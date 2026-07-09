@@ -1,15 +1,16 @@
 import React from 'react';
 import { useApp } from '../../store/useApp';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Users, 
-  UserPlus, 
-  AlertTriangle, 
-  IndianRupee, 
-  Activity, 
-  ChevronRight, 
-  TrendingUp, 
-  Bell 
+import {
+  Users,
+  UserPlus,
+  AlertTriangle,
+  IndianRupee,
+  Activity,
+  ChevronRight,
+  TrendingUp,
+  Bell,
+  Building2
 } from 'lucide-react';
 
 export default function AdminHome() {
@@ -102,6 +103,25 @@ export default function AdminHome() {
             <IndianRupee className="w-5 h-5" />
           </div>
         </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <button
+          onClick={() => navigate('/admin/department/new')}
+          className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm flex items-center justify-between hover:border-indigo-150 hover:shadow-md transition-all text-left w-full group"
+        >
+          <div className="space-y-1">
+            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Quick Action</span>
+            <p className="text-sm font-extrabold text-slate-800 pt-1">Create Department</p>
+            <span className="text-[10px] text-indigo-600 font-semibold block group-hover:underline">
+              Set up staff & categories
+            </span>
+          </div>
+          <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-650 flex items-center justify-center">
+            <Building2 className="w-5 h-5" />
+          </div>
+        </button>
       </div>
 
       {/* Admin Sub Grid */}

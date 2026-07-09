@@ -32,6 +32,7 @@ import AdminComplaints from './pages/AdminDashboard/Complaints';
 import AdminMaintenance from './pages/AdminDashboard/Maintenance';
 import AdminSettings from './pages/AdminDashboard/Settings';
 import AdminAmenities from './pages/AdminDashboard/Amenities';
+import CreateDepartment from './pages/AdminDashboard/CreateDepartment';
 
 // Protected Route Guard Simulation
 function ProtectedRoute({ children, requiredRole }) {
@@ -88,6 +89,7 @@ export default function App() {
             }
           >
             <Route index element={<AdminHome />} />
+            <Route path="department/new" element={<CreateDepartment />} />
             <Route path="pending" element={<PendingRegistrations />} />
             <Route path="residents" element={<ResidentsTable />} />
             <Route path="admins" element={<AdminsList />} />
