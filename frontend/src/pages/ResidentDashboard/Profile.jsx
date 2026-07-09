@@ -1,0 +1,152 @@
+import React, { useState } from 'react';
+import { useApp } from '../../store/useApp';
+import { Phone, PhoneCall, Plus, Users } from 'lucide-react';
+
+export default function Profile() {
+  const { currentUser, users, addPhoneToApartment } = useApp();
+  const [newPhone, setNewPhone] = useState('');
+  const [newName, setNewName] = useState('');
+
+  // Everyone registered to this flat (PRD: one flat can hold several numbers).
+  const flatMembers = users.filter(
+    (u) => currentUser && u.apartmentId === currentUser.apartmentId
+  );
+
+  const handleAddNumber = (e) => {
+    e.preventDefault();
+    if (!newPhone.trim()) return;
+    addPhoneToApartment(currentUser.apartmentId, newPhone, newName.trim() || undefined);
+    setNewPhone('');
+    setNewName('');
+  };
+
+  const contacts = [
+    { name: 'Security Main Gate', phone: '+91 99999 11111', type: 'Emergency / Gate' },
+    { name: 'Society Management Office', phone: '+91 99999 22222', type: 'Administrative' },
+    { name: 'Plumber Assistance', phone: '+91 99999 33333', type: 'Maintenance Staff' },
+    { name: 'Electrician Assistance', phone: '+91 99999 44444', type: 'Maintenance Staff' },
+    { name: 'Fire Guard Room', phone: '040-1234567', type: 'Emergency' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Resident Profile & Helpdesk</h1>
+        <p className="text-xs font-semibold text-slate-400 mt-1">Review your flat occupancy information and get society contact numbers.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Profile Card */}
+        <div className="lg:col-span-5 bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-650 text-white font-extrabold text-2xl flex items-center justify-center shadow-lg shadow-indigo-150">
+              {currentUser?.name.charAt(0)}
+            </div>
+            <div>
+              <h3 className="text-lg font-extrabold text-slate-855">{currentUser?.name}</h3>
+              <p className="text-xs font-semibold text-slate-450">{currentUser?.role === 'Admin' ? 'Society Administrator' : 'Resident Owner'}</p>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full inline-block mt-1.5 uppercase tracking-wider">
+                {currentUser?.status} Account
+              </span>
+            </div>
+          </div>
+
+          <div className="divide-y divide-slate-50 border-t border-b border-slate-50 py-3 space-y-3.5 text-xs font-semibold text-slate-600">
+            <div className="flex justify-between items-center py-1.5">
+              <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Email Address</span>
+              <span className="text-slate-800">{currentUser?.email}</span>
+            </div>
+            <div className="flex justify-between items-center py-1.5">
+              <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Mobile Number</span>
+              <span className="text-slate-800">{currentUser?.phone}</span>
+            </div>
+            <div className="flex justify-between items-center py-1.5">
+              <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Flat Number</span>
+              <span className="text-slate-800">{currentUser?.flat}</span>
+            </div>
+            <div className="flex justify-between items-center py-1.5">
+              <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Tower Block</span>
+              <span className="text-slate-800">Tower {currentUser?.tower}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Contact Helpdesk Card */}
+        <div className="lg:col-span-7 bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-4">
+          <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
+            <PhoneCall className="w-5 h-5 text-indigo-650" />
+            <h3 className="font-extrabold text-slate-805 text-sm">Emergency & Utility Contacts</h3>
+          </div>
+
+          <div className="divide-y divide-slate-50">
+            {contacts.map((c) => (
+              <div key={c.name} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-bold text-slate-800">{c.name}</p>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">{c.type}</p>
+                </div>
+                
+                <a 
+                  href={`tel:${c.phone}`}
+                  className="px-3.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  {c.phone}
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Flat members — add another number without needing the admin (PRD #8) */}
+      <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-4">
+        <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
+          <Users className="w-5 h-5 text-indigo-650" />
+          <h3 className="font-extrabold text-slate-805 text-sm">Numbers Registered to Flat {currentUser?.flat}</h3>
+        </div>
+
+        <div className="divide-y divide-slate-50">
+          {flatMembers.map((m) => (
+            <div key={m.id} className="py-2.5 first:pt-0 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-slate-800">{m.name}</p>
+                <p className="text-[11px] text-slate-500 font-semibold">{m.phone}</p>
+              </div>
+              <span
+                className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                  m.status === 'Active'
+                    ? 'text-emerald-700 bg-emerald-50 border-emerald-100'
+                    : 'text-amber-700 bg-amber-50 border-amber-100'
+                }`}
+              >
+                {m.status}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <form onSubmit={handleAddNumber} className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Name (optional)"
+            className="sm:col-span-4 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-medium"
+          />
+          <input
+            value={newPhone}
+            onChange={(e) => setNewPhone(e.target.value)}
+            placeholder="+91 9XXXX XXXXX"
+            className="sm:col-span-5 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-medium"
+          />
+          <button
+            type="submit"
+            className="sm:col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all shadow-sm shadow-indigo-100 inline-flex items-center justify-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" /> Add Number
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
