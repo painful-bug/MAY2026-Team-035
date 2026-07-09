@@ -87,7 +87,8 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<AdminHome />} />
+            <Route index element={<Navigate to="/admin/dashboard" replace />} />
+            <Route path="dashboard" element={<AdminHome />} />
             <Route path="pending" element={<PendingRegistrations />} />
             <Route path="residents" element={<ResidentsTable />} />
             <Route path="admins" element={<AdminsList />} />
