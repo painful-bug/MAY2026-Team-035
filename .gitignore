@@ -11,6 +11,22 @@ node_modules
 dist
 dist-ssr
 *.local
+start-vite-dev.cmd
+
+# Package manager / tool caches
+.npm/
+.npm-cache/
+.pnpm-store/
+.yarn/
+!.yarn/releases/
+!.yarn/plugins/
+!.yarn/sdks/
+!.yarn/versions/
+.parcel-cache/
+.vite/
+.turbo/
+.cache/
+coverage/
 
 # Env
 .env
@@ -22,8 +38,15 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
