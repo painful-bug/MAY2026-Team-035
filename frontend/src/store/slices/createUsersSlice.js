@@ -1,6 +1,12 @@
 import { genId } from '../../lib/ids';
 import { initialUsers } from '../../data/users';
 
+const normalizeResidenceAddress = (address = '') =>
+  address
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
 // The people directory: residents + admins. Also owns admin resident-management
 // (add via invite, edit, remove) and the resident self-service "add another
 // number to my flat". Invite minting itself lives in the invitations slice;
@@ -49,6 +55,70 @@ export const createUsersSlice = (set, get) => ({
     get().showToast(`Invite created for ${residentData.name} (${apartmentId})`, 'success');
     get().addActivity(`Admin invited resident ${residentData.name} to ${apartmentId}`, 'general');
     return invite;
+  },
+
+  getResidentsAtResidence: (address) => {
+    const residenceKey = normalizeResidenceAddress(address);
+    if (!residenceKey) return [];
+    return get().users.filter(
+      (u) =>
+        u.role === 'Resident' &&
+        normalizeResidenceAddress(u.apartmentId || u.flat) === residenceKey
+    );
+  },
+
+  registerResidenceMembers: ({ address, members, replaceExisting = false }) => {
+    const residence = address.trim().replace(/\s+/g, ' ');
+    const residenceKey = normalizeResidenceAddress(residence);
+    const validMembers = (members || [])
+      .map((member) => ({
+        name: member.name.trim(),
+        phone: member.phone.trim(),
+      }))
+      .filter((member) => member.name && member.phone);
+
+    if (!residenceKey || validMembers.length === 0) {
+      get().showToast('Add a residence address and at least one member', 'error');
+      return { ok: false, reason: 'invalid' };
+    }
+
+    const newUsers = validMembers.map((member, i) => ({
+      id: genId('u'),
+      name: member.name,
+      email: '',
+      role: 'Resident',
+      phone: member.phone,
+      tower: residence.match(/\bblock\s+([a-z0-9]+)/i)?.[1]?.toUpperCase() || '',
+      flat: residence,
+      apartmentId: residence,
+      residenceKey,
+      status: 'Active',
+      isPrimaryResident: i === 0,
+    }));
+
+    set((s) => ({
+      users: [
+        ...s.users.filter(
+          (u) =>
+            !(
+              replaceExisting &&
+              u.role === 'Resident' &&
+              normalizeResidenceAddress(u.apartmentId || u.flat) === residenceKey
+            )
+        ),
+        ...newUsers,
+      ],
+      invitations: replaceExisting
+        ? s.invitations.filter(
+            (invite) => normalizeResidenceAddress(invite.apartmentId) !== residenceKey
+          )
+        : s.invitations,
+    }));
+
+    const action = replaceExisting ? 'replaced residents at' : 'registered members at';
+    get().showToast(`Registered ${validMembers.length} member${validMembers.length > 1 ? 's' : ''} at ${residence}`, 'success');
+    get().addActivity(`Admin ${action} ${residence}`, 'general');
+    return { ok: true, users: newUsers };
   },
 
   editResident: (userId, updated) => {
