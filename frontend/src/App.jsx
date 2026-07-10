@@ -10,8 +10,20 @@ import AdminLayout from './layouts/AdminLayout';
 // Public Pages
 import LandingPage from './pages/Landing/LandingPage';
 import LoginPage from './pages/Login/LoginPage';
+import OtpVerificationPage from './pages/OtpVerification/OtpVerificationPage';
+import AssociationRegistrationPage from './pages/AssociationRegistration/AssociationRegistrationPage';
+import MapConfigurationPage from './pages/MapConfiguration/MapConfigurationPage';
+import FeatureConfigurationPage from './pages/FeatureConfiguration/FeatureConfigurationPage';
+import AdminProfilePage from './pages/AdminProfile/AdminProfilePage';
+import OnboardingOtpPage from './pages/OnboardingOtp/OnboardingOtpPage';
+import OnboardingSuccessPage from './pages/OnboardingSuccess/OnboardingSuccessPage';
 import SignupPage from './pages/Signup/SignupPage';
 import JoinPage from './pages/Join/JoinPage';
+import AuthFlowRoute from './routes/AuthFlowRoute';
+import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
+import { AUTH_ROUTES } from './routes/authRoutes';
+import { AUTH_FLOW_STATE } from './store/authStore';
+import { ONBOARDING_STEPS } from './data/onboarding';
 
 // Resident Pages
 import ResidentHome from './pages/ResidentDashboard/DashboardHome';
@@ -40,12 +52,12 @@ function ProtectedRoute({ children, requiredRole }) {
   
   if (!currentUser) {
     // If not logged in, redirect to login page
-    return <Navigate to="/login" replace />;
+    return <Navigate to={AUTH_ROUTES.LOGIN} replace />;
   }
   
   if (requiredRole && currentUser.role !== requiredRole) {
     // If user doesn't have the required role (e.g. resident tries to access admin)
-    return <Navigate to="/resident" replace />;
+    return <Navigate to={AUTH_ROUTES.RESIDENT_DASHBOARD} replace />;
   }
   
   return children;
@@ -56,14 +68,95 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* Public Routes */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
+          <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
+          <Route path={AUTH_ROUTES.LOGIN} element={<LoginPage />} />
+          <Route
+            path={AUTH_ROUTES.OTP_VERIFICATION}
+            element={
+              <AuthFlowRoute
+                allowedStates={[
+                  AUTH_FLOW_STATE.OTP_REQUIRED,
+                  AUTH_FLOW_STATE.OTP_SUBMITTING,
+                ]}
+                authenticatedRedirect={AUTH_ROUTES.ADMIN_DASHBOARD}
+              >
+                <OtpVerificationPage />
+              </AuthFlowRoute>
+            }
+          />
+          <Route
+            path={AUTH_ROUTES.ASSOCIATION_REGISTRATION}
+            element={
+              <OnboardingFlowRoute
+                minimumStep={ONBOARDING_STEPS.ASSOCIATION_DETAILS}
+                previousRoute={AUTH_ROUTES.LOGIN}
+              >
+                <AssociationRegistrationPage />
+              </OnboardingFlowRoute>
+            }
+          />
+          <Route
+            path={AUTH_ROUTES.MAP_CONFIGURATION}
+            element={
+              <OnboardingFlowRoute
+                minimumStep={ONBOARDING_STEPS.MAP_CONFIGURATION}
+                previousRoute={AUTH_ROUTES.ASSOCIATION_REGISTRATION}
+              >
+                <MapConfigurationPage />
+              </OnboardingFlowRoute>
+            }
+          />
+          <Route
+            path={AUTH_ROUTES.FEATURE_CONFIGURATION}
+            element={
+              <OnboardingFlowRoute
+                minimumStep={ONBOARDING_STEPS.FEATURE_CONFIGURATION}
+                previousRoute={AUTH_ROUTES.MAP_CONFIGURATION}
+              >
+                <FeatureConfigurationPage />
+              </OnboardingFlowRoute>
+            }
+          />
+          <Route
+            path={AUTH_ROUTES.ADMIN_PROFILE}
+            element={
+              <OnboardingFlowRoute
+                minimumStep={ONBOARDING_STEPS.ADMIN_PROFILE}
+                previousRoute={AUTH_ROUTES.FEATURE_CONFIGURATION}
+              >
+                <AdminProfilePage />
+              </OnboardingFlowRoute>
+            }
+          />
+          <Route
+            path={AUTH_ROUTES.ONBOARDING_OTP}
+            element={
+              <OnboardingFlowRoute
+                minimumStep={ONBOARDING_STEPS.ONBOARDING_OTP}
+                previousRoute={AUTH_ROUTES.ADMIN_PROFILE}
+              >
+                <OnboardingOtpPage />
+              </OnboardingFlowRoute>
+            }
+          />
+          <Route
+            path={AUTH_ROUTES.ONBOARDING_SUCCESS}
+            element={
+              <OnboardingFlowRoute
+                minimumStep={ONBOARDING_STEPS.ONBOARDING_OTP}
+                previousRoute={AUTH_ROUTES.ONBOARDING_OTP}
+                requireCreatedAssociation
+              >
+                <OnboardingSuccessPage />
+              </OnboardingFlowRoute>
+            }
+          />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/join/:token" element={<JoinPage />} />
 
           {/* Resident Dashboard Layout */}
           <Route 
-            path="/resident" 
+            path={AUTH_ROUTES.RESIDENT_DASHBOARD}
             element={
               <ProtectedRoute>
                 <ResidentLayout />
@@ -81,7 +174,7 @@ export default function App() {
 
           {/* Admin Dashboard Layout */}
           <Route 
-            path="/admin" 
+            path={AUTH_ROUTES.ADMIN_DASHBOARD}
             element={
               <ProtectedRoute requiredRole="Admin">
                 <AdminLayout />
@@ -102,7 +195,7 @@ export default function App() {
           </Route>
 
           {/* Fallback Redirect */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to={AUTH_ROUTES.HOME} replace />} />
         </Routes>
 
         {/* Global Floating Toast Alert Messages */}
