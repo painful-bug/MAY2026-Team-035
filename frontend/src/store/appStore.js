@@ -12,6 +12,7 @@ import { createNoticesSlice } from './slices/createNoticesSlice';
 import { createVisitorsSlice } from './slices/createVisitorsSlice';
 import { createAmenitiesSlice } from './slices/createAmenitiesSlice';
 import { createPaymentsSlice } from './slices/createPaymentsSlice';
+import { createDepartmentsSlice } from './slices/createDepartmentsSlice';
 
 // The whole domain layer. persist(...) writes it to localStorage on every
 // change; a storage-event listener (store/sync.js) re-reads it in other tabs.
@@ -31,6 +32,7 @@ export const useAppStore = create(
       ...createVisitorsSlice(set, get, api),
       ...createAmenitiesSlice(set, get, api),
       ...createPaymentsSlice(set, get, api),
+      ...createDepartmentsSlice(set, get, api),
     }),
     {
       name: 'homebandhu-app',
@@ -48,6 +50,7 @@ export const useAppStore = create(
         payments: s.payments,
         amenities: s.amenities,
         activities: s.activities,
+        departments: s.departments,
       }),
     }
   )

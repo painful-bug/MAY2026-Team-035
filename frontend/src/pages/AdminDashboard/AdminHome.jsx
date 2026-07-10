@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../../store/useApp';
 import {
   AlertOctagon,
@@ -26,6 +27,7 @@ const emptyRegistrationForm = {
 
 export default function AdminHome() {
   const { users } = useApp();
+  const navigate = useNavigate();
   const [addResidentOpen, setAddResidentOpen] = useState(false);
   const residentsCount = users.filter((u) => u.role === 'Resident').length;
 
@@ -44,14 +46,17 @@ export default function AdminHome() {
     {
       label: 'Complaints',
       icon: AlertOctagon,
+      onClick: () => navigate('/admin/complaints'),
     },
     {
       label: 'Create Department',
       icon: ClipboardList,
+      onClick: () => navigate('/admin/department/new'),
     },
     {
       label: 'Publish Notice',
       icon: BellRing,
+      onClick: () => navigate('/admin/notices'),
     },
   ];
 
