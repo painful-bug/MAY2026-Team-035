@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useApp } from './store/useApp';
 import ToastContainer from './components/common/ToastContainer';
@@ -45,6 +45,15 @@ import AdminMaintenance from './pages/AdminDashboard/Maintenance';
 import AdminSettings from './pages/AdminDashboard/Settings';
 import AdminAmenities from './pages/AdminDashboard/Amenities';
 import CreateDepartment from './pages/AdminDashboard/CreateDepartment';
+import AmenityDetailLayout from './features/amenities/layouts/AmenityDetailLayout';
+import AmenityDashboardPage from './features/amenities/pages/AmenityDashboardPage';
+import AmenityApprovalsPage from './features/amenities/pages/AmenityApprovalsPage';
+import AmenityLedgerPage from './features/amenities/pages/AmenityLedgerPage';
+import AmenitySettingsPage from './features/amenities/pages/AmenitySettingsPage';
+
+const AmenityReportsPage = lazy(() =>
+  import('./features/amenities/pages/AmenityReportsPage')
+);
 
 // Protected Route Guard Simulation
 function ProtectedRoute({ children, requiredRole }) {
@@ -190,6 +199,29 @@ export default function App() {
             <Route path="complaints" element={<AdminComplaints />} />
             <Route path="maintenance" element={<AdminMaintenance />} />
             <Route path="amenities" element={<AdminAmenities />} />
+            <Route
+              path="amenities/reports"
+              element={
+                <Suspense
+                  fallback={
+                    <div className="rounded-2xl border border-slate-100 bg-white px-6 py-16 text-center text-xs font-semibold text-slate-400">
+                      Loading amenity reports...
+                    </div>
+                  }
+                >
+                  <AmenityReportsPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="amenities/:amenityId"
+              element={<AmenityDetailLayout />}
+            >
+              <Route index element={<AmenityDashboardPage />} />
+              <Route path="approvals" element={<AmenityApprovalsPage />} />
+              <Route path="ledger" element={<AmenityLedgerPage />} />
+              <Route path="settings" element={<AmenitySettingsPage />} />
+            </Route>
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 
