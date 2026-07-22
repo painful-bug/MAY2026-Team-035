@@ -1,0 +1,164 @@
+import { amenitiesManagementMock } from '../../../data/amenitiesManagement.js';
+import { genId } from '../../../lib/ids.js';
+import {
+  loadAmenities,
+  saveAmenities,
+} from '../persistence/amenitiesPersistence.js';
+import {
+  createAmenitySettingsFormValues,
+  formatAmenityOperatingHours,
+  mergeAmenitySettings,
+  normalizeAmenityRecord,
+} from '../utils/amenitySettingsModel.js';
+import { validateAmenitySettings } from '../utils/validateAmenitySettings.js';
+
+const cloneAmenity = (amenity) => normalizeAmenityRecord(amenity);
+
+const readAmenities = () =>
+  loadAmenities(amenitiesManagementMock).map(normalizeAmenityRecord);
+
+const normalizeBookingConfiguration = (amenityData, currentAmenity = {}) => {
+  const bookingMode = amenityData.bookingMode ?? currentAmenity.bookingMode;
+  const capacity = amenityData.capacity ?? currentAmenity.capacity;
+  const privateBooking =
+    amenityData.allowPrivateBooking ?? currentAmenity.allowPrivateBooking;
+  const approval =
+    amenityData.requireApproval ?? currentAmenity.requireApproval ?? false;
+  const cleaningBuffer =
+    amenityData.cleaningBuffer ?? currentAmenity.cleaningBuffer ?? 0;
+  const bookingLimit =
+    amenityData.maxBookingsPerResident ??
+    currentAmenity.maxBookingsPerResident;
+
+  return {
+    bookingMode,
+    capacity: capacity === '' || capacity == null ? null : Number(capacity),
+    allowPrivateBooking: Boolean(privateBooking),
+    requireApproval: Boolean(approval),
+    cleaningBuffer: Number(cleaningBuffer) || 0,
+    maxBookingsPerResident:
+      bookingLimit === '' || bookingLimit == null ? null : Number(bookingLimit),
+  };
+};
+
+const findAmenityIndex = (amenities, amenityId) => {
+  const amenityIndex = amenities.findIndex(
+    (amenity) => amenity.id === amenityId
+  );
+
+  if (amenityIndex === -1) {
+    throw new Error('Amenity not found.');
+  }
+
+  return amenityIndex;
+};
+
+export const getAmenities = async () => readAmenities();
+
+export const getAmenityById = async (amenityId) => {
+  const amenities = readAmenities();
+  const amenity = amenities.find((item) => item.id === amenityId);
+  return amenity ? cloneAmenity(amenity) : null;
+};
+
+export const createAmenity = async (amenityData) => {
+  const amenities = readAmenities();
+  const isActive = amenityData.isActive ?? true;
+  const amenity = normalizeAmenityRecord({
+    id: genId('amenity'),
+    name: amenityData.name,
+    description: amenityData.description ?? '',
+    category: amenityData.category ?? 'Utility',
+    image: amenityData.image ?? '',
+    status: isActive ? 'Active' : 'Inactive',
+    ...normalizeBookingConfiguration(amenityData),
+    openingTime: amenityData.openingTime,
+    closingTime: amenityData.closingTime,
+    openingHours:
+      amenityData.openingHours ??
+      (amenityData.openingTime && amenityData.closingTime
+        ? formatAmenityOperatingHours(
+            amenityData.openingTime,
+            amenityData.closingTime
+          )
+        : ''),
+    pendingRequests: Number(amenityData.pendingRequests) || 0,
+    outstandingDues: Number(amenityData.outstandingDues) || 0,
+    isActive,
+  });
+
+  saveAmenities([...amenities, amenity]);
+  return cloneAmenity(amenity);
+};
+
+export const updateAmenity = async (amenityId, amenityData) => {
+  const amenities = readAmenities();
+  const amenityIndex = findAmenityIndex(amenities, amenityId);
+  const currentAmenity = amenities[amenityIndex];
+  const isActive = amenityData.isActive ?? currentAmenity.isActive;
+  const updatedAmenity = normalizeAmenityRecord({
+    ...currentAmenity,
+    ...amenityData,
+    ...normalizeBookingConfiguration(amenityData, currentAmenity),
+    id: currentAmenity.id,
+    status: isActive ? 'Active' : 'Inactive',
+    isActive,
+  });
+
+  const updatedAmenities = amenities.map((amenity, index) =>
+    index === amenityIndex ? updatedAmenity : amenity
+  );
+  saveAmenities(updatedAmenities);
+
+  return cloneAmenity(updatedAmenity);
+};
+
+export const removeAmenity = async (amenityId) => {
+  const amenities = readAmenities();
+  findAmenityIndex(amenities, amenityId);
+  saveAmenities(amenities.filter((amenity) => amenity.id !== amenityId));
+  return amenityId;
+};
+
+export const setAmenityActiveStatus = async (amenityId) => {
+  const amenities = readAmenities();
+  const amenityIndex = findAmenityIndex(amenities, amenityId);
+  const currentAmenity = amenities[amenityIndex];
+  const isActive = !currentAmenity.isActive;
+  const updatedAmenity = {
+    ...currentAmenity,
+    status: isActive ? 'Active' : 'Inactive',
+    isActive,
+  };
+
+  const updatedAmenities = amenities.map((amenity, index) =>
+    index === amenityIndex ? updatedAmenity : amenity
+  );
+  saveAmenities(updatedAmenities);
+
+  return cloneAmenity(updatedAmenity);
+};
+
+export const updateAmenitySettings = async (amenityId, settings) => {
+  const amenities = readAmenities();
+  const amenityIndex = findAmenityIndex(amenities, amenityId);
+  const updatedAmenity = mergeAmenitySettings(
+    amenities[amenityIndex],
+    settings
+  );
+  const validationErrors = validateAmenitySettings(
+    createAmenitySettingsFormValues(updatedAmenity)
+  );
+
+  if (Object.keys(validationErrors).length > 0) {
+    throw new Error(Object.values(validationErrors)[0]);
+  }
+
+  saveAmenities(
+    amenities.map((amenity, index) =>
+      index === amenityIndex ? updatedAmenity : amenity
+    )
+  );
+
+  return cloneAmenity(updatedAmenity);
+};
