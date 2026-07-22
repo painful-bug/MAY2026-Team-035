@@ -1,13 +1,2138 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HomeBandhu</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HomeBandhu - Society Management Platform</title>
+  <!-- Premium Google Fonts -->
+  <link rel="stylesheet" href="styles.css">
+  <!-- Load Vue 3 Global Build from CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body>
+  <div id="app" v-cloak>
+    
+    <!-- Offline Banner for Security simulation -->
+    <div v-if="isOfflineMode" class="offline-banner">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M10.706 3.294A1.25 1.25 0 1 1 12.47 5.06l-.73.731a.25.25 0 0 0-.073.177v2.244a.25.25 0 0 0 .25.25h1.365a.25.25 0 0 0 .177-.073l1.83-1.83a.25.25 0 0 0-.177-.427h-.793l-.707-.707a2.5 2.5 0 0 0-3.536 0L8.71 7.13a.25.25 0 0 0 .177.427h1.042a.25.25 0 0 0 .25-.25v-.909c0-.066.026-.13.073-.177l.454-.455zM6.104 11.236a.25.25 0 0 0-.177-.073H4.561a.25.25 0 0 0-.177.073l-1.83 1.83a.25.25 0 0 0 .177.427h.793l.707.707a2.5 2.5 0 0 0 3.536 0l1.83-1.83a.25.25 0 0 0-.177-.427H8.38a.25.25 0 0 0-.25.25v.909c0 .066-.026.13-.073.177l-.454.455a1.25 1.25 0 1 1-1.768-1.767l.73-.731a.25.25 0 0 0 .073-.177v-2.244a.25.25 0 0 0-.25-.25H6.104z"/>
+      </svg>
+      <span>OFFLINE SIMULATION: Security Guard logs will be buffered locally on browser cache.</span>
+    </div>
+
+    <div class="app-container">
+      
+      <!-- ================= SIDEBAR ================= -->
+      <aside class="sidebar">
+        <div class="logo-container">
+          <div class="logo-icon">HB</div>
+          <span class="logo-text">HomeBandhu</span>
+        </div>
+
+        <nav class="nav-menu">
+          <!-- Resident Tabs -->
+          <template v-if="currentRole === 'resident'">
+            <li class="nav-item" :class="{active: currentTab === 'dashboard'}" @click="currentTab = 'dashboard'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              Dashboard
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'complaints'}" @click="currentTab = 'complaints'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Complaints
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'amenities'}" @click="currentTab = 'amenities'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Amenities
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'visitors'}" @click="currentTab = 'visitors'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              Visitors
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'notices'}" @click="currentTab = 'notices'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              Notices
+              <span v-if="residentNoticesCount > 0" class="badge danger" style="padding: 2px 6px; font-size: 10px; border-radius: 4px; margin-left: auto;">{{ residentNoticesCount }}</span>
+            </li>
+          </template>
+
+          <!-- Admin Tabs -->
+          <template v-if="currentRole === 'admin'">
+            <li class="nav-item" :class="{active: currentTab === 'dashboard'}" @click="currentTab = 'dashboard'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2a2 2 0 00-2 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              Overview
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'complaints'}" @click="currentTab = 'complaints'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              Assign Complaints
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'bookings'}" @click="currentTab = 'bookings'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Manage Bookings
+              <span v-if="pendingBookingsList.length > 0" class="badge warning" style="padding: 2px 6px; font-size: 10px; border-radius: 4px; margin-left: auto;">{{ pendingBookingsList.length }}</span>
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'notices'}" @click="currentTab = 'notices'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Notices & Bylaws
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'committee'}" @click="currentTab = 'committee'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              Committee Hub
+            </li>
+          </template>
+
+          <!-- Security Tabs -->
+          <template v-if="currentRole === 'security'">
+            <li class="nav-item" :class="{active: currentTab === 'check-in'}" @click="currentTab = 'check-in'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              Gate Check-in
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'registers'}" @click="currentTab = 'registers'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+              Material Register
+            </li>
+            <li class="nav-item" :class="{active: currentTab === 'water-tanker'}" @click="currentTab = 'water-tanker'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 9.172V5L8 4z" />
+              </svg>
+              Water Tankers
+            </li>
+          </template>
+
+          <!-- Serviceman Tabs -->
+          <template v-if="currentRole === 'serviceman'">
+            <li class="nav-item" :class="{active: currentTab === 'dashboard'}" @click="currentTab = 'dashboard'">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Workman Roster
+            </li>
+          </template>
+        </nav>
+
+        <div class="sidebar-footer">
+          <!-- Profile Badge -->
+          <div class="user-profile-badge">
+            <div class="avatar" v-if="currentRole === 'resident'">SV</div>
+            <div class="avatar" v-else-if="currentRole === 'admin'">MS</div>
+            <div class="avatar" v-else-if="currentRole === 'security'">G1</div>
+            <div class="avatar" v-else-if="currentRole === 'serviceman'">RK</div>
+            <div class="user-info">
+              <span class="user-name" v-if="currentRole === 'resident'">Sai Vishnu</span>
+              <span class="user-name" v-else-if="currentRole === 'admin'">Mr. Sharma</span>
+              <span class="user-name" v-else-if="currentRole === 'security'">Guard Prasad</span>
+              <span class="user-name" v-else-if="currentRole === 'serviceman'">
+                {{ db.servicemen.find(s => s.id === selectedServicemanId)?.name || 'Utility Crew' }}
+              </span>
+              <span class="user-role-label">Flat B-1204</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ================= MAIN WRAPPER ================= -->
+      <main class="main-wrapper">
+        
+        <!-- Header Bar -->
+        <header class="header-bar">
+          <div class="search-bar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="var(--text-light)">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input type="text" class="search-input" placeholder="Search notices, visitors, complaints...">
+          </div>
+
+          <div class="header-actions">
+            <!-- Simulated Push Notification Indicator -->
+            <div v-if="currentPushVisitor && currentRole !== 'resident'" style="font-size: 11px; background-color: var(--warning-light); color: var(--warning-dark); padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
+              <span style="display:inline-block; width: 6px; height: 6px; background-color: var(--warning); border-radius: 50%; animation: fadeIn 1s infinite alternate;"></span>
+              Pending Visitor Approval on Resident Flat!
+            </div>
+
+            <!-- Role Selector -->
+            <div class="role-selector-tool">
+              <label>Acting Role</label>
+              <select :value="currentRole" @change="switchRole($event.target.value)" class="role-select">
+                <option value="resident">Resident Portal</option>
+                <option value="admin">Admin Portal</option>
+                <option value="security">Security Guard Gate</option>
+                <option value="serviceman">Serviceman (Utility)</option>
+              </select>
+            </div>
+            
+            <!-- Notification Bell Icon (Triggers Toast History mock) -->
+            <button class="notification-bell-btn" @click="showToast('No new notifications', 'info')">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              <span class="notification-badge" v-if="residentNoticesCount > 0 && currentRole === 'resident'"></span>
+            </button>
+          </div>
+        </header>
+
+        <!-- Content Body -->
+        <div class="content-body">
+
+          <!-- ================= RESIDENT PORTAL VIEWS ================= -->
+          <div v-if="currentRole === 'resident'">
+            
+            <!-- TAB: DASHBOARD -->
+            <div v-if="currentTab === 'dashboard'">
+              <div class="flex-between">
+                <div>
+                  <h1>Good morning, Sai Vishnu 👋</h1>
+                  <p class="subtitle">Here's what's happening in your apartment today.</p>
+                </div>
+                <div class="flex-gap-2">
+                  <button class="btn btn-primary btn-sm" @click="activeModals.raiseComplaint = true">Raise Complaint</button>
+                  <button class="btn btn-secondary btn-sm" @click="activeModals.bookAmenity = true">Book Amenity</button>
+                  <button class="btn btn-outline btn-sm" @click="activeModals.preApproveVisitor = true">Pre-Approve Guest</button>
+                </div>
+              </div>
+
+              <!-- Stat Boxes -->
+              <div class="grid-3">
+                <div class="card stat-card" @click="currentTab = 'complaints'">
+                  <div class="stat-content">
+                    <span class="stat-label">Active Complaints</span>
+                    <span class="stat-value">{{ db.complaints.filter(c => c.status !== 'Resolved').length }}</span>
+                    <span class="stat-change up">1 in progress</span>
+                  </div>
+                  <div class="stat-icon primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                </div>
+                <div class="card stat-card" @click="currentTab = 'visitors'">
+                  <div class="stat-content">
+                    <span class="stat-label">Pending Visitors</span>
+                    <span class="stat-value">{{ db.visitors.filter(v => v.type === 'Pending').length }}</span>
+                    <span class="stat-change text-muted">Awaiting approval</span>
+                  </div>
+                  <div class="stat-icon secondary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                  </div>
+                </div>
+                <div class="card stat-card" @click="currentTab = 'amenities'">
+                  <div class="stat-content">
+                    <span class="stat-label">Upcoming Bookings</span>
+                    <span class="stat-value">{{ db.bookings.filter(b => b.status === 'Confirmed').length }}</span>
+                    <span class="stat-change text-muted">This week</span>
+                  </div>
+                  <div class="stat-icon success">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Main Dashboard Grids -->
+              <div class="grid-2">
+                
+                <!-- Recent Notices -->
+                <div class="card">
+                  <div class="flex-between">
+                    <h2>Recent Notices</h2>
+                    <span class="btn btn-outline btn-sm" @click="currentTab = 'notices'">View All</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+                    <div v-for="notice in db.notices.slice(0, 3)" :key="notice.id" @click="currentTab = 'notices'" style="display:flex; justify-content:space-between; align-items:start; padding-bottom:12px; border-bottom:1px solid var(--border); cursor:pointer;">
+                      <div style="flex:1; padding-right:12px;">
+                        <div style="font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px;">
+                          {{ notice.reference }}
+                          <span v-if="!notice.readBy.includes('B-1204')" class="badge primary btn-sm" style="padding: 1px 4px; font-size: 8px;">New</span>
+                        </div>
+                        <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">{{ notice.body }}</p>
+                      </div>
+                      <span class="badge warning" v-if="notice.isImmediate">High</span>
+                      <span class="badge info" v-else>Medium</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- My Complaints -->
+                <div class="card">
+                  <div class="flex-between">
+                    <h2>My Complaints</h2>
+                    <span class="btn btn-outline btn-sm" @click="currentTab = 'complaints'">View All</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:20px; margin-top:16px;">
+                    <div v-for="comp in db.complaints.slice(0, 2)" :key="comp.id">
+                      <div class="flex-between" style="margin-bottom:6px;">
+                        <div>
+                          <strong style="font-size:14px;">{{ comp.title }}</strong>
+                          <div style="font-size:11px; color:var(--text-muted);">
+                            {{ comp.category }} • {{ comp.history[comp.history.length-1].timestamp }}
+                          </div>
+                        </div>
+                        <span class="badge" :class="{
+                          danger: comp.priority === 'High',
+                          warning: comp.priority === 'Medium',
+                          success: comp.priority === 'Low'
+                        }">{{ comp.priority }}</span>
+                      </div>
+                      <!-- Progress bar based on status -->
+                      <div style="height:6px; background-color:var(--border); border-radius:3px; overflow:hidden; position:relative;">
+                        <div style="height:100%; transition:width 0.4s ease; background:linear-gradient(to right, var(--primary), var(--secondary));"
+                          :style="{width: comp.status === 'Submitted' ? '15%' : (comp.status === 'Analysing' ? '40%' : (comp.status === 'Resolved' ? '100%' : '75%'))}">
+                        </div>
+                      </div>
+                      <div class="flex-between" style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+                        <span>Progress: {{ comp.status }}</span>
+                        <span>Assignee: {{ db.servicemen.find(s => s.id === comp.assignedTo)?.name || 'Awaiting Assignment' }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Upcoming Amenities -->
+                <div class="card">
+                  <div class="flex-between">
+                    <h2>Booked Amenities</h2>
+                    <span class="btn btn-outline btn-sm" @click="currentTab = 'amenities'">Manage</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+                    <div v-for="book in db.bookings.slice(0, 3)" :key="book.id" class="flex-between" style="padding-bottom:12px; border-bottom:1px solid var(--border);">
+                      <div>
+                        <strong style="font-size:14px; display:flex; align-items:center; gap:8px;">
+                          {{ book.amenityName }}
+                          <span class="badge success" v-if="book.paymentStatus === 'Paid'" style="font-size: 9px; padding: 1px 6px;">Paid</span>
+                          <span class="badge danger" v-else style="font-size: 9px; padding: 1px 6px;">Unpaid</span>
+                        </strong>
+                        <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                          Dates: {{ book.dates.join(', ') }}
+                        </div>
+                      </div>
+                      <button v-if="book.paymentStatus === 'Unpaid'" class="btn btn-primary btn-sm" @click="triggerPaymentFlow(book)">Pay ₹{{ book.totalCost }}</button>
+                      <span v-else class="badge primary">Confirmed</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Visitors Expected Today -->
+                <div class="card">
+                  <div class="flex-between">
+                    <h2>Expected Guests</h2>
+                    <span class="btn btn-outline btn-sm" @click="currentTab = 'visitors'">Authorize</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:12px; margin-top:16px;">
+                    <div v-for="vis in db.visitors.slice(0, 3)" :key="vis.id" class="flex-between" style="padding-bottom:8px; border-bottom:1px solid var(--border);">
+                      <div>
+                        <strong style="font-size:14px;">{{ vis.name }}</strong>
+                        <div style="font-size:12px; color:var(--text-muted);">{{ vis.phone }}</div>
+                      </div>
+                      <div class="text-right">
+                        <div v-if="vis.otp" style="font-family:monospace; font-weight:700; color:var(--secondary);">OTP: {{ vis.otp }}</div>
+                        <span class="badge" :class="{
+                          success: vis.type === 'Checked In',
+                          warning: vis.type === 'Pending',
+                          primary: vis.type === 'Expected'
+                        }">{{ vis.type }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- TAB: COMPLAINTS -->
+            <div v-if="currentTab === 'complaints'">
+              <div class="flex-between">
+                <div>
+                  <h1>Complaints & Maintenance Requests</h1>
+                  <p class="subtitle">Submit new utility maintenance tickets and track their status in real-time.</p>
+                </div>
+                <button class="btn btn-primary" @click="activeModals.raiseComplaint = true">Raise a Complaint</button>
+              </div>
+
+              <div class="grid-2">
+                
+                <!-- Complaints List -->
+                <div class="card" style="padding: 0; overflow:hidden;">
+                  <div style="padding:20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h2 style="font-size:16px;">My Raised Tickets</h2>
+                  </div>
+                  
+                  <div style="max-height: 500px; overflow-y: auto;">
+                    <div v-for="comp in db.complaints" :key="comp.id" style="padding: 20px; border-bottom: 1px solid var(--border); transition: all 0.2s;" :style="{backgroundColor: newComplaint.selectedId === comp.id ? 'var(--primary-light)' : 'transparent'}" @click="newComplaint.selectedId = comp.id" class="cursor-pointer">
+                      <div class="flex-between">
+                        <h3 style="font-size:15px; font-weight:600; color:var(--text-main);">{{ comp.title }}</h3>
+                        <span class="badge" :class="{
+                          danger: comp.priority === 'High',
+                          warning: comp.priority === 'Medium',
+                          success: comp.priority === 'Low'
+                        }">{{ comp.priority }}</span>
+                      </div>
+                      <p style="font-size:13px; color:var(--text-muted); margin-top:8px; display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+                        {{ comp.description }}
+                      </p>
+                      
+                      <div class="flex-between" style="margin-top:12px; font-size:12px; color:var(--text-muted);">
+                        <span>Category: <strong>{{ comp.category }}</strong></span>
+                        <span class="badge" :class="{
+                          primary: comp.status === 'Submitted',
+                          warning: comp.status === 'Analysing',
+                          success: comp.status === 'Resolved'
+                        }">{{ comp.status }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Complaint Details & Timeline Tracker -->
+                <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+                  <div v-if="selectedComplaint">
+                      <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:16px; margin-bottom:16px;">
+                        <div>
+                          <h2>{{ comp.title }}</h2>
+                          <span style="font-size:12px; color:var(--text-muted);">Ticket ID: {{ comp.id }} • Raised on {{ comp.dateRaised }}</span>
+                        </div>
+                        <span class="badge info">{{ comp.category }}</span>
+                      </div>
+                      
+                      <div style="margin-bottom:24px;">
+                        <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase;">Description</h4>
+                        <p style="font-size:14px; margin-top:4px;">{{ comp.description }}</p>
+                      </div>
+
+                      <div style="margin-bottom:24px;">
+                        <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase;">Assigned Workman</h4>
+                        <div v-if="comp.assignedTo" style="display:flex; align-items:center; gap:12px; margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:8px;">
+                          <div class="avatar">
+                            {{ db.servicemen.find(s => s.id === comp.assignedTo)?.name.split(' ').map(n=>n[0]).join('') }}
+                          </div>
+                          <div>
+                            <strong style="font-size:14px;">{{ db.servicemen.find(s => s.id === comp.assignedTo)?.name }}</strong>
+                            <div style="font-size:12px; color:var(--text-muted);">{{ db.servicemen.find(s => s.id === comp.assignedTo)?.specialty }} Specialist • ★ {{ db.servicemen.find(s => s.id === comp.assignedTo)?.rating }}</div>
+                          </div>
+                        </div>
+                        <div v-else style="font-size:13px; color:var(--warning-dark); background-color:var(--warning-light); padding:10px; border-radius:8px; margin-top:8px;">
+                          Awaiting assignment from Society Administrator.
+                        </div>
+                      </div>
+
+                      <div>
+                        <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Ticket Lifecycle History</h4>
+                        <div class="timeline">
+                          <div class="timeline-item" v-for="log in selectedComplaint.history" :key="log.status" class="completed">
+                            <div class="timeline-dot"></div>
+                            <div class="timeline-info">
+                              <span class="timeline-title">{{ log.status }}</span>
+                              <span class="timeline-time">{{ log.timestamp }} - {{ log.detail }}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    
+                  </div>
+                  <div v-else style="text-align:center; padding:64px 0; color:var(--text-muted); display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="var(--text-light)">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <p style="margin-top:16px;">Select a complaint ticket from the left panel to track live resolution history.</p>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- TAB: AMENITIES -->
+            <div v-if="currentTab === 'amenities'">
+              <div class="flex-between">
+                <div>
+                  <h1>Amenity Bookings</h1>
+                  <p class="subtitle">Book common areas such as the Club House, Swimming Pool, and Gym.</p>
+                </div>
+                <button class="btn btn-primary" @click="activeModals.bookAmenity = true">New Reservation</button>
+              </div>
+
+              <!-- Amenity Selection Info Cards -->
+              <div class="grid-3">
+                <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+                  <div>
+                    <span class="badge primary">Health & Fitness</span>
+                    <h3 style="margin-top:8px;">Society Gym</h3>
+                    <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Equipped with modern treadmills, weights, and cross trainers.</p>
+                  </div>
+                  <div class="flex-between" style="margin-top:20px; border-top:1px solid var(--border); padding-top:12px;">
+                    <strong>₹500 / Day</strong>
+                    <button class="btn btn-secondary btn-sm" @click="newBooking.amenityName = 'Gym'; activeModals.bookAmenity = true;">Book</button>
+                  </div>
+                </div>
+                <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+                  <div>
+                    <span class="badge secondary">Events & Parties</span>
+                    <h3 style="margin-top:8px;">Club House</h3>
+                    <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Spacious air-conditioned hall for birthday parties and gatherings.</p>
+                  </div>
+                  <div class="flex-between" style="margin-top:20px; border-top:1px solid var(--border); padding-top:12px;">
+                    <strong>₹2,000 / Day</strong>
+                    <button class="btn btn-secondary btn-sm" @click="newBooking.amenityName = 'Club House'; activeModals.bookAmenity = true;">Book</button>
+                  </div>
+                </div>
+                <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+                  <div>
+                    <span class="badge success">Recreation</span>
+                    <h3 style="margin-top:8px;">Swimming Pool</h3>
+                    <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Olympic size pool with a dedicated children area and lockers.</p>
+                  </div>
+                  <div class="flex-between" style="margin-top:20px; border-top:1px solid var(--border); padding-top:12px;">
+                    <strong>₹500 / Day</strong>
+                    <button class="btn btn-secondary btn-sm" @click="newBooking.amenityName = 'Swimming Pool'; activeModals.bookAmenity = true;">Book</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- My Reservations Table -->
+              <div class="card">
+                <h2>My Reservations Log</h2>
+                <div class="table-container mt-4">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Booking ID</th>
+                        <th>Amenity</th>
+                        <th>Booked Dates</th>
+                        <th>Total Cost</th>
+                        <th>Payment</th>
+                        <th>Reservation Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="book in db.bookings" :key="book.id">
+                        <td><strong>{{ book.id }}</strong></td>
+                        <td>{{ book.amenityName }}</td>
+                        <td>{{ book.dates.join(', ') }}</td>
+                        <td>₹{{ book.totalCost }}</td>
+                        <td>
+                          <span class="badge" :class="book.paymentStatus === 'Paid' ? 'success' : 'danger'">
+                            {{ book.paymentStatus }}
+                          </span>
+                        </td>
+                        <td>
+                          <span class="badge" :class="{
+                            success: book.status === 'Confirmed',
+                            warning: book.status === 'Pending',
+                            danger: book.status === 'Cancelled'
+                          }">
+                            {{ book.status }}
+                          </span>
+                        </td>
+                        <td>
+                          <div class="flex-gap-2">
+                            <button v-if="book.paymentStatus === 'Unpaid' && book.status !== 'Cancelled'" class="btn btn-primary btn-sm" @click="triggerPaymentFlow(book)">Pay Fee</button>
+                            <button v-if="book.status !== 'Cancelled'" class="btn btn-danger btn-sm" @click="setBookingStatus(book.id, 'Cancelled')">Cancel Booking</button>
+                            <span v-else class="text-muted" style="font-size:12px;">No Actions</span>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr v-if="db.bookings.length === 0">
+                        <td colspan="7" class="text-center text-muted">You have no active or historical amenity reservations.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB: VISITORS -->
+            <div v-if="currentTab === 'visitors'">
+              <div class="flex-between">
+                <div>
+                  <h1>Visitor & Guest Access</h1>
+                  <p class="subtitle">Generate digital OTP credentials for expected guests or delivery agents.</p>
+                </div>
+                <button class="btn btn-primary" @click="activeModals.preApproveVisitor = true">Pre-Approve Guest</button>
+              </div>
+
+              <div class="grid-2">
+                <!-- Pre-approved Active passes -->
+                <div class="card">
+                  <h2>Active Expected Access Passes</h2>
+                  <div style="display:flex; flex-direction:column; gap:16px; margin-top:20px;">
+                    <div v-for="vis in db.visitors.filter(v => v.type === 'Expected')" :key="vis.id" style="border:1px solid var(--border); border-radius:12px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                      <div>
+                        <h3>{{ vis.name }}</h3>
+                        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Phone: {{ vis.phone }}</p>
+                        <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+                          <span class="badge primary" style="font-family:monospace; font-size:14px; padding:6px 12px;">OTP: {{ vis.otp }}</span>
+                          <span style="font-size:11px; color:var(--text-muted);">Share this code with your guest</span>
+                        </div>
+                      </div>
+                      <div class="text-center" style="background-color:var(--bg-app); padding:8px; border-radius:8px; border:1px dashed var(--text-light);">
+                        <!-- Simulated QR Box -->
+                        <div style="width:64px; height:64px; background-color:#334155; color:white; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700;">QR PASS</div>
+                        <span style="font-size:9px; color:var(--text-muted); display:block; margin-top:4px;">Scan at gate</span>
+                      </div>
+                    </div>
+                    <div v-if="db.visitors.filter(v => v.type === 'Expected').length === 0" class="text-center text-muted" style="padding:32px 0;">
+                      No active expected guests registered.
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Access History -->
+                <div class="card">
+                  <h2>Gate Activity Registry (Logs)</h2>
+                  <div class="table-container mt-4" style="max-height: 400px; overflow-y:auto;">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Guest Name</th>
+                          <th>Status</th>
+                          <th>Time Checked-In</th>
+                          <th>Approval</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="vis in db.visitors.filter(v => v.type !== 'Expected')" :key="vis.id">
+                          <td>
+                            <strong>{{ vis.name }}</strong>
+                            <div style="font-size:11px; color:var(--text-muted);">{{ vis.phone }}</div>
+                          </td>
+                          <td>
+                            <span class="badge" :class="vis.type === 'Checked In' ? 'success' : 'warning'">{{ vis.type }}</span>
+                          </td>
+                          <td>{{ vis.checkInTime || 'Pending' }}</td>
+                          <td>
+                            <span class="badge" :class="{
+                              success: vis.approvalStatus === 'Approved',
+                              danger: vis.approvalStatus === 'Rejected',
+                              warning: vis.approvalStatus === 'Pending'
+                            }">{{ vis.approvalStatus }}</span>
+                          </td>
+                        </tr>
+                        <tr v-if="db.visitors.filter(v => v.type !== 'Expected').length === 0">
+                          <td colspan="4" class="text-center text-muted">No historical access logs recorded.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB: NOTICES -->
+            <div v-if="currentTab === 'notices'">
+              <h1>Society Notice Board</h1>
+              <p class="subtitle">Official circulars, regulatory guidelines, and news published by the management committee.</p>
+
+              <div style="display:flex; flex-direction:column; gap:20px; max-width:800px;">
+                <div v-for="notice in db.notices" :key="notice.id" class="card" :style="{borderColor: !notice.readBy.includes('B-1204') ? 'var(--primary)' : 'var(--border)'}">
+                  <div class="flex-between">
+                    <div>
+                      <span class="badge info">{{ notice.reference }}</span>
+                      <span style="font-size:12px; color:var(--text-muted); margin-left:12px;">Published on {{ notice.datePublished }}</span>
+                    </div>
+                    <div class="flex-gap-2">
+                      <span class="badge danger" v-if="notice.isImmediate">Urgent</span>
+                      <button v-if="!notice.readBy.includes('B-1204')" class="btn btn-secondary btn-sm" @click="markNoticeAsRead(notice.id)">Mark as Read</button>
+                      <span v-else class="badge success" style="font-size:10px; padding:2px 8px;">Read</span>
+                    </div>
+                  </div>
+                  <div style="margin-top:16px; font-size:15px; color:var(--text-main);">
+                    {{ notice.body }}
+                  </div>
+                  <div style="margin-top:16px; border-top: 1px solid var(--border); padding-top:12px; font-size:12px; color:var(--text-muted);">
+                    Date of Effect: <strong>{{ notice.dateOfEffect }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+                    <!-- ================= ADMINISTRATOR PORTAL VIEWS ================= -->
+          <div v-else-if="currentRole === 'admin'">
+            
+            <!-- TAB: OVERVIEW (6a) -->
+            <div v-if="currentTab === 'dashboard'">
+              <div class="flex-between">
+                <div>
+                  <h1>Welcome, Mr. Sharma 👋</h1>
+                  <p class="subtitle">Sunrise Housing Society Administrative Control</p>
+                </div>
+                <div class="flex-gap-2">
+                  <button class="btn btn-outline btn-sm" @click="switchRole('resident')">Resident View</button>
+                </div>
+              </div>
+
+              <!-- Stat Boxes (6a) -->
+              <div class="grid-3">
+                <div class="card stat-card" @click="currentTab = 'complaints'">
+                  <div class="stat-content">
+                    <span class="stat-label">REGISTERED RESIDENTS</span>
+                    <span class="stat-value">142</span>
+                    <span class="stat-change up">Flats Active</span>
+                  </div>
+                  <div class="stat-icon primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </div>
+                </div>
+
+                <div class="card stat-card" @click="currentTab = 'bookings'">
+                  <div class="stat-content">
+                    <span class="stat-label">VISITORS TODAY</span>
+                    <span class="stat-value">18</span>
+                    <span class="stat-change text-muted">Gate Verified</span>
+                  </div>
+                  <div class="stat-icon secondary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                </div>
+
+                <div class="card stat-card" @click="currentTab = 'complaints'">
+                  <div class="stat-content">
+                    <span class="stat-label">COMPLAINTS STATUS</span>
+                    <div style="font-size: 13px; font-weight: 700; margin-top: 4px; display: flex; gap: 12px;">
+                      <span class="badge danger">Open: 7</span>
+                      <span class="badge warning">In Progress: 4</span>
+                      <span class="badge success">Resolved: 26</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon warning">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Action Required Banner (9e/6a) -->
+              <div class="card" style="background-color: var(--danger-light); border: 1px solid var(--danger-border); margin-bottom: 32px;">
+                <div class="flex-between" style="margin-bottom:0;">
+                  <div style="display:flex; align-items:center; gap:12px;">
+                    <span style="font-size:20px;">⚠️</span>
+                    <div>
+                      <strong style="color:var(--danger-dark); font-size:14px;">ACTION REQUIRED — Bylaws Policy Drafts</strong>
+                      <p style="font-size:12px; color:var(--text-muted); margin-top:2px;">You have 2 unpublished draft policy sections in progress.</p>
+                    </div>
+                  </div>
+                  <button class="btn btn-danger btn-sm" @click="currentTab = 'notices'">Resume Editing</button>
+                </div>
+              </div>
+
+              <!-- Quick Task Panel -->
+              <div class="grid-2">
+                <!-- Unassigned complaints list -->
+                <div class="card">
+                  <div class="flex-between">
+                    <h2>Awaiting Workman Assignment</h2>
+                    <span class="badge danger">{{ db.complaints.filter(c => !c.assignedTo).length }} Unassigned</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+                    <div v-for="comp in db.complaints.filter(c => !c.assignedTo)" :key="comp.id" style="border:1px solid var(--border); padding:16px; border-radius:12px;">
+                      <div class="flex-between">
+                        <strong>Ticket #{{ comp.id }}: {{ comp.title }}</strong>
+                        <span class="badge danger">{{ comp.priority }}</span>
+                      </div>
+                      <p style="font-size:12px; color:var(--text-muted); margin-top:4px;">{{ comp.description }}</p>
+                      
+                      <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                        <span style="font-size:12px;">Category: <strong>{{ comp.category }}</strong></span>
+                        <div class="flex-gap-2">
+                          <select :id="'assignee-select-' + comp.id" class="form-control btn-sm" style="width: auto; padding: 2px 10px;">
+                            <option v-for="sm in db.servicemen" :key="sm.id" :value="sm.id">
+                              {{ sm.name }} ({{ sm.specialty }})
+                            </option>
+                          </select>
+                          <button class="btn btn-primary btn-sm" @click="assignComplaintToServiceman(comp.id, document.getElementById('assignee-select-' + comp.id).value)">Dispatch</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="db.complaints.filter(c => !c.assignedTo).length === 0" class="text-center text-muted" style="padding:32px 0;">
+                      All raised complaints have been successfully dispatched.
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Booking Requests Review -->
+                <div class="card">
+                  <div class="flex-between">
+                    <h2>Review Amenity Reservations</h2>
+                    <span class="badge warning">{{ pendingBookingsList.length }} Pending</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+                    <div v-for="book in pendingBookingsList" :key="book.id" style="border:1px solid var(--border); padding:16px; border-radius:12px; display:flex; justify-content:space-between; align-items:center;">
+                      <div>
+                        <strong>{{ book.amenityName }} Booking</strong>
+                        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+                          Requested by: {{ book.residentName }} ({{ book.residentFlat }})
+                        </div>
+                        <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                          Dates: {{ book.dates.join(', ') }} • Slot: {{ book.timeSlot }}
+                        </div>
+                        <div v-if="book.hasDefaulterWarning" style="margin-top:6px;">
+                          <span class="badge danger" style="font-size:9px;">⚠️ {{ book.defaulterReason }}</span>
+                        </div>
+                      </div>
+                      <div class="flex-gap-2">
+                        <button class="btn btn-primary btn-sm" @click="setBookingStatus(book.id, 'Confirmed')">Approve</button>
+                        <button class="btn btn-danger btn-sm" @click="openRejectBookingModal(book)">Reject</button>
+                      </div>
+                    </div>
+                    <div v-if="pendingBookingsList.length === 0" class="text-center text-muted" style="padding:32px 0;">
+                      No booking reservation requests pending review.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB: COMPLAINTS TRIAGE BOARD & SLA ESCALATION (Wireframe 7a-7f) -->
+            <div v-if="currentTab === 'complaints'">
+              <div class="flex-between">
+                <div>
+                  <h1>Complaints Triage Board</h1>
+                  <p class="subtitle">Audit tickets, track real-time SLA timers, and dispatch maintenance crews.</p>
+                </div>
+                <div class="flex-gap-2">
+                  <button class="btn btn-sm" :class="complaintFilter === 'active' ? 'btn-primary' : 'btn-outline'" @click="complaintFilter = 'active'">Active</button>
+                  <button class="btn btn-sm" :class="complaintFilter === 'resolved' ? 'btn-primary' : 'btn-outline'" @click="complaintFilter = 'resolved'">Resolved</button>
+                  <button class="btn btn-sm" :class="complaintFilter === 'all' ? 'btn-primary' : 'btn-outline'" @click="complaintFilter = 'all'">All</button>
+                </div>
+              </div>
+
+              <!-- Urgent Complaints Table (Starred) Wireframe 7a -->
+              <div class="card mb-4">
+                <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+                  <h2 style="display:flex; align-items:center; gap:8px;">
+                    <span style="color:#eab308;">★</span> Urgent Complaints
+                  </h2>
+                  <span class="badge danger" style="font-size:10px;">{{ urgentComplaints.length }} High Priority</span>
+                </div>
+                <div class="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style="width:40px;">★</th>
+                        <th>RESIDENT</th>
+                        <th>DEPT</th>
+                        <th>STATUS</th>
+                        <th>REQUESTED ON</th>
+                        <th>LATEST UPDATE</th>
+                        <th>SLA / TIMER</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="comp in urgentComplaints" :key="comp.id" style="background-color: var(--danger-light); cursor:pointer;" @click="openComplaintDetail(comp)">
+                        <td @click.stop="toggleStarComplaint(comp)" style="font-size:18px; color:#eab308; text-align:center;">★</td>
+                        <td>
+                          <strong>{{ comp.residentName }}</strong>
+                          <div style="font-size:11px; color:var(--text-muted);">{{ comp.residentFlat }}</div>
+                        </td>
+                        <td><span class="badge info">{{ comp.category }}</span></td>
+                        <td>
+                          <span class="badge" :class="{
+                            danger: comp.status === 'Work in Progress',
+                            warning: comp.status === 'Assigned',
+                            success: comp.status === 'Resolved',
+                            primary: comp.status === 'Submitted'
+                          }">{{ comp.status }}</span>
+                        </td>
+                        <td style="font-size:12px;">{{ comp.dateRaised }}</td>
+                        <td style="font-size:12px; max-width:220px;">{{ comp.latestUpdate }}</td>
+                        <td>
+                          <span class="badge" :class="comp.slaStatus.includes('Overdue') ? 'danger' : 'warning'">
+                            🔴 {{ comp.slaStatus }}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr v-if="urgentComplaints.length === 0">
+                        <td colspan="7" class="text-center text-muted" style="padding:24px 0;">No urgent starred complaints flagged.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Standard Complaints Table (Unstarred) Wireframe 7a -->
+              <div class="card">
+                <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+                  <h2>📋 Standard Complaints</h2>
+                  <span class="badge primary" style="font-size:10px;">{{ standardComplaints.length }} Tickets</span>
+                </div>
+                <div class="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style="width:40px;">☆</th>
+                        <th>RESIDENT</th>
+                        <th>DEPT</th>
+                        <th>STATUS</th>
+                        <th>REQUESTED ON</th>
+                        <th>LATEST UPDATE</th>
+                        <th>SLA / TIMER</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="comp in standardComplaints" :key="comp.id" class="cursor-pointer" @click="openComplaintDetail(comp)">
+                        <td @click.stop="toggleStarComplaint(comp)" style="font-size:18px; color:var(--text-light); text-align:center;" title="Click to mark priority — pins row to top ↑">☆</td>
+                        <td>
+                          <strong>{{ comp.residentName }}</strong>
+                          <div style="font-size:11px; color:var(--text-muted);">{{ comp.residentFlat }}</div>
+                        </td>
+                        <td><span class="badge info">{{ comp.category }}</span></td>
+                        <td>
+                          <span class="badge" :class="{
+                            primary: comp.status === 'Submitted',
+                            warning: comp.status === 'Scheduled' || comp.status === 'Analysing',
+                            success: comp.status === 'Resolved'
+                          }">{{ comp.status }}</span>
+                        </td>
+                        <td style="font-size:12px;">{{ comp.dateRaised }}</td>
+                        <td style="font-size:12px; max-width:220px;">{{ comp.latestUpdate }}</td>
+                        <td>
+                          <span v-if="comp.status === 'Resolved'" class="text-muted" style="font-size:12px;">—</span>
+                          <span v-else class="badge info">{{ comp.slaStatus }}</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB: AMENITIES MANAGEMENT & WORKSPACE (Wireframe 8a-8i) -->
+            <div v-if="currentTab === 'bookings'">
+              
+              <!-- VIEW 1: Facilities Grid View (Wireframe 8a) -->
+              <div v-if="!selectedAmenity">
+                <div class="flex-between">
+                  <div>
+                    <h1>Amenities Management</h1>
+                    <p class="subtitle">Monitor society facilities, manage rules, review approvals, and audit ledgers.</p>
+                  </div>
+                  <span class="badge success" style="padding:6px 12px;">🟢 Live Sync Active</span>
+                </div>
+
+                <div class="grid-2">
+                  <!-- Facilities Card Grid -->
+                  <div>
+                    <h2 style="margin-bottom:16px;">Registered Facilities</h2>
+                    <div style="display:flex; flex-direction:column; gap:16px;">
+                      <div v-for="fac in db.facilities" :key="fac.name" class="card cursor-pointer" style="display:flex; justify-content:space-between; align-items:center;" @click="openAmenityDetail(fac.name)">
+                        <div>
+                          <div style="display:flex; align-items:center; gap:8px;">
+                            <h3>{{ fac.name }}</h3>
+                            <span class="badge" :class="fac.isEnabled ? 'success' : 'danger'" style="font-size:9px;">
+                              {{ fac.isEnabled ? 'Open' : 'Closed for Booking' }}
+                            </span>
+                          </div>
+                          <div style="margin-top:12px; display:flex; gap:10px;">
+                            <span class="badge warning" style="font-size:10px;">{{ fac.pendingCount }} Pending</span>
+                            <span class="badge primary" style="font-size:10px;">₹{{ fac.dueAmount }} Due</span>
+                          </div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:16px;">
+                          <!-- Toggle for facility -->
+                          <label class="checkbox-label" @click.stop>
+                            <input type="checkbox" v-model="fac.isEnabled">
+                          </label>
+                          <button class="btn btn-outline btn-sm" @click.stop="openAmenityDetail(fac.name)">Open Workspace →</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Export Report Panel (8a) -->
+                  <div class="card">
+                    <h2>Export Activity Report</h2>
+                    <p class="subtitle" style="margin-bottom:16px;">Generate CSV/PDF statements for audits.</p>
+
+                    <div class="form-group">
+                      <label>AMENITIES TO INCLUDE</label>
+                      <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+                        <label class="checkbox-label"><input type="checkbox" checked> Swimming Pool</label>
+                        <label class="checkbox-label"><input type="checkbox" checked> Party Hall</label>
+                        <label class="checkbox-label"><input type="checkbox" checked> Tennis Court</label>
+                      </div>
+                    </div>
+
+                    <div class="form-group">
+                      <label>DATE RANGE</label>
+                      <div class="grid-2" style="margin-bottom:0; gap:8px;">
+                        <input type="date" class="form-control" value="2026-10-01">
+                        <input type="date" class="form-control" value="2026-10-31">
+                      </div>
+                    </div>
+
+                    <button class="btn btn-primary btn-block" @click="showToast('Exporting PDF/CSV statement report...', 'info')">Export PDF/CSV Statement</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- VIEW 2: Amenity Detail Workspace (Wireframe 8b-8e) -->
+              <div v-else>
+                <div class="flex-between">
+                  <div style="display:flex; align-items:center; gap:16px;">
+                    <button class="btn btn-outline btn-sm" @click="closeAmenityDetail">‹ Back to Facilities</button>
+                    <h1>{{ selectedAmenity }} Workspace</h1>
+                  </div>
+                  <div class="flex-gap-2">
+                    <button class="btn btn-sm" :class="amenityTab === 'dashboard' ? 'btn-primary' : 'btn-outline'" @click="amenityTab = 'dashboard'">Dashboard</button>
+                    <button class="btn btn-sm" :class="amenityTab === 'approvals' ? 'btn-primary' : 'btn-outline'" @click="amenityTab = 'approvals'">Approvals</button>
+                    <button class="btn btn-sm" :class="amenityTab === 'ledger' ? 'btn-primary' : 'btn-outline'" @click="amenityTab = 'ledger'">Ledger</button>
+                    <button class="btn btn-sm" :class="amenityTab === 'settings' ? 'btn-primary' : 'btn-outline'" @click="amenityTab = 'settings'">Settings</button>
+                  </div>
+                </div>
+
+                <!-- SUB-TAB 1: Dashboard (Wireframe 8b) -->
+                <div v-if="amenityTab === 'dashboard'">
+                  <div class="card mb-4">
+                    <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:12px;">
+                      <h2 class="micro-label">TODAY — HOURLY TIMELINE</h2>
+                      <div class="flex-gap-2">
+                        <span class="badge primary" style="font-size:9px;">■ Booked</span>
+                        <span class="badge info" style="font-size:9px;">□ Empty</span>
+                        <span class="badge warning" style="font-size:9px;">▨ Cleaning buffer</span>
+                      </div>
+                    </div>
+
+                    <!-- Timeline Slot Blocks -->
+                    <div style="display:flex; gap:8px; overflow-x:auto; padding:16px 0;">
+                      <div style="flex:1; min-width:80px; padding:12px; background-color:var(--primary-light); border:1px solid var(--primary); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--text-muted); display:block;">8–9 AM</span>
+                        <strong style="font-size:12px; color:var(--primary);">Kumar party</strong>
+                      </div>
+                      <div style="flex:1; min-width:80px; padding:12px; background-color:var(--warning-light); border:1px dashed var(--warning); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--warning-dark); display:block;">9–11 AM</span>
+                        <strong style="font-size:11px; color:var(--warning-dark);">Cleaning Buffer</strong>
+                      </div>
+                      <div style="flex:1; min-width:80px; padding:12px; background-color:var(--bg-app); border:1px solid var(--border); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--text-muted); display:block;">11–12 PM</span>
+                        <span style="font-size:12px; color:var(--text-muted);">Empty</span>
+                      </div>
+                      <div style="flex:1; min-width:80px; padding:12px; background-color:var(--primary-light); border:1px solid var(--primary); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--text-muted); display:block;">12–1 PM</span>
+                        <strong style="font-size:12px; color:var(--primary);">Iyer swim</strong>
+                      </div>
+                      <div style="flex:1; min-width:80px; padding:12px; background-color:var(--warning-light); border:1px dashed var(--warning); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--warning-dark); display:block;">1–3 PM</span>
+                        <strong style="font-size:11px; color:var(--warning-dark);">Buffer</strong>
+                      </div>
+                      <div style="flex:1; min-width:80px; padding:12px; background-color:var(--primary-light); border:1px solid var(--primary); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--text-muted); display:block;">3–4 PM</span>
+                        <strong style="font-size:12px; color:var(--primary);">Rao lesson</strong>
+                      </div>
+                    </div>
+
+                    <div style="margin-top:16px; display:flex; gap:12px;">
+                      <button class="btn btn-outline btn-sm" @click="activeModals.blockOutTime = true">Block Out Time / Maintenance</button>
+                      <button class="btn btn-primary btn-sm" @click="activeModals.adminOverrideBooking = true">Create Booking (Admin Override)</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- SUB-TAB 2: Approvals (Wireframe 8c) -->
+                <div v-if="amenityTab === 'approvals'">
+                  <div class="card">
+                    <h2 style="margin-bottom:16px;">Pending Slot Approvals</h2>
+                    <div class="table-container">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>RESIDENT</th>
+                            <th>SLOT REQUESTED</th>
+                            <th>ACTION</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="book in db.bookings.filter(b => b.status === 'Pending')" :key="book.id">
+                            <td>
+                              <strong>{{ book.residentName }}</strong>
+                              <div v-if="book.hasDefaulterWarning" style="margin-top:4px;">
+                                <span class="badge danger" style="font-size:9px;">⚠️ {{ book.defaulterReason }}</span>
+                              </div>
+                            </td>
+                            <td>{{ book.dates.join(', ') }} • {{ book.timeSlot }}</td>
+                            <td>
+                              <div class="flex-gap-2">
+                                <button class="btn btn-danger btn-sm" @click="openRejectBookingModal(book)">Reject</button>
+                                <button class="btn btn-primary btn-sm" @click="setBookingStatus(book.id, 'Confirmed')">Approve</button>
+                              </div>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style="margin-top:16px; padding:12px; background-color:var(--warning-light); border-radius:8px; font-size:12px; color:var(--warning-dark);">
+                      ⚠️ All bookings are private. Send push notification to subscribers that facility will be temporarily occupied.
+                    </div>
+                  </div>
+                </div>
+
+                <!-- SUB-TAB 3: Ledger (Wireframe 8d) -->
+                <div v-if="amenityTab === 'ledger'">
+                  <!-- Stat tiles -->
+                  <div class="grid-3 mb-4" style="grid-template-columns: repeat(5, 1fr);">
+                    <div class="card" style="padding:16px;">
+                      <span class="micro-label">TOTAL EARNED</span>
+                      <div class="stat-value" style="font-size:1.4rem;">₹1,84,000</div>
+                    </div>
+                    <div class="card" style="padding:16px;">
+                      <span class="micro-label">REV: SUBSCRIPTIONS</span>
+                      <div class="stat-value" style="font-size:1.4rem;">₹64,000</div>
+                    </div>
+                    <div class="card" style="padding:16px;">
+                      <span class="micro-label">REV: PAY-PER-USE</span>
+                      <div class="stat-value" style="font-size:1.4rem;">₹1,20,000</div>
+                    </div>
+                    <div class="card" style="padding:16px;">
+                      <span class="micro-label">DEPOSITS HELD</span>
+                      <div class="stat-value" style="font-size:1.4rem;">₹32,000</div>
+                    </div>
+                    <div class="card" style="padding:16px;">
+                      <span class="micro-label">OUTSTANDING DUES</span>
+                      <div class="stat-value" style="font-size:1.4rem; color:var(--danger);">₹6,000</div>
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <h2>Financial Ledger</h2>
+                    <div class="table-container mt-4">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>RESIDENT</th>
+                            <th>DATE(S)</th>
+                            <th>AMOUNT</th>
+                            <th>STATUS</th>
+                            <th>ACTION</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="book in db.bookings" :key="book.id">
+                            <td><strong>{{ book.residentName }}</strong></td>
+                            <td>
+                              {{ book.dates.join(', ') }}
+                              <div v-if="book.isMultiDay" style="font-size:11px; color:var(--text-muted); margin-top:2px;">
+                                <div v-for="sub in book.subDays" :key="sub.day">
+                                  {{ sub.day }}: {{ sub.event }} <span v-if="sub.status === 'Canceled'" class="badge danger" style="font-size:8px;">Canceled</span>
+                                </div>
+                                <span v-if="book.subDays?.some(s=>s.isProratedRefunded)" class="badge success" style="font-size:8px; margin-top:2px;">Auto-Reconciled: Prorated refund credited to Ledger</span>
+                              </div>
+                            </td>
+                            <td>₹{{ book.totalCost }}</td>
+                            <td>
+                              <span class="badge" :class="book.status === 'Completed' || book.status === 'Confirmed' ? 'success' : 'warning'">{{ book.status }}</span>
+                            </td>
+                            <td>
+                              <div class="flex-gap-2">
+                                <button v-if="book.depositStatus === 'Held'" class="btn btn-outline btn-sm" @click="openDepositActionModal(book, 'Refund')">Deposit Actions ▾</button>
+                                <button v-if="book.status === 'Upcoming'" class="btn btn-danger btn-sm" @click="forceCancelBooking(book)">Force Cancel</button>
+                              </div>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- SUB-TAB 4: Settings (Wireframe 8e) -->
+                <div v-if="amenityTab === 'settings'">
+                  <div class="card max-w-md" style="max-width:600px;">
+                    <h2>Rules & Operational Settings</h2>
+                    <div style="display:flex; flex-direction:column; gap:20px; margin-top:20px;">
+                      <div>
+                        <span class="micro-label">OPERATIONAL HOURS</span>
+                        <div style="font-size:14px; font-weight:700; margin-top:4px;">6:00 AM – 9:00 PM</div>
+                      </div>
+                      <div>
+                        <span class="micro-label">PAYMENT MODEL</span>
+                        <div style="font-size:13px; margin-top:4px;">
+                          <div>✓ Pay-Per-Use (Hourly/Daily)</div>
+                          <div>✓ Recurring Subscriptions (Monthly)</div>
+                        </div>
+                      </div>
+                      <div>
+                        <span class="micro-label">PRIVACY MODEL</span>
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px;">
+                          <span>Private Access (blocks entire facility from others)</span>
+                          <label class="checkbox-label"><input type="checkbox" checked></label>
+                        </div>
+                      </div>
+                      <div>
+                        <span class="micro-label">BUFFER TIME</span>
+                        <div style="font-size:14px; font-weight:700; margin-top:4px;">60 mins mandatory cleaning gap</div>
+                      </div>
+                      <div>
+                        <span class="micro-label">FAIR USE LIMITS</span>
+                        <div style="font-size:14px; font-weight:700; margin-top:4px;">Max 2 bookings / week</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+            
+            <!-- TAB: COMMITTEE WORKSPACE (Wireframes 10a–10h) -->
+            <div v-if="currentTab === 'committee'">
+              <!-- Main Dashboard Alert (10a) -->
+              <div class="card mb-4" style="background-color: var(--primary-light); border: 1px solid var(--primary);">
+                <div class="flex-between" style="margin-bottom:0;">
+                  <div style="display:flex; align-items:center; gap:12px;">
+                    <div style="background-color:var(--primary); color:white; padding:8px 12px; border-radius:8px; font-weight:800; font-size:12px; text-align:center;">
+                      JUL<br>17
+                    </div>
+                    <div>
+                      <strong style="color:var(--primary); font-size:14px;">Reminder: Monthly Board Meeting today at 7:00 PM.</strong>
+                      <p style="font-size:12px; color:var(--text-muted); margin-top:2px;">Virtual link ready for attendance and minutes logging.</p>
+                    </div>
+                  </div>
+                  <div class="flex-gap-2">
+                    <button class="btn btn-outline btn-sm" @click="showToast('Opening Board Agenda...', 'info')">View Agenda</button>
+                    <button class="btn btn-primary btn-sm" @click="showToast('Joining Google Meet...', 'info')">Join GMeet</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Committee Workspace Hub Cards (10a) -->
+              <div class="grid-3 mb-4">
+                <div class="card cursor-pointer text-center" style="padding:24px;" @click="activeModals.addCommitteeMember = true">
+                  <div style="font-size:32px; margin-bottom:8px;">👥</div>
+                  <h3>Members Directory</h3>
+                  <span style="font-size:12px; color:var(--text-muted);">Manage committee members → see 10b</span>
+                </div>
+
+                <div class="card cursor-pointer text-center" style="padding:24px;" @click="activeModals.scheduleMeeting = true">
+                  <div style="font-size:32px; margin-bottom:8px;">📅</div>
+                  <h3>Meetings & Calendar</h3>
+                  <span style="font-size:12px; color:var(--text-muted);">Schedule board meets → see 10e</span>
+                </div>
+
+                <div class="card cursor-pointer text-center" style="padding:24px;" @click="activeModals.addRecord = true">
+                  <div style="font-size:32px; margin-bottom:8px;">📜</div>
+                  <h3>Resolutions & Minutes</h3>
+                  <span style="font-size:12px; color:var(--text-muted);">Archive signed documents → see 10g</span>
+                </div>
+              </div>
+
+              <!-- Members Directory Section (10b) -->
+              <div class="card mb-4">
+                <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+                  <h2>Committee Members Directory</h2>
+                  <button class="btn btn-primary btn-sm" @click="activeModals.addCommitteeMember = true">+ Add Committee Member</button>
+                </div>
+                
+                <div class="grid-3">
+                  <div v-for="mem in db.committee" :key="mem.name" class="card" style="padding:16px;">
+                    <div class="flex-between">
+                      <strong>{{ mem.name }}</strong>
+                      <span class="badge info" style="font-size:10px;">{{ mem.flat }}</span>
+                    </div>
+                    <span class="badge primary mt-2" style="font-size:10px;">{{ mem.role }}</span>
+                    
+                    <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:4px;">
+                      <span v-for="tag in mem.tags" :key="tag" class="badge secondary" style="font-size:9px;">{{ tag }}</span>
+                    </div>
+
+                    <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:8px; font-size:11px; color:var(--text-muted);">
+                      Routes to: Official App Chat
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Meetings Table (10e) -->
+              <div class="card mb-4">
+                <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+                  <h2>Board Meetings & Calendar</h2>
+                  <button class="btn btn-primary btn-sm" @click="activeModals.scheduleMeeting = true">+ Schedule Meeting</button>
+                </div>
+                
+                <div class="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>MEETING TITLE</th>
+                        <th>DATE / TIME</th>
+                        <th>STATUS</th>
+                        <th>ACTION</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="m in db.meetings" :key="m.title">
+                        <td><strong>{{ m.title }}</strong></td>
+                        <td>{{ m.date }}</td>
+                        <td>
+                          <span class="badge" :class="{
+                            primary: m.status === 'Upcoming',
+                            warning: m.status === 'Awaiting Minutes',
+                            success: m.status === 'Minutes Filed'
+                          }">{{ m.status }}</span>
+                        </td>
+                        <td>
+                          <button class="btn btn-outline btn-sm" @click="showToast('Opening meeting agenda details...', 'info')">View Details</button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Resolutions & Minutes Hub (10g) -->
+              <div class="card">
+                <div class="flex-between" style="border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+                  <h2>Resolutions & Minutes Hub</h2>
+                  <button class="btn btn-primary btn-sm" @click="activeModals.addRecord = true">+ Add Record</button>
+                </div>
+                
+                <div class="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>TYPE</th>
+                        <th>TITLE</th>
+                        <th>MEETING DATE</th>
+                        <th>SIGNED FILE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="rec in db.records" :key="rec.title">
+                        <td>
+                          <span class="badge" :class="rec.type === 'Minute' ? 'info' : 'warning'">{{ rec.type }}</span>
+                        </td>
+                        <td><strong>{{ rec.title }}</strong></td>
+                        <td>{{ rec.date }}</td>
+                        <td>
+                          <span style="font-family:monospace; font-size:12px; color:var(--primary); text-decoration:underline; cursor:pointer;" @click="showToast('Downloading signed document PDF...', 'info')">
+                            📄 {{ rec.file }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- TAB: PUBLISH NOTICES (Wireframe 9a-9e) -->
+            <div v-if="currentTab === 'notices'">
+              <div class="flex-between">
+                <div>
+                  <h1>Publish Notice & Society Policy</h1>
+                  <p class="subtitle">Draft circulars, publish regulations, and manage live bylaws index.</p>
+                </div>
+                <button class="btn btn-primary" @click="activeModals.publishNotice = true">Create Notice Circular</button>
+              </div>
+
+              <div class="grid-2">
+                <!-- Form -->
+                <div class="card">
+                  <h2>Create Announcement</h2>
+                  <form @submit.prevent="publishNotice" class="mt-4">
+                    <div class="form-group">
+                      <label for="notice-ref">SECTION REFERENCE</label>
+                      <select id="notice-ref" v-model="newNotice.reference" class="form-control">
+                        <option value="Section 4 - Safety">Section 4 - Safety & Security</option>
+                        <option value="Section 8 - Utilities">Section 8 - Utilities & Maintenance</option>
+                        <option value="Section 12 - Events">Section 12 - Clubhouse & Recreation</option>
+                        <option value="Section 15 - Billing">Section 15 - Billing & Accounts</option>
+                        <option value="General Rules">General Guidelines</option>
+                      </select>
+                    </div>
+
+                    <div class="form-group">
+                      <label for="notice-body">POLICY DETAILS / BODY</label>
+                      <textarea id="notice-body" v-model="newNotice.body" class="form-control" rows="4" placeholder="Enter notice body context..." required></textarea>
+                    </div>
+
+                    <div class="form-group">
+                      <label for="notice-date">DATE OF EFFECT</label>
+                      <input type="date" id="notice-date" v-model="newNotice.dateOfEffect" class="form-control" >
+                    </div>
+
+                    <div class="form-group">
+                      <label class="checkbox-label">
+                        <input type="checkbox" v-model="newNotice.isImmediate">
+                        Notice takes immediate effect upon publishing
+                      </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-block">Publish Notice Circular</button>
+                  </form>
+                </div>
+
+                <!-- History -->
+                <div class="card">
+                  <h2>Notice Board Archive</h2>
+                  <div style="display:flex; flex-direction:column; gap:16px; margin-top:16px; max-height:450px; overflow-y:auto;">
+                    <div v-for="not in db.notices" :key="not.id" style="border:1px solid var(--border); border-radius:12px; padding:16px;">
+                      <div class="flex-between">
+                        <span class="badge primary">{{ not.reference }}</span>
+                        <span style="font-size:11px; color:var(--text-muted);">Published: {{ not.datePublished }}</span>
+                      </div>
+                      <p style="font-size:13px; margin-top:8px;">{{ not.body }}</p>
+                      <div class="flex-between" style="margin-top:12px; border-top:1px solid var(--border); padding-top:8px; font-size:11px; color:var(--text-muted);">
+                        <span>Effective from: <strong>{{ not.dateOfEffect }}</strong></span>
+                        <span>Read by {{ not.readBy.length }} flats</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ================= SECURITY PORTAL VIEWS ================= -->
+          <div v-else-if="currentRole === 'security'">
+            <div class="flex-between">
+              <div>
+                <h1>Gate Terminal Dashboard</h1>
+                <p class="subtitle">Monitor visitors, log water tankers, and register incoming materials.</p>
+              </div>
+              <button class="btn" :class="isOfflineMode ? 'btn-danger' : 'btn-outline'" @click="toggleOffline">
+                {{ isOfflineMode ? 'Deactivate Offline Mode' : 'Simulate Network Outage (Offline)' }}
+              </button>
+            </div>
+
+            <!-- TAB: GATE CHECK-IN -->
+            <div v-if="currentTab === 'check-in'" class="grid-2">
+              
+              <!-- Check-In via OTP -->
+              <div class="card">
+                <h2>Expected Guest OTP Check-in</h2>
+                <p class="subtitle">Verify visitor credentials generated by residents.</p>
+                <div class="mt-4">
+                  <div class="form-group">
+                    <label for="otp-val">Enter 6-Digit Guest OTP Code</label>
+                    <input type="text" id="otp-val" v-model="otpVerifyInput" class="form-control text-center" style="font-size: 1.5rem; letter-spacing: 0.5em; font-family: monospace;" placeholder="000000" maxlength="6">
+                  </div>
+                  <button class="btn btn-primary btn-block" @click="verifyVisitorOTP">Verify & Check-In</button>
+                </div>
+
+                <!-- OTP helper hint list for TA demo -->
+                <div style="margin-top:24px; padding:12px; background-color:var(--primary-light); border-radius:8px; font-size:12px;">
+                  <strong style="color:var(--primary);">Demo Helper:</strong> Active expected OTPs currently registered in database:
+                  <ul style="margin-top:6px; padding-left:16px;">
+                    <li v-for="v in db.visitors.filter(v => v.type === 'Expected')" :key="v.id">
+                      {{ v.name }} - OTP: <strong>{{ v.otp }}</strong> (Flat {{ v.residentFlat }})
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Ad-Hoc Visitor (Push notification loop) -->
+              <div class="card">
+                <h2>Ad-Hoc Guest Entry</h2>
+                <p class="subtitle">Request immediate approval from resident for unscheduled guests.</p>
+                <form @submit.prevent="submitAdHocVisitor" class="mt-4">
+                  <div class="form-group">
+                    <label for="adhoc-name">Visitor's Full Name</label>
+                    <input type="text" id="adhoc-name" v-model="adHocVisitorForm.name" class="form-control" placeholder="e.g. Courier, Delivery Agent, Guest Name" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="adhoc-phone">Mobile Number</label>
+                    <input type="tel" id="adhoc-phone" v-model="adHocVisitorForm.phone" class="form-control" placeholder="10-digit mobile number" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="adhoc-flat">Target Residence Flat</label>
+                    <select id="adhoc-flat" v-model="adHocVisitorForm.flat" class="form-control">
+                      <option value="B-1204">B-1204 (Sai Vishnu)</option>
+                      <option value="A-402">A-402 (Lee Johns Shaji)</option>
+                      <option value="C-901">C-901 (Aniket Shedge)</option>
+                    </select>
+                  </div>
+                  <button type="submit" class="btn btn-secondary btn-block">Request Access Approval</button>
+                </form>
+
+                <!-- Dynamic simulator state -->
+                <div v-if="currentPushVisitor" style="margin-top: 16px; padding: 12px; border-radius: 8px; background-color: var(--warning-light); text-align: center;">
+                  <div style="font-size: 13px; font-weight: 600; color: var(--warning-dark);">Approval Pending...</div>
+                  <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                    A simulated push notification was sent to flat {{ currentPushVisitor.residentFlat }}.
+                    <br><strong>Use the dropdown in header to switch to Resident Portal to Approve/Reject!</strong>
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- TAB: DIGITAL REGISTERS -->
+            <div v-if="currentTab === 'registers'" class="grid-2">
+              
+              <!-- Inward Outward Log Form -->
+              <div class="card">
+                <h2>Material Entry Log</h2>
+                <form @submit.prevent="submitMaterialLog" class="mt-4">
+                  <div class="form-group">
+                    <label for="mat-type">Movement Type</label>
+                    <select id="mat-type" v-model="newMaterial.type" class="form-control">
+                      <option value="Inward">Inward (Couriers, Parcels, Material In)</option>
+                      <option value="Outward">Outward (Waste removal, Material Out)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="mat-desc">Description of Materials</label>
+                    <input type="text" id="mat-desc" v-model="newMaterial.description" class="form-control" placeholder="e.g. Amazon Package, Construction Materials" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="mat-contact">Deliverer / Agent Name</label>
+                    <input type="text" id="mat-contact" v-model="newMaterial.contactName" class="form-control" placeholder="Courier agent name" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="mat-phone">Agent Contact Phone</label>
+                    <input type="text" id="mat-phone" v-model="newMaterial.phone" class="form-control" placeholder="Mobile number">
+                  </div>
+                  <button type="submit" class="btn btn-primary btn-block">Log Material Entry</button>
+                </form>
+              </div>
+
+              <!-- Material Register Logs list -->
+              <div class="card">
+                <h2>Material Registers Log</h2>
+                <div class="table-container mt-4" style="max-height: 400px; overflow-y:auto;">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Material Description</th>
+                        <th>Courier Agent</th>
+                        <th>Timestamp</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="log in db.materialMovements" :key="log.id">
+                        <td>
+                          <span class="badge" :class="log.type === 'Inward' ? 'primary' : 'warning'">{{ log.type }}</span>
+                        </td>
+                        <td><strong>{{ log.description }}</strong></td>
+                        <td>
+                          <div>{{ log.contactName }}</div>
+                          <span style="font-size:11px; color:var(--text-muted);">{{ log.phone }}</span>
+                        </td>
+                        <td style="font-size: 12px;">{{ log.timeStamp }}</td>
+                      </tr>
+                      <tr v-if="db.materialMovements.length === 0">
+                        <td colspan="4" class="text-center text-muted">No material logs stored.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- TAB: WATER TANKERS -->
+            <div v-if="currentTab === 'water-tanker'" class="grid-2">
+              
+              <!-- Water Tanker Log Form -->
+              <div class="card">
+                <h2>Digitized Water Tanker Entry</h2>
+                <form @submit.prevent="submitTankerLog" class="mt-4">
+                  <div class="form-group">
+                    <label for="wt-num">Tanker Vehicle Number Plate</label>
+                    <input type="text" id="wt-num" v-model="newTanker.vehicleNumber" class="form-control" placeholder="e.g. KA-51-MM-9999" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="wt-capacity">Tanker Capacity</label>
+                    <select id="wt-capacity" v-model="newTanker.capacity" class="form-control">
+                      <option value="5000L">5,000 Liters</option>
+                      <option value="10000L">10,000 Liters</option>
+                      <option value="15000L">15,000 Liters</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="wt-source">Water Supplier Source</label>
+                    <input type="text" id="wt-source" v-model="newTanker.source" class="form-control" placeholder="e.g. Cauvery Water Supply">
+                  </div>
+                  <button type="submit" class="btn btn-primary btn-block">Log Water Intake</button>
+                </form>
+              </div>
+
+              <!-- Water Tankers Log list -->
+              <div class="card">
+                <h2>Tanker Logs</h2>
+                <div class="table-container mt-4" style="max-height: 400px; overflow-y:auto;">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Vehicle Num</th>
+                        <th>Capacity</th>
+                        <th>Supplier</th>
+                        <th>Intake Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="wt in db.waterTankers" :key="wt.id">
+                        <td><strong>{{ wt.vehicleNumber }}</strong></td>
+                        <td><span class="badge primary">{{ wt.capacity }}</span></td>
+                        <td>{{ wt.source }}</td>
+                        <td style="font-size:12px;">{{ wt.checkInTime }}</td>
+                      </tr>
+                      <tr v-if="db.waterTankers.length === 0">
+                        <td colspan="4" class="text-center text-muted">No water tanker entries logged today.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- ================= SERVICEMAN PORTAL VIEW ================= -->
+          <div v-else-if="currentRole === 'serviceman'">
+            <div class="flex-between">
+              <div>
+                <h1>Utility Serviceman Dashboard</h1>
+                <p class="subtitle">Manage assigned maintenance jobs, priority schedules, and close tickets with verification OTP codes.</p>
+              </div>
+              <div class="flex-gap-2">
+                <label style="font-size:13px; font-weight:600;">Active Account Login:</label>
+                <select v-model="selectedServicemanId" class="form-control btn-sm" style="width: auto;">
+                  <option v-for="sm in db.servicemen" :key="sm.id" :value="sm.id">{{ sm.name }} ({{ sm.specialty }})</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Assigned Jobs -->
+            <div class="card">
+              <h2>My Work Roster (Jobs)</h2>
+              <div style="display:flex; flex-direction:column; gap:20px; margin-top:20px;">
+                <div v-for="job in servicemanJobsList" :key="job.id" style="border:1px solid var(--border); border-radius:16px; padding:24px;">
+                  <div class="flex-between">
+                    <div>
+                      <span class="badge danger" v-if="job.priority === 'High'">High Priority</span>
+                      <span class="badge warning" v-else-if="job.priority === 'Medium'">Medium Priority</span>
+                      <span class="badge success" v-else>Low Priority</span>
+                      
+                      <h3 style="margin-top:8px;">{{ job.title }}</h3>
+                      <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">Raised by: <strong>{{ job.residentName }}</strong> (Flat {{ job.residentFlat }}) • Raised on: {{ job.dateRaised }}</p>
+                    </div>
+                    <span class="badge info" style="font-size: 14px; padding: 6px 12px;">{{ job.status }}</span>
+                  </div>
+
+                  <p style="font-size:14px; margin-top:16px; padding:12px; background-color:var(--bg-app); border-radius:8px;">
+                    {{ job.description }}
+                  </p>
+
+                  <div style="margin-top:20px; border-top:1px solid var(--border); padding-top:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+                    <!-- Actions to transition status -->
+                    <div class="flex-gap-2">
+                      <button v-if="job.status === 'Analysing'" class="btn btn-secondary btn-sm" @click="progressJob(job.id, 'Maintenance scheduled')">Schedule Maintenance</button>
+                      <button v-if="job.status === 'Maintenance scheduled'" class="btn btn-outline btn-sm" @click="requestJobClosure(job.id)">Request Closure OTP</button>
+                    </div>
+
+                    <!-- OTP verification entry -->
+                    <div v-if="job.closureOTP && job.status !== 'Resolved'" class="flex-gap-2" style="background-color: var(--warning-light); padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warning);">
+                      <label style="font-size:12px; font-weight:600; color:var(--warning-dark);">Enter Resident Verification Code:</label>
+                      <input type="text" :id="'closure-otp-' + job.id" class="form-control btn-sm" style="width:100px; text-align:center;" placeholder="4-digit" maxlength="4">
+                      <button class="btn btn-primary btn-sm" @click="closeJob(job.id, document.getElementById('closure-otp-' + job.id).value)">Verify & Close</button>
+                      <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">(Simulated code code: <strong>{{ job.closureOTP }}</strong>)</div>
+                    </div>
+
+                    <div v-if="job.status === 'Resolved'" class="badge success" style="font-size:13px; padding: 6px 12px;">
+                      ✓ Job Complete & Verified
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="servicemanJobsList.length === 0" class="text-center text-muted" style="padding:64px 0;">
+                  No jobs currently assigned to your roster profile.
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </main>
+
+    </div>
+
+    <!-- ================= MODALS & POPUPS ================= -->
+
+    <!-- Modal: Raise Complaint -->
+    <div v-if="activeModals.raiseComplaint" class="modal-overlay" @click.self="activeModals.raiseComplaint = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Raise New Maintenance Request</span>
+          <button type="button" class="cancel-btn" @click="activeModals.raiseComplaint = false">Cancel</button>
+        </div>
+        <form @submit.prevent="submitComplaint">
+          <div class="form-group">
+            <label for="c-title">Complaint Title / Summary</label>
+            <input type="text" id="c-title" v-model="newComplaint.title" class="form-control" placeholder="Brief summary of the issue..." required>
+          </div>
+          <div class="form-group">
+            <label for="c-desc">Detailed Description</label>
+            <textarea id="c-desc" v-model="newComplaint.description" class="form-control" rows="3" placeholder="Provide details like location, urgency details..." required></textarea>
+          </div>
+          <div class="form-group">
+            <label for="c-cat">Utility Category</label>
+            <select id="c-cat" v-model="newComplaint.category" class="form-control">
+              <option value="Plumbing">Plumbing (Leaks, Drainage)</option>
+              <option value="Electrician">Electrical (Flickering, Power Loss)</option>
+              <option value="Gas Utility">Gas Utility (Leakage, Burner)</option>
+              <option value="Billing & Accounts">Billing (Maintenance Bills, Receipts)</option>
+              <option value="Others">Others</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="c-priority">Priority Level</label>
+            <select id="c-priority" v-model="newComplaint.priority" class="form-control">
+              <option value="Low">Low - Normal Schedule</option>
+              <option value="Medium">Medium - Rectify within 24 Hours</option>
+              <option value="High">High - Emergency/Immediate Dispatch</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Submit Complaint Ticket</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Book Amenity -->
+    <div v-if="activeModals.bookAmenity" class="modal-overlay" @click.self="activeModals.bookAmenity = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Book Society Amenity</span>
+          <button type="button" class="cancel-btn" @click="activeModals.bookAmenity = false">Cancel</button>
+        </div>
+        <form @submit.prevent="selectBookedDates">
+          <div class="form-group">
+            <label for="b-name">Select Amenity</label>
+            <select id="b-name" v-model="newBooking.amenityName" class="form-control">
+              <option value="Gym">Society Gym (₹500 / Day)</option>
+              <option value="Club House">Club House (₹2,000 / Day)</option>
+              <option value="Swimming Pool">Swimming Pool (₹500 / Day)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="b-date">Reservation Start Date</label>
+            <input type="date" id="b-date" v-model="newBooking.customDate" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="newBooking.isMultiDay">
+              Multi-Day Booking (2 consecutive days)
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Confirm Reservation Dates</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Pre-approve Visitor -->
+    <div v-if="activeModals.preApproveVisitor" class="modal-overlay" @click.self="activeModals.preApproveVisitor = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Pre-Authorize Guest Entry</span>
+          <button type="button" class="cancel-btn" @click="activeModals.preApproveVisitor = false">Cancel</button>
+        </div>
+        <form @submit.prevent="submitPreApproveVisitor">
+          <div class="form-group">
+            <label for="v-name">Guest Name</label>
+            <input type="text" id="v-name" v-model="newVisitor.name" class="form-control" placeholder="Guest Full Name..." required>
+          </div>
+          <div class="form-group">
+            <label for="v-phone">Mobile Number</label>
+            <input type="tel" id="v-phone" v-model="newVisitor.phone" class="form-control" placeholder="10-digit mobile number" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Generate Guest Access Credentials</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Make Payment -->
+    <div v-if="activeModals.makePayment" class="modal-overlay" @click.self="activeModals.makePayment = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Complete Booking Transaction</span>
+          <button type="button" class="cancel-btn" @click="activeModals.makePayment = false">Cancel</button>
+        </div>
+        
+        <div v-if="paymentSuccess" class="payment-flow">
+          <div class="payment-success-tick">✓</div>
+          <h3>Payment Completed!</h3>
+          <p class="subtitle" style="margin-bottom:0;">Receipt successfully synced with society accounts ledger.</p>
+          <button class="btn btn-primary mt-6 btn-block" @click="activeModals.makePayment = false">Back to Dashboard</button>
+        </div>
+
+        <div v-else class="payment-flow">
+          <h2 style="font-size:2rem; color:var(--primary); font-family:'Plus Jakarta Sans';">₹{{ paymentTargetBooking?.totalCost }}</h2>
+          <p class="subtitle">Payable to: HomeBandhu Society Welfare Association</p>
+          
+          <!-- Mock Credit Card Layout -->
+          <div style="background: linear-gradient(135deg, #1e1b4b, #312e81); color: white; border-radius: 12px; padding: 20px; text-align: left; width: 100%; box-shadow: var(--shadow-md); margin-bottom: 24px;">
+            <div style="font-size: 11px; opacity: 0.8; text-transform: uppercase;">Linked Maintenance Wallet</div>
+            <div style="font-size: 18px; font-weight: 600; letter-spacing: 0.1em; margin-top: 8px;">Sai Vishnu</div>
+            <div style="font-size: 12px; opacity: 0.7; margin-top: 2px;">Flat: B-1204</div>
+            <div class="flex-between" style="margin-top: 24px;">
+              <span style="font-family: monospace; font-size: 14px;">•••• •••• •••• 1204</span>
+              <span style="font-size: 11px; opacity: 0.8;">Exp: 12/29</span>
+            </div>
+          </div>
+
+          <div style="width: 100%;">
+            <button class="btn btn-primary btn-block" :disabled="paymentProcessing" @click="processPayment">
+              <span v-if="paymentProcessing">Connecting to Gateway...</span>
+              <span v-else>Confirm Secure Payment</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Push Notification for Visitor Entry (Simulated popup on Resident Screen) -->
+    <div v-if="activeModals.pushNotification" class="modal-overlay">
+      <div class="modal-content" style="border-top: 6px solid var(--warning);">
+        <div class="modal-header">
+          <span class="modal-title" style="display:flex; align-items:center; gap:8px;">
+            <span style="display:inline-block; width: 8px; height: 8px; background-color: var(--warning); border-radius: 50%;"></span>
+            Visitor Authorization Alert
+          </span>
+        </div>
+        <div style="text-align: center; padding: 12px 0;">
+          <div class="avatar" style="width:64px; height:64px; margin:0 auto 16px; font-size:1.5rem;">
+            {{ currentPushVisitor?.name.split(' ').map(n=>n[0]).join('') }}
+          </div>
+          <h2>{{ currentPushVisitor?.name }}</h2>
+          <p class="subtitle">is at the Main Gate requesting check-in access to flat {{ currentPushVisitor?.residentFlat }}.</p>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 24px;">Phone: {{ currentPushVisitor?.phone }}</div>
+
+          <div class="grid-2">
+            <button class="btn btn-primary" @click="handlePushNotificationApproval(true)">Approve & Grant Entry</button>
+            <button class="btn btn-danger" @click="handlePushNotificationApproval(false)">Reject & Deny Entry</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+        <!-- Modal: Complaint Detail Modal (Wireframe 7b) -->
+    <div v-if="activeModals.complaintDetail" class="modal-overlay" @click.self="activeModals.complaintDetail = false">
+      <div class="modal-content" style="max-width:640px;">
+        <div class="modal-header">
+          <span class="modal-title">Complaint #{{ selectedComplaintDetail?.id }} – {{ selectedComplaintDetail?.category }}</span>
+          <button type="button" class="cancel-btn" @click="activeModals.complaintDetail = false">Cancel</button>
+        </div>
+        
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- Resident Card -->
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:16px; border:1px solid var(--border); border-radius:12px;">
+            <div>
+              <strong>{{ selectedComplaintDetail?.residentName }}</strong>
+              <div style="font-size:12px; color:var(--text-muted);">{{ selectedComplaintDetail?.residentFlat }} • {{ selectedComplaintDetail?.residentPhone }}</div>
+            </div>
+            <button class="btn btn-outline btn-sm" @click="showToast('Connecting official app chat to resident...', 'info')">Message Resident</button>
+          </div>
+
+          <div>
+            <span class="micro-label">DESCRIPTION</span>
+            <p style="font-size:14px; margin-top:4px;">{{ selectedComplaintDetail?.description }}</p>
+          </div>
+
+          <!-- SLA Timeline Stepper (7b) -->
+          <div>
+            <span class="micro-label" style="margin-bottom:8px; display:block;">SLA TIMELINE</span>
+            <div class="timeline">
+              <div v-for="step in selectedComplaintDetail?.slaTimeline" :key="step.stage" class="timeline-item" :class="{completed: step.isCompleted, active: step.isOverdue}">
+                <div class="timeline-dot"></div>
+                <div class="timeline-info">
+                  <span class="timeline-title" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>{{ step.stage }}</span>
+                    <span v-if="step.isOverdue" class="badge danger" style="font-size:9px;">🔴 Overdue</span>
+                  </span>
+                  <span class="timeline-time">Target: {{ step.target }} • Actual: {{ step.actual }} <span v-if="step.staff">• Staff: {{ step.staff }}</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:16px; display:flex; justify-content:flex-end;">
+            <button class="btn btn-primary" :disabled="!selectedComplaintDetail?.slaStatus?.includes('Overdue')" @click="openRequestDelayCause">Request Cause →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Request Cause for Delay (Wireframe 7c/7d) -->
+    <div v-if="activeModals.requestDelayCause" class="modal-overlay" @click.self="activeModals.requestDelayCause = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Request Cause for Delay</span>
+          <button type="button" class="cancel-btn" @click="activeModals.requestDelayCause = false">Cancel</button>
+        </div>
+        
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- Message history thread -->
+          <div style="display:flex; flex-direction:column; gap:8px; max-height:200px; overflow-y:auto; padding:12px; background-color:var(--bg-app); border-radius:8px;">
+            <div v-for="msg in selectedComplaintDetail?.messages" :key="msg.text" style="padding:8px 12px; border-radius:8px; max-width:80%; font-size:12px;" :style="{backgroundColor: msg.sender === 'Admin' ? 'var(--primary-light)' : 'white', alignSelf: msg.sender === 'Admin' ? 'flex-end' : 'flex-start'}">
+              <strong>{{ msg.sender }}:</strong> {{ msg.text }}
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>MESSAGE TO STAFF</label>
+            <textarea v-model="delayCauseMessage" class="form-control" rows="3" placeholder="This complaint has exceeded its SLA. Please provide the cause for the delay and an updated ETA."></textarea>
+          </div>
+
+          <div class="flex-gap-2" style="justify-content:flex-end;">
+            <button type="button" class="cancel-btn" @click="activeModals.requestDelayCause = false">Cancel</button>
+            <button class="btn btn-primary" @click="sendDelayRequest">Send Request</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Block Out Time / Maintenance (Wireframe 8b) -->
+    <div v-if="activeModals.blockOutTime" class="modal-overlay" @click.self="activeModals.blockOutTime = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Block Out Time / Maintenance</span>
+          <button type="button" class="cancel-btn" @click="activeModals.blockOutTime = false">Cancel</button>
+        </div>
+        <form @submit.prevent="submitBlockOutSlot">
+          <div class="form-group">
+            <label>REASON</label>
+            <input type="text" v-model="blockOutForm.reason" class="form-control" placeholder="e.g. Filter cleaning & chlorine top-up" required>
+          </div>
+          <div class="form-group">
+            <label>CROSS-MODULE DEPARTMENT ASSIGNMENT</label>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <span class="badge primary">Plumbing ✕</span>
+              <span class="badge warning">Cleaning ✕</span>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Block Slot</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Create Booking (Admin Override) (Wireframe 8f) -->
+    <div v-if="activeModals.adminOverrideBooking" class="modal-overlay" @click.self="activeModals.adminOverrideBooking = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Create Booking (Admin Override)</span>
+          <button type="button" class="cancel-btn" @click="activeModals.adminOverrideBooking = false">Cancel</button>
+        </div>
+        <form @submit.prevent="submitAdminOverrideBooking">
+          <div class="form-group">
+            <label>RESIDENT NAME OR UNIT</label>
+            <input type="text" v-model="overrideBookingForm.residentName" class="form-control" placeholder="Search name or unit no..." required>
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>DATE</label>
+              <input type="date" v-model="overrideBookingForm.date" class="form-control" required>
+            </div>
+            <div class="form-group">
+              <label>TIME SLOT</label>
+              <input type="text" v-model="overrideBookingForm.timeSlot" class="form-control" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="overrideBookingForm.isComped">
+              Charge Override: ₹0 (Comped for society AGM / event)
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Create Booking & Clear Gate</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Reject Booking Confirmation (Wireframe 8h) -->
+    <div v-if="activeModals.rejectBookingReason" class="modal-overlay" @click.self="activeModals.rejectBookingReason = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Reject Booking Request?</span>
+          <button type="button" class="cancel-btn" @click="activeModals.rejectBookingReason = false">Cancel</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="padding:16px; border:1px solid var(--border); border-radius:12px; background-color:var(--bg-app);">
+            <strong>{{ rejectBookingForm.booking?.residentName }}</strong>
+            <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">{{ rejectBookingForm.booking?.dates.join(', ') }} • {{ rejectBookingForm.booking?.amenityName }}</div>
+            <span class="badge danger" style="margin-top:6px; font-size:9px;">⚠️ {{ rejectBookingForm.booking?.defaulterReason || 'Outstanding Dues' }}</span>
+          </div>
+
+          <div class="form-group">
+            <label>REASON FOR REJECTION</label>
+            <select v-model="rejectBookingForm.reason" class="form-control">
+              <option value="Outstanding dues on account">Outstanding dues on account</option>
+              <option value="Facility undergoing maintenance">Facility undergoing maintenance</option>
+              <option value="Conflict with prior reservation">Conflict with prior reservation</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="rejectBookingForm.notifyResident">
+              Notify resident with this reason
+            </label>
+          </div>
+
+          <div class="grid-2">
+            <button class="btn btn-outline" @click="activeModals.rejectBookingReason = false">Go Back</button>
+            <button class="btn btn-danger" @click="confirmBookingRejection">Confirm Rejection</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Deposit Action (Wireframe 8d) -->
+    <div v-if="activeModals.depositAction" class="modal-overlay" @click.self="activeModals.depositAction = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Deposit {{ depositActionForm.actionType }}</span>
+          <button type="button" class="cancel-btn" @click="activeModals.depositAction = false">Cancel</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div class="form-group">
+            <label>ACTION TYPE</label>
+            <select v-model="depositActionForm.actionType" class="form-control">
+              <option value="Refund">Refund Full Deposit</option>
+              <option value="Deduct">Deduct for Damages</option>
+            </select>
+          </div>
+          <div v-if="depositActionForm.actionType === 'Deduct'" class="form-group">
+            <label>DEDUCTION AMOUNT (₹)</label>
+            <input type="number" v-model="depositActionForm.amount" class="form-control">
+          </div>
+          <div class="form-group">
+            <label>REASON / INSPECTION NOTES</label>
+            <input type="text" v-model="depositActionForm.reason" class="form-control" placeholder="e.g. Cracked pool tile">
+          </div>
+          <button class="btn btn-primary btn-block" @click="confirmDepositAction">Confirm Deposit {{ depositActionForm.actionType }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Schedule Meeting (Wireframe 10f) -->
+    <div v-if="activeModals.scheduleMeeting" class="modal-overlay" @click.self="activeModals.scheduleMeeting = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Schedule Board Meeting</span>
+          <button type="button" class="cancel-btn" @click="activeModals.scheduleMeeting = false">Cancel</button>
+        </div>
+        <form @submit.prevent="submitScheduleMeeting">
+          <div class="form-group">
+            <label>MEETING TITLE</label>
+            <input type="text" v-model="newMeetingForm.title" class="form-control" placeholder="e.g. Emergency Committee Session" required>
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>DATE / TIME</label>
+              <input type="text" v-model="newMeetingForm.date" class="form-control" placeholder="Aug 3, 2026 — 6:30 PM">
+            </div>
+            <div class="form-group">
+              <label>VIRTUAL LINK</label>
+              <input type="text" v-model="newMeetingForm.virtualLink" class="form-control" placeholder="meet.google.com/xyz">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>AGENDA</label>
+            <textarea v-model="newMeetingForm.agenda" class="form-control" rows="3"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Schedule & Notify Board</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Add Committee Record (Wireframe 10h) -->
+    <div v-if="activeModals.addRecord" class="modal-overlay" @click.self="activeModals.addRecord = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Add Committee Record / Minute</span>
+          <button type="button" class="cancel-btn" @click="activeModals.addRecord = false">Cancel</button>
+        </div>
+        <form @submit.prevent="submitAddRecord">
+          <div class="form-group">
+            <label>LINK TO PAST MEETING</label>
+            <select v-model="newRecordForm.pastMeeting" class="form-control">
+              <option value="Budget Review Session">Budget Review Session — Jun 18, 2026</option>
+              <option value="Q2 AGM">Q2 AGM — Apr 3, 2026</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>RECORD TYPE</label>
+            <select v-model="newRecordForm.type" class="form-control">
+              <option value="Minute">Minute</option>
+              <option value="Resolution">⚖️ Resolution</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>UPLOAD SIGNED PDF</label>
+            <input type="file" class="form-control">
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Save to Hub & Notify Board →</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Add Committee Member (Wireframe 10c/10d) -->
+    <div v-if="activeModals.addCommitteeMember" class="modal-overlay" @click.self="activeModals.addCommitteeMember = false">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">Add Committee Member</span>
+          <button type="button" class="cancel-btn" @click="activeModals.addCommitteeMember = false">Cancel</button>
+        </div>
+        <form @submit.prevent="db.committee.push({name:'Priya Kapoor', flat:'Flat 6D', role:'Vice President', tags:['Executive']}); activeModals.addCommitteeMember=false; showToast('Added Priya Kapoor to Committee');">
+          <div class="form-group">
+            <label>RESIDENT NAME (AUTOCOMPLETE)</label>
+            <input type="text" class="form-control" value="Priya Kapoor" placeholder="Type resident name...">
+          </div>
+          <div class="form-group">
+            <label>UNIT / ADDRESS</label>
+            <input type="text" class="form-control" value="Flat 6D" readonly>
+          </div>
+          <div class="form-group">
+            <label>COMMITTEE TITLE</label>
+            <input type="text" class="form-control" value="Vice President" placeholder="e.g. Secretary">
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Add Member</button>
+        </form>
+      </div>
+    </div>
+<!-- Toast Notifications Container -->
+    <div class="toast-container">
+      <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.type">
+        <span>{{ toast.message }}</span>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
 </html>
