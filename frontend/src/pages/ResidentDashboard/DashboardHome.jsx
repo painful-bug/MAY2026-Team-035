@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
+import { getVisitorSecurityCode } from '../../lib/visitorPasses';
 import { useNavigate } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { 
@@ -12,7 +13,9 @@ import {
   ChevronRight,
   DollarSign,
   Download,
-  QrCode
+  QrCode,
+  Copy,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function DashboardHome() {
@@ -25,7 +28,9 @@ export default function DashboardHome() {
     preapproveVisitor,
     payInvoice,
     approveVisitorRequest,
-    searchQuery
+    rejectVisitorRequest,
+    searchQuery,
+    showToast
   } = useApp();
 
   const navigate = useNavigate();
@@ -66,7 +71,7 @@ export default function DashboardHome() {
   );
   const pendingVisitors = filteredVisitors.filter(v => v.status === 'Pending Approval');
   const expectedVisitorsCount = filteredVisitors
-    .filter(v => v.status === 'Expected')
+    .filter(v => ['Expected', 'Approved'].includes(v.status))
     .reduce((count, visitor) => count + Number(visitor.guestCount || 1), 0);
   const checkedInVisitorsCount = filteredVisitors
     .filter(v => v.status === 'Checked In')
@@ -135,6 +140,14 @@ export default function DashboardHome() {
       date: new Date().toISOString().split('T')[0],
       guestCount: 1,
     });
+  };
+
+  const copyVisitorSecurityCode = async () => {
+    const securityCode = getVisitorSecurityCode(visitorQrPass?.visitor);
+    if (!securityCode) return;
+
+    await navigator.clipboard.writeText(securityCode);
+    showToast('Security code copied', 'success');
   };
 
   const handlePay = (e) => {
@@ -374,7 +387,7 @@ export default function DashboardHome() {
                           Approve
                         </button>
                         <button
-                          onClick={() => {}} // Reject logic can be just local removing
+                          onClick={() => rejectVisitorRequest(vis.id)}
                           className="py-1 border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-lg transition-colors"
                         >
                           Reject
@@ -473,9 +486,38 @@ export default function DashboardHome() {
                   </div>
                   <div className="mt-3 flex items-center gap-2 rounded-xl bg-white p-3 text-[11px] font-semibold text-slate-500">
                     <QrCode className="h-4 w-4 shrink-0 text-indigo-600" />
-                    Share this same QR with every guest in the group. Security
-                    will validate it for the selected group size.
+                    Share this same QR and security code with every guest in the
+                    group.
                   </div>
+                </div>
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="rounded-xl bg-white p-2 text-indigo-600 shadow-sm">
+                        <ShieldCheck className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          Security Code
+                        </p>
+                        <p className="mt-0.5 font-mono text-xl font-extrabold tracking-[0.2em] text-slate-900">
+                          {getVisitorSecurityCode(visitorQrPass.visitor)}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyVisitorSecurityCode}
+                      className="flex items-center gap-1.5 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy
+                    </button>
+                  </div>
+                  <p className="mt-3 text-[10px] font-semibold leading-relaxed text-slate-500">
+                    Security can scan the QR or enter this code manually. It is
+                    valid for the complete visitor group.
+                  </p>
                 </div>
                 <a
                   href={visitorQrPass.qrDataUrl}

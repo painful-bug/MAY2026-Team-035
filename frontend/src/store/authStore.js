@@ -163,19 +163,53 @@ export const useAuthStore = create(
           const userPhone = normalizePhoneNumber(u.phone);
           return userPhone === cleanPhone;
         });
-        if (foundUser) {
+        const securityDepartment = app.departments.find((department) => {
+          const handlesSecurity =
+            department.name.toLowerCase().includes('security') ||
+            department.categories?.some(
+              (category) => category.toLowerCase() === 'security'
+            );
+          return (
+            department.status !== 'Inactive' &&
+            handlesSecurity &&
+            department.staff?.some(
+              (member) =>
+                normalizePhoneNumber(member.phone) === cleanPhone
+            )
+          );
+        });
+        const securityStaff = securityDepartment?.staff.find(
+          (member) => normalizePhoneNumber(member.phone) === cleanPhone
+        );
+        const securityUser = securityStaff
+          ? {
+              id: `security-${securityStaff.id}`,
+              name: securityStaff.name,
+              phone: securityStaff.phone,
+              role: 'Security',
+              staffRole: securityStaff.role,
+              departmentId: securityDepartment.id,
+              departmentName: securityDepartment.name,
+              status: 'Active',
+              tower: 'Community',
+              flat: 'Main Gate',
+            }
+          : null;
+        const communityUser = foundUser || securityUser;
+
+        if (communityUser) {
           set({
-            currentUser: foundUser,
+            currentUser: communityUser,
             currentPhone: cleanPhone,
             registrationStatus:
-              foundUser.role === 'Admin'
+              communityUser.role === 'Admin'
                 ? ADMIN_REGISTRATION_STATUS.REGISTERED
                 : ADMIN_REGISTRATION_STATUS.UNKNOWN,
             authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
             pendingAdmin: null,
           });
-          app.showToast(`Welcome back, ${foundUser.name}!`, 'success');
-          return { success: true, user: foundUser };
+          app.showToast(`Welcome back, ${communityUser.name}!`, 'success');
+          return { success: true, user: communityUser };
         }
 
         const demoAccount = demoAuthAccounts.find(

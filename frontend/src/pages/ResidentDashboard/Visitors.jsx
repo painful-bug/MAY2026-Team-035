@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
+import { getVisitorSecurityCode } from '../../lib/visitorPasses';
 import { useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import {
@@ -9,10 +10,19 @@ import {
   QrCode,
   Download,
   X,
+  Copy,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function Visitors() {
-  const { visitors, currentUser, preapproveVisitor, approveVisitorRequest } = useApp();
+  const {
+    visitors,
+    currentUser,
+    preapproveVisitor,
+    approveVisitorRequest,
+    rejectVisitorRequest,
+    showToast,
+  } = useApp();
   const [searchParams, setSearchParams] = useSearchParams();
   const [purpose, setPurpose] = useState('Guest');
   const [purposeDetails, setPurposeDetails] = useState('');
@@ -26,7 +36,8 @@ export default function Visitors() {
   const today = new Date().toISOString().split('T')[0];
   const activeView = searchParams.get('view') === 'history' ? 'history' : 'current';
   const isPastVisitor = (visitor) =>
-    visitor.status === 'Checked Out' || (visitor.date && visitor.date < today);
+    ['Checked Out', 'Rejected'].includes(visitor.status) ||
+    (visitor.date && visitor.date < today);
   const visibleVisitors = userVisitors
     .filter((visitor) =>
       activeView === 'history' ? isPastVisitor(visitor) : !isPastVisitor(visitor)
@@ -50,7 +61,7 @@ export default function Visitors() {
           type: 'homebandhu-visitor-pass',
           version: 1,
           passId: visitor.id,
-          code: visitor.code,
+          securityCode: getVisitorSecurityCode(visitor),
           guestCount: visitor.guestCount ?? 1,
         });
       const qrDataUrl = await QRCode.toDataURL(payload, {
@@ -63,6 +74,14 @@ export default function Visitors() {
     } finally {
       setIsGeneratingQr(false);
     }
+  };
+
+  const copySecurityCode = async (visitor) => {
+    const securityCode = getVisitorSecurityCode(visitor);
+    if (!securityCode) return;
+
+    await navigator.clipboard.writeText(securityCode);
+    showToast('Security code copied', 'success');
   };
 
   const handleSubmit = async (e) => {
@@ -225,7 +244,7 @@ export default function Visitors() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50/55 border-b border-slate-100 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
-                    <th className="px-6 py-3.5">Pass Code</th>
+                    <th className="px-6 py-3.5">Security Code</th>
                     <th className="px-6 py-3.5">Purpose</th>
                     <th className="px-6 py-3.5">Group Size</th>
                     <th className="px-6 py-3.5">Expected On</th>
@@ -239,7 +258,7 @@ export default function Visitors() {
                     <tr key={vis.id} className="hover:bg-slate-50/30 transition-colors">
                       <td className="px-6 py-4.5">
                         <span className="font-mono text-indigo-700 bg-indigo-50 border border-indigo-100/50 px-2 py-0.5 rounded text-[10px] font-bold">
-                          {vis.code}
+                          {getVisitorSecurityCode(vis)}
                         </span>
                       </td>
                       <td className="px-6 py-4.5">
@@ -284,6 +303,8 @@ export default function Visitors() {
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
                             : vis.status === 'Checked Out'
                             ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                            : vis.status === 'Approved'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-100'
                             : vis.status === 'Expected'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100'
                             : 'bg-rose-50 text-rose-700 border border-rose-100'
@@ -297,13 +318,21 @@ export default function Visitors() {
                             <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Recorded
                           </span>
                         ) : vis.status === 'Pending Approval' ? (
-                          <button
-                            onClick={() => approveVisitorRequest(vis.id)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold px-3 py-1 rounded-lg transition-colors shadow-sm"
-                          >
-                            Approve
-                          </button>
-                        ) : vis.status === 'Expected' ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => approveVisitorRequest(vis.id)}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold px-3 py-1 rounded-lg transition-colors shadow-sm"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => rejectVisitorRequest(vis.id)}
+                              className="border border-slate-200 text-slate-500 hover:bg-slate-50 text-[10px] font-bold px-3 py-1 rounded-lg transition-colors"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : ['Expected', 'Approved'].includes(vis.status) ? (
                           <button
                             type="button"
                             onClick={() => showQrPass(vis)}
@@ -371,6 +400,35 @@ export default function Visitors() {
                 {generatedPass.visitor.date} at{' '}
                 {generatedPass.visitor.expectedTime ??
                   generatedPass.visitor.eta}
+              </p>
+            </div>
+            <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-white p-2 text-indigo-600 shadow-sm">
+                    <ShieldCheck className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Security Code
+                    </p>
+                    <p className="mt-0.5 font-mono text-xl font-extrabold tracking-[0.2em] text-slate-900">
+                      {getVisitorSecurityCode(generatedPass.visitor)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copySecurityCode(generatedPass.visitor)}
+                  className="flex items-center gap-1.5 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy
+                </button>
+              </div>
+              <p className="mt-3 text-[10px] font-semibold leading-relaxed text-slate-500">
+                Security can scan the QR or enter this code manually. The same
+                code is valid for the complete visitor group.
               </p>
             </div>
             <a
