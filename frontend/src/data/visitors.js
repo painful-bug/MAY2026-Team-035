@@ -9,6 +9,7 @@ export const initialVisitors = [
     date: '2026-07-08',
     status: 'Expected',
     eta: '04:00 PM',
+    securityCode: '967890',
     code: 'PG-7890'
   },
   {
@@ -21,6 +22,7 @@ export const initialVisitors = [
     date: '2026-07-08',
     status: 'Checked In',
     checkInTime: '11:15 AM',
+    securityCode: '931245',
     code: 'PG-1245'
   },
   {
@@ -33,6 +35,7 @@ export const initialVisitors = [
     date: '2026-07-08',
     status: 'Pending Approval',
     eta: 'Just Now',
+    securityCode: '984561',
     code: 'PG-4561'
   },
   {
@@ -45,6 +48,7 @@ export const initialVisitors = [
     date: '2026-07-08',
     status: 'Pending Approval',
     eta: '10 mins ago',
+    securityCode: '972311',
     code: 'PG-2311'
   },
   {
@@ -57,6 +61,7 @@ export const initialVisitors = [
     date: '2026-07-08',
     status: 'Pending Approval',
     eta: '5 mins ago',
+    securityCode: '918921',
     code: 'PG-8921'
   },
   {
@@ -70,6 +75,7 @@ export const initialVisitors = [
     status: 'Checked Out',
     checkInTime: '06:00 PM',
     checkOutTime: '09:30 PM',
+    securityCode: '966523',
     code: 'PG-6523'
   }
 ];

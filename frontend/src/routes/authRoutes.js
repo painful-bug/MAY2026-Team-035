@@ -12,4 +12,11 @@ export const AUTH_ROUTES = Object.freeze({
   ONBOARDING_SUCCESS: '/onboarding-success',
   ADMIN_DASHBOARD: '/admin',
   RESIDENT_DASHBOARD: '/resident',
+  SECURITY_DASHBOARD: '/security',
 });
+
+export const getDashboardRouteForRole = (role) => {
+  if (role === 'Admin') return AUTH_ROUTES.ADMIN_DASHBOARD;
+  if (role === 'Security') return AUTH_ROUTES.SECURITY_DASHBOARD;
+  return AUTH_ROUTES.RESIDENT_DASHBOARD;
+};

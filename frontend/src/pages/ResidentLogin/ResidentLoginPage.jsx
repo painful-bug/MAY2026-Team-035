@@ -10,7 +10,10 @@ import {
 import { useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
 import PhoneNumberField from '../../components/auth/PhoneNumberField';
-import { AUTH_ROUTES } from '../../routes/authRoutes';
+import {
+  AUTH_ROUTES,
+  getDashboardRouteForRole,
+} from '../../routes/authRoutes';
 import { useAppStore } from '../../store/appStore';
 import { useAuthStore } from '../../store/authStore';
 import {
@@ -23,6 +26,7 @@ import {
 export default function ResidentLoginPage() {
   const navigate = useNavigate();
   const users = useAppStore((state) => state.users);
+  const departments = useAppStore((state) => state.departments);
   const redeemInvite = useAppStore((state) => state.redeemInvite);
   const login = useAuthStore((state) => state.login);
   const setCurrentUser = useAuthStore((state) => state.setCurrentUser);
@@ -30,10 +34,8 @@ export default function ResidentLoginPage() {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [registrationCode, setRegistrationCode] = useState('');
-  const [matchedUserId, setMatchedUserId] = useState(null);
+  const [matchedAccount, setMatchedAccount] = useState(null);
   const [error, setError] = useState('');
-
-  const matchedUser = users.find((user) => user.id === matchedUserId);
 
   const handlePhoneChange = (event) => {
     setPhone(sanitizePhoneInput(event.target.value));
@@ -53,29 +55,51 @@ export default function ResidentLoginPage() {
     const user = users.find(
       (item) => normalizePhoneNumber(item.phone) === cleanPhone
     );
+    const securityDepartment = departments.find((department) => {
+      const handlesSecurity =
+        department.name.toLowerCase().includes('security') ||
+        department.categories?.some(
+          (category) => category.toLowerCase() === 'security'
+        );
+      return (
+        department.status !== 'Inactive' &&
+        handlesSecurity &&
+        department.staff?.some(
+          (member) => normalizePhoneNumber(member.phone) === cleanPhone
+        )
+      );
+    });
+    const securityStaff = securityDepartment?.staff.find(
+      (member) => normalizePhoneNumber(member.phone) === cleanPhone
+    );
+    const account =
+      user ||
+      (securityStaff
+        ? { ...securityStaff, role: 'Security', status: 'Active' }
+        : null);
 
-    if (!user) {
+    if (!account) {
       setError(
         'This number is not registered. Ask your society admin or apartment member to add it.'
       );
       return;
     }
 
-    if (user.role === 'Admin') {
+    if (account.role === 'Admin') {
       setError('Administrator accounts must use the Admin Portal.');
       return;
     }
 
-    if (user.status !== 'Active') {
+    if (account.status !== 'Active') {
       setError(
-        user.status === 'Invited'
+        account.status === 'Invited'
           ? 'Your account is awaiting activation. Use the registration code option below.'
           : 'This account is currently inactive. Contact your society office.'
       );
       return;
     }
 
-    setMatchedUserId(user.id);
+    setMatchedAccount(account);
     setStep('otp');
   };
 
@@ -88,7 +112,7 @@ export default function ResidentLoginPage() {
       return;
     }
 
-    if (!matchedUser || matchedUser.role === 'Admin') {
+    if (!matchedAccount || matchedAccount.role === 'Admin') {
       setError('Unable to verify this community account. Please start again.');
       return;
     }
@@ -99,12 +123,12 @@ export default function ResidentLoginPage() {
       return;
     }
 
-    navigate(AUTH_ROUTES.RESIDENT_DASHBOARD, { replace: true });
+    navigate(getDashboardRouteForRole(result.user.role), { replace: true });
   };
 
   const resetPhone = () => {
     setStep('phone');
-    setMatchedUserId(null);
+    setMatchedAccount(null);
     setOtp('');
     setError('');
   };
