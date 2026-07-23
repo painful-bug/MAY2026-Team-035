@@ -39,13 +39,13 @@ export default function CreateDepartment() {
 
   const confirmCreate = () => {
     createDepartment({ name: name.trim(), categories: cleanCategories, staff: cleanStaff });
-    navigate('/admin/dashboard');
+    navigate('/admin');
   };
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
       <button
-        onClick={() => navigate('/admin/dashboard')}
+        onClick={() => navigate('/admin')}
         className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-700"
       >
         <ArrowLeft className="w-4 h-4" /> Back to Dashboard
@@ -139,7 +139,7 @@ export default function CreateDepartment() {
             <div className="flex items-center gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => navigate('/admin/dashboard')}
+                onClick={() => navigate('/admin')}
                 className="flex-1 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-all"
               >
                 Cancel
@@ -180,8 +180,8 @@ export default function CreateDepartment() {
               <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
                 {cleanStaff.map((m, i) => (
                   <div key={i} className="flex items-center justify-between px-4 py-2.5 text-xs font-semibold text-slate-700">
-                    <span>{m.name || '-'}</span>
-                    <span className="text-slate-400">{m.phone || '-'}</span>
+                    <span>{m.name || '—'}</span>
+                    <span className="text-slate-400">{m.phone || '—'}</span>
                     <span className="text-indigo-600 font-bold">{m.role}</span>
                   </div>
                 ))}

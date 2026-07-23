@@ -31,7 +31,7 @@ export default function AdminLayout() {
   };
 
   const navItems = [
-    { name: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
+    { name: 'Dashboard', path: '/admin', icon: LayoutDashboard, end: true },
     { name: 'Pending Registrations', path: '/admin/pending', icon: UserPlus, badgeKey: 'pending' },
     { name: 'Residents', path: '/admin/residents', icon: Users },
     { name: 'Admins', path: '/admin/admins', icon: ShieldCheck },

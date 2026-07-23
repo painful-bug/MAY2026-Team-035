@@ -190,8 +190,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/admin/dashboard" replace />} />
-            <Route path="dashboard" element={<AdminHome />} />
+            <Route index element={<AdminHome />} />
             <Route path="department/new" element={<CreateDepartment />} />
             <Route path="pending" element={<PendingRegistrations />} />
             <Route path="residents" element={<ResidentsTable />} />

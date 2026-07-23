@@ -55,29 +55,5 @@ export const initialUsers = [
     flat: 'A-1003',
     apartmentId: 'A-1003',
     status: 'Active'
-  },
-  {
-    id: 'u6',
-    name: 'Ravi Kumar',
-    email: '',
-    role: 'Resident',
-    phone: '+91 98765 11111',
-    tower: 'B',
-    flat: '12 Cedar Lane, Block B',
-    apartmentId: '12 Cedar Lane, Block B',
-    residenceKey: '12 cedar lane, block b',
-    status: 'Active'
-  },
-  {
-    id: 'u7',
-    name: 'Priya Kumar',
-    email: '',
-    role: 'Resident',
-    phone: '+91 98765 22222',
-    tower: 'B',
-    flat: '12 Cedar Lane, Block B',
-    apartmentId: '12 Cedar Lane, Block B',
-    residenceKey: '12 cedar lane, block b',
-    status: 'Active'
   }
 ];
