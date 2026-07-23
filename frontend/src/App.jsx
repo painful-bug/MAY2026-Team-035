@@ -6,6 +6,7 @@ import ToastContainer from './components/common/ToastContainer';
 // Layouts
 import ResidentLayout from './layouts/ResidentLayout';
 import AdminLayout from './layouts/AdminLayout';
+import SecurityLayout from './layouts/SecurityLayout';
 
 // Public Pages
 import LandingPage from './pages/Landing/LandingPage';
@@ -22,7 +23,10 @@ import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
 import ResidentLoginPage from './pages/ResidentLogin/ResidentLoginPage';
 import AuthFlowRoute from './routes/AuthFlowRoute';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
-import { AUTH_ROUTES } from './routes/authRoutes';
+import {
+  AUTH_ROUTES,
+  getDashboardRouteForRole,
+} from './routes/authRoutes';
 import { AUTH_FLOW_STATE } from './store/authStore';
 import { ONBOARDING_STEPS } from './data/onboarding';
 
@@ -48,6 +52,7 @@ import AdminSettings from './pages/AdminDashboard/Settings';
 import AdminAmenities from './pages/AdminDashboard/Amenities';
 import AdminDepartments from './pages/AdminDashboard/Departments';
 import AdminDepartmentDetail from './pages/AdminDashboard/DepartmentDetail';
+import SecurityDashboard from './pages/SecurityDashboard/SecurityDashboard';
 import AmenityDetailLayout from './features/amenities/layouts/AmenityDetailLayout';
 import AmenityDashboardPage from './features/amenities/pages/AmenityDashboardPage';
 import AmenityApprovalsPage from './features/amenities/pages/AmenityApprovalsPage';
@@ -71,9 +76,14 @@ function ProtectedRoute({
     return <Navigate to={loginPath} replace />;
   }
   
-  if (requiredRole && currentUser.role !== requiredRole) {
-    // If user doesn't have the required role (e.g. resident tries to access admin)
-    return <Navigate to={AUTH_ROUTES.RESIDENT_DASHBOARD} replace />;
+  const allowedRoles = Array.isArray(requiredRole)
+    ? requiredRole
+    : requiredRole
+      ? [requiredRole]
+      : [];
+
+  if (allowedRoles.length && !allowedRoles.includes(currentUser.role)) {
+    return <Navigate to={getDashboardRouteForRole(currentUser.role)} replace />;
   }
   
   return children;
@@ -185,7 +195,10 @@ export default function App() {
           <Route 
             path={AUTH_ROUTES.RESIDENT_DASHBOARD}
             element={
-              <ProtectedRoute loginPath={AUTH_ROUTES.RESIDENT_LOGIN}>
+              <ProtectedRoute
+                requiredRole={['Resident', 'Admin']}
+                loginPath={AUTH_ROUTES.RESIDENT_LOGIN}
+              >
                 <ResidentLayout />
               </ProtectedRoute>
             }
@@ -198,6 +211,33 @@ export default function App() {
             <Route path="notices" element={<ResidentNotices />} />
             <Route path="faq" element={<ResidentFaq />} />
             <Route path="profile" element={<ResidentProfile />} />
+          </Route>
+
+          {/* Security Operations Dashboard */}
+          <Route
+            path={AUTH_ROUTES.SECURITY_DASHBOARD}
+            element={
+              <ProtectedRoute
+                requiredRole="Security"
+                loginPath={AUTH_ROUTES.RESIDENT_LOGIN}
+              >
+                <SecurityLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<SecurityDashboard view="dashboard" />} />
+            <Route
+              path="visitors"
+              element={<SecurityDashboard view="visitors" />}
+            />
+            <Route
+              path="history"
+              element={<SecurityDashboard view="history" />}
+            />
+            <Route
+              path="emergency"
+              element={<SecurityDashboard view="emergency" />}
+            />
           </Route>
 
           {/* Admin Dashboard Layout */}

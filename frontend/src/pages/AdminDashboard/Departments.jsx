@@ -29,7 +29,14 @@ const CATEGORY_OPTIONS = [
   'Others',
 ];
 
-const STAFF_ROLES = ['Technician', 'Supervisor', 'Manager', 'Coordinator'];
+const STAFF_ROLES = [
+  'Technician',
+  'Security Guard',
+  'Gate Officer',
+  'Supervisor',
+  'Manager',
+  'Coordinator',
+];
 
 const emptyStaffMember = () => ({
   id: '',
@@ -651,6 +658,9 @@ function DepartmentForm({
 }) {
   const inputClass =
     'w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none';
+  const isSecurityDepartment =
+    form.name.toLowerCase().includes('security') ||
+    form.categories.includes('Security');
   return (
     <form onSubmit={onSubmit} className="mt-6 space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -812,7 +822,9 @@ function DepartmentForm({
           <div>
             <p className="text-xs font-extrabold text-slate-700">Team members</p>
             <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
-              Add staff who can be assigned to complaints.
+              {isSecurityDepartment
+                ? 'Each member can sign in through the Community Portal using the phone number entered here.'
+                : 'Add staff who can be assigned to complaints.'}
             </p>
           </div>
           <button
@@ -837,6 +849,7 @@ function DepartmentForm({
               className={inputClass}
             />
             <input
+              required={isSecurityDepartment && Boolean(member.name.trim())}
               value={member.phone}
               onChange={(event) =>
                 setStaffField(index, 'phone', event.target.value)
