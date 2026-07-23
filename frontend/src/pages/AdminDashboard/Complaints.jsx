@@ -3,12 +3,19 @@ import { useApp } from '../../store/useApp';
 import { AlertOctagon, Edit2, CheckCircle2, User, Home, Clock, Check } from 'lucide-react';
 
 export default function Complaints() {
-  const { complaints, updateComplaint } = useApp();
+  const { complaints, updateComplaint, addComplaintComment } = useApp();
   const [filterStatus, setFilterStatus] = useState('All');
   
   // Edit state
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ status: 'Pending', progress: 0, assignee: '' });
+  const [editForm, setEditForm] = useState({
+    status: 'Pending',
+    progress: 0,
+    assignee: '',
+    expectedResolutionAt: '',
+    updateNote: '',
+    comment: '',
+  });
 
   const filteredComplaints = complaints.filter(c => {
     if (filterStatus === 'All') return true;
@@ -20,7 +27,12 @@ export default function Complaints() {
     setEditForm({
       status: c.status,
       progress: c.progress,
-      assignee: c.assignee
+      assignee: c.assignee,
+      expectedResolutionAt: c.expectedResolutionAt
+        ? c.expectedResolutionAt.slice(0, 16)
+        : '',
+      updateNote: '',
+      comment: '',
     });
   };
 
@@ -28,8 +40,15 @@ export default function Complaints() {
     updateComplaint(id, {
       status: editForm.status,
       progress: editForm.status === 'Resolved' ? 100 : Number(editForm.progress),
-      assignee: editForm.assignee
+      assignee: editForm.assignee,
+      expectedResolutionAt: editForm.expectedResolutionAt
+        ? new Date(editForm.expectedResolutionAt).toISOString()
+        : null,
+      updateNote: editForm.updateNote,
     });
+    if (editForm.comment.trim()) {
+      addComplaintComment(id, editForm.comment);
+    }
     setEditingId(null);
   };
 
@@ -114,6 +133,27 @@ export default function Complaints() {
                   {c.description}
                 </p>
 
+                {(c.comments ?? []).length > 0 && (
+                  <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      Recent conversation
+                    </p>
+                    {c.comments.slice(-3).map((comment) => (
+                      <div
+                        key={comment.id}
+                        className="rounded-lg bg-white px-3 py-2"
+                      >
+                        <p className="text-[10px] font-bold text-slate-700">
+                          {comment.authorName}
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-slate-500">
+                          {comment.message}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* Edit Form or Display status details */}
                 {isEditing ? (
                   <div className="bg-slate-50 border border-indigo-100 rounded-xl p-4.5 space-y-4">
@@ -127,7 +167,7 @@ export default function Complaints() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-semibold">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-semibold">
                       <div className="space-y-1">
                         <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Staff / Assignee</label>
                         <input
@@ -152,6 +192,21 @@ export default function Complaints() {
                         </select>
                       </div>
 
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Expected Resolution</label>
+                        <input
+                          type="datetime-local"
+                          value={editForm.expectedResolutionAt}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              expectedResolutionAt: e.target.value,
+                            })
+                          }
+                          className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 font-semibold"
+                        />
+                      </div>
+
                       {editForm.status !== 'Resolved' && (
                         <div className="space-y-1">
                           <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Progress Percent ({editForm.progress}%)</label>
@@ -166,6 +221,38 @@ export default function Complaints() {
                           />
                         </div>
                       )}
+
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Resident-visible Update</label>
+                        <textarea
+                          rows={2}
+                          value={editForm.updateNote}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              updateNote: e.target.value,
+                            })
+                          }
+                          placeholder="Explain what changed or what happens next."
+                          className="w-full resize-none bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 font-semibold"
+                        />
+                      </div>
+
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Message Resident</label>
+                        <textarea
+                          rows={2}
+                          value={editForm.comment}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              comment: e.target.value,
+                            })
+                          }
+                          placeholder="Reply to the resident's conversation."
+                          className="w-full resize-none bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 font-semibold"
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : (

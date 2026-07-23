@@ -9,7 +9,6 @@ import {
   Activity,
   ChevronRight,
   TrendingUp,
-  Bell,
   Building2
 } from 'lucide-react';
 
@@ -108,7 +107,7 @@ export default function AdminHome() {
       {/* Quick Actions */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <button
-          onClick={() => navigate('/admin/department/new')}
+          onClick={() => navigate('/admin/departments?create=1')}
           className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm flex items-center justify-between hover:border-indigo-150 hover:shadow-md transition-all text-left w-full group"
         >
           <div className="space-y-1">

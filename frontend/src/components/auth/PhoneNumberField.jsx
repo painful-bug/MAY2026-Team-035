@@ -1,11 +1,16 @@
 import React from 'react';
 import { Phone } from 'lucide-react';
 
-export default function PhoneNumberField({ value, onChange, disabled = false }) {
+export default function PhoneNumberField({
+  value,
+  onChange,
+  disabled = false,
+  id = 'admin-phone',
+}) {
   return (
     <div className="space-y-1">
       <label
-        htmlFor="admin-phone"
+        htmlFor={id}
         className="text-[11px] font-bold text-slate-500 uppercase tracking-wider"
       >
         Mobile Number
@@ -16,7 +21,7 @@ export default function PhoneNumberField({ value, onChange, disabled = false }) 
           +91
         </span>
         <input
-          id="admin-phone"
+          id={id}
           type="tel"
           inputMode="numeric"
           autoComplete="tel-national"

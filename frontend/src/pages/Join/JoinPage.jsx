@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../../store/useApp';
 import { Building, XCircle, Loader2 } from 'lucide-react';
+import { AUTH_ROUTES } from '../../routes/authRoutes';
 
 // Magic-link landing: /join/:token. Redeems the invite (activating the flat),
 // logs the resident in, and forwards to their dashboard. A single-use token, so
@@ -21,7 +22,7 @@ export default function JoinPage() {
     const res = redeemInvite(token);
     if (res.ok && res.user) {
       setCurrentUser(res.user);
-      navigate('/resident', { replace: true });
+      navigate(AUTH_ROUTES.RESIDENT_DASHBOARD, { replace: true });
     } else {
       setMessage(res.message || 'This invite link is not valid.');
     }
@@ -53,7 +54,7 @@ export default function JoinPage() {
               <p className="text-xs font-semibold text-slate-400">{message}</p>
             </div>
             <Link
-              to="/login"
+              to={AUTH_ROUTES.RESIDENT_LOGIN}
               className="inline-block w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md shadow-indigo-100"
             >
               Go to Sign In

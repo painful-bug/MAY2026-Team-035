@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useApp } from '../store/useApp';
+import { AUTH_ROUTES } from '../routes/authRoutes';
 import Header from '../components/layout/Header';
 import { 
   LayoutDashboard, 
@@ -14,7 +15,8 @@ import {
   LogOut,
   Building,
   X,
-  PhoneCall
+  PhoneCall,
+  CircleHelp
 } from 'lucide-react';
 
 export default function ResidentLayout() {
@@ -23,7 +25,7 @@ export default function ResidentLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = () => {
-    navigate('/');
+    navigate(AUTH_ROUTES.RESIDENT_LANDING);
     setTimeout(() => {
       logout();
     }, 50);
@@ -36,6 +38,7 @@ export default function ResidentLayout() {
     { name: 'Amenities', path: '/resident/amenities', icon: Calendar },
     { name: 'Payments', path: '/resident/payments', icon: CreditCard },
     { name: 'Notices', path: '/resident/notices', icon: BellRing },
+    { name: 'Help & FAQ', path: '/resident/faq', icon: CircleHelp },
     { name: 'Profile', path: '/resident/profile', icon: User },
   ];
 

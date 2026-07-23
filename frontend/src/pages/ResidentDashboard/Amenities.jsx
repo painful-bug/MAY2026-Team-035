@@ -1,182 +1,1311 @@
-import React, { useState } from 'react';
-import { useApp } from '../../store/useApp';
-import { Calendar, Clock, Users, CalendarDays, CheckCircle, Plus } from 'lucide-react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import {
+  AlertCircle,
+  CalendarDays,
+  CalendarRange,
+  CheckCircle,
+  Clock,
+  MapPin,
+  Plus,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react';
+import { BOOKING_MODE } from '../../features/amenities/constants/bookingModes.js';
+import { BOOKING_STATUS_LABELS } from '../../features/amenities/constants/bookingStatuses.js';
+import { AMENITIES_STORAGE_KEY } from '../../features/amenities/persistence/amenitiesPersistence.js';
+import { AMENITY_BOOKINGS_STORAGE_KEY } from '../../features/amenities/persistence/amenityBookingsPersistence.js';
+import {
+  cancelResidentAmenityBookingDays,
+  createResidentAmenityBookingSeries,
+  getResidentAmenityBookings,
+  validateBookingSlot,
+} from '../../features/amenities/services/amenityBookingsService.js';
+import { useAmenitiesStore } from '../../features/amenities/store/useAmenitiesStore.js';
+import { useAppStore } from '../../store/appStore.js';
+import { useAuthStore } from '../../store/authStore.js';
 
-export default function Amenities() {
-  const { amenities, bookings, currentUser, bookAmenity, searchQuery } = useApp();
-  
-  const [amenityId, setAmenityId] = useState('a1');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [timeSlot, setTimeSlot] = useState('07:00 AM - 08:30 AM');
+const todayISO = () => new Date().toISOString().split('T')[0];
 
-  const userBookings = bookings.filter(b => b.userId === currentUser?.id);
+const getDatesInRange = (startDate, endDate) => {
+  if (!startDate || !endDate || endDate < startDate) return [];
 
-  const filteredAmenitiesCatalog = amenities.filter(a => 
-    a.name.toLowerCase().includes((searchQuery || '').toLowerCase()) ||
-    (a.description && a.description.toLowerCase().includes((searchQuery || '').toLowerCase()))
+  const dates = [];
+  const current = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  while (current <= end) {
+    dates.push(current.toISOString().split('T')[0]);
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return dates;
+};
+
+const formatBookingDate = (date) =>
+  new Intl.DateTimeFormat('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00.000Z`));
+
+const groupResidentBookings = (bookings) => {
+  const groups = new Map();
+  bookings.forEach((booking) => {
+    const groupId = booking.bookingGroupId ?? booking.id;
+    const currentGroup = groups.get(groupId) ?? [];
+    currentGroup.push(booking);
+    groups.set(groupId, currentGroup);
+  });
+
+  return [...groups.entries()]
+    .map(([id, records]) => ({
+      id,
+      records: records.sort((first, second) =>
+        first.date.localeCompare(second.date)
+      ),
+    }))
+    .sort((first, second) =>
+      first.records[0].date.localeCompare(second.records[0].date)
+    );
+};
+
+const getGroupStatus = (records) => {
+  const statuses = new Set(records.map((record) => record.status));
+  const hasCancelled = statuses.has('cancelled');
+  const hasActive = records.some((record) =>
+    ['pending', 'approved', 'confirmed'].includes(record.status)
   );
 
-  const selectedAmenity = amenities.find(a => a.id === amenityId);
-  const isMaintenance = selectedAmenity?.status === 'Under Maintenance';
+  if (hasCancelled && hasActive) {
+    return {
+      key: 'partially-cancelled',
+      label: 'Partially Cancelled',
+    };
+  }
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (isMaintenance) return;
-    bookAmenity({ amenityId, date, timeSlot });
+  if (statuses.size === 1) {
+    const status = records[0].status;
+    return {
+      key: status,
+      label: BOOKING_STATUS_LABELS[status] ?? status,
+    };
+  }
+
+  return { key: 'mixed', label: 'Mixed Status' };
+};
+
+const timeToMinutes = (time) => {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+const minutesToTime = (minutes) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(
+    minutes % 60
+  ).padStart(2, '0')}`;
+
+const formatTime = (time) =>
+  new Intl.DateTimeFormat('en-IN', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'UTC',
+  }).format(new Date(`2000-01-01T${time}:00.000Z`));
+
+const createBookingSlots = (amenity) => {
+  if (!amenity?.openingTime || !amenity?.closingTime) {
+    return [];
+  }
+
+  const minimumDuration =
+    amenity.availabilitySettings.minimumBookingDurationMinutes;
+  const maximumDuration =
+    amenity.availabilitySettings.maximumBookingDurationMinutes;
+  const configuredDuration = amenity.bookingSlotDuration || 60;
+  const duration = Math.min(
+    Math.max(configuredDuration, minimumDuration),
+    maximumDuration
+  );
+  const openingMinutes = timeToMinutes(amenity.openingTime);
+  const closingMinutes = timeToMinutes(amenity.closingTime);
+  const slots = [];
+
+  for (
+    let startMinutes = openingMinutes;
+    startMinutes + duration <= closingMinutes;
+    startMinutes += configuredDuration
+  ) {
+    const startTime = minutesToTime(startMinutes);
+    const endTime = minutesToTime(startMinutes + duration);
+    slots.push({
+      value: `${startTime}-${endTime}`,
+      startTime,
+      endTime,
+      label: `${formatTime(startTime)} - ${formatTime(endTime)}`,
+    });
+  }
+
+  return slots;
+};
+
+const getClosureReason = (amenity, date) => {
+  if (!amenity?.isActive) {
+    return 'This amenity has been disabled by the administrator.';
+  }
+
+  if (!date) {
+    return 'Select a booking date.';
+  }
+
+  const availability = amenity.availabilitySettings;
+
+  if (availability.temporaryClosure) {
+    return 'This amenity is temporarily closed.';
+  }
+
+  const dayName = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00.000Z`));
+
+  if (availability.closedDays.includes(dayName)) {
+    return `This amenity is closed on ${dayName}s.`;
+  }
+
+  if (availability.maintenanceDays.includes(dayName)) {
+    return `This amenity is under maintenance on ${dayName}s.`;
+  }
+
+  if (availability.holidayOverrides.includes(date)) {
+    return 'This amenity is closed on the selected date.';
+  }
+
+  return '';
+};
+
+const statusClassNames = {
+  pending: 'border-amber-100 bg-amber-50 text-amber-700',
+  approved: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+  confirmed: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+  rejected: 'border-rose-100 bg-rose-50 text-rose-700',
+  cancelled: 'border-slate-200 bg-slate-50 text-slate-600',
+  'partially-cancelled': 'border-amber-100 bg-amber-50 text-amber-700',
+  mixed: 'border-indigo-100 bg-indigo-50 text-indigo-700',
+};
+
+export default function Amenities() {
+  const amenities = useAmenitiesStore((state) => state.amenities);
+  const isLoading = useAmenitiesStore((state) => state.isLoading);
+  const amenitiesError = useAmenitiesStore((state) => state.error);
+  const fetchAmenities = useAmenitiesStore((state) => state.fetchAmenities);
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const searchQuery = useAppStore((state) => state.searchQuery);
+  const showToast = useAppStore((state) => state.showToast);
+  const addActivity = useAppStore((state) => state.addActivity);
+  const [amenityId, setAmenityId] = useState('');
+  const [date, setDate] = useState(todayISO);
+  const [endDate, setEndDate] = useState(todayISO);
+  const [timeSlot, setTimeSlot] = useState('');
+  const [guestCount, setGuestCount] = useState(0);
+  const [isPrivateBooking, setIsPrivateBooking] = useState(false);
+  const [userBookings, setUserBookings] = useState([]);
+  const [availableSlotValues, setAvailableSlotValues] = useState(new Set());
+  const [isCheckingSlots, setIsCheckingSlots] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [bookingRevision, setBookingRevision] = useState(0);
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [managedBookingGroupId, setManagedBookingGroupId] = useState(null);
+  const [selectedCancellationIds, setSelectedCancellationIds] = useState([]);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationError, setCancellationError] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const loadUserBookings = useCallback(async () => {
+    if (!currentUser?.id) {
+      setUserBookings([]);
+      return;
+    }
+
+    const records = await getResidentAmenityBookings(currentUser.id);
+    setUserBookings(records);
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    fetchAmenities();
+    loadUserBookings();
+
+    const handleStorage = (event) => {
+      if (
+        event.key === AMENITIES_STORAGE_KEY &&
+        event.newValue !== event.oldValue
+      ) {
+        fetchAmenities();
+      }
+
+      if (
+        event.key === AMENITY_BOOKINGS_STORAGE_KEY &&
+        event.newValue !== event.oldValue
+      ) {
+        loadUserBookings();
+        setBookingRevision((revision) => revision + 1);
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [fetchAmenities, loadUserBookings]);
+
+  useEffect(() => {
+    if (
+      amenities.length > 0 &&
+      !amenities.some((amenity) => amenity.id === amenityId)
+    ) {
+      const firstAvailableAmenity =
+        amenities.find((amenity) => amenity.isActive) ?? amenities[0];
+      setAmenityId(firstAvailableAmenity.id);
+    }
+  }, [amenities, amenityId]);
+
+  const selectedAmenity = amenities.find(
+    (amenity) => amenity.id === amenityId
+  );
+  const bookingSlots = useMemo(
+    () => createBookingSlots(selectedAmenity),
+    [selectedAmenity]
+  );
+  const bookingDates = useMemo(
+    () => getDatesInRange(date, endDate),
+    [date, endDate]
+  );
+  const closureReason = selectedAmenity
+    ? bookingDates
+        .map((bookingDate) => ({
+          date: bookingDate,
+          reason: getClosureReason(selectedAmenity, bookingDate),
+        }))
+        .filter((item) => item.reason)
+        .map((item) => `${formatBookingDate(item.date)}: ${item.reason}`)[0] ??
+      (bookingDates.length === 0 ? 'Select a valid date range.' : '')
+    : '';
+
+  useEffect(() => {
+    let ignore = false;
+
+    const checkSlots = async () => {
+      setTimeSlot('');
+      setAvailableSlotValues(new Set());
+
+      if (!selectedAmenity || closureReason || bookingSlots.length === 0) {
+        setIsCheckingSlots(false);
+        return;
+      }
+
+      setIsCheckingSlots(true);
+      const availability = await Promise.all(
+        bookingSlots.map((slot) =>
+          Promise.all(
+            bookingDates.map((bookingDate) =>
+              validateBookingSlot({
+                amenityId: selectedAmenity.id,
+                date: bookingDate,
+                startTime: slot.startTime,
+                endTime: slot.endTime,
+                openingTime: selectedAmenity.openingTime,
+                closingTime: selectedAmenity.closingTime,
+                cleaningBuffer: selectedAmenity.cleaningBuffer,
+                bookingMode: selectedAmenity.bookingMode,
+                isPrivateBooking,
+                guestCount,
+                capacity: selectedAmenity.capacity,
+              })
+            )
+          ).then((dayAvailability) =>
+            dayAvailability.every(Boolean)
+          )
+        )
+      );
+
+      if (!ignore) {
+        const values = new Set(
+          bookingSlots
+            .filter((_, index) => availability[index])
+            .map((slot) => slot.value)
+        );
+        setAvailableSlotValues(values);
+        setTimeSlot(bookingSlots.find((slot) => values.has(slot.value))?.value ?? '');
+        setIsCheckingSlots(false);
+      }
+    };
+
+    checkSlots();
+    return () => {
+      ignore = true;
+    };
+  }, [
+    selectedAmenity,
+    bookingDates,
+    closureReason,
+    bookingSlots,
+    bookingRevision,
+    isPrivateBooking,
+    guestCount,
+  ]);
+
+  useEffect(() => {
+    const supportsPrivateBooking =
+      selectedAmenity?.bookingMode === BOOKING_MODE.EXCLUSIVE ||
+      (selectedAmenity?.bookingMode === BOOKING_MODE.HYBRID &&
+        selectedAmenity?.bookingSettings.allowPrivateBooking);
+
+    if (!supportsPrivateBooking) {
+      setIsPrivateBooking(false);
+    }
+
+    if (!selectedAmenity?.bookingSettings.allowGuestBooking) {
+      setGuestCount(0);
+    }
+  }, [selectedAmenity]);
+
+  useEffect(() => {
+    if (!isBookingModalOpen && !managedBookingGroupId) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleEscape = (event) => {
+      if (event.key === 'Escape' && !isSubmitting) {
+        setIsBookingModalOpen(false);
+        setManagedBookingGroupId(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [
+    isBookingModalOpen,
+    managedBookingGroupId,
+    isSubmitting,
+  ]);
+
+  const filteredAmenitiesCatalog = amenities.filter((amenity) => {
+    const normalizedSearch = (searchQuery || '').trim().toLowerCase();
+    return (
+      !normalizedSearch ||
+      amenity.name.toLowerCase().includes(normalizedSearch) ||
+      amenity.description.toLowerCase().includes(normalizedSearch) ||
+      amenity.category.toLowerCase().includes(normalizedSearch)
+    );
+  });
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setFormError('');
+
+    const slot = bookingSlots.find((item) => item.value === timeSlot);
+
+    if (!selectedAmenity || !slot || closureReason) {
+      setFormError(closureReason || 'Select an available time slot.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const bookingData = {
+      amenityId: selectedAmenity.id,
+      residentId: currentUser.id,
+      residentName: currentUser.name,
+      bookingTitle: isPrivateBooking
+        ? 'Private Resident Booking'
+        : 'Resident Booking',
+      bookingType: isPrivateBooking ? 'private-event' : 'resident',
+      date: bookingDates[0],
+      dates: bookingDates,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      isPrivateBooking,
+      guestCount,
+      notes: '',
+    };
+
+    try {
+      const createdBookings =
+        await createResidentAmenityBookingSeries(bookingData);
+      await loadUserBookings();
+      setBookingRevision((revision) => revision + 1);
+      const message =
+        createdBookings[0].status === 'pending'
+          ? `${createdBookings.length}-day booking request sent for admin approval`
+          : `${selectedAmenity.name} booked for ${createdBookings.length} day${createdBookings.length === 1 ? '' : 's'}`;
+      showToast(message, 'success');
+      addActivity(
+        `You booked ${selectedAmenity.name} from ${bookingDates[0]} to ${bookingDates[bookingDates.length - 1]}`,
+        'general'
+      );
+      setIsBookingModalOpen(false);
+    } catch (error) {
+      setFormError(
+        error instanceof Error ? error.message : 'Unable to create booking.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openBookingModal = (amenity) => {
+    setAmenityId(amenity.id);
+    setDate(todayISO());
+    setEndDate(todayISO());
+    setGuestCount(0);
+    setIsPrivateBooking(amenity.bookingMode === BOOKING_MODE.EXCLUSIVE);
+    setFormError('');
+    setIsBookingModalOpen(true);
+  };
+
+  const closeBookingModal = () => {
+    if (!isSubmitting) {
+      setIsBookingModalOpen(false);
+      setFormError('');
+    }
+  };
+
+  const maximumDate = useMemo(() => {
+    const result = new Date(`${todayISO()}T00:00:00.000Z`);
+    result.setUTCDate(
+      result.getUTCDate() +
+        (selectedAmenity?.availabilitySettings.advanceBookingWindowDays ?? 30)
+    );
+    return result.toISOString().split('T')[0];
+  }, [selectedAmenity]);
+
+  const supportsSharedBooking =
+    selectedAmenity?.bookingMode !== BOOKING_MODE.EXCLUSIVE;
+  const supportsPrivateBooking =
+    selectedAmenity?.bookingMode === BOOKING_MODE.EXCLUSIVE ||
+    (selectedAmenity?.bookingMode === BOOKING_MODE.HYBRID &&
+      selectedAmenity?.bookingSettings.allowPrivateBooking);
+  const requiresAdminApproval =
+    selectedAmenity?.bookingSettings.requireAdminApproval &&
+    !selectedAmenity?.bookingSettings.enableAutoApproval;
+  const groupedBookings = useMemo(
+    () => groupResidentBookings(userBookings),
+    [userBookings]
+  );
+  const managedBookingGroup = groupedBookings.find(
+    (group) => group.id === managedBookingGroupId
+  );
+  const cancellableManagedBookings =
+    managedBookingGroup?.records.filter(
+      (booking) =>
+        booking.source === 'resident' &&
+        booking.date >= todayISO() &&
+        ['pending', 'approved', 'confirmed'].includes(booking.status)
+    ) ?? [];
+
+  const openCancellationModal = (groupId) => {
+    setManagedBookingGroupId(groupId);
+    setSelectedCancellationIds([]);
+    setCancellationReason('');
+    setCancellationError('');
+  };
+
+  const closeCancellationModal = () => {
+    if (!isCancelling) {
+      setManagedBookingGroupId(null);
+      setCancellationError('');
+    }
+  };
+
+  const handlePartialCancellation = async (event) => {
+    event.preventDefault();
+    setCancellationError('');
+    setIsCancelling(true);
+
+    try {
+      const cancelledBookings =
+        await cancelResidentAmenityBookingDays({
+          bookingIds: selectedCancellationIds,
+          residentId: currentUser.id,
+          reason: cancellationReason,
+        });
+      await loadUserBookings();
+      setBookingRevision((revision) => revision + 1);
+      showToast(
+        `${cancelledBookings.length} booking day${cancelledBookings.length === 1 ? '' : 's'} cancelled`,
+        'success'
+      );
+      addActivity(
+        `You cancelled ${cancelledBookings.length} day${cancelledBookings.length === 1 ? '' : 's'} from an amenity booking`,
+        'general'
+      );
+      setManagedBookingGroupId(null);
+    } catch (error) {
+      setCancellationError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to cancel the selected days.'
+      );
+    } finally {
+      setIsCancelling(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Amenities Booking</h1>
-        <p className="text-xs font-semibold text-slate-400 mt-1">Reserve society assets like the Gym, Swimming Pool, Banquet Hall, or Tennis Courts.</p>
+        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
+          Amenities Booking
+        </h1>
+        <p className="mt-1 text-xs font-semibold text-slate-400">
+          View live facility availability and reserve a society amenity.
+        </p>
       </div>
 
-      {/* Facilities Catalog */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {filteredAmenitiesCatalog.map((am) => (
-          <div key={am.id} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between hover:shadow-md transition-shadow">
-            <div className="space-y-2">
-              <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block border ${
-                am.status === 'Under Maintenance'
-                  ? 'bg-rose-50 border-rose-100 text-rose-650'
-                  : 'bg-slate-50 border-slate-100 text-slate-500'
-              }`}>
-                {am.status}
-              </span>
-              <h3 className="text-base font-extrabold text-slate-805">{am.name}</h3>
-              <p className="text-xs text-slate-450 leading-relaxed font-semibold">{am.description}</p>
-            </div>
-
-            <div className="pt-3 border-t border-slate-50 space-y-2 text-xs font-bold text-slate-500">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-indigo-500" />
-                <span>{am.timing}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-indigo-500" />
-                <span>Max Capacity: {am.capacity} people</span>
-              </div>
-            </div>
+      <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-50 p-6">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-indigo-600" />
+            <h2 className="text-sm font-extrabold text-slate-800">
+              Your Bookings
+            </h2>
           </div>
-        ))}
+          <span className="rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            {groupedBookings.length} Bookings
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          {groupedBookings.length === 0 ? (
+            <div className="py-12 text-center text-xs font-semibold text-slate-400">
+              You have no amenity reservations.
+            </div>
+          ) : (
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/50 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  <th className="px-6 py-3.5">Facility</th>
+                  <th className="px-6 py-3.5">Reserved Dates</th>
+                  <th className="px-6 py-3.5">Time Slot</th>
+                  <th className="px-6 py-3.5">Status</th>
+                  <th className="px-6 py-3.5 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 text-xs font-semibold text-slate-600">
+                {groupedBookings.map((group) => {
+                  const firstBooking = group.records[0];
+                  const lastBooking =
+                    group.records[group.records.length - 1];
+                  const amenity = amenities.find(
+                    (item) => item.id === firstBooking.amenityId
+                  );
+                  const groupStatus = getGroupStatus(group.records);
+                  const cancellableBookings = group.records.filter(
+                    (booking) =>
+                      booking.source === 'resident' &&
+                      booking.date >= todayISO() &&
+                      ['pending', 'approved', 'confirmed'].includes(
+                        booking.status
+                      )
+                  );
+                  return (
+                    <tr
+                      key={group.id}
+                      className="transition-colors hover:bg-slate-50/30"
+                    >
+                      <td className="px-6 py-4 font-bold text-slate-800">
+                        {amenity?.name ?? 'Removed amenity'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="font-bold text-slate-700">
+                          {formatBookingDate(firstBooking.date)}
+                          {group.records.length > 1 &&
+                            ` – ${formatBookingDate(lastBooking.date)}`}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] text-slate-400">
+                          {group.records.length} day
+                          {group.records.length === 1 ? '' : 's'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-mono text-indigo-700">
+                        {formatTime(firstBooking.startTime)} -{' '}
+                        {formatTime(firstBooking.endTime)}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`flex w-fit items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                            statusClassNames[groupStatus.key] ??
+                            'border-slate-200 bg-slate-50 text-slate-600'
+                          }`}
+                        >
+                          <CheckCircle className="h-3 w-3" />
+                          {groupStatus.label}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {cancellableBookings.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openCancellationModal(group.id)
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                          >
+                            Manage days
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
 
-      {/* Booking Form and Logs */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Book slot Form */}
-        <div className="lg:col-span-4 bg-white p-6 border border-slate-100 rounded-2xl h-fit space-y-4 shadow-sm">
-          <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
-            <Calendar className="w-5 h-5 text-indigo-650" />
-            <h3 className="font-extrabold text-slate-855 text-sm">Reserve a Slot</h3>
-          </div>
+      <div>
+        <h2 className="text-base font-extrabold text-slate-800">
+          Explore Amenities
+        </h2>
+        <p className="mt-1 text-xs font-semibold text-slate-400">
+          Select an amenity to view its details and book an available slot.
+        </p>
+      </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Choose Amenity</label>
-              <select
-                value={amenityId}
-                onChange={(e) => setAmenityId(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
+      {isLoading && amenities.length === 0 ? (
+        <div className="rounded-2xl border border-slate-100 bg-white px-6 py-12 text-center text-xs font-semibold text-slate-400">
+          Loading amenities...
+        </div>
+      ) : amenitiesError && amenities.length === 0 ? (
+        <div className="rounded-2xl border border-rose-100 bg-rose-50 px-6 py-10 text-center">
+          <p className="text-xs font-bold text-rose-700">{amenitiesError}</p>
+          <button
+            type="button"
+            onClick={fetchAmenities}
+            className="mt-3 rounded-xl bg-white px-4 py-2 text-xs font-bold text-rose-700"
+          >
+            Try again
+          </button>
+        </div>
+      ) : filteredAmenitiesCatalog.length === 0 ? (
+        <div className="rounded-2xl border border-slate-100 bg-white px-6 py-12 text-center text-xs font-semibold text-slate-400">
+          No amenities match your search.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {filteredAmenitiesCatalog.map((amenity) => {
+            const isAvailable =
+              amenity.isActive &&
+              !amenity.availabilitySettings.temporaryClosure;
+
+            return (
+              <button
+                type="button"
+                key={amenity.id}
+                onClick={() => openBookingModal(amenity)}
+                className="group overflow-hidden rounded-2xl border border-slate-100 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-200"
               >
-                {amenities.map(a => (
-                  <option key={a.id} value={a.id} disabled={a.status === 'Under Maintenance'}>
-                    {a.name} {a.status === 'Under Maintenance' ? '(Under Maintenance)' : ''}
-                  </option>
-                ))}
-              </select>
+                {amenity.image && (
+                  <img
+                    src={amenity.image}
+                    alt=""
+                    className="h-32 w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                  />
+                )}
+                <div className="space-y-4 p-5">
+                  <div className="space-y-2">
+                    <span
+                      className={`inline-block rounded-lg border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider ${
+                        isAvailable
+                          ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                          : 'border-rose-100 bg-rose-50 text-rose-700'
+                      }`}
+                    >
+                      {isAvailable ? 'Available' : 'Unavailable'}
+                    </span>
+                    <h3 className="text-base font-extrabold text-slate-800">
+                      {amenity.name}
+                    </h3>
+                    <p className="text-xs font-semibold leading-relaxed text-slate-500">
+                      {amenity.description}
+                    </p>
+                  </div>
+                  <div className="space-y-2 border-t border-slate-50 pt-3 text-xs font-bold text-slate-500">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-indigo-500" />
+                      <span>{amenity.openingHours}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-indigo-500" />
+                      <span>Capacity: {amenity.capacity ?? 'Not limited'}</span>
+                    </div>
+                    {amenity.location && (
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-indigo-500" />
+                        <span>{amenity.location}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between border-t border-slate-50 pt-3">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600">
+                      View details &amp; book
+                    </span>
+                    <span className="text-sm font-bold text-indigo-500 transition-transform group-hover:translate-x-0.5">
+                      →
+                    </span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {isBookingModalOpen && selectedAmenity && (
+        <div
+          className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeBookingModal();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="resident-amenity-booking-title"
+            className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-100 bg-white shadow-xl"
+          >
+            {selectedAmenity.image && (
+              <div className="relative h-44 overflow-hidden rounded-t-3xl">
+                <img
+                  src={selectedAmenity.image}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/65 to-transparent" />
+                <div className="absolute bottom-5 left-6 right-6 text-white">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-white/75">
+                    {selectedAmenity.category}
+                  </p>
+                  <h2
+                    id="resident-amenity-booking-title"
+                    className="mt-1 text-xl font-extrabold"
+                  >
+                    {selectedAmenity.name}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeBookingModal}
+                  className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-sm transition-colors hover:bg-white"
+                  aria-label="Close booking form"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-6 p-6">
+              {!selectedAmenity.image && (
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+                      {selectedAmenity.category}
+                    </p>
+                    <h2
+                      id="resident-amenity-booking-title"
+                      className="mt-1 text-xl font-extrabold text-slate-900"
+                    >
+                      {selectedAmenity.name}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeBookingModal}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200"
+                    aria-label="Close booking form"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-semibold leading-relaxed text-slate-500">
+                  {selectedAmenity.description}
+                </p>
+                {selectedAmenity.location && (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-slate-600">
+                    <MapPin className="h-4 w-4 text-indigo-500" />
+                    {selectedAmenity.location}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">
+                    Opening Time
+                  </p>
+                  <p className="mt-1 text-sm font-extrabold text-slate-700">
+                    {formatTime(selectedAmenity.openingTime)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">
+                    Closing Time
+                  </p>
+                  <p className="mt-1 text-sm font-extrabold text-slate-700">
+                    {formatTime(selectedAmenity.closingTime)}
+                  </p>
+                </div>
+                <div className="col-span-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:col-span-1">
+                  <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">
+                    Capacity
+                  </p>
+                  <p className="mt-1 text-sm font-extrabold text-slate-700">
+                    {selectedAmenity.capacity ?? 'Not limited'}
+                  </p>
+                </div>
+              </div>
+
+              <form
+                onSubmit={handleSubmit}
+                className="space-y-5 border-t border-slate-100 pt-5"
+              >
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-800">
+                    Book this amenity
+                  </h3>
+                  <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                    Choose one or more consecutive days and a time available
+                    across the full date range.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Booking Type
+                  </label>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {supportsSharedBooking && (
+                      <button
+                        type="button"
+                        onClick={() => setIsPrivateBooking(false)}
+                        className={`rounded-xl border p-3 text-left transition-colors ${
+                          !isPrivateBooking
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200'
+                        }`}
+                      >
+                        <span className="block text-xs font-extrabold">
+                          Shared Booking
+                        </span>
+                        <span className="mt-1 block text-[10px] font-semibold opacity-70">
+                          Reserve your place in a shared slot.
+                        </span>
+                      </button>
+                    )}
+                    {supportsPrivateBooking && (
+                      <button
+                        type="button"
+                        onClick={() => setIsPrivateBooking(true)}
+                        className={`rounded-xl border p-3 text-left transition-colors ${
+                          isPrivateBooking
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200'
+                        }`}
+                      >
+                        <span className="block text-xs font-extrabold">
+                          Private Booking
+                        </span>
+                        <span className="mt-1 block text-[10px] font-semibold opacity-70">
+                          Reserve the amenity exclusively.
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Start Date
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      min={todayISO()}
+                      max={maximumDate}
+                      value={date}
+                      onChange={(event) => {
+                        const nextStartDate = event.target.value;
+                        setDate(nextStartDate);
+                        if (endDate < nextStartDate) {
+                          setEndDate(nextStartDate);
+                        }
+                        setFormError('');
+                      }}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      End Date
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      min={date || todayISO()}
+                      max={maximumDate}
+                      value={endDate}
+                      onChange={(event) => {
+                        setEndDate(event.target.value);
+                        setFormError('');
+                      }}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Time Slot
+                    </label>
+                    <select
+                      value={timeSlot}
+                      onChange={(event) => {
+                        setTimeSlot(event.target.value);
+                        setFormError('');
+                      }}
+                      disabled={
+                        isCheckingSlots ||
+                        Boolean(closureReason) ||
+                        availableSlotValues.size === 0
+                      }
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none disabled:text-slate-400"
+                    >
+                      {isCheckingSlots && (
+                        <option value="">Checking availability...</option>
+                      )}
+                      {!isCheckingSlots &&
+                        bookingSlots.map((slot) => (
+                          <option
+                            key={slot.value}
+                            value={slot.value}
+                            disabled={!availableSlotValues.has(slot.value)}
+                          >
+                            {slot.label}
+                            {!availableSlotValues.has(slot.value)
+                              ? ' (Unavailable)'
+                              : ''}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
+                {bookingDates.length > 0 && (
+                  <div className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-[11px] font-bold text-indigo-700">
+                    <CalendarRange className="h-4 w-4" />
+                    {bookingDates.length} day
+                    {bookingDates.length === 1 ? '' : 's'} selected ·{' '}
+                    {formatBookingDate(bookingDates[0])}
+                    {bookingDates.length > 1 &&
+                      ` to ${formatBookingDate(
+                        bookingDates[bookingDates.length - 1]
+                      )}`}
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Number of Guests
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={
+                      selectedAmenity.capacity == null
+                        ? undefined
+                        : Math.max(selectedAmenity.capacity - 1, 0)
+                    }
+                    value={guestCount}
+                    disabled={
+                      !selectedAmenity.bookingSettings.allowGuestBooking
+                    }
+                    onChange={(event) =>
+                      setGuestCount(Number(event.target.value))
+                    }
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
+                  />
+                  {!selectedAmenity.bookingSettings.allowGuestBooking && (
+                    <p className="text-[10px] font-semibold text-slate-400">
+                      Guests are not allowed for this amenity.
+                    </p>
+                  )}
+                </div>
+
+                {(closureReason || formError) && (
+                  <div className="flex gap-2 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{formError || closureReason}</span>
+                  </div>
+                )}
+
+                {!closureReason &&
+                  !isCheckingSlots &&
+                  bookingSlots.length > 0 &&
+                  availableSlotValues.size === 0 && (
+                    <div className="flex gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>
+                        No single time slot is available across all selected
+                        days.
+                      </span>
+                    </div>
+                  )}
+
+                {(selectedAmenity.paymentSettings.bookingFee > 0 ||
+                  selectedAmenity.paymentSettings.securityDeposit > 0) && (
+                  <p className="rounded-xl bg-slate-50 p-3 text-[11px] font-semibold text-slate-500">
+                    Booking fee: {selectedAmenity.paymentSettings.currency}{' '}
+                    {selectedAmenity.paymentSettings.bookingFee}
+                    {selectedAmenity.paymentSettings.securityDeposit > 0 &&
+                      ` · Deposit: ${selectedAmenity.paymentSettings.currency} ${selectedAmenity.paymentSettings.securityDeposit}`}
+                  </p>
+                )}
+
+                <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={closeBookingModal}
+                    disabled={isSubmitting}
+                    className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isSubmitting ||
+                      isCheckingSlots ||
+                      Boolean(closureReason) ||
+                      !timeSlot
+                    }
+                    className="flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {isSubmitting
+                      ? 'Booking...'
+                      : requiresAdminApproval
+                        ? `Request ${bookingDates.length}-Day Booking`
+                        : `Book ${bookingDates.length} Day${
+                            bookingDates.length === 1 ? '' : 's'
+                          }`}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {managedBookingGroup && (
+        <div
+          className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCancellationModal();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manage-booking-days-title"
+            className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  id="manage-booking-days-title"
+                  className="text-lg font-extrabold text-slate-900"
+                >
+                  Manage Booking Days
+                </h2>
+                <p className="mt-1 text-xs font-semibold text-slate-400">
+                  Cancel only the days you no longer need. Unselected days will
+                  remain booked.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCancellationModal}
+                disabled={isCancelling}
+                aria-label="Close booking management"
+                className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <form
+              onSubmit={handlePartialCancellation}
+              className="mt-6 space-y-5"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Select days to cancel
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedCancellationIds(
+                      selectedCancellationIds.length ===
+                        cancellableManagedBookings.length
+                        ? []
+                        : cancellableManagedBookings.map(
+                            (booking) => booking.id
+                          )
+                    )
+                  }
+                  className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700"
+                >
+                  {selectedCancellationIds.length ===
+                  cancellableManagedBookings.length
+                    ? 'Clear selection'
+                    : 'Select all active days'}
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {managedBookingGroup.records.map((booking) => {
+                  const canCancel = cancellableManagedBookings.some(
+                    (item) => item.id === booking.id
+                  );
+                  const isSelected = selectedCancellationIds.includes(
+                    booking.id
+                  );
+                  return (
+                    <label
+                      key={booking.id}
+                      className={`flex items-center justify-between gap-4 rounded-xl border p-3 ${
+                        canCancel
+                          ? 'cursor-pointer border-slate-200 bg-white hover:border-rose-200'
+                          : 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-65'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={!canCancel}
+                          onChange={() =>
+                            setSelectedCancellationIds((current) =>
+                              current.includes(booking.id)
+                                ? current.filter((id) => id !== booking.id)
+                                : [...current, booking.id]
+                            )
+                          }
+                          className="h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                        />
+                        <div>
+                          <p className="text-xs font-extrabold text-slate-700">
+                            {formatBookingDate(booking.date)}
+                          </p>
+                          <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
+                            {formatTime(booking.startTime)} -{' '}
+                            {formatTime(booking.endTime)}
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${
+                          statusClassNames[booking.status] ??
+                          'border-slate-200 bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        {BOOKING_STATUS_LABELS[booking.status] ??
+                          booking.status}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
               <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</label>
-                <input
-                  type="date"
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Cancellation reason
+                </label>
+                <textarea
                   required
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
+                  rows={3}
+                  value={cancellationReason}
+                  onChange={(event) =>
+                    setCancellationReason(event.target.value)
+                  }
+                  placeholder="Tell management why these days are no longer needed..."
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 focus:border-rose-400 focus:bg-white focus:outline-none"
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Time Slot</label>
-                <select
-                  value={timeSlot}
-                  onChange={(e) => setTimeSlot(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
+              {selectedCancellationIds.length > 0 && (
+                <div className="flex gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-[11px] font-semibold text-amber-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {selectedCancellationIds.length ===
+                  cancellableManagedBookings.length
+                    ? 'All remaining active days in this booking will be cancelled.'
+                    : `${selectedCancellationIds.length} selected day${
+                        selectedCancellationIds.length === 1 ? '' : 's'
+                      } will be cancelled. The other days will remain active.`}
+                </div>
+              )}
+
+              {cancellationError && (
+                <div className="flex gap-2 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {cancellationError}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeCancellationModal}
+                  disabled={isCancelling}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                 >
-                  <option value="07:00 AM - 08:30 AM">07:00 AM - 08:30 AM</option>
-                  <option value="09:00 AM - 10:30 AM">09:00 AM - 10:30 AM</option>
-                  <option value="04:00 PM - 05:30 PM">04:00 PM - 05:30 PM</option>
-                  <option value="06:00 PM - 07:30 PM">06:00 PM - 07:30 PM</option>
-                  <option value="08:00 PM - 09:30 PM">08:00 PM - 09:30 PM</option>
-                </select>
+                  Keep Booking
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    isCancelling ||
+                    selectedCancellationIds.length === 0 ||
+                    !cancellationReason.trim()
+                  }
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-rose-100 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {isCancelling
+                    ? 'Cancelling...'
+                    : `Cancel ${selectedCancellationIds.length} Day${
+                        selectedCancellationIds.length === 1 ? '' : 's'
+                      }`}
+                </button>
               </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isMaintenance}
-              className={`w-full py-2.5 text-white font-bold rounded-xl transition-all text-xs flex items-center justify-center gap-1.5 ${
-                isMaintenance 
-                  ? 'bg-slate-300 cursor-not-allowed shadow-none' 
-                  : 'bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-100'
-              }`}
-            >
-              <Plus className="w-4 h-4" />
-              {isMaintenance ? 'Under Maintenance' : 'Book Selected Slot'}
-            </button>
-          </form>
-        </div>
-
-        {/* Bookings log */}
-        <div className="lg:col-span-8 bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between">
-          <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-indigo-650" />
-              <h3 className="font-extrabold text-slate-800 text-sm">Your Upcoming Bookings</h3>
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-50 px-2.5 py-1 border border-slate-100 rounded-lg text-slate-450">
-              {userBookings.length} Bookings
-            </span>
-          </div>
-
-          <div className="overflow-x-auto flex-1">
-            {userBookings.length === 0 ? (
-              <div className="text-center py-12 text-xs text-slate-400 font-semibold">
-                You have no active slot reservations.
-              </div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/55 border-b border-slate-100 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
-                    <th className="px-6 py-3.5">Facility</th>
-                    <th className="px-6 py-3.5">Reserved Date</th>
-                    <th className="px-6 py-3.5">Time Slot</th>
-                    <th className="px-6 py-3.5">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50 text-xs font-semibold text-slate-600">
-                  {userBookings.map((bk) => (
-                    <tr key={bk.id} className="hover:bg-slate-55/30 transition-colors">
-                      <td className="px-6 py-4 font-bold text-slate-850">{bk.amenityName}</td>
-                      <td className="px-6 py-4">{bk.date}</td>
-                      <td className="px-6 py-4 font-mono text-indigo-755">{bk.timeSlot}</td>
-                      <td className="px-6 py-4">
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit">
-                          <CheckCircle className="w-3 h-3 text-emerald-600" />
-                          {bk.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            </form>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

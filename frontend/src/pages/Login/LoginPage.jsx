@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
 import PhoneNumberField from '../../components/auth/PhoneNumberField';
 import { demoAuthAccounts } from '../../data/authentication';
@@ -20,6 +20,9 @@ export default function LoginPage() {
   );
   const login = useAuthStore((state) => state.login);
   const [error, setError] = useState('');
+  const adminDemoAccount = demoAuthAccounts.find(
+    (account) => account.role === 'Admin'
+  );
 
   const isChecking = authFlowState === AUTH_FLOW_STATE.CHECKING_REGISTRATION;
 
@@ -46,15 +49,12 @@ export default function LoginPage() {
     );
   };
 
-  const handleShortcutLogin = (account) => {
-    const result = login(account.phone);
+  const handleShortcutLogin = () => {
+    if (!adminDemoAccount) return;
+    const result = login(adminDemoAccount.phone);
 
     if (result.success) {
-      navigate(
-        account.role === 'Admin'
-          ? AUTH_ROUTES.ADMIN_DASHBOARD
-          : AUTH_ROUTES.RESIDENT_DASHBOARD
-      );
+      navigate(AUTH_ROUTES.ADMIN_DASHBOARD);
     }
   };
 
@@ -98,20 +98,25 @@ export default function LoginPage() {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {demoAuthAccounts.map((account) => (
-          <button
-            key={account.role}
-            type="button"
-            onClick={() => handleShortcutLogin(account)}
-            className="flex flex-col items-center justify-center p-3 border border-slate-150 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 transition-all gap-1"
-          >
-            <span className="text-[10px] font-extrabold uppercase tracking-wide">
-              As {account.role}
-            </span>
-          </button>
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={handleShortcutLogin}
+        className="flex w-full flex-col items-center justify-center gap-1 rounded-xl border border-slate-150 bg-slate-50 p-3 text-slate-700 transition-all hover:bg-slate-100"
+      >
+        <span className="text-[10px] font-extrabold uppercase tracking-wide">
+          Sign in as Demo Admin
+        </span>
+      </button>
+
+      <p className="text-center text-[10px] font-semibold text-slate-400">
+        Resident or society staff?{' '}
+        <Link
+          to={AUTH_ROUTES.RESIDENT_LOGIN}
+          className="font-bold text-indigo-600 hover:underline"
+        >
+          Open Community Portal
+        </Link>
+      </p>
     </AuthCard>
   );
 }

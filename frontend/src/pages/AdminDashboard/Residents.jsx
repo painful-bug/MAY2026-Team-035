@@ -1,12 +1,32 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../store/useApp';
 import { buildInviteLink } from '../../lib/tokens';
-import { Search, Edit2, Trash2, UserPlus, Plus, X, Copy, Check, Link2 } from 'lucide-react';
+import {
+  Search,
+  Edit2,
+  Trash2,
+  UserPlus,
+  Plus,
+  X,
+  Copy,
+  Check,
+  Link2,
+  KeyRound,
+  AlertTriangle,
+  RefreshCw,
+} from 'lucide-react';
 
 const emptyAddForm = { name: '', email: '', tower: 'A', flatNumber: '', phones: [''] };
 
 export default function Residents() {
-  const { users, addResident, editResident, removeResident } = useApp();
+  const {
+    users,
+    invitations,
+    addResident,
+    editResident,
+    removeResident,
+    issueInvite,
+  } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
 
   const [showAdd, setShowAdd] = useState(false);
@@ -25,6 +45,60 @@ export default function Residents() {
   );
 
   const inviteLink = invite ? buildInviteLink(invite.token) : '';
+  const inviteExpired = invite?.expiresAt && Date.now() > invite.expiresAt;
+
+  useEffect(() => {
+    if (!invite) return;
+    const apartmentUsers = users.filter(
+      (user) => user.apartmentId === invite.apartmentId
+    );
+    if (
+      apartmentUsers.length > 0 &&
+      apartmentUsers.every((user) => user.status === 'Active')
+    ) {
+      setInvite(null);
+      setCopied('');
+    }
+  }, [invite, users]);
+
+  const getLatestPendingInvite = (resident) =>
+    [...invitations]
+      .filter(
+        (item) =>
+          item.apartmentId === resident.apartmentId &&
+          !item.used
+      )
+      .sort((first, second) => second.createdAt - first.createdAt)[0] ?? null;
+
+  const getApartmentPhones = (resident) =>
+    users
+      .filter((user) => user.apartmentId === resident.apartmentId)
+      .map((user) => user.phone)
+      .filter(Boolean);
+
+  const openResidentInvite = (resident) => {
+    const pendingInvite = getLatestPendingInvite(resident);
+    if (pendingInvite) {
+      setInvite(pendingInvite);
+      return;
+    }
+
+    const newInvite = issueInvite({
+      apartmentId: resident.apartmentId,
+      phones: getApartmentPhones(resident),
+    });
+    setInvite(newInvite);
+  };
+
+  const renewInvite = () => {
+    if (!invite) return;
+    const newInvite = issueInvite({
+      apartmentId: invite.apartmentId,
+      phones: invite.phones,
+    });
+    setInvite(newInvite);
+    setCopied('');
+  };
 
   const copy = (field, text) => {
     navigator.clipboard?.writeText(text);
@@ -137,6 +211,18 @@ export default function Residents() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
+                        {res.status === 'Invited' && (
+                          <button
+                            type="button"
+                            onClick={() => openResidentInvite(res)}
+                            title="View invite link and registration code"
+                            aria-label={`View invite for ${res.name}`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1.5 text-[9px] font-bold text-amber-700 transition-all hover:border-amber-200 hover:bg-amber-100"
+                          >
+                            <KeyRound className="h-3.5 w-3.5" />
+                            View Invite
+                          </button>
+                        )}
                         <button
                           onClick={() => openEdit(res)}
                           className="p-1.5 border border-slate-100 hover:bg-indigo-50 hover:text-indigo-650 hover:border-indigo-100 rounded-lg text-slate-400 transition-all"
@@ -237,11 +323,19 @@ export default function Residents() {
 
       {/* Invite success modal */}
       {invite && (
-        <Modal onClose={() => setInvite(null)} title="Invite created">
+        <Modal onClose={() => setInvite(null)} title="Resident invite">
           <p className="text-xs font-semibold text-slate-500">
             Share this link or code with the resident. Opening the link signs them straight in;
             the code works from the login screen. It expires in 7 days and can be used once.
           </p>
+          {inviteExpired && (
+            <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                This invite has expired. Generate a new invite before sharing it.
+              </p>
+            </div>
+          )}
           <div className="space-y-3 mt-4">
             <div>
               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1"><Link2 className="w-3 h-3" /> Invite Link</label>
@@ -258,9 +352,20 @@ export default function Residents() {
               </div>
             </div>
           </div>
-          <button onClick={() => setInvite(null)} className="w-full mt-5 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-all">
-            Done
-          </button>
+          {inviteExpired ? (
+            <button
+              type="button"
+              onClick={renewInvite}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 font-bold text-white transition-all hover:bg-indigo-700"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Generate New Invite
+            </button>
+          ) : (
+            <button onClick={() => setInvite(null)} className="w-full mt-5 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-all">
+              Done
+            </button>
+          )}
         </Modal>
       )}
 
