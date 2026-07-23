@@ -6,7 +6,6 @@ import {
   LayoutDashboard, 
   UserPlus, 
   Users, 
-  ShieldAlert, 
   Megaphone, 
   AlertOctagon, 
   Wrench,
@@ -15,7 +14,8 @@ import {
   LogOut,
   ShieldCheck,
   X,
-  Calendar
+  Calendar,
+  Building2
 } from 'lucide-react';
 
 export default function AdminLayout() {
@@ -35,6 +35,7 @@ export default function AdminLayout() {
     { name: 'Pending Registrations', path: '/admin/pending', icon: UserPlus, badgeKey: 'pending' },
     { name: 'Residents', path: '/admin/residents', icon: Users },
     { name: 'Admins', path: '/admin/admins', icon: ShieldCheck },
+    { name: 'Departments', path: '/admin/departments', icon: Building2 },
     { name: 'Amenities Management', path: '/admin/amenities', icon: Calendar },
     { name: 'Notices Board', path: '/admin/notices', icon: Megaphone },
     { name: 'Complaints Management', path: '/admin/complaints', icon: AlertOctagon },

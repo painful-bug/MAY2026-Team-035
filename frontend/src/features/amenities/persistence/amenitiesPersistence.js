@@ -1,6 +1,6 @@
 import { normalizeAmenityRecord } from '../utils/amenitySettingsModel.js';
 
-const AMENITIES_STORAGE_KEY = 'homebandhu-amenities';
+export const AMENITIES_STORAGE_KEY = 'homebandhu-amenities';
 const AMENITIES_VERSION_KEY = 'homebandhu-amenities-version';
 const AMENITIES_VERSION = '2';
 

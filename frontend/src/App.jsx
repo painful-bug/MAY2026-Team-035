@@ -17,8 +17,9 @@ import FeatureConfigurationPage from './pages/FeatureConfiguration/FeatureConfig
 import AdminProfilePage from './pages/AdminProfile/AdminProfilePage';
 import OnboardingOtpPage from './pages/OnboardingOtp/OnboardingOtpPage';
 import OnboardingSuccessPage from './pages/OnboardingSuccess/OnboardingSuccessPage';
-import SignupPage from './pages/Signup/SignupPage';
 import JoinPage from './pages/Join/JoinPage';
+import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
+import ResidentLoginPage from './pages/ResidentLogin/ResidentLoginPage';
 import AuthFlowRoute from './routes/AuthFlowRoute';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
 import { AUTH_ROUTES } from './routes/authRoutes';
@@ -33,6 +34,7 @@ import ResidentAmenities from './pages/ResidentDashboard/Amenities';
 import ResidentPayments from './pages/ResidentDashboard/Payments';
 import ResidentNotices from './pages/ResidentDashboard/Notices';
 import ResidentProfile from './pages/ResidentDashboard/Profile';
+import ResidentFaq from './pages/ResidentDashboard/Faq';
 
 // Admin Pages
 import AdminHome from './pages/AdminDashboard/AdminHome';
@@ -44,7 +46,8 @@ import AdminComplaints from './pages/AdminDashboard/Complaints';
 import AdminMaintenance from './pages/AdminDashboard/Maintenance';
 import AdminSettings from './pages/AdminDashboard/Settings';
 import AdminAmenities from './pages/AdminDashboard/Amenities';
-import CreateDepartment from './pages/AdminDashboard/CreateDepartment';
+import AdminDepartments from './pages/AdminDashboard/Departments';
+import AdminDepartmentDetail from './pages/AdminDashboard/DepartmentDetail';
 import AmenityDetailLayout from './features/amenities/layouts/AmenityDetailLayout';
 import AmenityDashboardPage from './features/amenities/pages/AmenityDashboardPage';
 import AmenityApprovalsPage from './features/amenities/pages/AmenityApprovalsPage';
@@ -56,12 +59,16 @@ const AmenityReportsPage = lazy(() =>
 );
 
 // Protected Route Guard Simulation
-function ProtectedRoute({ children, requiredRole }) {
+function ProtectedRoute({
+  children,
+  requiredRole,
+  loginPath = AUTH_ROUTES.LOGIN,
+}) {
   const { currentUser } = useApp();
   
   if (!currentUser) {
     // If not logged in, redirect to login page
-    return <Navigate to={AUTH_ROUTES.LOGIN} replace />;
+    return <Navigate to={loginPath} replace />;
   }
   
   if (requiredRole && currentUser.role !== requiredRole) {
@@ -79,6 +86,14 @@ export default function App() {
           {/* Public Routes */}
           <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
           <Route path={AUTH_ROUTES.LOGIN} element={<LoginPage />} />
+          <Route
+            path={AUTH_ROUTES.RESIDENT_LANDING}
+            element={<ResidentLandingPage />}
+          />
+          <Route
+            path={AUTH_ROUTES.RESIDENT_LOGIN}
+            element={<ResidentLoginPage />}
+          />
           <Route
             path={AUTH_ROUTES.OTP_VERIFICATION}
             element={
@@ -160,14 +175,17 @@ export default function App() {
               </OnboardingFlowRoute>
             }
           />
-          <Route path="/signup" element={<SignupPage />} />
+          <Route
+            path="/signup"
+            element={<Navigate to={AUTH_ROUTES.RESIDENT_LOGIN} replace />}
+          />
           <Route path="/join/:token" element={<JoinPage />} />
 
           {/* Resident Dashboard Layout */}
           <Route 
             path={AUTH_ROUTES.RESIDENT_DASHBOARD}
             element={
-              <ProtectedRoute>
+              <ProtectedRoute loginPath={AUTH_ROUTES.RESIDENT_LOGIN}>
                 <ResidentLayout />
               </ProtectedRoute>
             }
@@ -178,6 +196,7 @@ export default function App() {
             <Route path="amenities" element={<ResidentAmenities />} />
             <Route path="payments" element={<ResidentPayments />} />
             <Route path="notices" element={<ResidentNotices />} />
+            <Route path="faq" element={<ResidentFaq />} />
             <Route path="profile" element={<ResidentProfile />} />
           </Route>
 
@@ -191,7 +210,15 @@ export default function App() {
             }
           >
             <Route index element={<AdminHome />} />
-            <Route path="department/new" element={<CreateDepartment />} />
+            <Route path="departments" element={<AdminDepartments />} />
+            <Route
+              path="departments/:departmentId"
+              element={<AdminDepartmentDetail />}
+            />
+            <Route
+              path="department/new"
+              element={<Navigate to="/admin/departments?create=1" replace />}
+            />
             <Route path="pending" element={<PendingRegistrations />} />
             <Route path="residents" element={<ResidentsTable />} />
             <Route path="admins" element={<AdminsList />} />

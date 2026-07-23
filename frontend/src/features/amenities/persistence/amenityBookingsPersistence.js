@@ -1,4 +1,4 @@
-const AMENITY_BOOKINGS_STORAGE_KEY = 'homebandhu-amenity-bookings';
+export const AMENITY_BOOKINGS_STORAGE_KEY = 'homebandhu-amenity-bookings';
 const AMENITY_BOOKINGS_SEED_VERSION_KEY =
   'homebandhu-amenity-bookings-seed-version';
 const AMENITY_BOOKINGS_SEED_VERSION = '2';
