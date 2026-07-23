@@ -13,14 +13,20 @@ administrators. This repository is an npm-workspaces monorepo.
 
 ```
 .
-├── frontend/   # React 19 + Vite + Tailwind v4 SPA (all app code)
-└── backend/    # reserved — no server yet
+├── frontend/   # React 19 + Vite + Tailwind v4 SPA
+└── backend/    # Python FastAPI service over Supabase (Postgres + Auth + Storage)
 ```
 
-The frontend has **no backend**. Domain state lives in a Zustand store
-persisted to browser storage, which also gives it realtime cross-tab sync
-(a change in one tab shows up in others without a reload). See
+The **frontend currently runs without a live backend**: domain state lives in a
+Zustand store persisted to browser storage, which also gives it realtime
+cross-tab sync (a change in one tab shows up in others without a reload). See
 `frontend/src/store/`.
+
+A real backend is being built in `backend/` — a **FastAPI** service on top of
+**Supabase**, with role-based auth (`RESIDENT/MANAGER/TECHNICIAN/SECURITY/ADMIN`)
+via phone SMS OTP login and admin-issued invite links. It is not yet wired to the
+frontend. See [backend/README.md](backend/README.md) for setup and run
+instructions.
 
 ## Getting started
 

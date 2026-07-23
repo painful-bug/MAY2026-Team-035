@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-"HomeBandhu" — a residential society/apartment management app. React 19 + Vite + Tailwind CSS v4. There is **no backend**: all data lives in a Zustand store seeded from static arrays in `frontend/src/data/`. State is persisted to browser storage, so it survives reloads and syncs across tabs.
+"HomeBandhu" — a residential society/apartment management app. React 19 + Vite + Tailwind CSS v4. The **frontend has no live backend yet**: all data lives in a Zustand store seeded from static arrays in `frontend/src/data/`, persisted to browser storage so it survives reloads and syncs across tabs.
 
-Monorepo (npm workspaces): all app code is in `frontend/`; `backend/` is an empty placeholder for a future server.
+Monorepo: SPA code is in `frontend/`. `backend/` now holds a **Python FastAPI service over Supabase** (Postgres + Auth + Storage) that is being built out but is not yet wired to the frontend. See the "Backend" section of the root [AGENTS.md](../AGENTS.md) and [backend/README.md](../backend/README.md) — the backend's single Supabase entry point is `backend/app/core/supabase_client.py`, and RBAC (`RESIDENT/MANAGER/TECHNICIAN/SECURITY/ADMIN`, ADMIN ⊇ RESIDENT) is enforced via JWT `user_role` claim + Postgres RLS + FastAPI `require_role` guards.
 
 ## Commands
 
