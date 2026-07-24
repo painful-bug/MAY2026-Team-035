@@ -11,6 +11,7 @@ import {
   normalizePhoneNumber,
   sanitizePhoneInput,
 } from '../utils/phone';
+import { findSecurityCommunityAccount } from '../lib/securityAccounts';
 
 export const ADMIN_REGISTRATION_STATUS = Object.freeze({
   UNKNOWN: 'unknown',
@@ -163,41 +164,19 @@ export const useAuthStore = create(
           const userPhone = normalizePhoneNumber(u.phone);
           return userPhone === cleanPhone;
         });
-        const securityDepartment = app.departments.find((department) => {
-          const handlesSecurity =
-            department.name.toLowerCase().includes('security') ||
-            department.categories?.some(
-              (category) => category.toLowerCase() === 'security'
-            );
-          return (
-            department.status !== 'Inactive' &&
-            handlesSecurity &&
-            department.staff?.some(
-              (member) =>
-                normalizePhoneNumber(member.phone) === cleanPhone
-            )
-          );
-        });
-        const securityStaff = securityDepartment?.staff.find(
-          (member) => normalizePhoneNumber(member.phone) === cleanPhone
+        const securityUser = findSecurityCommunityAccount(
+          app.departments,
+          cleanPhone
         );
-        const securityUser = securityStaff
-          ? {
-              id: `security-${securityStaff.id}`,
-              name: securityStaff.name,
-              phone: securityStaff.phone,
-              role: 'Security',
-              staffRole: securityStaff.role,
-              departmentId: securityDepartment.id,
-              departmentName: securityDepartment.name,
-              status: 'Active',
-              tower: 'Community',
-              flat: 'Main Gate',
-            }
-          : null;
         const communityUser = foundUser || securityUser;
 
         if (communityUser) {
+          if (communityUser.status !== 'Active') {
+            return {
+              success: false,
+              message: 'This account is inactive. Contact your society administrator.',
+            };
+          }
           set({
             currentUser: communityUser,
             currentPhone: cleanPhone,

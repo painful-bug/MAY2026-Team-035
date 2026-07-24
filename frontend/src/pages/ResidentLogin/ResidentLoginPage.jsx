@@ -22,6 +22,7 @@ import {
   normalizePhoneNumber,
   sanitizePhoneInput,
 } from '../../utils/phone';
+import { findSecurityCommunityAccount } from '../../lib/securityAccounts';
 
 export default function ResidentLoginPage() {
   const navigate = useNavigate();
@@ -55,28 +56,8 @@ export default function ResidentLoginPage() {
     const user = users.find(
       (item) => normalizePhoneNumber(item.phone) === cleanPhone
     );
-    const securityDepartment = departments.find((department) => {
-      const handlesSecurity =
-        department.name.toLowerCase().includes('security') ||
-        department.categories?.some(
-          (category) => category.toLowerCase() === 'security'
-        );
-      return (
-        department.status !== 'Inactive' &&
-        handlesSecurity &&
-        department.staff?.some(
-          (member) => normalizePhoneNumber(member.phone) === cleanPhone
-        )
-      );
-    });
-    const securityStaff = securityDepartment?.staff.find(
-      (member) => normalizePhoneNumber(member.phone) === cleanPhone
-    );
     const account =
-      user ||
-      (securityStaff
-        ? { ...securityStaff, role: 'Security', status: 'Active' }
-        : null);
+      user || findSecurityCommunityAccount(departments, cleanPhone);
 
     if (!account) {
       setError(

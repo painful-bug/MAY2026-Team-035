@@ -9,9 +9,7 @@ import {
   Megaphone, 
   User, 
   AlertCircle, 
-  Calendar,
-  Activity,
-  ArrowRight
+  Activity
 } from 'lucide-react';
 
 export default function Header({ onMenuClick }) {
@@ -72,7 +70,7 @@ export default function Header({ onMenuClick }) {
           {currentUser && (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3.5 py-1.5 rounded-full text-xs font-semibold text-slate-600">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-              {currentUser.role === 'Security'
+              {['Security', 'SecurityManager'].includes(currentUser.role)
                 ? `${currentUser.departmentName} • ${currentUser.staffRole}`
                 : `Flat ${currentUser.flat} • Tower ${currentUser.tower}`}
             </div>
@@ -119,7 +117,9 @@ export default function Header({ onMenuClick }) {
                 <p className="text-[11px] font-semibold text-slate-400">
                   {currentUser.role === 'Admin'
                     ? 'Administrator'
-                    : currentUser.role === 'Security'
+                    : currentUser.role === 'SecurityManager'
+                      ? 'Security Department Manager'
+                      : currentUser.role === 'Security'
                       ? `Security ${currentUser.staffRole || 'Staff'}`
                       : 'Resident Owner'}
                 </p>

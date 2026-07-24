@@ -433,7 +433,7 @@ export default function Departments() {
               <div className="mt-4 flex flex-col justify-between gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center">
                 <div>
                   <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                    Department Head
+                    Department Manager
                   </p>
                   <p className="mt-0.5 text-xs font-bold text-slate-700">
                     {department.head || 'Not assigned'}
@@ -733,8 +733,9 @@ function DepartmentForm({
       </Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Department head">
+        <Field label="Department manager">
           <input
+            required={isSecurityDepartment}
             value={form.head}
             onChange={(event) =>
               setForm((current) => ({ ...current, head: event.target.value }))
@@ -756,6 +757,7 @@ function DepartmentForm({
         </Field>
         <Field label="Contact phone">
           <input
+            required={isSecurityDepartment}
             value={form.phone}
             onChange={(event) =>
               setForm((current) => ({ ...current, phone: event.target.value }))
@@ -782,40 +784,56 @@ function DepartmentForm({
         </Field>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Opening time">
-          <input
-            type="time"
-            value={form.operatingHours.start}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                operatingHours: {
-                  ...current.operatingHours,
-                  start: event.target.value,
-                },
-              }))
-            }
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Closing time">
-          <input
-            type="time"
-            value={form.operatingHours.end}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                operatingHours: {
-                  ...current.operatingHours,
-                  end: event.target.value,
-                },
-              }))
-            }
-            className={inputClass}
-          />
-        </Field>
-      </div>
+      {isSecurityDepartment && (
+        <p className="-mt-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3.5 py-3 text-[10px] font-semibold leading-relaxed text-indigo-700">
+          The security department manager can sign in through the Community
+          Portal using the contact phone number. Staff use the phone numbers in
+          the team list below.
+        </p>
+      )}
+
+      <Field label="Operating hours">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="space-y-1">
+            <span className="text-[10px] font-semibold text-slate-400">
+              Start time
+            </span>
+            <input
+              type="time"
+              value={form.operatingHours.start}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  operatingHours: {
+                    ...current.operatingHours,
+                    start: event.target.value,
+                  },
+                }))
+              }
+              className={inputClass}
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[10px] font-semibold text-slate-400">
+              End time
+            </span>
+            <input
+              type="time"
+              value={form.operatingHours.end}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  operatingHours: {
+                    ...current.operatingHours,
+                    end: event.target.value,
+                  },
+                }))
+              }
+              className={inputClass}
+            />
+          </label>
+        </div>
+      </Field>
 
       <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
         <div className="flex items-center justify-between gap-3">
@@ -935,7 +953,7 @@ function DepartmentDetails({ department, summary, complaints, onEdit }) {
             {department.description || 'No description added.'}
           </p>
           <div className="mt-4 space-y-2.5 text-xs font-semibold text-slate-500">
-            <DetailRow icon={UserRound} value={department.head || 'No department head'} />
+            <DetailRow icon={UserRound} value={department.head || 'No department manager'} />
             <DetailRow icon={Mail} value={department.email || 'No email added'} />
             <DetailRow icon={Phone} value={department.phone || 'No phone added'} />
             <DetailRow

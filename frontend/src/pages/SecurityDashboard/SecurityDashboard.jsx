@@ -126,6 +126,10 @@ export default function SecurityDashboard({ view = 'dashboard' }) {
     addActivity,
   } = useApp();
   const navigate = useNavigate();
+  const dashboardPath =
+    currentUser?.role === 'SecurityManager'
+      ? AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD
+      : AUTH_ROUTES.SECURITY_DASHBOARD;
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const scannerTimerRef = useRef(null);
@@ -466,7 +470,7 @@ export default function SecurityDashboard({ view = 'dashboard' }) {
             <button
               type="button"
               onClick={() =>
-                navigate(`${AUTH_ROUTES.SECURITY_DASHBOARD}/visitors`)
+                navigate(`${dashboardPath}/visitors`)
               }
               className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 hover:bg-indigo-700"
             >
@@ -535,13 +539,13 @@ export default function SecurityDashboard({ view = 'dashboard' }) {
         {!isVisitorWorkspace && (
           <QuickActions
             onVisitors={() =>
-              navigate(`${AUTH_ROUTES.SECURITY_DASHBOARD}/visitors`)
+              navigate(`${dashboardPath}/visitors`)
             }
             onHistory={() =>
-              navigate(`${AUTH_ROUTES.SECURITY_DASHBOARD}/history`)
+              navigate(`${dashboardPath}/history`)
             }
             onEmergency={() =>
-              navigate(`${AUTH_ROUTES.SECURITY_DASHBOARD}/emergency`)
+              navigate(`${dashboardPath}/emergency`)
             }
           />
         )}

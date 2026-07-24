@@ -53,6 +53,7 @@ import AdminAmenities from './pages/AdminDashboard/Amenities';
 import AdminDepartments from './pages/AdminDashboard/Departments';
 import AdminDepartmentDetail from './pages/AdminDashboard/DepartmentDetail';
 import SecurityDashboard from './pages/SecurityDashboard/SecurityDashboard';
+import SecurityManagerDashboard from './pages/SecurityManagerDashboard/SecurityManagerDashboard';
 import AmenityDetailLayout from './features/amenities/layouts/AmenityDetailLayout';
 import AmenityDashboardPage from './features/amenities/pages/AmenityDashboardPage';
 import AmenityApprovalsPage from './features/amenities/pages/AmenityApprovalsPage';
@@ -226,6 +227,37 @@ export default function App() {
             }
           >
             <Route index element={<SecurityDashboard view="dashboard" />} />
+            <Route
+              path="visitors"
+              element={<SecurityDashboard view="visitors" />}
+            />
+            <Route
+              path="history"
+              element={<SecurityDashboard view="history" />}
+            />
+            <Route
+              path="emergency"
+              element={<SecurityDashboard view="emergency" />}
+            />
+          </Route>
+
+          {/* Security Department Manager Dashboard */}
+          <Route
+            path={AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD}
+            element={
+              <ProtectedRoute
+                requiredRole="SecurityManager"
+                loginPath={AUTH_ROUTES.RESIDENT_LOGIN}
+              >
+                <SecurityLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<SecurityManagerDashboard />} />
+            <Route
+              path="staff"
+              element={<SecurityManagerDashboard view="staff" />}
+            />
             <Route
               path="visitors"
               element={<SecurityDashboard view="visitors" />}
