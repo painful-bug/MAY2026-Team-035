@@ -8,40 +8,53 @@ import {
   LifeBuoy,
   LogOut,
   ShieldCheck,
+  Users,
   X,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
 import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useApp } from '../store/useApp';
 
-const navItems = [
-  {
-    name: 'Gate Overview',
-    path: AUTH_ROUTES.SECURITY_DASHBOARD,
-    icon: LayoutDashboard,
-    end: true,
-  },
-  {
-    name: 'Visitor Access',
-    path: `${AUTH_ROUTES.SECURITY_DASHBOARD}/visitors`,
-    icon: ClipboardClock,
-  },
-  {
-    name: 'Gate History',
-    path: `${AUTH_ROUTES.SECURITY_DASHBOARD}/history`,
-    icon: History,
-  },
-  {
-    name: 'Emergency Desk',
-    path: `${AUTH_ROUTES.SECURITY_DASHBOARD}/emergency`,
-    icon: LifeBuoy,
-  },
-];
-
 export default function SecurityLayout() {
   const { currentUser, logout } = useApp();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isManager = currentUser?.role === 'SecurityManager';
+  const basePath = isManager
+    ? AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD
+    : AUTH_ROUTES.SECURITY_DASHBOARD;
+  const navItems = [
+    {
+      name: isManager ? 'Operations Overview' : 'Gate Overview',
+      path: basePath,
+      icon: LayoutDashboard,
+      end: true,
+    },
+    ...(isManager
+      ? [
+          {
+            name: 'Manage Staff',
+            path: `${basePath}/staff`,
+            icon: Users,
+          },
+        ]
+      : []),
+    {
+      name: 'Visitor Access',
+      path: `${basePath}/visitors`,
+      icon: ClipboardClock,
+    },
+    {
+      name: 'Gate History',
+      path: `${basePath}/history`,
+      icon: History,
+    },
+    {
+      name: 'Emergency Desk',
+      path: `${basePath}/emergency`,
+      icon: LifeBuoy,
+    },
+  ];
 
   const handleLogout = () => {
     navigate(AUTH_ROUTES.RESIDENT_LANDING);
@@ -72,7 +85,7 @@ export default function SecurityLayout() {
             <div>
               <p className="text-sm font-extrabold">HomeBandhu</p>
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                Security Operations
+                {isManager ? 'Security Management' : 'Security Operations'}
               </p>
             </div>
           </div>
@@ -96,13 +109,14 @@ export default function SecurityLayout() {
                   {currentUser?.name}
                 </p>
                 <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-400">
-                  {currentUser?.staffRole} · Main Gate
+                  {currentUser?.staffRole} ·{' '}
+                  {isManager ? 'Operations Centre' : 'Main Gate'}
                 </p>
               </div>
             </div>
             <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-[10px] font-bold text-emerald-400">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              On duty
+              {isManager ? 'Manager access' : 'On duty'}
             </div>
           </div>
 
@@ -135,7 +149,7 @@ export default function SecurityLayout() {
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-slate-300 hover:border-rose-400/30 hover:bg-rose-500/10 hover:text-rose-300"
           >
             <LogOut className="h-4 w-4" />
-            End Shift & Logout
+            {isManager ? 'Logout' : 'End Shift & Logout'}
           </button>
         </div>
       </aside>

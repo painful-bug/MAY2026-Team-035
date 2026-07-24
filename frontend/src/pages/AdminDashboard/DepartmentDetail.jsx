@@ -269,7 +269,7 @@ export default function DepartmentDetail() {
           </div>
           <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs shadow-sm">
             <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-              Department Head
+              Department Manager
             </p>
             <p className="mt-1 font-extrabold text-slate-700">
               {department.head || 'Not assigned'}
