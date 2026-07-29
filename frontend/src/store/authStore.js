@@ -1,11 +1,18 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { useAppStore } from './appStore';
-import { demoAuthAccounts } from '../data/authentication';
 import {
-  findRegisteredAdmin,
-  verifyAdminOtp,
-} from '../services/adminAuthService';
+  beginAuthentication,
+  getSession,
+  linkGoogleIdentity,
+  onAuthStateChange,
+  redeemResidentInvite,
+  requestOtp,
+  resolveApplicationUser,
+  signOut,
+  verifyOtp,
+} from '../lib/auth/authService';
+import { isSupabaseAuthConfigured } from '../lib/auth/supabaseClient';
 import {
   isValidMobileNumber,
   normalizePhoneNumber,
@@ -20,202 +27,226 @@ export const ADMIN_REGISTRATION_STATUS = Object.freeze({
 
 export const AUTH_FLOW_STATE = Object.freeze({
   IDLE: 'idle',
-  CHECKING_REGISTRATION: 'checking_registration',
+  INITIALIZING: 'initializing',
+  REDIRECTING: 'redirecting',
   OTP_REQUIRED: 'otp_required',
   OTP_SUBMITTING: 'otp_submitting',
+  // Retained while the separate association-onboarding flow is migrated to the
+  // backend. It is no longer entered by the login screen.
   REGISTRATION_REQUIRED: 'registration_required',
   AUTHENTICATED: 'authenticated',
+  ERROR: 'error',
 });
 
-const initialAdminAuthState = {
+const initialAuthState = {
+  currentUser: null,
   currentPhone: '',
   registrationStatus: ADMIN_REGISTRATION_STATUS.UNKNOWN,
   authFlowState: AUTH_FLOW_STATE.IDLE,
-  pendingAdmin: null,
+  authProvider: null,
+  authError: '',
+  isAuthReady: false,
 };
 
-// Auth is scoped per-tab on purpose: currentUser persists to sessionStorage, so
-// a resident tab and an admin tab stay independently logged in (both reading the
-// same shared domain data from useAppStore). login/logout reach into the app
-// store at call time (not import time) — the circular import is safe because
-// nothing crosses stores during module evaluation.
+let subscription;
+
+function messageFrom(error, fallback) {
+  const message = error instanceof Error && error.message ? error.message : fallback;
+  if (/unsupported provider.*not enabled/i.test(message)) {
+    return 'Google sign-in is not enabled for this Supabase project yet. Use phone OTP or ask an administrator to enable the Google provider.';
+  }
+  return message;
+}
+
+async function hydrateSession(set, session) {
+  if (!session) {
+    set({
+      currentUser: null,
+      authProvider: null,
+      authFlowState: AUTH_FLOW_STATE.IDLE,
+      authError: '',
+      isAuthReady: true,
+    });
+    return { success: true, user: null };
+  }
+
+  set({ authFlowState: AUTH_FLOW_STATE.INITIALIZING, authError: '' });
+  try {
+    const user = await resolveApplicationUser(session);
+    set({
+      currentUser: user,
+      authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
+      authError: '',
+      isAuthReady: true,
+    });
+    return { success: true, user };
+  } catch (error) {
+    const message = messageFrom(error, 'Unable to load your HomeBandhu access.');
+    set({
+      currentUser: null,
+      authFlowState: AUTH_FLOW_STATE.ERROR,
+      authError: message,
+      isAuthReady: true,
+    });
+    return { success: false, message };
+  }
+}
+
+// The auth store never manufactures a user. Every authenticated UI identity is
+// derived from a Supabase session plus an active community membership.
 export const useAuthStore = create(
   persist(
     (set, get) => ({
-      currentUser: null,
-      ...initialAdminAuthState,
+      ...initialAuthState,
 
-      setCurrentUser: (currentUser) =>
-        set({
-          currentUser,
-          authFlowState: currentUser
-            ? AUTH_FLOW_STATE.AUTHENTICATED
-            : AUTH_FLOW_STATE.IDLE,
-        }),
+      initializeAuth: async () => {
+        if (!isSupabaseAuthConfigured()) {
+          set({
+            currentUser: null,
+            authFlowState: AUTH_FLOW_STATE.ERROR,
+            authError: 'Authentication is not configured for this environment.',
+            isAuthReady: true,
+          });
+          return;
+        }
+
+        set({ authFlowState: AUTH_FLOW_STATE.INITIALIZING, isAuthReady: false });
+        try {
+          await hydrateSession(set, await getSession());
+        } catch (error) {
+          set({
+            currentUser: null,
+            authFlowState: AUTH_FLOW_STATE.ERROR,
+            authError: messageFrom(error, 'Unable to restore your session.'),
+            isAuthReady: true,
+          });
+        }
+
+        if (!subscription) {
+          subscription = onAuthStateChange((session) => {
+            void hydrateSession(set, session);
+          }).data.subscription;
+        }
+      },
 
       setCurrentPhone: (phone) =>
         set({
           currentPhone: sanitizePhoneInput(phone),
+          authError: '',
           registrationStatus: ADMIN_REGISTRATION_STATUS.UNKNOWN,
-          authFlowState: AUTH_FLOW_STATE.IDLE,
-          pendingAdmin: null,
         }),
 
-      startAdminAuthentication: async () => {
-        const phone = normalizePhoneNumber(get().currentPhone);
-
-        if (!isValidMobileNumber(phone)) {
-          return {
-            success: false,
-            message: 'Please enter a valid 10-digit mobile number.',
-          };
+      beginProviderSignIn: async (provider) => {
+        if (!isSupabaseAuthConfigured()) {
+          return { success: false, message: 'Authentication is not configured for this environment.' };
         }
 
-        set({
-          currentUser: null,
-          authFlowState: AUTH_FLOW_STATE.CHECKING_REGISTRATION,
-        });
-
+        set({ authProvider: provider, authFlowState: AUTH_FLOW_STATE.REDIRECTING, authError: '' });
         try {
-          const admin = await findRegisteredAdmin(phone);
-
-          if (admin) {
-            set({
-              currentPhone: phone,
-              registrationStatus: ADMIN_REGISTRATION_STATUS.REGISTERED,
-              authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED,
-              pendingAdmin: admin,
-            });
-            return { success: true, isRegistered: true };
-          }
-
-          set({
-            currentPhone: phone,
-            registrationStatus: ADMIN_REGISTRATION_STATUS.NEW_ADMIN,
-            authFlowState: AUTH_FLOW_STATE.REGISTRATION_REQUIRED,
-            pendingAdmin: null,
-          });
-          return { success: true, isRegistered: false };
-        } catch {
-          set({ authFlowState: AUTH_FLOW_STATE.IDLE });
-          return {
-            success: false,
-            message: 'Unable to check admin registration. Please try again.',
-          };
+          await beginAuthentication(provider);
+          return { success: true };
+        } catch (error) {
+          const message = messageFrom(error, 'Unable to start sign in.');
+          set({ authFlowState: AUTH_FLOW_STATE.IDLE, authError: message });
+          return { success: false, message };
         }
       },
 
-      // Task 1 fix: model submission and authentication as separate states.
-      // The mock service accepts every OTP; its async contract matches the
-      // future verify-OTP API boundary.
-      submitAdminOtp: async (otp) => {
-        const { currentPhone, registrationStatus, authFlowState } = get();
-
-        if (
-          registrationStatus !== ADMIN_REGISTRATION_STATUS.REGISTERED ||
-          authFlowState !== AUTH_FLOW_STATE.OTP_REQUIRED
-        ) {
-          return {
-            success: false,
-            message: 'Start the admin login flow before submitting an OTP.',
-          };
+      requestPhoneOtp: async () => {
+        const phone = normalizePhoneNumber(get().currentPhone);
+        if (!isValidMobileNumber(phone)) {
+          return { success: false, message: 'Please enter a valid 10-digit mobile number.' };
         }
 
-        set({ authFlowState: AUTH_FLOW_STATE.OTP_SUBMITTING });
-
+        set({ authProvider: 'otp', authFlowState: AUTH_FLOW_STATE.OTP_SUBMITTING, authError: '' });
         try {
-          const result = await verifyAdminOtp({ phone: currentPhone, otp });
+          await requestOtp(`+91${phone}`);
+          set({ currentPhone: phone, authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED });
+          return { success: true };
+        } catch (error) {
+          const message = messageFrom(error, 'Unable to send the OTP. Please try again.');
+          set({ authFlowState: AUTH_FLOW_STATE.IDLE, authError: message });
+          return { success: false, message };
+        }
+      },
 
-          if (!result.success) {
-            set({ authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED });
-            return result;
+      submitAdminOtp: async (otp) => {
+        const phone = normalizePhoneNumber(get().currentPhone);
+        if (!isValidMobileNumber(phone) || get().authFlowState !== AUTH_FLOW_STATE.OTP_REQUIRED) {
+          return { success: false, message: 'Request a new OTP before submitting it.' };
+        }
+
+        set({ authFlowState: AUTH_FLOW_STATE.OTP_SUBMITTING, authError: '' });
+        try {
+          const session = await verifyOtp(`+91${phone}`, otp);
+          if (!session) throw new Error('Invalid or expired OTP.');
+          const result = await hydrateSession(set, session);
+          if (result.success && result.user) {
+            useAppStore.getState().showToast(`Welcome back, ${result.user.name}!`, 'success');
           }
+          return result;
+        } catch (error) {
+          const message = messageFrom(error, 'Unable to verify the OTP. Please try again.');
+          set({ authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED, authError: message });
+          return { success: false, message };
+        }
+      },
 
-          set({
-            currentUser: result.admin,
-            authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
-            pendingAdmin: null,
-          });
-          useAppStore
-            .getState()
-            .showToast(`Welcome back, ${result.admin.name}!`, 'success');
-          return { success: true, user: result.admin };
-        } catch {
-          set({ authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED });
-          return {
-            success: false,
-            message: 'Unable to submit the OTP. Please try again.',
-          };
+      completeExternalLogin: async () => {
+        try {
+          return await hydrateSession(set, await getSession());
+        } catch (error) {
+          const message = messageFrom(error, 'Unable to complete sign in.');
+          set({ authFlowState: AUTH_FLOW_STATE.ERROR, authError: message, isAuthReady: true });
+          return { success: false, message };
+        }
+      },
+
+      linkGoogleIdentity: async () => {
+        set({ authFlowState: AUTH_FLOW_STATE.REDIRECTING, authError: '' });
+        try {
+          await linkGoogleIdentity();
+          return { success: true };
+        } catch (error) {
+          const message = messageFrom(error, 'Unable to link your Google account.');
+          set({ authFlowState: AUTH_FLOW_STATE.AUTHENTICATED, authError: message });
+          return { success: false, message };
+        }
+      },
+
+      redeemInvite: async (token, phone) => {
+        try {
+          const session = await redeemResidentInvite(phone, token);
+          return hydrateSession(set, session);
+        } catch (error) {
+          return { success: false, message: messageFrom(error, 'Unable to redeem this invite.') };
         }
       },
 
       resetAdminAuthentication: () =>
-        set({ currentUser: null, ...initialAdminAuthState }),
+        set({
+          currentPhone: '',
+          registrationStatus: ADMIN_REGISTRATION_STATUS.UNKNOWN,
+          authFlowState: AUTH_FLOW_STATE.IDLE,
+          authProvider: null,
+          authError: '',
+        }),
 
-      // Temporary direct login used only by the Resident/Admin demonstration
-      // shortcut buttons retained until the Resident Portal is replaced.
-      login: (phone) => {
-        const app = useAppStore.getState();
-        const users = app.users;
-        const cleanPhone = normalizePhoneNumber(phone);
-
-        const foundUser = users.find((u) => {
-          const userPhone = normalizePhoneNumber(u.phone);
-          return userPhone === cleanPhone;
-        });
-        if (foundUser) {
-          set({
-            currentUser: foundUser,
-            currentPhone: cleanPhone,
-            registrationStatus:
-              foundUser.role === 'Admin'
-                ? ADMIN_REGISTRATION_STATUS.REGISTERED
-                : ADMIN_REGISTRATION_STATUS.UNKNOWN,
-            authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
-            pendingAdmin: null,
-          });
-          app.showToast(`Welcome back, ${foundUser.name}!`, 'success');
-          return { success: true, user: foundUser };
+      logout: async () => {
+        try {
+          if (isSupabaseAuthConfigured()) await signOut();
+        } finally {
+          set({ ...initialAuthState, isAuthReady: true });
+          useAppStore.getState().showToast('Logged out successfully', 'info');
         }
-
-        const demoAccount = demoAuthAccounts.find(
-          (account) => normalizePhoneNumber(account.phone) === cleanPhone
-        );
-
-        if (demoAccount) {
-          const u =
-            users.find((user) => user.id === demoAccount.userId) ||
-            users.find((user) => user.role === demoAccount.role);
-
-          if (!u) {
-            return { success: false, message: 'Demo account is unavailable.' };
-          }
-
-          set({
-            currentUser: u,
-            currentPhone: cleanPhone,
-            registrationStatus:
-              demoAccount.role === 'Admin'
-                ? ADMIN_REGISTRATION_STATUS.REGISTERED
-                : ADMIN_REGISTRATION_STATUS.UNKNOWN,
-            authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
-            pendingAdmin: null,
-          });
-          app.showToast(`Logged in as ${demoAccount.role}: ${u.name}`, 'success');
-          return { success: true, user: u };
-        }
-
-        return { success: false, message: 'Invalid credentials. Phone number not registered.' };
-      },
-
-      logout: () => {
-        set({ currentUser: null, ...initialAdminAuthState });
-        useAppStore.getState().showToast('Logged out successfully', 'info');
       },
     }),
     {
       name: 'homebandhu-auth',
       storage: createJSONStorage(() => sessionStorage),
+      // Supabase owns session persistence. Keep no browser-created identity
+      // around that could be mistaken for a valid server session.
+      partialize: (state) => ({ currentPhone: state.currentPhone }),
     }
   )
 );

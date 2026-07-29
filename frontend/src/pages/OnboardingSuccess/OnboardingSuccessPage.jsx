@@ -5,7 +5,6 @@ import { COMMUNITY_TYPES } from '../../data/onboarding';
 import { onboardingModules } from '../../data/onboardingModules';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { useAppStore } from '../../store/appStore';
-import { useAuthStore } from '../../store/authStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
 import { formatPhoneNumber } from '../../utils/phone';
 
@@ -14,9 +13,7 @@ export default function OnboardingSuccessPage() {
   const createdAssociation = useOnboardingStore(
     (state) => state.createdAssociation
   );
-  const createdAdmin = useOnboardingStore((state) => state.createdAdmin);
   const resetOnboarding = useOnboardingStore((state) => state.resetOnboarding);
-  const setCurrentUser = useAuthStore((state) => state.setCurrentUser);
   const showToast = useAppStore((state) => state.showToast);
 
   const enabledModuleNames = onboardingModules
@@ -30,10 +27,9 @@ export default function OnboardingSuccessPage() {
       : 'Layout / Villa';
 
   const handleGoToDashboard = () => {
-    setCurrentUser(createdAdmin);
     resetOnboarding();
-    showToast('Welcome to your new HomeBandhu association!', 'success');
-    navigate(AUTH_ROUTES.ADMIN_DASHBOARD, { replace: true });
+    showToast('Association setup is complete. Sign in after your administrator account is provisioned.', 'success');
+    navigate(AUTH_ROUTES.LOGIN, { replace: true });
   };
 
   return (

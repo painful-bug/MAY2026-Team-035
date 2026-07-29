@@ -2,6 +2,20 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
+## Supabase authentication
+
+Copy `.env.example` to `.env.local` and set the public Supabase URL and
+publishable key. Google is the default primary provider and SMS OTP is the
+secondary provider; swap `VITE_AUTH_PRIMARY_PROVIDER` and
+`VITE_AUTH_SECONDARY_PROVIDER` (`google` / `otp`) to reverse that order without
+changing application code.
+
+In Supabase, enable Google under **Authentication → Providers**, add
+`http://localhost:5173/auth/callback` (and the production equivalent) to the
+redirect allow list, and enable manual identity linking. Existing phone users
+can sign in once with OTP and choose **Link Google sign-in** in their profile.
+Supabase automatically links matching verified email identities where available.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)

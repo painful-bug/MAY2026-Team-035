@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useApp } from './store/useApp';
 import ToastContainer from './components/common/ToastContainer';
@@ -10,6 +10,7 @@ import AdminLayout from './layouts/AdminLayout';
 // Public Pages
 import LandingPage from './pages/Landing/LandingPage';
 import LoginPage from './pages/Login/LoginPage';
+import AuthCallbackPage from './pages/AuthCallback/AuthCallbackPage';
 import OtpVerificationPage from './pages/OtpVerification/OtpVerificationPage';
 import AssociationRegistrationPage from './pages/AssociationRegistration/AssociationRegistrationPage';
 import MapConfigurationPage from './pages/MapConfiguration/MapConfigurationPage';
@@ -22,7 +23,7 @@ import JoinPage from './pages/Join/JoinPage';
 import AuthFlowRoute from './routes/AuthFlowRoute';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
 import { AUTH_ROUTES } from './routes/authRoutes';
-import { AUTH_FLOW_STATE } from './store/authStore';
+import { AUTH_FLOW_STATE, useAuthStore } from './store/authStore';
 import { ONBOARDING_STEPS } from './data/onboarding';
 
 // Resident Pages
@@ -57,7 +58,15 @@ const AmenityReportsPage = lazy(() =>
 
 // Protected Route Guard Simulation
 function ProtectedRoute({ children, requiredRole }) {
-  const { currentUser } = useApp();
+  const { currentUser, isAuthReady } = useApp();
+
+  if (!isAuthReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
+        Restoring your session…
+      </div>
+    );
+  }
   
   if (!currentUser) {
     // If not logged in, redirect to login page
@@ -72,13 +81,25 @@ function ProtectedRoute({ children, requiredRole }) {
   return children;
 }
 
+function AuthSessionBootstrap() {
+  const initializeAuth = useAuthStore((state) => state.initializeAuth);
+
+  useEffect(() => {
+    void initializeAuth();
+  }, [initializeAuth]);
+
+  return null;
+}
+
 export default function App() {
   return (
       <BrowserRouter>
+        <AuthSessionBootstrap />
         <Routes>
           {/* Public Routes */}
           <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
           <Route path={AUTH_ROUTES.LOGIN} element={<LoginPage />} />
+          <Route path={AUTH_ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
           <Route
             path={AUTH_ROUTES.OTP_VERIFICATION}
             element={

@@ -1,6 +1,7 @@
 export const AUTH_ROUTES = Object.freeze({
   HOME: '/',
   LOGIN: '/login',
+  AUTH_CALLBACK: '/auth/callback',
   OTP_VERIFICATION: '/admin-otp-verification',
   ASSOCIATION_REGISTRATION: '/association-registration',
   MAP_CONFIGURATION: '/map-configuration',

@@ -3,18 +3,17 @@
 Two entry points:
 
 ``create_invitation``
-    An admin mints an invite for a phone/apartment. We generate a magic-link
-    token and a short typable code, store only their hashes, and return the
-    plaintext link + code to the admin exactly once.
+    An admin mints an invite for one phone number and community unit. We
+    generate a magic-link token and a short typable code, store only their
+    hashes, and return the plaintext link + code exactly once.
 
 ``redeem``
     A resident activates their account via **either** the link token **or** the
     typed code. The validity decision (:func:`evaluate_invitation`) is a pure
     function mirroring ``frontend/src/lib/invites.js#applyRedeem`` so it is
-    trivially unit-testable. On success we provision the Supabase auth user
-    (service-role Admin API), set their profile role, mark the invite redeemed
-    (single-use, compare-and-set), and mint a session so the resident lands
-    logged in. They use SMS OTP for every subsequent login.
+    trivially unit-testable. On success we provision the Supabase auth user,
+    atomically claim the invite into membership and residency, and mint a
+    session so the resident lands logged in. They use SMS OTP thereafter.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ from app.core import tokens
 from app.core.exceptions import ConflictError, ValidationError
 from app.core.logging import get_logger
 from app.core.supabase_client import get_anon_client, get_service_client
-from app.domain.roles import Role, parse_role
+from app.domain.roles import Role
 from app.domain.schemas import (
     CreateInvitationRequest,
     InvitationCreated,
@@ -36,7 +35,11 @@ from app.domain.schemas import (
     RedeemRequest,
     Session,
 )
-from app.repositories import invitations_repository, profiles_repository
+from app.repositories import (
+    invitations_repository,
+    memberships_repository,
+    profiles_repository,
+)
 from supabase import Client
 
 _logger = get_logger(__name__)
@@ -48,6 +51,12 @@ def create_invitation(
     request: CreateInvitationRequest,
 ) -> InvitationCreated:
     """Create an invite and return its one-time link + code (admin only)."""
+    admin_membership = memberships_repository.require_active_role(
+        admin_client,
+        profile_id=principal.user_id,
+        community_id=request.community_id,
+        role=Role.ADMIN,
+    )
     token = tokens.generate_token()
     code = tokens.generate_code()
     expires_at = datetime.now(timezone.utc) + timedelta(
@@ -55,14 +64,15 @@ def create_invitation(
     )
 
     row = invitations_repository.insert_invitation(
-        admin_client,
+        get_service_client(),
         token_hash=tokens.hash_secret(token),
         code_hash=tokens.hash_secret(code),
         phone=request.phone,
-        apartment_id=request.apartment_id,
-        role=request.role,
+        community_id=request.community_id,
+        intended_unit_id=request.intended_unit_id,
         full_name=request.full_name,
-        created_by=principal.user_id,
+        email=request.email,
+        created_by_membership_id=admin_membership["id"],
         expires_at=expires_at,
     )
 
@@ -72,8 +82,8 @@ def create_invitation(
         link=link,
         code=code,
         phone=request.phone,
-        apartment_id=request.apartment_id,
-        role=request.role,
+        community_id=request.community_id,
+        intended_unit_id=request.intended_unit_id,
         expires_at=datetime.fromisoformat(row["expires_at"]),
     )
 
@@ -89,6 +99,8 @@ def evaluate_invitation(
     now = now or datetime.now(timezone.utc)
     if invite is None:
         return "invalid"
+    if invite.get("status") and invite.get("status") != "issued":
+        return "used"
     if invite.get("redeemed_at") is not None:
         return "used"
     expires_at = _parse_dt(invite.get("expires_at"))
@@ -124,32 +136,38 @@ def redeem(request: RedeemRequest) -> Session:
     if reason is not None:
         raise _REASON_ERRORS[reason]
     assert invite is not None  # narrowed by evaluate_invitation
+    if invite.get("invitee_phone_e164") != request.phone:
+        # Do not disclose that a real invitation exists for another number.
+        raise _REASON_ERRORS["invalid"]
 
-    # Compare-and-set redeemed_at: enforces single-use even under concurrency.
-    claimed = invitations_repository.mark_redeemed(service, invite["id"])
-    if claimed is None:
-        raise _REASON_ERRORS["used"]
-
-    role = parse_role(invite.get("role")) or Role.RESIDENT
+    # Auth provisioning happens first; the SQL RPC below then consumes the
+    # invite and creates membership + residency in one database transaction.
+    # A failed claim therefore never creates partial domain access.
     session = _provision_and_login(
         phone=request.phone,
-        role=role,
-        full_name=invite.get("full_name"),
-        apartment_id=invite.get("apartment_id"),
-        association_id=invite.get("association_id"),
+        full_name=invite.get("invitee_name"),
+        community_id=invite.get("community_id"),
+        intended_unit_id=invite.get("intended_unit_id"),
     )
-    _logger.info("Invitation %s redeemed for apartment %s", invite["id"],
-                 invite.get("apartment_id"))
+    memberships_repository.claim_resident_invite(
+        service,
+        invite_id=invite["id"],
+        profile_id=session.user_id,
+    )
+    _logger.info(
+        "Invitation %s redeemed for unit %s",
+        invite["id"],
+        invite.get("intended_unit_id"),
+    )
     return session
 
 
 def _provision_and_login(
     *,
     phone: str,
-    role: Role,
     full_name: str | None,
-    apartment_id: str | None,
-    association_id: str | None,
+    community_id: str | None,
+    intended_unit_id: str | None,
 ) -> Session:
     """Create the auth user + profile and mint an initial session.
 
@@ -167,9 +185,9 @@ def _provision_and_login(
                 "phone_confirm": True,
                 "password": one_time_password,
                 "user_metadata": {
-                    "role": role.value,
                     "full_name": full_name,
-                    "apartment_id": apartment_id,
+                    "community_id": community_id,
+                    "intended_unit_id": intended_unit_id,
                 },
             }
         )
@@ -183,15 +201,13 @@ def _provision_and_login(
     if user is None:
         raise ConflictError("Could not create the account.")
 
-    # Ensure role/placement are set even if the DB trigger raced or lacked data.
-    profiles_repository.upsert_profile_role(
+    # Ensure identity fields are set even if the Auth trigger raced or lacked
+    # metadata.  Membership/residency is claimed by the transactional RPC.
+    profiles_repository.upsert_profile(
         service,
         user_id=user.id,
-        role=role,
         full_name=full_name,
         phone=phone,
-        apartment_id=apartment_id,
-        association_id=association_id,
     )
 
     result = get_anon_client().auth.sign_in_with_password(
@@ -199,7 +215,7 @@ def _provision_and_login(
     )
     if result.session is None:
         raise ConflictError("Account created but sign-in failed. Use OTP login.")
-    return _session_from_result(result.session, user.id, role)
+    return _session_from_result(result.session, user.id, Role.RESIDENT)
 
 
 def _session_from_result(session: Any, user_id: str, role: Role) -> Session:

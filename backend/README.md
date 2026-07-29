@@ -24,7 +24,7 @@ app/
   api/
     deps.py                 # get_current_user, require_role(...), get_request_client
     v1/routers/             # auth.py, invitations.py
-supabase/migrations/        # SQL: schema (0001), RLS (0002), access-token hook (0003)
+supabase/migrations/        # SQL: baseline (0001-0003), domain (0004), tenant RLS/workflows (0005)
 tests/                      # pytest — pure logic (roles, invite decision, hashing)
 ```
 
@@ -37,28 +37,38 @@ constructs a client.** It exposes three, by trust level:
 
 ## Authentication & RBAC
 
-Roles: `RESIDENT, MANAGER, TECHNICIAN, SECURITY, ADMIN` (ADMIN is also a
-RESIDENT). The role lives on `profiles.role`, is injected into every access
-token as a `user_role` claim by a Supabase **access-token hook**, and is enforced
-in **three layers**: Postgres RLS, FastAPI `require_role(...)` guards, and the
-verified `Principal`.
+Roles: `RESIDENT, WORKER, SECURITY, MANAGER, ADMIN` (ADMIN is also a
+RESIDENT). Identity lives in `profiles`; tenant roles and residency live in
+`community_memberships` and `unit_residencies`. The access-token hook supplies
+a coarse `user_role` claim for FastAPI guards, while Postgres RLS always checks
+the caller's active membership in the target community.
 
 - **Login (existing members):** phone **SMS OTP** —
   `POST /api/v1/auth/otp/request` then `/api/v1/auth/otp/verify`. Unknown numbers
   can't self-signup (`should_create_user=false`). "Remember me" = the frontend
   persists the returned session; `POST /api/v1/auth/refresh` renews it.
 - **Registration (new residents):** admin-initiated.
-  `POST /api/v1/admin/invitations` (ADMIN only) returns a one-time **magic link**
-  and a typable **code**. The resident redeems either one at
-  `POST /api/v1/auth/redeem`, which provisions their Supabase user, sets their
-  role, and returns a session. Only hashes of the token/code are stored.
+  `POST /api/v1/admin/invitations` requires a `community_id` and
+  `intended_unit_id`, then returns a one-time **magic link** and a typable
+  **code**. The resident redeems either at `POST /api/v1/auth/redeem`; the
+  database atomically creates their resident membership and unit residency.
+  Only hashes of the token/code are stored.
+
+The database also provides trusted SQL workflows for single-admin transfer,
+resident-invite claiming, and approval of self-service access requests with a
+default maintenance invoice. Browser clients cannot mutate membership, admin,
+or financial rows directly.
 
 ## Setup
 
 1. Create a Supabase project. Copy `.env.example` to `.env` and fill in the URL,
    anon key, service-role key, and JWT secret (Settings → API).
-2. Apply migrations (`supabase db push`, or paste `supabase/migrations/*.sql`
-   into the SQL editor in order).
+2. Apply migrations in filename order with `supabase db push`. Migrations
+   `0004` and `0005` are forward-only: they rename the original association
+   tables to the canonical community/building/unit names and retain
+   `profiles.legacy_*` values until the post-deployment backfill audit passes.
+   Existing users must refresh their session after `0005`, so its updated
+   membership-derived access-token claim is issued.
 3. Register the access-token hook: **Authentication → Hooks → Customize Access
    Token** → `public.custom_access_token_hook`.
 4. Configure an **SMS provider** under Authentication → Providers → Phone

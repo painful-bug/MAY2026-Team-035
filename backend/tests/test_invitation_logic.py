@@ -17,6 +17,7 @@ def _invite(**overrides: object) -> dict:
         "expires_at": (NOW + timedelta(hours=1)).isoformat(),
         "role": "RESIDENT",
         "apartment_id": "B-1204",
+        "invitee_phone_e164": "+919876543210",
     }
     base.update(overrides)
     return base

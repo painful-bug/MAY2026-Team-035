@@ -113,7 +113,7 @@ export default function Header({ onMenuClick }) {
             <div className="flex items-center gap-3 pl-3 border-l border-slate-100">
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-bold text-slate-800">{currentUser.name}</p>
-                <p className="text-[11px] font-semibold text-slate-400">{currentUser.role === 'Admin' ? 'Administrator' : 'Resident Owner'}</p>
+                <p className="text-[11px] font-semibold text-slate-400">{currentUser.role === 'Admin' ? 'Administrator' : currentUser.role}</p>
               </div>
               <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center shadow-md shadow-indigo-100">
                 {currentUser.name.charAt(0)}

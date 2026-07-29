@@ -1,65 +1,58 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useApp } from '../../store/useApp';
-import { Building, XCircle, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Building, Loader2 } from 'lucide-react';
+import { homeRouteFor } from '../../lib/auth/authService';
+import { AUTH_ROUTES } from '../../routes/authRoutes';
+import { useAuthStore } from '../../store/authStore';
+import { isValidMobileNumber, normalizePhoneNumber } from '../../utils/phone';
 
-// Magic-link landing: /join/:token. Redeems the invite (activating the flat),
-// logs the resident in, and forwards to their dashboard. A single-use token, so
-// the redeem runs exactly once — the ref guards against StrictMode's double
-// effect invocation, which would otherwise "spend" the token on the first run
-// and report it already-used on the second.
+// Invitation redemption stays server-side. The client never activates a local
+// user record from an invite token.
 export default function JoinPage() {
   const { token } = useParams();
-  const { redeemInvite, setCurrentUser } = useApp();
   const navigate = useNavigate();
-  const ran = useRef(false);
-  const [message, setMessage] = useState('');
+  const redeemInvite = useAuthStore((state) => state.redeemInvite);
+  const [phone, setPhone] = useState('');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
-    const res = redeemInvite(token);
-    if (res.ok && res.user) {
-      setCurrentUser(res.user);
-      navigate('/resident', { replace: true });
-    } else {
-      setMessage(res.message || 'This invite link is not valid.');
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const normalizedPhone = normalizePhoneNumber(phone);
+    if (!isValidMobileNumber(normalizedPhone)) {
+      setError('Enter the mobile number that received this invitation.');
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    setError('');
+    setIsSubmitting(true);
+    const result = await redeemInvite(token, `+91${normalizedPhone}`);
+    setIsSubmitting(false);
+    if (result.success) navigate(homeRouteFor(result.user), { replace: true });
+    else setError(result.message);
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center py-12 px-6 font-sans">
-      <div className="max-w-md w-full bg-white border border-slate-100 p-8 rounded-3xl shadow-xl shadow-slate-100 text-center space-y-6 animate-slide-up">
-        <div className="inline-flex items-center gap-2 justify-center">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center">
-            <Building className="w-5 h-5" />
-          </div>
-          <span className="font-extrabold text-slate-900 tracking-tight">HomeBandhu</span>
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 py-12 font-sans">
+      <div className="w-full max-w-md space-y-6 rounded-3xl border border-slate-100 bg-white p-8 text-center shadow-xl shadow-slate-100 animate-slide-up">
+        <div className="inline-flex items-center justify-center gap-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white"><Building className="h-5 w-5" /></div>
+          <span className="font-extrabold tracking-tight text-slate-900">HomeBandhu</span>
         </div>
-
-        {!message ? (
-          <div className="space-y-3">
-            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-            <p className="text-sm font-semibold text-slate-500">Verifying your invite…</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto">
-              <XCircle className="w-7 h-7" />
-            </div>
-            <div className="space-y-1">
-              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Invite not valid</h2>
-              <p className="text-xs font-semibold text-slate-400">{message}</p>
-            </div>
-            <Link
-              to="/login"
-              className="inline-block w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md shadow-indigo-100"
-            >
-              Go to Sign In
-            </Link>
-          </div>
-        )}
+        <div className="space-y-1">
+          <h1 className="text-xl font-extrabold text-slate-900">Activate your invitation</h1>
+          <p className="text-xs font-semibold text-slate-400">Confirm the invited mobile number. You can link Google from your profile after activation.</p>
+        </div>
+        {error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</p>}
+        <form onSubmit={handleSubmit} className="space-y-3 text-left">
+          <label htmlFor="invite-phone" className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Invited mobile number</label>
+          <input id="invite-phone" value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" placeholder="98765 43210" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-indigo-500 focus:bg-white" />
+          <button type="submit" disabled={isSubmitting} className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-wait disabled:bg-indigo-400">
+            {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isSubmitting ? 'Activating…' : 'Activate invitation'}
+          </button>
+        </form>
+        <Link to={AUTH_ROUTES.LOGIN} className="block text-xs font-bold text-indigo-600 hover:underline">Already have access? Sign in</Link>
       </div>
     </div>
   );

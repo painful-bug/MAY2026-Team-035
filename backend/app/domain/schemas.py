@@ -24,15 +24,17 @@ class Principal(BaseModel):
 
 
 class Profile(BaseModel):
-    """A user's community profile (the ``profiles`` table row)."""
+    """A user's identity profile.
+
+    Community role and placement are deliberately not stored here: callers
+    receive those from ``community_memberships`` and ``unit_residencies``.
+    """
 
     id: str
-    role: Role
     full_name: str | None = None
     phone: str | None = None
-    apartment_id: str | None = None
-    association_id: str | None = None
-    status: str = "Active"
+    email: str | None = None
+    is_active: bool = True
 
 
 class Session(BaseModel):
@@ -78,12 +80,13 @@ class MessageResponse(BaseModel):
 
 
 class CreateInvitationRequest(BaseModel):
-    """Admin request to invite a new member to an apartment."""
+    """Admin request to invite one resident to a concrete community unit."""
 
+    community_id: str
+    intended_unit_id: str
     phone: str = Field(..., examples=["+919812345678"])
-    apartment_id: str = Field(..., examples=["B-1204"])
     full_name: str | None = None
-    role: Role = Role.RESIDENT
+    email: str | None = None
 
 
 class InvitationCreated(BaseModel):
@@ -97,8 +100,8 @@ class InvitationCreated(BaseModel):
     link: str
     code: str
     phone: str
-    apartment_id: str
-    role: Role
+    community_id: str
+    intended_unit_id: str
     expires_at: datetime
 
 

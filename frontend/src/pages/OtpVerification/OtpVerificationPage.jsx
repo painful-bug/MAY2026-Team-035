@@ -5,6 +5,7 @@ import AuthCard from '../../components/auth/AuthCard';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { AUTH_FLOW_STATE, useAuthStore } from '../../store/authStore';
 import { formatPhoneNumber } from '../../utils/phone';
+import { homeRouteFor } from '../../lib/auth/authService';
 
 export default function OtpVerificationPage() {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ export default function OtpVerificationPage() {
     const result = await submitAdminOtp(otp);
 
     if (result.success) {
-      navigate(AUTH_ROUTES.ADMIN_DASHBOARD, { replace: true });
+      navigate(homeRouteFor(result.user), { replace: true });
     }
   };
 
@@ -65,7 +66,7 @@ export default function OtpVerificationPage() {
             />
           </div>
           <p className="text-[10px] text-center text-slate-400 font-semibold pt-1">
-            OTP verification is intentionally simulated in Task 1.
+            Enter the code sent by Supabase to your approved phone number.
           </p>
         </div>
 

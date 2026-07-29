@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
-import { Phone, PhoneCall, Plus, Users } from 'lucide-react';
+import { Link2, Loader2, Phone, PhoneCall, Plus, Users } from 'lucide-react';
 
 export default function Profile() {
-  const { currentUser, users, addPhoneToApartment } = useApp();
+  const { currentUser, users, addPhoneToApartment, linkGoogleIdentity } = useApp();
   const [newPhone, setNewPhone] = useState('');
   const [newName, setNewName] = useState('');
+  const [linkingGoogle, setLinkingGoogle] = useState(false);
+  const [linkError, setLinkError] = useState('');
 
   // Everyone registered to this flat (PRD: one flat can hold several numbers).
   const flatMembers = users.filter(
@@ -18,6 +20,16 @@ export default function Profile() {
     addPhoneToApartment(currentUser.apartmentId, newPhone, newName.trim() || undefined);
     setNewPhone('');
     setNewName('');
+  };
+
+  const handleLinkGoogle = async () => {
+    setLinkError('');
+    setLinkingGoogle(true);
+    const result = await linkGoogleIdentity();
+    if (!result.success) {
+      setLinkingGoogle(false);
+      setLinkError(result.message);
+    }
   };
 
   const contacts = [
@@ -44,7 +56,7 @@ export default function Profile() {
             </div>
             <div>
               <h3 className="text-lg font-extrabold text-slate-855">{currentUser?.name}</h3>
-              <p className="text-xs font-semibold text-slate-450">{currentUser?.role === 'Admin' ? 'Society Administrator' : 'Resident Owner'}</p>
+              <p className="text-xs font-semibold text-slate-450">{currentUser?.role === 'Admin' ? 'Society Administrator' : currentUser?.role}</p>
               <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full inline-block mt-1.5 uppercase tracking-wider">
                 {currentUser?.status} Account
               </span>
@@ -68,6 +80,18 @@ export default function Profile() {
               <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Tower Block</span>
               <span className="text-slate-800">Tower {currentUser?.tower}</span>
             </div>
+          </div>
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={handleLinkGoogle}
+              disabled={linkingGoogle}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-wait"
+            >
+              {linkingGoogle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+              {linkingGoogle ? 'Opening Google…' : 'Link Google sign-in'}
+            </button>
+            {linkError && <p role="alert" className="text-center text-[10px] font-semibold text-rose-600">{linkError}</p>}
           </div>
         </div>
 
