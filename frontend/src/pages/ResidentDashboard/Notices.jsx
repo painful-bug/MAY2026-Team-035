@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../../store/useApp';
-import { Megaphone, Calendar, AlertOctagon, Info } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 
 export default function Notices() {
   const { notices } = useApp();

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
-import { CreditCard, CheckCircle, Clock, Check, Receipt, ShieldCheck } from 'lucide-react';
+import { CheckCircle, Clock, Check, Receipt, ShieldCheck } from 'lucide-react';
 
 export default function Payments() {
   const { payments, currentUser, payInvoice } = useApp();

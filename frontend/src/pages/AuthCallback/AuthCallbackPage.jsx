@@ -17,7 +17,13 @@ export default function AuthCallbackPage() {
     ran.current = true;
 
     completeExternalLogin().then((result) => {
-      if (result.success) navigate(homeRouteFor(result.user), { replace: true });
+      if (result.success) {
+        const intent = new URLSearchParams(window.location.search).get('intent');
+        const destination = result.onboardingEligible && intent === 'register'
+          ? AUTH_ROUTES.GET_STARTED
+          : homeRouteFor(result.context);
+        navigate(destination, { replace: true });
+      }
       else setError(result.message);
     });
   }, [completeExternalLogin, navigate]);

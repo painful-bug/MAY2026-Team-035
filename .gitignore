@@ -1,52 +1,9 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-start-vite-dev.cmd
-
-# Package manager / tool caches
-.npm/
-.npm-cache/
-.pnpm-store/
-.yarn/
-!.yarn/releases/
-!.yarn/plugins/
-!.yarn/sdks/
-!.yarn/versions/
-.parcel-cache/
-.vite/
-.turbo/
-.cache/
-coverage/
-
-# Env
-.env
-.env.*
-!.env.example
-.venv/
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+node_modules/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
 .DS_Store
-Thumbs.db
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
+.env
+.env.local

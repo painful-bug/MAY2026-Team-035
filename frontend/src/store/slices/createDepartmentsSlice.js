@@ -1,8 +1,7 @@
 import { genId } from '../../lib/ids';
-import { initialDepartments } from '../../data/departments';
 
 export const createDepartmentsSlice = (set, get) => ({
-  departments: initialDepartments,
+  departments: [],
 
   createDepartment: (departmentData) => {
     const name = departmentData.name.trim();

@@ -11,8 +11,7 @@
     "lint": "npm run lint -w frontend",
     "preview": "npm run preview -w frontend"
   },
-  "dependencies": {
-    "install": "^0.13.0",
+  "devDependencies": {
     "supabase": "^2.109.1"
   }
 }

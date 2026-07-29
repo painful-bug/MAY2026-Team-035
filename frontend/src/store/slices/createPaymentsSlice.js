@@ -1,10 +1,9 @@
 import { todayISO } from '../../lib/dates';
-import { initialPayments } from '../../data/payments';
 
 // New residents get an unpaid invoice seeded by acceptRequest (in the pending
 // slice) — that write targets this collection through the shared store.
 export const createPaymentsSlice = (set, get) => ({
-  payments: initialPayments,
+  payments: [],
 
   payInvoice: (invoiceId, paymentMethod) => {
     const p = get().payments.find((pay) => pay.id === invoiceId);

@@ -1,6 +1,5 @@
 import { genId } from '../../lib/ids';
 import { todayISO } from '../../lib/dates';
-import { initialComplaints } from '../../data/complaints';
 import { useAuthStore } from '../authStore';
 
 const getExpectedResolutionAt = (urgency, createdAt) => {
@@ -38,7 +37,7 @@ const getComplaintTimeline = (complaint) => {
 };
 
 export const createComplaintsSlice = (set, get) => ({
-  complaints: initialComplaints,
+  complaints: [],
 
   raiseComplaint: (complaintData) => {
     const currentUser = useAuthStore.getState().currentUser;

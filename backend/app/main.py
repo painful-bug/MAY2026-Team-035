@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     configure_logging()
     settings = get_settings()
+    settings.validate_auth_configuration()
 
     app = FastAPI(
         title="HomeBandhu API",

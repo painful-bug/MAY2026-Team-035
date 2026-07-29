@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
-import { ShieldCheck, Plus, User, Mail, Phone, Home } from 'lucide-react';
+import { ShieldCheck, Plus, User, Mail, Phone } from 'lucide-react';
 
 export default function Admins() {
   const { users, addAdmin } = useApp();

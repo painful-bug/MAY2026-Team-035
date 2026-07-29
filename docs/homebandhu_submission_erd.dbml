@@ -54,7 +54,6 @@ Table community_registration_requests [headercolor: #102A43] {
   country_code char(2) [not null]
   applicant_email text [not null]
   applicant_phone_e164 text [not null]
-  otp_verified_at timestamptz
   status text [not null]
   review_notes text
   reviewed_by_operator_ref text
@@ -145,6 +144,19 @@ Table community_memberships [headercolor: #B7791F] {
   }
 
   Note: 'RLS tenant boundary. Role ENUM: resident, worker, security, manager, admin. Partial UQ constraints: one active role membership per profile per community; one active admin per community. Residents and admins have one active community; staff may serve multiple communities. Technician and serviceman are worker skills, not roles.'
+}
+
+Table community_admin_terms [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  admin_membership_id uuid [not null, ref: > community_memberships.id]
+  designation text
+  started_at timestamptz [not null]
+  ended_at timestamptz
+  transferred_by_membership_id uuid [ref: > community_memberships.id]
+  transfer_note text
+
+  Note: 'Administrator appointment history. Designation belongs to this community-scoped term, not the global profile.'
 }
 
 Table unit_residencies [headercolor: #0F766E] {
@@ -287,13 +299,12 @@ Table access_requests [headercolor: #102A43] {
   applicant_profile_id uuid [ref: > profiles.id]
   applicant_name text [not null]
   applicant_email text [not null]
-  applicant_phone_e164 text [not null]
-  requested_occupancy_type text [not null]
+  applicant_phone_e164 text
+  requested_relationship text [not null]
   status text [not null]
   reviewed_by_membership_id uuid [ref: > community_memberships.id]
   reviewed_at timestamptz
-  decision_reason text
-  resulting_invite_id uuid [ref: > resident_invites.id]
+  rejection_reason text
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -405,7 +416,6 @@ Table work_order_completion_verifications [headercolor: #C53030] {
   work_order_id uuid [not null, ref: > work_orders.id]
   assignment_id uuid [not null, ref: > work_order_assignments.id]
   verification_method text [not null]
-  otp_digest text
   resident_confirmed_by_membership_id uuid [ref: > community_memberships.id]
   verified_at timestamptz
   notes text
@@ -815,6 +825,7 @@ TableGroup teal_residency {
 
 TableGroup gold_people_operations {
   community_memberships
+  community_admin_terms
   departments
   vendors
   staff_assignments

@@ -1,9 +1,8 @@
 import { genId } from '../../lib/ids';
 import { longDate } from '../../lib/dates';
-import { initialNotices } from '../../data/notices';
 
 export const createNoticesSlice = (set, get) => ({
-  notices: initialNotices,
+  notices: [],
 
   addNotice: (noticeData) => {
     const newNotice = {

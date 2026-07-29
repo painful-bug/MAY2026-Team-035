@@ -1,34 +1,30 @@
-"""Pydantic DTOs for API requests and responses.
-
-These are the wire contracts between the React frontend and the backend. They
-are deliberately separate from database row shapes so the storage layer can
-evolve without breaking clients.
-"""
+"""Pydantic DTOs for the browser-safe HomeBandhu API contracts."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.domain.roles import Role
+
+class StrictModel(BaseModel):
+    """Reject fields the browser is not authorised to control."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class Principal(BaseModel):
-    """The authenticated caller, derived from a verified access token."""
+    """The authenticated identity derived from a verified Supabase token."""
 
     user_id: str
-    role: Role
     phone: str | None = None
     email: str | None = None
+    email_verified: bool = False
 
 
 class Profile(BaseModel):
-    """A user's identity profile.
-
-    Community role and placement are deliberately not stored here: callers
-    receive those from ``community_memberships`` and ``unit_residencies``.
-    """
+    """Identity/contact data; community authorisation never lives here."""
 
     id: str
     full_name: str | None = None
@@ -37,81 +33,231 @@ class Profile(BaseModel):
     is_active: bool = True
 
 
-class Session(BaseModel):
-    """A Supabase auth session returned to the client after login/redeem."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_at: int | None = None
-    user_id: str
-    role: Role | None = None
+class MembershipContext(BaseModel):
+    id: str
+    community_id: str
+    role: str
+    department_id: str | None = None
+    unit_id: str | None = None
 
 
-# --- Auth: phone SMS OTP login -------------------------------------------------
+class SessionContext(BaseModel):
+    """Browser-safe session context; provider credentials remain HTTP-only."""
 
-
-class OtpRequest(BaseModel):
-    """Body for requesting a login OTP."""
-
-    phone: str = Field(..., examples=["+919876543210"])
-
-
-class OtpVerifyRequest(BaseModel):
-    """Body for verifying a login OTP."""
-
-    phone: str = Field(..., examples=["+919876543210"])
-    token: str = Field(..., examples=["123456"], description="The 6-digit SMS code.")
-
-
-class RefreshRequest(BaseModel):
-    """Body for refreshing a session (the 'remember me' path)."""
-
-    refresh_token: str
+    identity: Profile
+    membership: MembershipContext | None = None
+    portal: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    onboarding_eligible: bool = False
 
 
 class MessageResponse(BaseModel):
-    """Generic acknowledgement response."""
-
     message: str
 
 
-# --- Invitations: admin-initiated resident registration -----------------------
+class DashboardSnapshot(BaseModel):
+    """One tenant-scoped projection used by all authenticated portals."""
+
+    users: list[dict] = Field(default_factory=list)
+    complaints: list[dict] = Field(default_factory=list)
+    visitors: list[dict] = Field(default_factory=list)
+    amenities: list[dict] = Field(default_factory=list)
+    bookings: list[dict] = Field(default_factory=list)
+    payments: list[dict] = Field(default_factory=list)
+    notices: list[dict] = Field(default_factory=list)
+    departments: list[dict] = Field(default_factory=list)
+    activities: list[dict] = Field(default_factory=list)
 
 
-class CreateInvitationRequest(BaseModel):
-    """Admin request to invite one resident to a concrete community unit."""
+class AmenityWrite(StrictModel):
+    name: str = Field(min_length=2, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    category: str = Field(default="Utility", max_length=120)
+    location: str = Field(default="", max_length=200)
+    capacity: int | None = Field(default=None, ge=1, le=10000)
+    booking_mode: str = Field(default="Exclusive", max_length=40)
+    approval_required: bool = False
+    hourly_rate: float = Field(default=0, ge=0)
+    is_active: bool = True
 
-    community_id: str
+
+class AuthMethod(BaseModel):
+    id: str
+    kind: Literal["redirect"]
+    label: str
+    enabled: bool = True
+
+
+class AuthMethodsResponse(BaseModel):
+    primary: str
+    methods: list[AuthMethod]
+
+
+# --- Invitations --------------------------------------------------------------
+
+
+class CreateInvitationRequest(StrictModel):
+    """An active administrator invites a resident into their own community."""
+
     intended_unit_id: str
-    phone: str = Field(..., examples=["+919812345678"])
-    full_name: str | None = None
-    email: str | None = None
+    invitee_email: str = Field(min_length=3, max_length=320)
+    phone: str | None = Field(default=None, max_length=20)
+    full_name: str | None = Field(default=None, max_length=160)
+
+    @field_validator("invitee_email")
+    @classmethod
+    def _email_shape(cls, value: str) -> str:
+        value = value.strip()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("A valid invitation email is required.")
+        return value
 
 
 class InvitationCreated(BaseModel):
-    """Invite delivery payload — shown to the admin exactly once.
-
-    The plaintext ``link`` and ``code`` are never persisted or re-served; only
-    their hashes are stored.
-    """
-
     invitation_id: str
     link: str
     code: str
-    phone: str
+    invitee_email: str
     community_id: str
     intended_unit_id: str
     expires_at: datetime
 
 
-class RedeemRequest(BaseModel):
-    """Resident request to redeem an invite via link token or typed code.
+class PrepareInvitationRequest(StrictModel):
+    token: str | None = Field(default=None, min_length=1, max_length=512)
+    code: str | None = Field(default=None, min_length=1, max_length=64)
 
-    Exactly one of ``token`` (from the magic link) or ``code`` (typed manually)
-    must be provided, along with the phone number being registered.
-    """
 
-    phone: str
-    token: str | None = None
-    code: str | None = None
+class RedeemInvitationRequest(StrictModel):
+    pass
+
+
+# --- Community directory and access requests --------------------------------
+
+
+class CommunitySearchItem(BaseModel):
+    id: str
+    name: str
+    community_type: str
+    city: str | None = None
+    state: str | None = None
+
+
+class CommunitySearchResponse(BaseModel):
+    items: list[CommunitySearchItem] = Field(default_factory=list)
+
+
+class CommunityUnitOption(BaseModel):
+    id: str
+    unit_code: str
+    building_name: str | None = None
+
+
+class CommunityUnitListResponse(BaseModel):
+    items: list[CommunityUnitOption] = Field(default_factory=list)
+
+
+Relationship = Literal["owner", "tenant", "family_member", "caregiver", "other"]
+
+
+class CreateAccessRequest(StrictModel):
+    community_id: str
+    requested_unit_id: str | None = None
+    requested_relationship: Relationship = "tenant"
+    phone: str | None = Field(default=None, max_length=20)
+
+
+class WithdrawAccessRequest(StrictModel):
+    pass
+
+
+class AccessRequestCommunity(BaseModel):
+    id: str
+    name: str
+
+
+class AccessRequestResponse(BaseModel):
+    id: str
+    community: AccessRequestCommunity
+    status: str
+    requested_relationship: str
+    requested_unit_id: str | None = None
+    applicant_name: str | None = None
+    applicant_email: str | None = None
+    applicant_phone_e164: str | None = None
+    created_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    rejection_reason: str | None = None
+
+
+class AccessRequestListResponse(BaseModel):
+    items: list[AccessRequestResponse] = Field(default_factory=list)
+
+
+class ApproveAccessRequest(StrictModel):
+    unit_id: str | None = None
+    relationship: Relationship | None = None
+
+
+class RejectAccessRequest(StrictModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+# --- Founder onboarding -------------------------------------------------------
+
+
+class MapPoint(StrictModel):
+    x: float = Field(ge=0, le=100)
+    y: float = Field(ge=0, le=100)
+
+
+class CommunityStructure(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=100)
+
+
+class FounderProfileInput(StrictModel):
+    fullName: str = Field(min_length=2, max_length=160)
+    designation: str | None = Field(default=None, max_length=120)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=20)
+    unitNumber: str = Field(min_length=1, max_length=80)
+    founderStructureId: str | None = Field(default=None, max_length=80)
+    profileImage: str | None = None
+
+    @field_validator("profileImage")
+    @classmethod
+    def _reject_inline_image(cls, value: str | None) -> str | None:
+        if value and value.startswith("data:"):
+            raise ValueError("Profile images must be uploaded separately.")
+        return value
+
+
+class CommunityOnboardingRequest(StrictModel):
+    name: str = Field(min_length=3, max_length=100)
+    community_type: Literal["apartment", "layout_villa"]
+    address_line1: str = Field(min_length=3, max_length=200)
+    address_line2: str | None = Field(default=None, max_length=200)
+    city: str = Field(min_length=2, max_length=100)
+    state: str = Field(min_length=2, max_length=100)
+    postal_code: str = Field(min_length=3, max_length=20)
+    country_code: str = Field(default="IN", min_length=2, max_length=2)
+    blocks: list[CommunityStructure] = Field(default_factory=list, max_length=10)
+    villas: list[CommunityStructure] = Field(default_factory=list, max_length=50)
+    block_locations: dict[str, MapPoint] = Field(default_factory=dict)
+    villa_locations: dict[str, MapPoint] = Field(default_factory=dict)
+    enabled_features: list[str] = Field(default_factory=list, max_length=10)
+    admin_profile: FounderProfileInput
+
+    @field_validator("country_code")
+    @classmethod
+    def _country_code(cls, value: str) -> str:
+        value = value.upper()
+        if not value.isalpha():
+            raise ValueError("Country code must contain two letters.")
+        return value
+
+
+class CommunityOnboardingResponse(BaseModel):
+    community: dict
+    admin: dict

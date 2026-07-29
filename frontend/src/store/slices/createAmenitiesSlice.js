@@ -1,12 +1,11 @@
 import { genId } from '../../lib/ids';
-import { initialAmenities, initialBookings } from '../../data/amenities';
 import { useAuthStore } from '../authStore';
 
 // Amenities + their bookings live together — resident booking and admin
 // management both operate on the same pair.
 export const createAmenitiesSlice = (set, get) => ({
-  amenities: initialAmenities,
-  bookings: initialBookings,
+  amenities: [],
+  bookings: [],
 
   bookAmenity: (bookingData) => {
     const currentUser = useAuthStore.getState().currentUser;

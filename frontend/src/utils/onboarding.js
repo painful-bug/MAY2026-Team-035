@@ -31,6 +31,11 @@ export const createNextVilla = (villas) => {
 
 export const validateAssociationDetails = ({
   associationName,
+  addressLine1,
+  city,
+  state,
+  postalCode,
+  countryCode,
   communityType,
   blocks,
   villas,
@@ -44,6 +49,14 @@ export const validateAssociationDetails = ({
     errors.associationName = 'Association name must be at least 3 characters.';
   } else if (normalizedName.length > 100) {
     errors.associationName = 'Association name cannot exceed 100 characters.';
+  }
+
+  if (!addressLine1?.trim()) errors.addressLine1 = 'Address line 1 is required.';
+  if (!city?.trim()) errors.city = 'City is required.';
+  if (!state?.trim()) errors.state = 'State is required.';
+  if (!postalCode?.trim()) errors.postalCode = 'Postal code is required.';
+  if (!/^[a-z]{2}$/i.test(countryCode?.trim() || '')) {
+    errors.countryCode = 'Use a two-letter country code.';
   }
 
   if (

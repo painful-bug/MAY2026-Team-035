@@ -16,19 +16,11 @@ export const createInitialCompletionState = () => ({
 export const createOnboardingCompletionSlice = (set, get) => ({
   ...createInitialCompletionState(),
 
-  createAssociation: async (otp) => {
-    if (!/^\d{6}$/.test(otp)) {
-      return {
-        success: false,
-        message: 'Enter the complete 6-digit OTP.',
-      };
-    }
-
+  createAssociation: async () => {
     set({ associationCreationStatus: ASSOCIATION_CREATION_STATUS.CREATING });
 
     try {
       const result = await createAssociationRegistration({
-        otp,
         onboardingState: get(),
       });
       set({

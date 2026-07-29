@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useApp } from './store/useApp';
 import ToastContainer from './components/common/ToastContainer';
+import DashboardDataBootstrap from './components/dashboard/DashboardDataBootstrap';
 
 // Layouts
 import ResidentLayout from './layouts/ResidentLayout';
@@ -11,24 +12,24 @@ import SecurityLayout from './layouts/SecurityLayout';
 // Public Pages
 import LandingPage from './pages/Landing/LandingPage';
 import LoginPage from './pages/Login/LoginPage';
+import RegistrationPage from './pages/Registration/RegistrationPage';
+import GetStartedPage from './pages/GetStarted/GetStartedPage';
 import AuthCallbackPage from './pages/AuthCallback/AuthCallbackPage';
-import OtpVerificationPage from './pages/OtpVerification/OtpVerificationPage';
 import AssociationRegistrationPage from './pages/AssociationRegistration/AssociationRegistrationPage';
 import MapConfigurationPage from './pages/MapConfiguration/MapConfigurationPage';
 import FeatureConfigurationPage from './pages/FeatureConfiguration/FeatureConfigurationPage';
 import AdminProfilePage from './pages/AdminProfile/AdminProfilePage';
-import OnboardingOtpPage from './pages/OnboardingOtp/OnboardingOtpPage';
 import OnboardingSuccessPage from './pages/OnboardingSuccess/OnboardingSuccessPage';
+import OnboardingReviewPage from './pages/OnboardingReview/OnboardingReviewPage';
+import AccountPage from './pages/Account/AccountPage';
 import JoinPage from './pages/Join/JoinPage';
 import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
-import ResidentLoginPage from './pages/ResidentLogin/ResidentLoginPage';
-import AuthFlowRoute from './routes/AuthFlowRoute';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
 import {
   AUTH_ROUTES,
   getDashboardRouteForRole,
 } from './routes/authRoutes';
-import { AUTH_FLOW_STATE, useAuthStore } from './store/authStore';
+import { useAuthStore } from './store/authStore';
 import { ONBOARDING_STEPS } from './data/onboarding';
 
 // Resident Pages
@@ -113,39 +114,28 @@ export default function App() {
   return (
       <BrowserRouter>
         <AuthSessionBootstrap />
+        <DashboardDataBootstrap />
         <Routes>
           {/* Public Routes */}
           <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
           <Route path={AUTH_ROUTES.LOGIN} element={<LoginPage />} />
+          <Route path={AUTH_ROUTES.REGISTER} element={<RegistrationPage />} />
           <Route path={AUTH_ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
+          <Route path={AUTH_ROUTES.GET_STARTED} element={<GetStartedPage />} />
+          <Route
+            path={AUTH_ROUTES.ACCOUNT}
+            element={<ProtectedRoute><AccountPage /></ProtectedRoute>}
+          />
           <Route
             path={AUTH_ROUTES.RESIDENT_LANDING}
             element={<ResidentLandingPage />}
-          />
-          <Route
-            path={AUTH_ROUTES.RESIDENT_LOGIN}
-            element={<ResidentLoginPage />}
-          />
-          <Route
-            path={AUTH_ROUTES.OTP_VERIFICATION}
-            element={
-              <AuthFlowRoute
-                allowedStates={[
-                  AUTH_FLOW_STATE.OTP_REQUIRED,
-                  AUTH_FLOW_STATE.OTP_SUBMITTING,
-                ]}
-                authenticatedRedirect={AUTH_ROUTES.ADMIN_DASHBOARD}
-              >
-                <OtpVerificationPage />
-              </AuthFlowRoute>
-            }
           />
           <Route
             path={AUTH_ROUTES.ASSOCIATION_REGISTRATION}
             element={
               <OnboardingFlowRoute
                 minimumStep={ONBOARDING_STEPS.ASSOCIATION_DETAILS}
-                previousRoute={AUTH_ROUTES.LOGIN}
+                previousRoute={`${AUTH_ROUTES.GET_STARTED}?tab=create`}
               >
                 <AssociationRegistrationPage />
               </OnboardingFlowRoute>
@@ -185,13 +175,13 @@ export default function App() {
             }
           />
           <Route
-            path={AUTH_ROUTES.ONBOARDING_OTP}
+            path={AUTH_ROUTES.ONBOARDING_REVIEW}
             element={
               <OnboardingFlowRoute
-                minimumStep={ONBOARDING_STEPS.ONBOARDING_OTP}
+                minimumStep={ONBOARDING_STEPS.REVIEW}
                 previousRoute={AUTH_ROUTES.ADMIN_PROFILE}
               >
-                <OnboardingOtpPage />
+                <OnboardingReviewPage />
               </OnboardingFlowRoute>
             }
           />
@@ -199,8 +189,8 @@ export default function App() {
             path={AUTH_ROUTES.ONBOARDING_SUCCESS}
             element={
               <OnboardingFlowRoute
-                minimumStep={ONBOARDING_STEPS.ONBOARDING_OTP}
-                previousRoute={AUTH_ROUTES.ONBOARDING_OTP}
+                minimumStep={ONBOARDING_STEPS.REVIEW}
+                previousRoute={AUTH_ROUTES.ONBOARDING_REVIEW}
                 requireCreatedAssociation
               >
                 <OnboardingSuccessPage />
@@ -209,9 +199,10 @@ export default function App() {
           />
           <Route
             path="/signup"
-            element={<Navigate to={AUTH_ROUTES.RESIDENT_LOGIN} replace />}
+            element={<Navigate to={AUTH_ROUTES.REGISTER} replace />}
           />
           <Route path="/join/:token" element={<JoinPage />} />
+          <Route path="/join" element={<JoinPage />} />
 
           {/* Resident Dashboard Layout */}
           <Route 
@@ -219,7 +210,7 @@ export default function App() {
             element={
               <ProtectedRoute
                 requiredRole={['Resident', 'Admin']}
-                loginPath={AUTH_ROUTES.RESIDENT_LOGIN}
+                loginPath={AUTH_ROUTES.LOGIN}
               >
                 <ResidentLayout />
               </ProtectedRoute>
@@ -241,7 +232,7 @@ export default function App() {
             element={
               <ProtectedRoute
                 requiredRole="Security"
-                loginPath={AUTH_ROUTES.RESIDENT_LOGIN}
+                loginPath={AUTH_ROUTES.LOGIN}
               >
                 <SecurityLayout />
               </ProtectedRoute>
@@ -268,7 +259,7 @@ export default function App() {
             element={
               <ProtectedRoute
                 requiredRole="SecurityManager"
-                loginPath={AUTH_ROUTES.RESIDENT_LOGIN}
+                loginPath={AUTH_ROUTES.LOGIN}
               >
                 <SecurityLayout />
               </ProtectedRoute>

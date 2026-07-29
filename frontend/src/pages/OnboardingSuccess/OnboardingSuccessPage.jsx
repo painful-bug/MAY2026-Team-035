@@ -6,6 +6,7 @@ import { onboardingModules } from '../../data/onboardingModules';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { useAppStore } from '../../store/appStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
+import { useAuthStore } from '../../store/authStore';
 import { formatPhoneNumber } from '../../utils/phone';
 
 export default function OnboardingSuccessPage() {
@@ -14,22 +15,29 @@ export default function OnboardingSuccessPage() {
     (state) => state.createdAssociation
   );
   const resetOnboarding = useOnboardingStore((state) => state.resetOnboarding);
+  const createdAdmin = useOnboardingStore((state) => state.createdAdmin);
+  const refreshSession = useAuthStore((state) => state.refreshSession);
   const showToast = useAppStore((state) => state.showToast);
 
   const enabledModuleNames = onboardingModules
     .filter((module) =>
-      createdAssociation.enabledModules.includes(module.id)
+      (createdAssociation?.enabledModules || []).includes(module.id)
     )
     .map((module) => module.name);
   const communityTypeLabel =
-    createdAssociation.communityType === COMMUNITY_TYPES.APARTMENT
+    createdAssociation?.communityType === COMMUNITY_TYPES.APARTMENT
       ? 'Apartment'
       : 'Layout / Villa';
 
-  const handleGoToDashboard = () => {
-    resetOnboarding();
-    showToast('Association setup is complete. Sign in after your administrator account is provisioned.', 'success');
-    navigate(AUTH_ROUTES.LOGIN, { replace: true });
+  const handleGoToDashboard = async () => {
+    try {
+      await refreshSession();
+      resetOnboarding();
+      showToast('Association setup is complete.', 'success');
+      navigate(AUTH_ROUTES.ADMIN_DASHBOARD, { replace: true });
+    } catch {
+      showToast('Your community was created. Please retry loading the dashboard.', 'error');
+    }
   };
 
   return (
@@ -75,7 +83,7 @@ export default function OnboardingSuccessPage() {
                     Association Name
                   </dt>
                   <dd className="mt-1 text-sm font-extrabold text-slate-800">
-                    {createdAssociation.name}
+                    {createdAssociation?.name || 'Your community'}
                   </dd>
                 </div>
                 <div>
@@ -88,10 +96,10 @@ export default function OnboardingSuccessPage() {
                 </div>
                 <div>
                   <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Number of {createdAssociation.unitType}
+                    Number of {createdAssociation?.unitType || 'structures'}
                   </dt>
                   <dd className="mt-1 text-sm font-extrabold text-slate-800">
-                    {createdAssociation.unitCount}
+                    {createdAssociation?.unitCount ?? '—'}
                   </dd>
                 </div>
                 <div>
@@ -99,7 +107,7 @@ export default function OnboardingSuccessPage() {
                     Administrator Name
                   </dt>
                   <dd className="mt-1 text-sm font-extrabold text-slate-800">
-                    {createdAdmin.fullName}
+                    {createdAdmin?.fullName || createdAdmin?.name || 'Administrator'}
                   </dd>
                 </div>
                 <div className="sm:col-span-2">
@@ -108,7 +116,7 @@ export default function OnboardingSuccessPage() {
                   </dt>
                   <dd className="mt-1 inline-flex items-center gap-2 text-sm font-extrabold text-slate-800">
                     <Phone className="h-4 w-4 text-indigo-500" />
-                    {formatPhoneNumber(createdAdmin.phone)}
+                    {createdAdmin?.phone ? formatPhoneNumber(createdAdmin.phone) : 'Not provided'}
                   </dd>
                 </div>
                 <div className="sm:col-span-2">

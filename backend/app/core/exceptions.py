@@ -65,6 +65,13 @@ class ConflictError(AppError):
     code = "conflict"
 
 
+class ServiceUnavailableError(AppError):
+    """A required external dependency has not been provisioned correctly."""
+
+    status_code = 503
+    code = "service_unavailable"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register JSON handlers for :class:`AppError` and uncaught exceptions."""
 

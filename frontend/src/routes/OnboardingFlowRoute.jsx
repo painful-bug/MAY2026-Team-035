@@ -1,8 +1,9 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { AUTH_FLOW_STATE, useAuthStore } from '../store/authStore';
+import { useAuthStore } from '../store/authStore';
 import { useOnboardingStore } from '../store/onboardingStore';
 import { AUTH_ROUTES } from './authRoutes';
+import { homeRouteFor } from '../lib/auth/authService';
 
 export default function OnboardingFlowRoute({
   minimumStep,
@@ -10,30 +11,17 @@ export default function OnboardingFlowRoute({
   requireCreatedAssociation = false,
   children,
 }) {
-  const currentPhone = useAuthStore((state) => state.currentPhone);
-  const authFlowState = useAuthStore((state) => state.authFlowState);
-  const currentUser = useAuthStore((state) => state.currentUser);
-  const associationName = useOnboardingStore((state) => state.associationName);
+  const sessionContext = useAuthStore((state) => state.sessionContext);
+  const isAuthReady = useAuthStore((state) => state.isAuthReady);
   const onboardingStep = useOnboardingStore((state) => state.onboardingStep);
   const createdAssociation = useOnboardingStore(
     (state) => state.createdAssociation
   );
 
-  const activeRegistrationFlow =
-    Boolean(currentPhone) &&
-    authFlowState === AUTH_FLOW_STATE.REGISTRATION_REQUIRED;
-  const persistedOnboardingDraft =
-    Boolean(associationName.trim()) && onboardingStep >= minimumStep;
-
-  if (
-    currentUser?.role === 'Admin' &&
-    authFlowState === AUTH_FLOW_STATE.AUTHENTICATED
-  ) {
-    return <Navigate to={AUTH_ROUTES.ADMIN_DASHBOARD} replace />;
-  }
-
-  if (!activeRegistrationFlow && !persistedOnboardingDraft) {
-    return <Navigate to={AUTH_ROUTES.LOGIN} replace />;
+  if (!isAuthReady) return null;
+  if (!sessionContext?.identity) return <Navigate to={AUTH_ROUTES.REGISTER} replace />;
+  if (sessionContext.membership || !sessionContext.onboarding_eligible) {
+    return <Navigate to={homeRouteFor(sessionContext)} replace />;
   }
 
   if (onboardingStep < minimumStep) {

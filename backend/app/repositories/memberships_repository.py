@@ -47,7 +47,7 @@ def claim_resident_invite(
 ) -> dict:
     """Atomically create membership/residency and consume an invite."""
     response = service_client.rpc(
-        "claim_resident_invite",
+        "claim_email_invitation",
         {"p_invite_id": invite_id, "p_profile_id": profile_id},
     ).execute()
     data = response.data

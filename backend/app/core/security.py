@@ -1,23 +1,26 @@
-"""Access-token verification.
+"""Supabase identity-token verification using the project's JWKS.
 
-Supabase signs access tokens with the project JWT secret (HS256). We verify the
-signature and expiry locally — no network round-trip — and project the token
-into a :class:`Principal`. The ``role`` is read from the ``user_role`` custom
-claim added by the access-token hook (see
-``supabase/migrations/0003_access_token_hook.sql``).
+Tokens establish identity only.  Community permissions are resolved from
+memberships in each protected operation rather than copied into a JWT claim.
 """
 
 from __future__ import annotations
+
+from functools import lru_cache
 
 import jwt
 
 from app.config import get_settings
 from app.core.exceptions import AuthenticationError
-from app.domain.roles import Role, parse_role
 from app.domain.schemas import Principal
 
 # Supabase issues user tokens with this audience.
 _AUDIENCE = "authenticated"
+
+
+@lru_cache(maxsize=1)
+def _jwks_client() -> jwt.PyJWKClient:
+    return jwt.PyJWKClient(f"{get_settings().supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json")
 
 
 def decode_token(token: str) -> Principal:
@@ -35,12 +38,15 @@ def decode_token(token: str) -> Principal:
     """
     settings = get_settings()
     try:
-        claims = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            audience=_AUDIENCE,
-        )
+        header = jwt.get_unverified_header(token)
+        algorithm = header.get("alg")
+        if algorithm == "HS256":
+            if not settings.supabase_jwt_secret:
+                raise AuthenticationError("Legacy token signing is disabled.")
+            key = settings.supabase_jwt_secret
+        else:
+            key = _jwks_client().get_signing_key_from_jwt(token).key
+        claims = jwt.decode(token, key, algorithms=[algorithm], audience=_AUDIENCE)
     except jwt.ExpiredSignatureError as exc:
         raise AuthenticationError("Session has expired.", code="token_expired") from exc
     except jwt.InvalidTokenError as exc:
@@ -50,22 +56,9 @@ def decode_token(token: str) -> Principal:
     if not user_id:
         raise AuthenticationError("Token is missing a subject claim.")
 
-    role = parse_role(claims.get("user_role"))
-    if role is None:
-        # The access-token hook must be registered; a token without a role claim
-        # cannot be authorized for anything.
-        raise AuthenticationError(
-            "Token is missing a valid role claim.", code="missing_role_claim"
-        )
-
     return Principal(
         user_id=user_id,
-        role=role,
         phone=claims.get("phone") or None,
         email=claims.get("email") or None,
+        email_verified=bool(claims.get("email_confirmed_at") or claims.get("email_verified")),
     )
-
-
-def role_from_claims(claims: dict) -> Role | None:
-    """Helper to extract a role from an already-decoded claim set."""
-    return parse_role(claims.get("user_role"))

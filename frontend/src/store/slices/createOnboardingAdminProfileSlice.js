@@ -1,11 +1,12 @@
 import { ONBOARDING_STEPS } from '../../data/onboarding.js';
-import { normalizePhoneNumber } from '../../utils/phone.js';
 
 const editableProfileFields = new Set([
   'fullName',
   'designation',
   'email',
+  'phone',
   'unitNumber',
+  'founderStructureId',
 ]);
 
 export const createEmptyAdminProfile = () => ({
@@ -14,13 +15,13 @@ export const createEmptyAdminProfile = () => ({
   email: '',
   phone: '',
   unitNumber: '',
+  founderStructureId: '',
   profileImage: '',
 });
 
 export const normalizeAdminProfile = (profile) => ({
   ...createEmptyAdminProfile(),
   ...(profile ?? {}),
-  phone: normalizePhoneNumber(profile?.phone),
 });
 
 export const createInitialAdminProfileState = () => ({
@@ -47,19 +48,6 @@ export const createOnboardingAdminProfileSlice = (set) => ({
   setAdminProfile: (profile) =>
     set({ adminProfile: normalizeAdminProfile(profile) }),
 
-  syncAdminProfilePhone: (phone) =>
-    set((state) => {
-      const normalizedPhone = normalizePhoneNumber(phone);
-
-      if (!normalizedPhone || state.adminProfile.phone === normalizedPhone) {
-        return state;
-      }
-
-      return {
-        adminProfile: { ...state.adminProfile, phone: normalizedPhone },
-      };
-    }),
-
   completeAdminProfileStep: () =>
     set((state) => ({
       adminProfile: {
@@ -68,6 +56,6 @@ export const createOnboardingAdminProfileSlice = (set) => ({
         email: state.adminProfile.email.trim(),
         unitNumber: state.adminProfile.unitNumber.trim(),
       },
-      onboardingStep: ONBOARDING_STEPS.ONBOARDING_OTP,
+      onboardingStep: ONBOARDING_STEPS.REVIEW,
     })),
 });
