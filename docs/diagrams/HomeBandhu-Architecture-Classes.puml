@@ -1,0 +1,280 @@
+@startuml HomeBandhu-Architecture-Classes
+' Current source-backed architecture: commit 94556e5 and the clean SQL baseline.
+skinparam dpi 150
+skinparam linetype ortho
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+!pragma layout smetana
+left to right direction
+hide empty members
+
+title HomeBandhu — Current Application Class Diagram
+caption Browser → FastAPI routers → services → repositories → Supabase.\nTenant authorization derives from an active community membership.
+
+package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
+  class ApiClient <<module>> {
+    + api(path, options) : JSON
+    - refresh() : Response
+    - csrfToken() : String
+  }
+  class AuthStore <<Zustand store>> {
+    + initializeAuth()
+    + beginGoogleSignIn(next)
+    + completeExternalLogin()
+    + logout()
+  }
+  class DashboardDataBootstrap <<React component>> {
+    + refresh()
+    + subscribeToDashboard()
+  }
+  class AppStore <<Zustand render cache>> {
+    + hydrateDashboard(snapshot)
+    + clearDashboard()
+  }
+  class RegistrationApi <<module>> {
+    + searchCommunities(query)
+    + createAccessRequest(body)
+    + createInvitation(body)
+  }
+  class AmenitiesService <<module>> {
+    + listAmenities()
+    + saveAmenity(body)
+    + removeAmenity(id)
+  }
+}
+
+package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
+  class AuthRouter <<router>> {
+    + google_start(next)
+    + google_callback(code)
+    + session()
+    + refresh()
+    + logout()
+  }
+  class CommunitiesRouter <<router>> {
+    + search(query)
+    + admin_units()
+  }
+  class AccessRequestsRouter <<router>> {
+    + create()
+    + mine()
+    + approve()
+    + reject()
+  }
+  class InvitationsRouter <<router>> {
+    + prepare()
+    + redeem()
+    + create()
+  }
+  class OnboardingRouter <<router>> {
+    + create_community()
+  }
+  class DashboardRouter <<router>> {
+    + get_dashboard_snapshot()
+    + dashboard_events()
+    + create_amenity()
+    + update_amenity()
+    + delete_amenity()
+  }
+  class Dependencies <<dependency provider>> {
+    + get_principal()
+    + get_active_membership()
+    + require_membership_role()
+    + require_csrf()
+  }
+  class MembershipContext <<DTO>> {
+    + id : UUID
+    + community_id : UUID
+    + role : MembershipRole
+  }
+}
+
+package "Application services" #FFF3E0 {
+  class AuthService <<service>> {
+    + start_google_oauth()
+    + exchange_google_code()
+    + refresh_session()
+    + get_session_context()
+  }
+  class CommunityDirectoryService <<service>> {
+    + search()
+    + admin_units()
+  }
+  class AccessRequestService <<service>> {
+    + create()
+    + mine()
+    + withdraw()
+    + approve()
+    + reject()
+  }
+  class InvitationService <<service>> {
+    + create_invitation()
+    + resolve_invitation()
+    + redeem_pending_invitation()
+  }
+  class OnboardingService <<service>> {
+    + create_community()
+  }
+  class DashboardService <<service>> {
+    + snapshot(membership)
+    + save_amenity(membership, payload)
+    + remove_amenity(membership, amenity_id)
+    + event_stream(membership, cursor)
+  }
+}
+
+package "Persistence adapters" #E2E8F0 {
+  class ProfilesRepository <<repository>> {
+    + get_profile()
+    + upsert_profile()
+  }
+  class MembershipsRepository <<repository>> {
+    + require_active_role()
+    + claim_resident_invite()
+  }
+  class CommunitiesRepository <<repository>> {
+    + search_joinable_communities()
+  }
+  class AccessRequestsRepository <<repository>> {
+    + insert()
+    + list_for_profile()
+    + approve()
+    + reject()
+  }
+  class InvitationsRepository <<repository>> {
+    + insert_invitation()
+    + find_by_token_hash()
+    + find_by_code_hash()
+  }
+  class DashboardRepository <<repository>> {
+    + list_memberships()
+    + list_domain_records()
+    + create_amenity()
+    + update_amenity()
+    + delete_amenity()
+    + publish()
+    + read_events()
+  }
+}
+
+package "Infrastructure" #F3F4F6 {
+  class Settings <<configuration>> {
+    + validate_auth_configuration()
+  }
+  class WebSession <<cookie/PKCE helper>> {
+    + pkce_challenge()
+    + establish_session()
+    + clear_session()
+    + csrf_token()
+  }
+  class Security <<identity verifier>> {
+    + decode_token()
+  }
+  class SupabaseClientFactory <<gateway>> {
+    + get_anon_client()
+    + get_user_client(access_token)
+    + get_service_client()
+  }
+  class AppError <<exception>>
+  class AuthenticationError
+  class AuthorizationError
+  class ConflictError
+  class NotFoundError
+}
+
+package "External systems and data" #FAFAFA {
+  class Google <<external>>
+  class SupabaseAuth <<external>> {
+    + authorize()
+    + exchange_code_for_session()
+    + refresh_session()
+  }
+  database "Supabase Postgres" as Postgres {
+    class "profiles / community_memberships" as MembershipTables
+    class "resident_invites / access_requests" as RegistrationTables
+    class "dashboard domain tables" as DomainTables
+    class "sse_events" as SseEvents
+  }
+}
+
+' Browser calls only the same-origin API; it has no provider token path.
+AuthStore ..> ApiClient
+DashboardDataBootstrap ..> ApiClient : snapshot + EventSource
+DashboardDataBootstrap --> AppStore : hydrate / clear
+RegistrationApi ..> ApiClient
+AmenitiesService ..> ApiClient
+
+ApiClient ..> AuthRouter : HTTPS + cookies
+ApiClient ..> CommunitiesRouter
+ApiClient ..> AccessRequestsRouter
+ApiClient ..> InvitationsRouter
+ApiClient ..> OnboardingRouter
+ApiClient ..> DashboardRouter
+
+AuthRouter ..> Dependencies
+CommunitiesRouter ..> Dependencies
+AccessRequestsRouter ..> Dependencies
+InvitationsRouter ..> Dependencies
+OnboardingRouter ..> Dependencies
+DashboardRouter ..> Dependencies
+Dependencies --> MembershipContext
+Dependencies ..> Security
+Dependencies ..> MembershipsRepository
+
+AuthRouter ..> AuthService
+CommunitiesRouter ..> CommunityDirectoryService
+AccessRequestsRouter ..> AccessRequestService
+InvitationsRouter ..> InvitationService
+OnboardingRouter ..> OnboardingService
+DashboardRouter ..> DashboardService
+
+AuthService ..> ProfilesRepository
+AuthService ..> MembershipsRepository
+AuthService ..> WebSession
+AuthService ..> SupabaseClientFactory
+CommunityDirectoryService ..> CommunitiesRepository
+AccessRequestService ..> AccessRequestsRepository
+AccessRequestService ..> MembershipsRepository
+InvitationService ..> InvitationsRepository
+InvitationService ..> MembershipsRepository
+OnboardingService ..> SupabaseClientFactory : founder RPC
+DashboardService ..> DashboardRepository
+
+ProfilesRepository ..> SupabaseClientFactory
+MembershipsRepository ..> SupabaseClientFactory
+CommunitiesRepository ..> SupabaseClientFactory
+AccessRequestsRepository ..> SupabaseClientFactory
+InvitationsRepository ..> SupabaseClientFactory
+DashboardRepository ..> SupabaseClientFactory
+
+Settings ..> SupabaseClientFactory
+WebSession ..> Settings
+Security ..> Settings
+SupabaseClientFactory ..> SupabaseAuth
+SupabaseClientFactory ..> Postgres
+SupabaseAuth ..> Google
+
+MembershipsRepository ..> MembershipTables
+AccessRequestsRepository ..> RegistrationTables
+InvitationsRepository ..> RegistrationTables
+DashboardRepository ..> DomainTables
+DashboardRepository ..> SseEvents
+SseEvents ..> DashboardService : tenant-scoped refresh event
+
+AppError <|-- AuthenticationError
+AppError <|-- AuthorizationError
+AppError <|-- ConflictError
+AppError <|-- NotFoundError
+
+legend left
+  <b>Legend</b>
+  solid arrow: state/result flow   dashed arrow: dependency
+  «router»: FastAPI HTTP boundary  «service»: application rule
+  «repository»: Supabase/PostgREST adapter
+  «Zustand render cache»: never persists tenant data
+  Browser authorization is never inferred from JWT roles; an active
+  community_memberships record supplies tenant scope and role.
+endlegend
+
+@enduml

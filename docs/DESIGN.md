@@ -139,11 +139,20 @@ text-slate-600 hover:bg-slate-50 hover:text-slate-800
 
 ## Layout shells
 
-Two independent, deliberately duplicated shells (see `CLAUDE.md`) — `ResidentLayout` and `AdminLayout` — both: fixed `w-64` white sidebar (`border-r border-slate-100`) with a top brand block, middle nav list, bottom logout/switch-role controls; a `Header` bar; and `<Outlet>` content padded and centered at `max-w-7xl`. Sidebar collapses to an overlay drawer below `lg`, toggled by a hamburger in `Header`.
+Three portal shells — `ResidentLayout`, `SecurityLayout`, and `AdminLayout` —
+share the same visual contract: fixed `w-64` white sidebar (`border-r
+border-slate-100`) with a top brand block, middle navigation, bottom logout or
+role-switch controls; a `Header` bar; and `<Outlet>` content padded and
+centered at `max-w-7xl`. The sidebar collapses to an overlay drawer below `lg`,
+toggled by a hamburger in `Header`. Portal-specific data is hydrated by the
+non-visual `DashboardDataBootstrap` component; see `ARCHITECTURE.md` for its
+data-flow boundary rather than duplicating it in the visual design system.
 
 ## When extending this system
 
 1. Reuse the tables above instead of eyeballing a new radius/shadow/shade.
 2. New semantic states get a pastel-bg + 700-text pair from the existing five families (indigo/slate/emerald/rose/amber[/blue]) — don't introduce a new hue without a reason.
-3. Every mutating action already triggers a toast + activity-feed entry (see `CLAUDE.md`) — new UI should surface state through those, not new ad-hoc notification patterns.
+3. Successful mutating actions should use the existing toast + activity-feed
+   conventions rather than new ad-hoc notification patterns. A mutation must
+   be backend-backed before it is presented as durable state.
 4. If a component needs to be reused 3+ times, promote it into `components/common/` (currently sparse: only `ToastContainer`) instead of re-copying the class strings.
