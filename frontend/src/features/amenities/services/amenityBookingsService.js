@@ -15,6 +15,7 @@ import {
   createHourlySlots,
   createTimelineBlocks,
 } from '../utils/amenityTimeline.js';
+import { getAmenityById } from './amenitiesService.js';
 
 const cloneBooking = (booking) => ({
   ...booking,
@@ -126,6 +127,20 @@ export const getAllAmenityBookings = async () =>
     .sort((firstBooking, secondBooking) =>
       secondBooking.date.localeCompare(firstBooking.date)
     );
+
+export const getResidentAmenityBookings = async (residentId) =>
+  getAllBookings()
+    .filter((booking) => booking.residentId === residentId)
+    .map(cloneBooking)
+    .sort((firstBooking, secondBooking) => {
+      const dateComparison = firstBooking.date.localeCompare(
+        secondBooking.date
+      );
+
+      return dateComparison !== 0
+        ? dateComparison
+        : firstBooking.startTime.localeCompare(secondBooking.startTime);
+    });
 
 export const getBookableResidents = async () =>
   initialUsers
@@ -247,6 +262,10 @@ export const validateBookingSlot = async ({
   closingTime,
   cleaningBuffer = 0,
   excludeBookingId = null,
+  bookingMode = null,
+  isPrivateBooking = false,
+  guestCount = 0,
+  capacity = null,
 }) => {
   assertValidTimeRange(startTime, endTime);
 
@@ -266,6 +285,61 @@ export const validateBookingSlot = async ({
       booking.id !== excludeBookingId &&
       isAvailabilityBlockingBooking(booking)
   );
+  const supportsSharedCapacity =
+    ['Shared', 'Hybrid'].includes(bookingMode) && !isPrivateBooking;
+
+  if (supportsSharedCapacity) {
+    const overlappingBookings = dayBookings.filter((booking) =>
+      intervalsOverlap(
+        proposedStart,
+        proposedEnd,
+        timeToMinutes(booking.startTime),
+        timeToMinutes(booking.endTime)
+      )
+    );
+    const hasExclusiveConflict = overlappingBookings.some(
+      (booking) =>
+        booking.state === BOOKING_TIMELINE_STATE.BLOCKED ||
+        booking.isPrivateBooking ||
+        booking.bookingType === 'private-event'
+    );
+
+    if (hasExclusiveConflict) {
+      return false;
+    }
+
+    if (capacity != null) {
+      const occupiedCapacity = overlappingBookings.reduce(
+        (total, booking) => total + 1 + Number(booking.guestCount || 0),
+        0
+      );
+
+      if (occupiedCapacity + 1 + Number(guestCount || 0) > Number(capacity)) {
+        return false;
+      }
+    }
+
+    const timelineBlocks = createTimelineBlocks(
+      dayBookings,
+      createHourlySlots(openingTime, closingTime),
+      cleaningBuffer
+    );
+    return !timelineBlocks
+      .filter(
+        (block) =>
+          block.state === BOOKING_TIMELINE_STATE.CLEANING_BUFFER ||
+          block.state === BOOKING_TIMELINE_STATE.BLOCKED
+      )
+      .some((block) =>
+        intervalsOverlap(
+          proposedStart,
+          proposedEnd,
+          timeToMinutes(block.startTime),
+          timeToMinutes(block.endTime)
+        )
+      );
+  }
+
   const timelineBlocks = createTimelineBlocks(
     dayBookings,
     createHourlySlots(openingTime, closingTime),
@@ -327,6 +401,289 @@ export const createAmenityBooking = async (bookingData) => {
 
   saveAmenityBookings([...bookings, booking]);
   return cloneBooking(booking);
+};
+
+const getDayName = (date) =>
+  new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00.000Z`));
+
+const assertResidentBookingRules = (
+  amenity,
+  bookingData,
+  bookings,
+  additionalBookingCount = 1
+) => {
+  if (!amenity || !amenity.isActive) {
+    throw new Error('This amenity is currently unavailable.');
+  }
+
+  const availability = amenity.availabilitySettings;
+  const bookingSettings = amenity.bookingSettings;
+  const selectedDay = getDayName(bookingData.date);
+
+  if (
+    availability.temporaryClosure ||
+    availability.closedDays.includes(selectedDay) ||
+    availability.maintenanceDays.includes(selectedDay) ||
+    availability.holidayOverrides.includes(bookingData.date)
+  ) {
+    throw new Error('This amenity is closed on the selected date.');
+  }
+
+  const today = new Date();
+  const todayIso = today.toISOString().split('T')[0];
+  const selectedDate = new Date(`${bookingData.date}T00:00:00.000Z`);
+  const todayDate = new Date(`${todayIso}T00:00:00.000Z`);
+  const daysInAdvance = Math.round(
+    (selectedDate.getTime() - todayDate.getTime()) / 86400000
+  );
+
+  if (daysInAdvance < 0) {
+    throw new Error('Select today or a future date.');
+  }
+
+  if (!bookingSettings.allowSameDayBooking && daysInAdvance === 0) {
+    throw new Error('Same-day bookings are not allowed for this amenity.');
+  }
+
+  if (daysInAdvance > availability.advanceBookingWindowDays) {
+    throw new Error(
+      `Bookings can only be made ${availability.advanceBookingWindowDays} days in advance.`
+    );
+  }
+
+  const supportsPrivateBooking =
+    amenity.bookingMode === 'Exclusive' ||
+    (amenity.bookingMode === 'Hybrid' &&
+      bookingSettings.allowPrivateBooking);
+
+  if (bookingData.isPrivateBooking && !supportsPrivateBooking) {
+    throw new Error('Private bookings are not allowed for this amenity.');
+  }
+
+  if (
+    !bookingData.isPrivateBooking &&
+    amenity.bookingMode === 'Exclusive'
+  ) {
+    throw new Error('This amenity only supports private bookings.');
+  }
+
+  if (Number(bookingData.guestCount) > 0 && !bookingSettings.allowGuestBooking) {
+    throw new Error('Guest bookings are not allowed for this amenity.');
+  }
+
+  if (
+    amenity.capacity != null &&
+    Number(bookingData.guestCount) + 1 > amenity.capacity
+  ) {
+    throw new Error(
+      `This amenity allows up to ${amenity.capacity} people per booking.`
+    );
+  }
+
+  const duration =
+    timeToMinutes(bookingData.endTime) - timeToMinutes(bookingData.startTime);
+
+  if (duration < availability.minimumBookingDurationMinutes) {
+    throw new Error(
+      `Bookings must be at least ${availability.minimumBookingDurationMinutes} minutes.`
+    );
+  }
+
+  if (duration > availability.maximumBookingDurationMinutes) {
+    throw new Error(
+      `Bookings cannot exceed ${availability.maximumBookingDurationMinutes} minutes.`
+    );
+  }
+
+  const bookingLimit = bookingSettings.maxActiveBookingsPerResident;
+
+  if (bookingLimit != null) {
+    const activeBookingCount = new Set(
+      bookings
+        .filter(
+          (booking) =>
+            booking.residentId === bookingData.residentId &&
+            booking.amenityId === bookingData.amenityId &&
+            booking.date >= todayIso &&
+            ![
+              BOOKING_STATUS.CANCELLED,
+              BOOKING_STATUS.REJECTED,
+              BOOKING_STATUS.COMPLETED,
+            ].includes(booking.status)
+        )
+        .map((booking) => booking.bookingGroupId ?? booking.id)
+    ).size;
+
+    if (activeBookingCount + additionalBookingCount > bookingLimit) {
+      throw new Error(
+        `You can have up to ${bookingLimit} active bookings for this amenity.`
+      );
+    }
+  }
+};
+
+const createResidentBookingRecord = (
+  bookingData,
+  amenity,
+  timestamp,
+  groupData
+) => {
+  const requiresApproval =
+    amenity.bookingSettings.requireAdminApproval &&
+    !amenity.bookingSettings.enableAutoApproval;
+  return {
+    id: genId('booking'),
+    amenityId: bookingData.amenityId,
+    residentId: bookingData.residentId,
+    residentName: bookingData.residentName,
+    bookingTitle: bookingData.bookingTitle || 'Resident Booking',
+    date: bookingData.date,
+    startTime: bookingData.startTime,
+    endTime: bookingData.endTime,
+    state: BOOKING_TIMELINE_STATE.BOOKED,
+    bookingType: bookingData.isPrivateBooking
+      ? 'private-event'
+      : 'resident',
+    status: requiresApproval
+      ? BOOKING_STATUS.PENDING
+      : BOOKING_STATUS.CONFIRMED,
+    source: 'resident',
+    requiresApproval,
+    isPrivateBooking: Boolean(bookingData.isPrivateBooking),
+    guestCount: Number(bookingData.guestCount) || 0,
+    guests: [],
+    notes: bookingData.notes?.trim() || null,
+    chargeOverride: null,
+    ...groupData,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+};
+
+export const createResidentAmenityBookingSeries = async (bookingData) => {
+  const dates = [
+    ...new Set(bookingData.dates ?? [bookingData.date]),
+  ].sort();
+
+  if (dates.length === 0) {
+    throw new Error('Select at least one booking date.');
+  }
+
+  const amenity = await getAmenityById(bookingData.amenityId);
+  const bookings = getAllBookings();
+  const bookingGroupId = genId('booking-group');
+
+  for (const date of dates) {
+    const datedBooking = { ...bookingData, date };
+    assertValidBookingDetails(datedBooking);
+    assertResidentBookingRules(
+      amenity,
+      datedBooking,
+      bookings,
+      1
+    );
+    await assertSlotAvailable({
+      ...datedBooking,
+      openingTime: amenity.openingTime,
+      closingTime: amenity.closingTime,
+      cleaningBuffer: amenity.cleaningBuffer,
+      bookingMode: amenity.bookingMode,
+      capacity: amenity.capacity,
+    });
+  }
+
+  const timestamp = new Date().toISOString();
+  const groupData = {
+    bookingGroupId,
+    bookingGroupSize: dates.length,
+    seriesStartDate: dates[0],
+    seriesEndDate: dates[dates.length - 1],
+  };
+  const createdBookings = dates.map((date) =>
+    createResidentBookingRecord(
+      { ...bookingData, date },
+      amenity,
+      timestamp,
+      groupData
+    )
+  );
+
+  saveAmenityBookings([...bookings, ...createdBookings]);
+  return createdBookings.map(cloneBooking);
+};
+
+export const createResidentAmenityBooking = async (bookingData) => {
+  const bookings = await createResidentAmenityBookingSeries({
+    ...bookingData,
+    dates: [bookingData.date],
+  });
+  return bookings[0];
+};
+
+export const cancelResidentAmenityBookingDays = async ({
+  bookingIds,
+  residentId,
+  reason,
+}) => {
+  const uniqueBookingIds = [...new Set(bookingIds)];
+  const trimmedReason = reason?.trim();
+
+  if (uniqueBookingIds.length === 0) {
+    throw new Error('Select at least one booking day to cancel.');
+  }
+
+  if (!trimmedReason) {
+    throw new Error('Add a cancellation reason.');
+  }
+
+  const bookings = getAllBookings();
+  const selectedBookings = uniqueBookingIds.map((bookingId) =>
+    bookings.find((booking) => booking.id === bookingId)
+  );
+  const cancellableStatuses = new Set([
+    BOOKING_STATUS.PENDING,
+    BOOKING_STATUS.APPROVED,
+    BOOKING_STATUS.CONFIRMED,
+  ]);
+
+  if (
+    selectedBookings.some(
+      (booking) =>
+        !booking ||
+        booking.residentId !== residentId ||
+        booking.source !== 'resident' ||
+        booking.date < new Date().toISOString().split('T')[0] ||
+        !cancellableStatuses.has(booking.status)
+    )
+  ) {
+    throw new Error(
+      'One or more selected booking days can no longer be cancelled.'
+    );
+  }
+
+  const cancelledAt = new Date().toISOString();
+  const selectedIds = new Set(uniqueBookingIds);
+  const updatedBookings = bookings.map((booking) =>
+    selectedIds.has(booking.id)
+      ? {
+          ...booking,
+          status: BOOKING_STATUS.CANCELLED,
+          cancellationReason: 'resident-requested',
+          cancellationDetails: trimmedReason,
+          cancelledByResident: true,
+          cancelledAt,
+          updatedAt: cancelledAt,
+        }
+      : booking
+  );
+
+  saveAmenityBookings(updatedBookings);
+  return updatedBookings
+    .filter((booking) => selectedIds.has(booking.id))
+    .map(cloneBooking);
 };
 
 export const createAmenityBlockedSlot = async (blockedSlotData) => {

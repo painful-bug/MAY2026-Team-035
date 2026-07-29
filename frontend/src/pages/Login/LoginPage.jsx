@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Loader2, Smartphone } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
 import PhoneNumberField from '../../components/auth/PhoneNumberField';
 import { AUTH_PROVIDER, authConfiguration, availableAuthProviders } from '../../lib/auth/config';
@@ -94,6 +94,12 @@ export default function LoginPage() {
           </button>
         </>
       )}
+      <p className="text-center text-[10px] font-semibold text-slate-400">
+        Resident or society staff?{' '}
+        <Link to={AUTH_ROUTES.RESIDENT_LOGIN} className="font-bold text-indigo-600 hover:underline">
+          Open Community Portal
+        </Link>
+      </p>
     </AuthCard>
   );
 }

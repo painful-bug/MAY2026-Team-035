@@ -18,6 +18,7 @@ import {
   normalizePhoneNumber,
   sanitizePhoneInput,
 } from '../utils/phone';
+import { findSecurityCommunityAccount } from '../lib/securityAccounts';
 
 export const ADMIN_REGISTRATION_STATUS = Object.freeze({
   UNKNOWN: 'unknown',
@@ -98,6 +99,17 @@ export const useAuthStore = create(
   persist(
     (set, get) => ({
       ...initialAuthState,
+
+      // Compatibility for the still-local resident/security demonstration
+      // routes. Production sign-in always hydrates this identity from Supabase.
+      setCurrentUser: (currentUser) =>
+        set({
+          currentUser,
+          authFlowState: currentUser
+            ? AUTH_FLOW_STATE.AUTHENTICATED
+            : AUTH_FLOW_STATE.IDLE,
+          isAuthReady: true,
+        }),
 
       initializeAuth: async () => {
         if (!isSupabaseAuthConfigured()) {
@@ -231,6 +243,46 @@ export const useAuthStore = create(
           authProvider: null,
           authError: '',
         }),
+
+      // The resident and security portals remain local demonstrations until
+      // their corresponding backend authentication paths are migrated. Do not
+      // use this action from the Google/OTP sign-in flow.
+      login: (phone) => {
+        const app = useAppStore.getState();
+        const cleanPhone = normalizePhoneNumber(phone);
+        const user =
+          app.users.find(
+            (candidate) =>
+              normalizePhoneNumber(candidate.phone) === cleanPhone
+          ) || findSecurityCommunityAccount(app.departments, cleanPhone);
+
+        if (!user) {
+          return {
+            success: false,
+            message: 'Invalid credentials. Phone number not registered.',
+          };
+        }
+        if (user.status !== 'Active') {
+          return {
+            success: false,
+            message: 'This account is inactive. Contact your society administrator.',
+          };
+        }
+
+        set({
+          currentUser: user,
+          currentPhone: cleanPhone,
+          registrationStatus:
+            user.role === 'Admin'
+              ? ADMIN_REGISTRATION_STATUS.REGISTERED
+              : ADMIN_REGISTRATION_STATUS.UNKNOWN,
+          authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
+          authError: '',
+          isAuthReady: true,
+        });
+        app.showToast(`Welcome back, ${user.name}!`, 'success');
+        return { success: true, user };
+      },
 
       logout: async () => {
         try {

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
+import { getVisitorSecurityCode } from '../../lib/visitorPasses';
 import { 
   Search, 
   Bell, 
@@ -8,9 +9,7 @@ import {
   Megaphone, 
   User, 
   AlertCircle, 
-  Calendar,
-  Activity,
-  ArrowRight
+  Activity
 } from 'lucide-react';
 
 export default function Header({ onMenuClick }) {
@@ -45,7 +44,7 @@ export default function Header({ onMenuClick }) {
 
     const matchedVisitors = visitors
       .filter(v => v.name.toLowerCase().includes(query) || v.purpose.toLowerCase().includes(query))
-      .map(v => ({ ...v, title: v.name, description: `Expected: ${v.eta} • Code: ${v.code}`, resultType: 'Visitor', icon: User, color: 'text-emerald-600 bg-emerald-50' }));
+      .map(v => ({ ...v, title: v.name, description: `Expected: ${v.eta} • Security code: ${getVisitorSecurityCode(v)}`, resultType: 'Visitor', icon: User, color: 'text-emerald-600 bg-emerald-50' }));
 
     const matchedComplaints = complaints
       .filter(c => c.title.toLowerCase().includes(query) || c.category.toLowerCase().includes(query))
@@ -71,7 +70,9 @@ export default function Header({ onMenuClick }) {
           {currentUser && (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3.5 py-1.5 rounded-full text-xs font-semibold text-slate-600">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-              Flat {currentUser.flat} • Tower {currentUser.tower}
+              {['Security', 'SecurityManager'].includes(currentUser.role)
+                ? `${currentUser.departmentName} • ${currentUser.staffRole}`
+                : `Flat ${currentUser.flat} • Tower ${currentUser.tower}`}
             </div>
           )}
         </div>
@@ -113,7 +114,15 @@ export default function Header({ onMenuClick }) {
             <div className="flex items-center gap-3 pl-3 border-l border-slate-100">
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-bold text-slate-800">{currentUser.name}</p>
-                <p className="text-[11px] font-semibold text-slate-400">{currentUser.role === 'Admin' ? 'Administrator' : currentUser.role}</p>
+                <p className="text-[11px] font-semibold text-slate-400">
+                  {currentUser.role === 'Admin'
+                    ? 'Administrator'
+                    : currentUser.role === 'SecurityManager'
+                      ? 'Security Department Manager'
+                      : currentUser.role === 'Security'
+                      ? `Security ${currentUser.staffRole || 'Staff'}`
+                      : 'Resident Owner'}
+                </p>
               </div>
               <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center shadow-md shadow-indigo-100">
                 {currentUser.name.charAt(0)}

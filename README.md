@@ -27,9 +27,6 @@ persisted to browser storage, which also gives it realtime cross-tab sync
 ```bash
 npm install          # once, from repo root — installs the frontend workspace
 npm run dev          # start Vite dev server
-npm run build        # production build
-npm run preview      # preview the build
-npm run lint         # oxlint
 ```
 
 Open the local URL printed by Vite after running `npm run dev`. All root scripts
