@@ -3,12 +3,17 @@
 Reads go through two ``security_invoker`` views so RLS still applies to the
 caller; the write goes through an RPC.
 
-**Neither view exists on the baseline yet.** ``community_settings_overview`` and
-``community_module_overview`` were defined in ``0017_settings.sql``, which is
-quarantined in ``supabase/migrations/legacy-preauth/``.
-``0018_settings_on_baseline.sql`` rebuilt the two *tables* they read from, not
-the views themselves, so ``GET``/``PUT /settings`` still needs that rebuild --
-see ``legacy-preauth/README.md``.
+Both views are created by ``0022_settings_views_on_baseline.sql``.
+``0018_settings_on_baseline.sql`` had rebuilt the two *tables* they read from but
+not the views themselves, which is why this domain was unrunnable for longer than
+the others.
+
+``community_module_overview`` reads **their** ``feature_catalog`` and
+``community_features``, not module tables of ours. That closes conflict C-11: the
+wiring audit deleted our three module endpoints because onboarding owns module
+selection, but the read still came from our own tables, so the duplication
+survived one level down. It does not any more, and ``0017_settings.sql``'s module
+tables are permanently superseded.
 """
 
 from __future__ import annotations

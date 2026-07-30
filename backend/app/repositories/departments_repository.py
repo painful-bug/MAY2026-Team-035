@@ -6,10 +6,14 @@ an RPC: creating a department touches four tables, and PostgREST has no
 client-side transaction, so doing it here would leave a department with no
 categories the first time the second call failed.
 
-**None of these database objects exist on the baseline yet.** ``0014_departments.sql``
-is quarantined in ``supabase/migrations/legacy-preauth/`` awaiting a rebuild, so
-the endpoints in this domain pass their contract tests but would fail against a
-real database. See ``legacy-preauth/README.md``.
+Every object here is created by ``0019_departments_on_baseline.sql``, which
+replaced the quarantined ``0014_departments.sql``.
+
+Two consequences of the baseline worth knowing when reading rows back: a roster
+entry may have no ``membership_id`` at all, because the department form collects
+typed names rather than accounts; and ``status`` is ours while ``is_active`` is
+theirs, kept equal by a trigger, so their ``dashboard_repository`` and this
+module never disagree about whether a department is live.
 """
 
 from __future__ import annotations

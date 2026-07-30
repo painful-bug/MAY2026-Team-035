@@ -11,10 +11,13 @@ No total is ever computed in this module. Every figure it returns is read from a
 database aggregate rather than summed here, because summing floats in Python
 produces a figure that is wrong in a way nobody notices.
 
-**None of these database objects exist on the baseline yet.** ``0015_money.sql``
-is quarantined in ``supabase/migrations/legacy-preauth/`` awaiting a rebuild, so
-the endpoints in this domain pass their contract tests but would fail against a
-real database. See ``legacy-preauth/README.md``.
+Every object here is created by ``0021_money_on_baseline.sql``, which replaced
+the quarantined ``0015_money.sql``. ``community_billing_settings`` came earlier,
+from ``0018``.
+
+``record_payment`` is idempotent on ``provider_reference`` through the baseline's
+own ``unique (community_id, idempotency_key)``, so a retried call returns the
+payment already recorded instead of crediting the invoice twice.
 """
 
 from __future__ import annotations

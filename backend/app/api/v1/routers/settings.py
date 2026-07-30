@@ -8,13 +8,21 @@ module selection exists only as an onboarding step, so our three module endpoint
 and two tables were duplicates with no caller. See
 ``docs/FRONTEND_WIRING_AUDIT.md`` and addendum C-11.
 
-``GET /settings`` still *reports* the module collection, and that read is the
-loose end: it comes from our ``community_module_overview`` view, not from their
-``community_features``, so it needs the ``0017_settings.sql`` rebuild before it
-will run. Repointing it at ``community_features`` would finish C-11 properly and
-delete the last of the duplication -- flagged rather than done here, because it
-changes which table is authoritative and the onboarding workstream owns the
-writer.
+``GET /settings`` still *reports* the module collection, and that read was the
+loose end for a while: it came from module tables of ours, so the duplication the
+endpoint deletions were meant to remove survived one level down.
+``0022_settings_views_on_baseline.sql`` closes it. ``community_module_overview``
+is now a view over **their** ``feature_catalog`` and ``community_features``, so
+there is exactly one place a module's enabled state lives and the onboarding
+workstream owns the writer. ``0017_settings.sql``'s module tables are permanently
+superseded and are not part of the rebuild.
+
+The view adds three columns to ``feature_catalog`` rather than keeping a parallel
+table: ``sort_order``, ``backend_status`` and ``backend_note``. They are
+editorial metadata about *our* backend -- whether a module a community has
+switched on actually does anything yet -- which is a fact about the code rather
+than about the community, and the Settings screen is the place that should be
+able to say so.
 
 **There is no community rename here, and that is deliberate.**
 ``GET /settings`` reports the community's name, type and status; nothing writes
