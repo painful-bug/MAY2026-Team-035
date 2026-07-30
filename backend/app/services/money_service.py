@@ -14,40 +14,32 @@ who leaves does not take the flat's arrears with them.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from app.core.exceptions import ValidationError
 from app.core.formatting import bill_period, parse_instant
-from app.domain.common_schemas import Page
 from app.domain.money_schemas import (
     BillingSettings,
-    CollectionSummaryDetail,
     CreateInvoiceRequest,
     InvoiceDetail,
     InvoiceLineItem,
     InvoiceSummary,
-    MaintenanceRunRequest,
-    MaintenanceRunResult,
     PaymentSummary,
     RecordPaymentRequest,
     UpdateBillingSettingsRequest,
 )
 from app.domain.units import normalize_unit_code
 from app.domain.vocabularies import (
-    invoice_filter_to_storage,
     invoice_status_to_wire,
     late_fee_period_to_storage,
     payment_method_to_storage,
     payment_method_to_wire,
 )
 from app.repositories import money_repository as repo
-from app.repositories import tenancy_repository as dash_repo
+from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 _VALID_INVOICE_TYPES = ("maintenance", "amenity", "penalty", "misc")
-_ONE_DAY = timedelta(days=1)
-
-
 def _amount(value: object) -> float:
     """Read a Postgres ``numeric`` off the wire as a float.
 
@@ -150,74 +142,9 @@ def _to_detail(row: dict, lines: list[dict], payments: list[dict]) -> InvoiceDet
     )
 
 
-def _statuses_for(status_filter: str | None) -> tuple[str, ...] | None:
-    """Translate the screen's ``Paid``/``Unpaid`` filter into stored statuses."""
-    if not status_filter or status_filter.strip().lower() == "all":
-        return None
-    statuses = invoice_filter_to_storage(status_filter)
-    if statuses is None:
-        raise ValidationError(
-            "status must be Paid, Unpaid, Void or All.", code="invalid_status"
-        )
-    return statuses
-
-
-def list_invoices(
-    client: Client,
-    user_id: str,
-    *,
-    search: str | None = None,
-    status: str | None = None,
-    unit_id: str | None = None,
-    invoice_type: str | None = None,
-    overdue_only: bool = False,
-    issued_from: date | None = None,
-    issued_to: date | None = None,
-    page: int = 1,
-    page_size: int = 20,
-) -> Page[InvoiceSummary]:
-    """Page through the community's invoices -- the maintenance collections table.
-
-    Ordered by due date descending so the bills that matter are first. Line items
-    are **not** embedded: unlike a department's roster, no list screen renders
-    them, and an invoice with twenty lines would multiply the response for a
-    table that shows one amount.
-    """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
-    if invoice_type and invoice_type not in _VALID_INVOICE_TYPES:
-        raise ValidationError(
-            f"invoiceType must be one of {', '.join(_VALID_INVOICE_TYPES)}.",
-            code="invalid_invoice_type",
-        )
-
-    offset = (page - 1) * page_size
-    rows, total = repo.list_invoices(
-        client,
-        community_id,
-        search=search,
-        statuses=_statuses_for(status),
-        unit_id=unit_id,
-        invoice_type=invoice_type,
-        overdue_only=overdue_only,
-        issued_from=issued_from.isoformat() if issued_from else None,
-        issued_to=issued_to.isoformat() if issued_to else None,
-        offset=offset,
-        limit=page_size,
-    )
-
-    items = [_to_summary(row) for row in rows]
-    return Page[InvoiceSummary](
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        has_more=offset + len(items) < total,
-    )
-
-
 def get_invoice(client: Client, user_id: str, invoice_id: str) -> InvoiceDetail:
     """One invoice with its line items and every payment against it."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     row = repo.get_invoice(client, community_id, invoice_id)
     lines = repo.list_line_items(client, community_id, invoice_id)
     payments, _ = repo.list_payments(
@@ -226,38 +153,11 @@ def get_invoice(client: Client, user_id: str, invoice_id: str) -> InvoiceDetail:
     return _to_detail(row, lines, payments)
 
 
-def get_collection_summary(client: Client, user_id: str) -> CollectionSummaryDetail:
-    """The Maintenance screen's three tiles, over the whole community.
-
-    A community with no invoices has no row in the aggregate, which becomes zeros
-    here rather than a 404 -- a founding admin sees this screen before anyone has
-    been billed, and it is the one case the dashboard has never rendered.
-    """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
-    row = repo.fetch_collection_summary(client, community_id) or {}
-
-    collected = _amount(row.get("total_collected"))
-    billed = _amount(row.get("total_billed"))
-    return CollectionSummaryDetail(
-        total_collected=collected,
-        total_outstanding=_amount(row.get("total_outstanding")),
-        total_billed=billed,
-        paid_count=int(row.get("paid_count") or 0),
-        unpaid_count=int(row.get("unpaid_count") or 0),
-        invoice_count=int(row.get("invoice_count") or 0),
-        collection_percent=round(collected / billed * 100) if billed > 0 else 0,
-        overdue_count=int(row.get("overdue_count") or 0),
-        overdue_amount=_amount(row.get("overdue_amount")),
-        currency=row.get("currency_code") or "INR",
-        generated_at=datetime.now(timezone.utc),
-    )
-
-
 def create_invoice(
     client: Client, user_id: str, body: CreateInvoiceRequest
 ) -> InvoiceDetail:
     """Issue one invoice against one flat, with its lines, atomically."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
 
     if body.invoice_type not in _VALID_INVOICE_TYPES:
         raise ValidationError(
@@ -314,7 +214,7 @@ def record_payment(
     question is always "is it settled now" -- and answering it here saves the
     screen a second request to find out.
     """
-    dash_repo.get_caller_community_id(client, user_id)
+    tenancy_repo.get_caller_community_id(client, user_id)
 
     method = payment_method_to_storage(body.method)
     if method is None:
@@ -338,101 +238,6 @@ def record_payment(
     return get_invoice(client, user_id, invoice_id)
 
 
-def void_invoice(
-    client: Client, user_id: str, invoice_id: str, reason: str | None
-) -> InvoiceDetail:
-    """Cancel an invoice and return it in its voided state."""
-    dash_repo.get_caller_community_id(client, user_id)
-    repo.void_invoice(client, invoice_id, reason)
-    return get_invoice(client, user_id, invoice_id)
-
-
-def run_maintenance_billing(
-    client: Client, user_id: str, body: MaintenanceRunRequest
-) -> MaintenanceRunResult:
-    """Bill every occupied flat for one period.
-
-    Safe to repeat: a partial unique index makes a second run for the same period
-    report every flat as skipped rather than billing it twice, so a double-click
-    costs nothing.
-    """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
-
-    payload: dict = {}
-    if body.amount is not None:
-        payload["amount"] = body.amount
-    if body.period_start:
-        payload["period_start"] = body.period_start.isoformat()
-    if body.period_end:
-        payload["period_end"] = body.period_end.isoformat()
-    if body.due_date:
-        payload["due_on"] = body.due_date.isoformat()
-    if body.title:
-        payload["title"] = body.title.strip()
-
-    result = repo.run_maintenance_billing(client, community_id, payload)
-
-    today = date.today()
-    period_start = body.period_start or today.replace(day=1)
-    period_end = body.period_end or _month_end(period_start)
-    return MaintenanceRunResult(
-        invoiced=int(result.get("invoiced") or 0),
-        skipped=int(result.get("skipped") or 0),
-        total_amount=_amount(result.get("total_amount")),
-        period_start=period_start,
-        period_end=period_end,
-    )
-
-
-def _month_end(value: date) -> date:
-    """The last day of ``value``'s month, without a calendar dependency."""
-    if value.month == 12:
-        return value.replace(day=31)
-    return value.replace(month=value.month + 1, day=1) - _ONE_DAY
-
-
-def list_payments(
-    client: Client,
-    user_id: str,
-    *,
-    search: str | None = None,
-    method: str | None = None,
-    invoice_id: str | None = None,
-    page: int = 1,
-    page_size: int = 20,
-) -> Page[PaymentSummary]:
-    """Page through recorded payments -- the collection log."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
-
-    stored_method = None
-    if method:
-        stored_method = payment_method_to_storage(method)
-        if stored_method is None:
-            raise ValidationError(
-                "Unknown payment method.", code="invalid_payment_method"
-            )
-
-    offset = (page - 1) * page_size
-    rows, total = repo.list_payments(
-        client,
-        community_id,
-        invoice_id=invoice_id,
-        search=search,
-        method=stored_method,
-        offset=offset,
-        limit=page_size,
-    )
-
-    items = [_to_payment(row) for row in rows]
-    return Page[PaymentSummary](
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        has_more=offset + len(items) < total,
-    )
-
-
 def get_billing_settings(client: Client, user_id: str) -> BillingSettings:
     """The community's billing configuration.
 
@@ -440,7 +245,7 @@ def get_billing_settings(client: Client, user_id: str) -> BillingSettings:
     404ing -- the row is created lazily on first write, and a screen asking what
     the settings are should not have to know that.
     """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     row = repo.fetch_billing_settings(client, community_id)
     if row is None:
         return BillingSettings(
@@ -468,7 +273,7 @@ def update_billing_settings(
     client: Client, user_id: str, body: UpdateBillingSettingsRequest
 ) -> BillingSettings:
     """Patch the billing configuration. Omitted fields are left unchanged."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
 
     supplied = body.model_dump(exclude_unset=True)
     patch: dict = {}

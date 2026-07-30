@@ -1,10 +1,14 @@
 """Data access for community settings and the feature-module registry.
 
-Reads go through the two ``security_invoker`` views from migration 0017; writes
-go through its three RPCs. The module writes are RPCs for a reason that is not
-transactionality: a bulk set has to validate all ten keys *before* writing any of
-them, so one typo in an array does not leave a community half-configured, and a
-PostgREST upsert cannot express "check everything first".
+Reads go through two ``security_invoker`` views so RLS still applies to the
+caller; the write goes through an RPC.
+
+**Neither view exists on the baseline yet.** ``community_settings_overview`` and
+``community_module_overview`` were defined in ``0017_settings.sql``, which is
+quarantined in ``supabase/migrations/legacy-preauth/``.
+``0018_settings_on_baseline.sql`` rebuilt the two *tables* they read from, not
+the views themselves, so ``GET``/``PUT /settings`` still needs that rebuild --
+see ``legacy-preauth/README.md``.
 """
 
 from __future__ import annotations
@@ -72,22 +76,6 @@ def list_modules(client: Client, community_id: str) -> list[dict]:
     return response.data or []
 
 
-def fetch_module(client: Client, community_id: str, module_key: str) -> dict:
-    """One module row, or raise."""
-    response = (
-        client.table(_MODULES)
-        .select(_MODULE_SELECT)
-        .eq("community_id", community_id)
-        .eq("module_key", module_key)
-        .limit(1)
-        .execute()
-    )
-    rows = response.data or []
-    if not rows:
-        raise NotFoundError("Module not found.")
-    return rows[0]
-
-
 def save_settings(client: Client, community_id: str, payload: dict) -> None:
     """Patch the community preferences (RPC), creating the row on first use."""
     try:
@@ -99,29 +87,3 @@ def save_settings(client: Client, community_id: str, payload: dict) -> None:
         raise translate(exc, default_message="Could not save the settings.") from exc
 
 
-def set_module(
-    client: Client, community_id: str, module_key: str, enabled: bool
-) -> None:
-    """Turn one module on or off (RPC)."""
-    try:
-        client.rpc(
-            "set_community_module",
-            {
-                "p_community_id": community_id,
-                "p_module_key": module_key,
-                "p_enabled": enabled,
-            },
-        ).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(exc, default_message="Could not update the module.") from exc
-
-
-def set_modules(client: Client, community_id: str, module_keys: list[str]) -> None:
-    """Set the whole module set from the list of enabled keys (RPC)."""
-    try:
-        client.rpc(
-            "set_community_modules",
-            {"p_community_id": community_id, "p_module_keys": module_keys},
-        ).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(exc, default_message="Could not update the modules.") from exc

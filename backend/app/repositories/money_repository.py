@@ -7,9 +7,14 @@ payment touches three and recomputes a balance, and PostgREST has no client-side
 transaction -- so doing either here would leave an invoice whose header disagreed
 with its own lines the first time the second call failed.
 
-No total is ever computed in this module. ``fetch_collection_summary`` reads a
-database aggregate rather than summing rows, because summing floats in Python
+No total is ever computed in this module. Every figure it returns is read from a
+database aggregate rather than summed here, because summing floats in Python
 produces a figure that is wrong in a way nobody notices.
+
+**None of these database objects exist on the baseline yet.** ``0015_money.sql``
+is quarantined in ``supabase/migrations/legacy-preauth/`` awaiting a rebuild, so
+the endpoints in this domain pass their contract tests but would fail against a
+real database. See ``legacy-preauth/README.md``.
 """
 
 from __future__ import annotations
@@ -20,7 +25,6 @@ from supabase import Client
 
 _INVOICES = "invoice_overview"
 _PAYMENTS = "payment_overview"
-_SUMMARY = "collection_summary"
 _LINE_ITEMS = "invoice_line_items"
 _SETTINGS = "community_billing_settings"
 
@@ -174,28 +178,6 @@ def list_payments(
     return (response.data or []), (response.count or 0)
 
 
-def fetch_collection_summary(client: Client, community_id: str) -> dict | None:
-    """The community's collection totals, aggregated by Postgres.
-
-    Returns None for a community with no invoices at all -- the view groups by
-    community, so a founding community has no row rather than a row of zeros. The
-    service turns that into zeros, because the dashboard must render something
-    (FRONTEND_MEETING_AGENDA.md item 7).
-    """
-    response = (
-        client.table(_SUMMARY)
-        .select(
-            "total_collected, total_outstanding, total_billed, paid_count,"
-            "unpaid_count, invoice_count, overdue_count, overdue_amount, currency_code"
-        )
-        .eq("community_id", community_id)
-        .limit(1)
-        .execute()
-    )
-    rows = response.data or []
-    return rows[0] if rows else None
-
-
 def fetch_billing_settings(client: Client, community_id: str) -> dict | None:
     """The community's billing configuration, or None before it has one."""
     response = (
@@ -255,34 +237,6 @@ def record_payment(client: Client, invoice_id: str, payload: dict) -> str:
     return str(payment_id)
 
 
-def run_maintenance_billing(
-    client: Client, community_id: str, payload: dict
-) -> dict:
-    """Issue one maintenance invoice per occupied flat for a period (RPC)."""
-    try:
-        response = client.rpc(
-            "run_maintenance_billing",
-            {"p_community_id": community_id, "p_payload": payload},
-        ).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(exc, default_message="Could not run the billing.") from exc
-
-    rows = response.data
-    if isinstance(rows, list):
-        rows = rows[0] if rows else None
-    return rows or {"invoiced": 0, "skipped": 0, "total_amount": 0}
-
-
-def void_invoice(client: Client, invoice_id: str, reason: str | None) -> None:
-    """Cancel an invoice (RPC). Refuses once a payment has succeeded on it."""
-    try:
-        client.rpc(
-            "void_invoice", {"p_invoice_id": invoice_id, "p_reason": reason}
-        ).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(exc, default_message="Could not void the invoice.") from exc
-
-
 def update_billing_settings(client: Client, community_id: str, patch: dict) -> None:
     """Patch the billing configuration (RPC), creating the row on first use."""
     try:
@@ -296,17 +250,3 @@ def update_billing_settings(client: Client, community_id: str, patch: dict) -> N
         ) from exc
 
 
-def get_payment(client: Client, community_id: str, payment_id: str) -> dict:
-    """Fetch one recorded payment, or raise."""
-    response = (
-        client.table(_PAYMENTS)
-        .select(_PAYMENT_SELECT)
-        .eq("community_id", community_id)
-        .eq("id", payment_id)
-        .limit(1)
-        .execute()
-    )
-    rows = response.data or []
-    if not rows:
-        raise NotFoundError("Payment not found.")
-    return rows[0]

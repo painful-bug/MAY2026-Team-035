@@ -19,14 +19,6 @@ show, instead of throwing it away to make a table symmetrical.
 
 from __future__ import annotations
 
-_STATUS_TO_WIRE = {
-    "pending": "Pending",
-    "in_progress": "In Progress",
-    "resolved": "Resolved",
-    "closed": "Resolved",
-    "reopened": "Pending",
-}
-
 _STATUS_TO_STORAGE = {
     "pending": "pending",
     "in progress": "in_progress",
@@ -35,8 +27,6 @@ _STATUS_TO_STORAGE = {
     "closed": "closed",
     "reopened": "reopened",
 }
-
-_URGENCY_TO_WIRE = {"low": "Low", "medium": "Medium", "high": "High"}
 
 # A6: the frontend has exactly two department states, Active and Inactive;
 # migration 0011's CHECK allows 'active' and 'archived'. Both vocabularies have
@@ -50,10 +40,6 @@ _DEPARTMENT_STATUS_TO_STORAGE = {
     "inactive": "archived",
     "archived": "archived",
 }
-
-# Statuses that mean the complaint is still someone's problem. Used for the
-# "active complaints" tile and for deciding whether an SLA is breached.
-OPEN_STATUSES = ("pending", "in_progress", "reopened")
 
 # A15: the Maintenance screen filters on exactly two values, `Paid` and `Unpaid`
 # (Maintenance.jsx:92), while an invoice has five lifecycle states. This is NOT a
@@ -69,14 +55,6 @@ _INVOICE_STATUS_TO_WIRE = {
     "partially_paid": "Unpaid",
     "paid": "Paid",
     "void": "Void",
-}
-
-# The reverse direction is a FILTER, not a status: `Unpaid` selects a set of
-# stored statuses rather than naming one. Hence a tuple per key.
-_INVOICE_FILTER_TO_STORAGE = {
-    "paid": ("paid",),
-    "unpaid": ("draft", "issued", "partially_paid"),
-    "void": ("void",),
 }
 
 # The frontend writes the method as a display string ('Net Banking', 'Credit
@@ -105,10 +83,6 @@ _PAYMENT_METHOD_TO_STORAGE = {
     "bank_transfer": "bank_transfer",
     "bank transfer": "bank_transfer",
 }
-
-# Invoice statuses that still owe money. The database is the authority on the
-# totals themselves; this drives filtering only.
-UNSETTLED_STATUSES = ("draft", "issued", "partially_paid")
 
 # ---------------------------------------------------------------------------
 # Amenities -- the surface that needed the least translation of any so far.
@@ -161,19 +135,11 @@ _WEEKDAY_TO_NUMBER = {
     name.lower(): index + 1 for index, name in enumerate(_WEEKDAY_NAMES)
 }
 
-# Statuses that mean the amenity is occupied. Anything else has released its
-# slot -- the same set the conflict trigger and the exclusion constraint use, so
-# a filter here can never disagree with what the database enforces.
-OCCUPYING_BOOKING_STATUSES = ("pending", "approved", "confirmed", "blocked")
-
-# A request nobody has decided yet.
-UNDECIDED_BOOKING_STATUSES = ("pending",)
-
 # ---------------------------------------------------------------------------
 # Settings (build step 9)
 # ---------------------------------------------------------------------------
 
-# `associations.community_type` stores the frontend's own machine values --
+# `communities.community_type` stores the frontend's own machine values --
 # COMMUNITY_TYPES.APARTMENT === 'apartment' -- so there is nothing to translate
 # on the way out. Only the label differs, and it differs in a way no rule can
 # derive: `communityTypeOptions` renders 'layout_villa' as 'Layout / Villa',
@@ -182,11 +148,6 @@ _COMMUNITY_TYPE_LABELS = {
     "apartment": "Apartment",
     "layout_villa": "Layout / Villa",
 }
-
-# The word for one dwelling. Stored as an override in `community_settings`, and
-# derived from the community type when the override is null -- so the fallback
-# has to exist on this side too, for the one caller that has a type and no row.
-_UNIT_LABELS = {"apartment": "Flat", "layout_villa": "Villa"}
 
 # What a late fine repeats on. The frontend's copy says "a flat Rs.100 weekly
 # fine", which names exactly one of these three; the other two exist because a
@@ -217,25 +178,9 @@ _BACKEND_STATUS_TO_WIRE = {
 }
 
 
-def status_to_wire(value: str | None) -> str:
-    """Stored status -> the string the frontend renders."""
-    return _STATUS_TO_WIRE.get((value or "").lower(), "Pending")
-
-
 def status_to_storage(value: str | None) -> str | None:
     """Frontend status -> the stored value. None when unrecognised."""
     return _STATUS_TO_STORAGE.get((value or "").strip().lower())
-
-
-def urgency_to_wire(value: str | None) -> str:
-    """Stored urgency -> the string the frontend renders."""
-    return _URGENCY_TO_WIRE.get((value or "").lower(), "Medium")
-
-
-def urgency_to_storage(value: str | None) -> str | None:
-    """Frontend urgency -> the stored value. None when unrecognised."""
-    candidate = (value or "").strip().lower()
-    return candidate if candidate in _URGENCY_TO_WIRE else None
 
 
 def department_status_to_wire(value: str | None) -> str:
@@ -253,15 +198,6 @@ def invoice_status_to_wire(value: str | None) -> str:
     return _INVOICE_STATUS_TO_WIRE.get((value or "").lower(), "Unpaid")
 
 
-def invoice_filter_to_storage(value: str | None) -> tuple[str, ...] | None:
-    """A ``Paid``/``Unpaid``/``Void`` filter -> the stored statuses it selects.
-
-    Returns None when the value is unrecognised, so the caller can reject it
-    rather than quietly returning everything.
-    """
-    return _INVOICE_FILTER_TO_STORAGE.get((value or "").strip().lower())
-
-
 def payment_method_to_wire(value: str | None) -> str | None:
     """Stored payment method -> the string the payment history renders."""
     if not value:
@@ -272,11 +208,6 @@ def payment_method_to_wire(value: str | None) -> str | None:
 def payment_method_to_storage(value: str | None) -> str | None:
     """Frontend payment method -> the stored value. None when unrecognised."""
     return _PAYMENT_METHOD_TO_STORAGE.get((value or "").strip().lower())
-
-
-def is_open(status: str | None) -> bool:
-    """True when the complaint is still outstanding."""
-    return (status or "").lower() in OPEN_STATUSES
 
 
 def booking_mode_to_wire(value: str | None) -> str:
@@ -340,15 +271,6 @@ def community_type_label(value: str | None) -> str:
     """Stored community type -> the label the onboarding select renders."""
     key = (value or "").lower()
     return _COMMUNITY_TYPE_LABELS.get(key, "Apartment")
-
-
-def unit_label_for(community_type: str | None) -> str:
-    """The derived word for one dwelling: Flat for apartments, Villa otherwise.
-
-    Mirrors the SQL fallback in ``community_settings_overview``. Two places know
-    this rule and they have to agree, so both are one line and both are tested.
-    """
-    return _UNIT_LABELS.get((community_type or "").lower(), "Villa")
 
 
 def late_fee_period_to_wire(value: str | None) -> str:

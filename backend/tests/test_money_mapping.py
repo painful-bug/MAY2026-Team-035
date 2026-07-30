@@ -21,12 +21,11 @@ from app.domain.money_schemas import (
     UpdateBillingSettingsRequest,
 )
 from app.domain.vocabularies import (
-    invoice_filter_to_storage,
     invoice_status_to_wire,
     payment_method_to_storage,
     payment_method_to_wire,
 )
-from app.services.money_service import _amount, _month_end, _statuses_for, _to_summary
+from app.services.money_service import _amount, _to_summary
 
 
 # ---------------------------------------------------------------------------
@@ -55,25 +54,6 @@ def test_unknown_invoice_status_reads_unpaid() -> None:
     """
     assert invoice_status_to_wire("something_new") == "Unpaid"
     assert invoice_status_to_wire(None) == "Unpaid"
-
-
-def test_unpaid_filter_selects_every_unsettled_status() -> None:
-    assert invoice_filter_to_storage("Unpaid") == ("draft", "issued", "partially_paid")
-    assert invoice_filter_to_storage("paid") == ("paid",)
-    assert invoice_filter_to_storage("nonsense") is None
-
-
-def test_all_and_blank_mean_no_filter() -> None:
-    assert _statuses_for("All") is None
-    assert _statuses_for(None) is None
-
-
-def test_unknown_status_filter_is_rejected_not_ignored() -> None:
-    """Silently returning everything would show paid invoices under an
-    'Unpaid' filter, which is the same failure as having no filter at all."""
-    with pytest.raises(Exception) as excinfo:
-        _statuses_for("Overdue?")
-    assert "Paid" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -315,18 +295,3 @@ def test_invoice_prefix_rejects_characters_that_would_break_a_number() -> None:
         UpdateBillingSettingsRequest(invoiceNumberPrefix="IN V/2026")
 
 
-# ---------------------------------------------------------------------------
-# Period arithmetic
-# ---------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    ("start", "expected"),
-    [
-        (date(2026, 7, 1), date(2026, 7, 31)),
-        (date(2026, 2, 1), date(2026, 2, 28)),
-        # A leap year, and the December rollover that a naive month+1 breaks on.
-        (date(2028, 2, 1), date(2028, 2, 29)),
-        (date(2026, 12, 1), date(2026, 12, 31)),
-    ],
-)
-def test_month_end(start: date, expected: date) -> None:
-    assert _month_end(start) == expected

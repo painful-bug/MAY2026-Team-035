@@ -17,6 +17,65 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-07-30 — Session 19: cleared the stale residue of the API cut
+
+PO instruction: *"check if there are any stale stuff left from any of our previous and irrelevant stuff from
+anything."* — `PO`
+
+Session 18 removed 32 operations from the routers and stopped there. The layers underneath them were left in
+place, so the branch carried a large body of code that nothing could reach. This session removed it and corrected
+the claims that had gone stale with it.
+
+### Dead code — **855 lines, 50 defs, 18 files** — `AUDIT`
+
+Found by walking the call graph outward from the live routers, then iterating until the set stopped growing (each
+pass orphans the helpers the previous pass's deletions were the last caller of). No test referenced any of it, so
+none of it was even test-supported.
+
+| Domain | Removed |
+|---|---|
+| Complaints | `list_complaints`, `get_complaint`, `mark_read`, `register_attachment` and their helpers; 6 of 10 repository functions; 5 of 8 schema classes |
+| Money | collection summary, void, maintenance-run paths across service, repository and schemas |
+| Settings | the whole module-toggle path (3 service, 3 repository, 2 schema defs) |
+| Departments, amenities, people | `list_categories`, `set_amenity_status`, `_tower_of` and their schemas |
+| Vocabularies | `status_to_wire`, `urgency_to_wire`, `is_open`, `urgency_to_storage`, `invoice_filter_to_storage`, `unit_label_for` and four status-set constants — the **read**-direction mappings, which went with the reads. `status_to_storage` stays because `PATCH /complaints/{id}` still writes a status. |
+
+Two of these were worse than unused: `complaints_service._unit_codes` queried `apartments` filtered by
+`association_id` — both renamed by the baseline — and `settings_repository.set_modules` called an RPC that no
+longer exists. Unreachable code cannot fail, but it can be revived by someone who assumes it works.
+
+34 tests were removed alongside, all covering removed features: **294 → 260 passing**. The API surface is
+unchanged at 50 paths / 59 operations, which is the point — nothing deleted here was reachable through it.
+
+Also renamed the `dash_repo` alias to `tenancy_repo` in five services: the module it points at stopped being a
+dashboard repository when `admin_overview_repository.py` became `tenancy_repository.py`.
+
+### `docs/CLAUDE.md` — **deleted** — `AUDIT`
+
+Deleted upstream at `94556e5` and kept by session 18's merge, which was a mistake: every architectural claim in it
+was false by then. It stated *"There is **no backend**"*, described the Zustand store as seeded from
+`frontend/src/data/` (deleted in the frontend rewrite) and persisted to localStorage (it is now a render cache
+that begins empty), and pointed at `frontend/.oxlintrc.json` and `selfcheck.mjs`, neither of which exists. Their
+root `AGENTS.md` covers the same ground correctly. Nothing depended on the file — a `CLAUDE.md` under `docs/` is
+not loaded as project context.
+
+### Two claims corrected because they were wrong, not merely stale — `AUDIT`
+
+- **`docs/FRONTEND_WIRING_AUDIT.md` §5** said `0018_settings_on_baseline.sql` rebuilt what `GET`/`PUT /settings`
+  need. It does not: 0018 creates the two *tables*, while those endpoints read the `community_settings_overview`
+  and `community_module_overview` **views**, which are still quarantined in `0017`. The section now counts
+  honestly — **3 of our 35 endpoints would run against a real baseline database**, not the 5 implied.
+- **`app/api/v1/routers/settings.py`** claimed `GET /settings` reports modules "read from `community_features`".
+  It reads our `community_module_overview`. So conflict C-11's duplication survives on the read side even though
+  the module *endpoints* were deleted; the docstring now says so and names repointing that read as the fix.
+
+Smaller corrections in the same pass: `associations` → `communities` in three comments, the `0017_settings.sql`
+citation in `settings_schemas.py`, and a quarantine note added to the four repository docstrings whose views and
+RPCs do not exist on the baseline — a reader following "the three views from migration 0015" would otherwise go
+looking in `supabase/migrations/` and find nothing.
+
+---
+
 ## 2026-07-30 — Session 18: merged, and cut the API down to what the frontend calls
 
 PO instruction: merge their work in via git so the folder never has to be shared again, wire our backend to what

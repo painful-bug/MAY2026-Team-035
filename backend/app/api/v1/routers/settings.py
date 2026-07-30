@@ -1,20 +1,28 @@
 """Community settings routes.
 
-**Module management is not here any more.** The clean baseline ships
+**Module *management* is not here any more.** The clean baseline ships
 ``feature_catalog`` + ``community_features``, whose ten keys and default-enabled
 values are byte-identical to the ``module_catalogue`` step 9 built -- both were
 derived from ``onboardingModules.js``. Their onboarding RPC already writes it, and
-module selection exists only as an onboarding step, so our three endpoints and two
-tables were duplicates with no caller. ``GET /settings`` still *reports*
-``enabledModules``, read from ``community_features``. See
+module selection exists only as an onboarding step, so our three module endpoints
+and two tables were duplicates with no caller. See
 ``docs/FRONTEND_WIRING_AUDIT.md`` and addendum C-11.
+
+``GET /settings`` still *reports* the module collection, and that read is the
+loose end: it comes from our ``community_module_overview`` view, not from their
+``community_features``, so it needs the ``0017_settings.sql`` rebuild before it
+will run. Repointing it at ``community_features`` would finish C-11 properly and
+delete the last of the duplication -- flagged rather than done here, because it
+changes which table is authoritative and the onboarding workstream owns the
+writer.
 
 **There is no community rename here, and that is deliberate.**
 ``GET /settings`` reports the community's name, type and status; nothing writes
-them. ``associations`` is the one table this build plan touches whose admin write
-policy carries no community clause (build plan 1.2, owned by the auth workstream),
-and a rename would be the first endpoint of sixty-eight to depend on it. It waits
-for that fix rather than becoming the reason it was urgent.
+them. ``communities`` (the baseline's rename of ``associations``) is the one table
+this build plan touches whose admin write policy carries no community clause
+(build plan 1.2, owned by the auth workstream), and a rename would be the first
+endpoint of sixty-eight to depend on it. It waits for that fix rather than
+becoming the reason it was urgent.
 
 **The billing toggles are readable here and writable only at
 ``PUT /billing-settings``.** They appear in the snapshot because the screen draws

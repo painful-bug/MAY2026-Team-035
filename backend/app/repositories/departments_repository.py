@@ -5,6 +5,11 @@ Reads go through the two views from migration 0014, which are declared
 an RPC: creating a department touches four tables, and PostgREST has no
 client-side transaction, so doing it here would leave a department with no
 categories the first time the second call failed.
+
+**None of these database objects exist on the baseline yet.** ``0014_departments.sql``
+is quarantined in ``supabase/migrations/legacy-preauth/`` awaiting a rebuild, so
+the endpoints in this domain pass their contract tests but would fail against a
+real database. See ``legacy-preauth/README.md``.
 """
 
 from __future__ import annotations
@@ -15,9 +20,6 @@ from supabase import Client
 
 _DEPARTMENTS = "department_overview"
 _STAFF = "department_staff_overview"
-_CATEGORIES = "complaint_categories"
-_DEPARTMENT_CATEGORIES = "department_categories"
-
 _DEPARTMENT_SELECT = (
     "id, name, description, contact_email, contact_phone_e164, opens_at, closes_at,"
     "sla_hours, kind, status, created_at, updated_at, head_name, head_staff_id,"
@@ -135,39 +137,6 @@ def get_staff_member(client: Client, community_id: str, staff_id: str) -> dict:
     if not rows:
         raise NotFoundError("Staff member not found.")
     return rows[0]
-
-
-def list_categories(client: Client, community_id: str) -> list[dict]:
-    """Every complaint category in the community, with the departments claiming it.
-
-    Not paginated: this is the option list behind a checkbox group, and a
-    community that needs paging through its own complaint categories has a
-    different problem.
-    """
-    response = (
-        client.table(_CATEGORIES)
-        .select("id, name, sla_hours, status")
-        .eq("community_id", community_id)
-        .order("name")
-        .execute()
-    )
-    categories = response.data or []
-    if not categories:
-        return []
-
-    claims = (
-        client.table(_DEPARTMENT_CATEGORIES)
-        .select("category_id, department_id")
-        .eq("community_id", community_id)
-        .execute()
-    )
-    by_category: dict[str, list[str]] = {}
-    for row in claims.data or []:
-        by_category.setdefault(row["category_id"], []).append(row["department_id"])
-
-    for category in categories:
-        category["department_ids"] = by_category.get(category["id"], [])
-    return categories
 
 
 def create_department(client: Client, community_id: str, payload: dict) -> str:

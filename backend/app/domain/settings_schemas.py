@@ -36,16 +36,14 @@ __all__ = [
     "ModuleCollection",
     "SettingsSnapshot",
     "UpdateSettingsRequest",
-    "ModuleToggleRequest",
-    "ReplaceModulesRequest",
 ]
 
 
 class CommunityProfile(CamelModel):
     """Who the community is. Read-only on this surface.
 
-    There is no write for ``name`` or ``communityType``, and the reason is in
-    ``0017_settings.sql``: ``associations`` is the one table this build plan
+    There is no write for ``name`` or ``communityType``: ``communities`` (the
+    baseline's rename of ``associations``) is the one table this build plan
     touches whose admin write policy has no community clause (build plan 1.2), so
     a rename endpoint would be the first of sixty-eight to depend on it.
     """
@@ -197,24 +195,3 @@ class UpdateSettingsRequest(CamelModel):
         return stripped
 
 
-class ModuleToggleRequest(CamelModel):
-    """Turn one module on or off.
-
-    One key at a time, because two admins toggling two different modules in the
-    same minute must not undo each other -- which is exactly what a
-    whole-set write does.
-    """
-
-    enabled: bool
-
-
-class ReplaceModulesRequest(CamelModel):
-    """Set the whole module set from the list of keys that should be on.
-
-    The shape the onboarding wizard already produces: ``enabledModules`` is an
-    array of the enabled keys and every other key is off by omission. An empty
-    list is legitimate and means every module off; a missing field is a `422`,
-    because a caller who forgot the field would otherwise disable everything.
-    """
-
-    module_keys: list[str] = Field(..., max_length=50)

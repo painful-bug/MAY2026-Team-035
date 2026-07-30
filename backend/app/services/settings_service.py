@@ -21,7 +21,6 @@ with itself.
 
 from __future__ import annotations
 
-from app.core.exceptions import ValidationError
 from app.core.formatting import parse_instant
 from app.domain.settings_schemas import (
     BillingToggles,
@@ -29,7 +28,6 @@ from app.domain.settings_schemas import (
     ModuleCollection,
     ModuleSummary,
     PreferenceSettings,
-    ReplaceModulesRequest,
     SettingsSnapshot,
     UpdateSettingsRequest,
 )
@@ -39,21 +37,18 @@ from app.domain.vocabularies import (
     late_fee_period_to_wire,
 )
 from app.repositories import settings_repository as repo
-from app.repositories import tenancy_repository as dash_repo
+from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 __all__ = [
     "get_settings_snapshot",
     "update_settings",
-    "list_modules",
-    "set_module",
-    "replace_modules",
 ]
 
 
 def _community(client: Client, user_id: str) -> str:
     """The community the caller belongs to."""
-    return dash_repo.get_caller_community_id(client, user_id)
+    return tenancy_repo.get_caller_community_id(client, user_id)
 
 
 def _amount(value: object) -> float | None:
@@ -210,41 +205,3 @@ def update_settings(
     return get_settings_snapshot(client, user_id)
 
 
-def list_modules(client: Client, user_id: str) -> ModuleCollection:
-    """The ten feature modules and this community's setting for each.
-
-    Readable by any authenticated role, not just admins: if module state ever
-    gates navigation, every shell needs it, and a resident learning that the
-    marketplace is switched off discloses nothing.
-    """
-    community_id = _community(client, user_id)
-    return _to_collection(repo.list_modules(client, community_id))
-
-
-def set_module(
-    client: Client, user_id: str, module_key: str, enabled: bool
-) -> ModuleSummary:
-    """Turn one module on or off and report it back."""
-    community_id = _community(client, user_id)
-    key = (module_key or "").strip().lower()
-    if not key:
-        raise ValidationError("A module key is required.")
-
-    repo.set_module(client, community_id, key, enabled)
-    return _to_module(repo.fetch_module(client, community_id, key))
-
-
-def replace_modules(
-    client: Client, user_id: str, body: ReplaceModulesRequest
-) -> ModuleCollection:
-    """Set the whole module set from the list of keys that should be on.
-
-    Duplicates and casing are normalised here as well as in the RPC, so the two
-    agree about what an empty result means. An empty list stays empty and turns
-    everything off -- that is a legitimate instruction, and the only guard
-    against sending it by accident is that the field is required.
-    """
-    community_id = _community(client, user_id)
-    keys = sorted({key.strip().lower() for key in body.module_keys if key.strip()})
-    repo.set_modules(client, community_id, keys)
-    return _to_collection(repo.list_modules(client, community_id))

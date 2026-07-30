@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
-# A5: the community's timezone is not stored anywhere -- not in `associations`,
+# A5: the community's timezone is not stored anywhere -- not in `communities`,
 # not in the ERD. Assumed IST, which the product's currency, phone format and
 # names all point to. It is wrong for any community outside India, so when
 # `communities.timezone` exists this constant becomes a per-community lookup.
@@ -89,34 +89,6 @@ def time_ago(instant: datetime, *, now: datetime | None = None) -> str:
     if seconds < 30 * _DAY:
         return f"{seconds // _WEEK}w ago"
     return f"{seconds // (30 * _DAY)}mo ago"
-
-
-def day_ago(instant: datetime, *, now: datetime | None = None) -> str:
-    """Format ``instant`` the way the notices list renders it ("Today").
-
-    Notices use a *different* vocabulary from complaints -- ``Today`` and
-    ``1w ago`` rather than ``2h ago`` (see frontend/src/data/notices.js). Two
-    functions rather than one flag, because the two lists genuinely disagree and
-    a single formatter would have to pick a winner.
-
-    Day boundaries are computed in :data:`COMMUNITY_TZ`, not UTC: something posted
-    at 01:00 IST is "Today" to a resident, but yesterday in UTC.
-    """
-    instant = _as_utc(instant)
-    current = _as_utc(now or datetime.now(timezone.utc))
-
-    today = current.astimezone(COMMUNITY_TZ).date()
-    then = instant.astimezone(COMMUNITY_TZ).date()
-    days = (today - then).days
-    if days <= 0:
-        return "Today"
-    if days == 1:
-        return "Yesterday"
-    if days < 7:
-        return f"{days}d ago"
-    if days < 30:
-        return f"{days // 7}w ago"
-    return f"{days // 30}mo ago"
 
 
 def clock_time(value: str | None) -> str | None:

@@ -9,6 +9,11 @@ reservation that does not exist.
 
 Nothing in this module computes a total. The ledger's eight summary figures and
 the amenity card's outstanding-dues badge are both database aggregates.
+
+**None of these database objects exist on the baseline yet.** ``0016_amenities.sql``
+is quarantined in ``supabase/migrations/legacy-preauth/`` awaiting a rebuild, so
+the endpoints in this domain pass their contract tests but would fail against a
+real database. See ``legacy-preauth/README.md``.
 """
 
 from __future__ import annotations
@@ -162,19 +167,6 @@ def save_amenity(
     if not result:
         raise NotFoundError("Amenity was not saved.")
     return str(result)
-
-
-def set_amenity_status(client: Client, amenity_id: str, is_active: bool) -> None:
-    """Flip the catalogue card's availability toggle (RPC)."""
-    try:
-        client.rpc(
-            "set_amenity_status",
-            {"p_amenity_id": amenity_id, "p_is_active": is_active},
-        ).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(
-            exc, default_message="Could not change the amenity's status."
-        ) from exc
 
 
 def delete_amenity(client: Client, amenity_id: str) -> None:

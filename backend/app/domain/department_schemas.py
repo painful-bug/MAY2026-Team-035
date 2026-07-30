@@ -176,16 +176,3 @@ class UpdateStaffMemberRequest(CamelModel):
     status: str | None = Field(None, description="active | inactive")
 
 
-class ComplaintCategorySummary(CamelModel):
-    """A complaint category and which departments claim it.
-
-    ``departmentIds`` has more than one entry exactly when 0011's A2 SLA
-    tie-break is load-bearing, which is why it is exposed rather than flattened
-    to a single owner.
-    """
-
-    id: str
-    name: str
-    sla_hours: int | None = None
-    status: str = "active"
-    department_ids: list[str] = Field(default_factory=list)

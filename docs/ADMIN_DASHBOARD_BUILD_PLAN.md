@@ -9,6 +9,12 @@ cannot solve from the backend go to [`FRONTEND_MEETING_AGENDA.md`](FRONTEND_MEET
 
 ## 0. What is already in `backend/` — this changes the plan
 
+> **Superseded 2026-07-30 (session 19).** This section describes the tree as it stood before the
+> merge of `origin/main` @ `94556e5`. `docs/CLAUDE.md` has since been deleted (it was the file that
+> claimed there was no backend), and `0001_init.sql`, `0002_rls.sql` and `0003_access_token_hook.sql`
+> were replaced upstream by a single `0001_baseline.sql`. Kept for the reasoning; read
+> `docs/FRONTEND_WIRING_AUDIT.md` for the current shape.
+
 `backend/` is not the empty placeholder `docs/CLAUDE.md` describes. It contains a working, cleanly
 layered FastAPI service:
 

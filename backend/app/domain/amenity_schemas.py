@@ -44,7 +44,6 @@ __all__ = [
     "AmenityReport",
     "SettingsInput",
     "SaveAmenityRequest",
-    "AmenityStatusRequest",
     "GuestInput",
     "AdminBookingRequest",
     "ResidentBookingRequest",
@@ -467,10 +466,6 @@ class SaveAmenityRequest(CamelModel):
         if isinstance(value, str):
             return value.strip()
         return value
-
-
-class AmenityStatusRequest(CamelModel):
-    is_active: bool
 
 
 class GuestInput(CamelModel):

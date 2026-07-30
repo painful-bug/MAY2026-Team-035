@@ -12,7 +12,6 @@ from app.core.exceptions import ValidationError
 from app.core.formatting import clock_time, parse_instant
 from app.domain.common_schemas import Page
 from app.domain.department_schemas import (
-    ComplaintCategorySummary,
     CreateDepartmentRequest,
     DepartmentDetail,
     DepartmentSummary,
@@ -27,7 +26,7 @@ from app.domain.vocabularies import (
     department_status_to_wire,
 )
 from app.repositories import departments_repository as repo
-from app.repositories import tenancy_repository as dash_repo
+from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 _VALID_KINDS = ("service", "security")
@@ -158,7 +157,7 @@ def list_departments(
     (``Departments.jsx:69``). One extra query per page, not one per department:
     ``list_staff`` takes every id on the page at once.
     """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     offset = (page - 1) * page_size
 
     rows, total = repo.list_departments(
@@ -189,7 +188,7 @@ def get_department(
     client: Client, user_id: str, department_id: str
 ) -> DepartmentDetail:
     """One department with its active roster."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     row = repo.get_department(client, community_id, department_id)
     staff = repo.list_staff(client, community_id, [department_id])
     return _to_detail(row, staff)
@@ -199,7 +198,7 @@ def create_department(
     client: Client, user_id: str, body: CreateDepartmentRequest
 ) -> DepartmentDetail:
     """Create a department, its category claims and its roster, atomically."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     _validate_kind(body.kind)
     for member in body.staff:
         _validate_shift(member.shift)
@@ -241,7 +240,7 @@ def update_department(
     client: Client, user_id: str, department_id: str, body: UpdateDepartmentRequest
 ) -> DepartmentDetail:
     """Apply a partial update and return the department as it now stands."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     _validate_kind(body.kind)
     for member in body.staff or []:
         _validate_shift(member.shift)
@@ -288,7 +287,7 @@ def update_department(
 
 def delete_department(client: Client, user_id: str, department_id: str) -> None:
     """Delete a department. Refuses (409) while it owns open complaints."""
-    dash_repo.get_caller_community_id(client, user_id)
+    tenancy_repo.get_caller_community_id(client, user_id)
     repo.delete_department(client, department_id)
 
 
@@ -296,7 +295,7 @@ def replace_staff(
     client: Client, user_id: str, department_id: str, members: list[StaffMemberInput]
 ) -> list[StaffMember]:
     """Replace a department's roster wholesale, as the department form submits it."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     for member in members:
         _validate_shift(member.shift)
         _validate_staff_status(member.status)
@@ -311,7 +310,7 @@ def add_staff_member(
     client: Client, user_id: str, department_id: str, member: StaffMemberInput
 ) -> StaffMember:
     """Add one person to a roster."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     _validate_shift(member.shift)
     _validate_staff_status(member.status)
     # Existence and tenancy first: RLS would reject a cross-community insert, but
@@ -347,7 +346,7 @@ def update_staff_member(
     head, and naming it through ``PATCH /departments/{id}`` with a ``head`` field
     is the single path that demotes the incumbent in the same transaction.
     """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     _validate_shift(body.shift)
     _validate_staff_status(body.status)
 
@@ -379,7 +378,7 @@ def remove_staff_member(
     client: Client, user_id: str, department_id: str, staff_id: str
 ) -> None:
     """Take a member off the active roster. Deactivation, not deletion (A7)."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     existing = repo.get_staff_member(client, community_id, staff_id)
     if existing.get("department_id") != department_id:
         raise ValidationError(
@@ -389,25 +388,3 @@ def remove_staff_member(
     repo.remove_staff_member(client, staff_id)
 
 
-def list_categories(client: Client, user_id: str) -> Page[ComplaintCategorySummary]:
-    """The community's complaint categories and who claims each one."""
-    community_id = dash_repo.get_caller_community_id(client, user_id)
-    rows = repo.list_categories(client, community_id)
-
-    items = [
-        ComplaintCategorySummary(
-            id=row["id"],
-            name=row["name"],
-            sla_hours=row.get("sla_hours"),
-            status=row.get("status", "active"),
-            department_ids=row.get("department_ids") or [],
-        )
-        for row in rows
-    ]
-    return Page[ComplaintCategorySummary](
-        items=items,
-        total=len(items),
-        page=1,
-        page_size=len(items),
-        has_more=False,
-    )

@@ -1141,9 +1141,9 @@ components:
       description: 'Who the community is. Read-only on this surface.
 
 
-        There is no write for ``name`` or ``communityType``, and the reason is in
+        There is no write for ``name`` or ``communityType``: ``communities`` (the
 
-        ``0017_settings.sql``: ``associations`` is the one table this build plan
+        baseline''s rename of ``associations``) is the one table this build plan
 
         touches whose admin write policy has no community clause (build plan 1.2), so
 

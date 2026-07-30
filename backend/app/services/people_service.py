@@ -8,22 +8,10 @@ from app.core.logging import get_logger
 from app.domain.people_schemas import AdminSummary, PromoteAdminRequest
 from app.domain.roles import display_role
 from app.repositories import people_repository as repo
-from app.repositories import tenancy_repository as dash_repo
+from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 _logger = get_logger(__name__)
-
-
-def _tower_of(unit_code: str | None) -> str | None:
-    """Derive the tower from a unit code ('C-505' -> 'C').
-
-    The frontend renders tower and flat as separate fields but only the full
-    code is stored, because storing both invites them to disagree -- which is
-    exactly the bug in ``createPendingRequestsSlice`` (see app/domain/units.py).
-    """
-    if not unit_code or "-" not in unit_code:
-        return None
-    return unit_code.split("-", 1)[0] or None
 
 
 def promote_admin(
@@ -35,7 +23,7 @@ def promote_admin(
         NotFoundError: If no active membership in this community has that email.
         ConflictError: If that member is already an admin.
     """
-    community_id = dash_repo.get_caller_community_id(client, user_id)
+    community_id = tenancy_repo.get_caller_community_id(client, user_id)
 
     membership = repo.find_active_membership_by_email(client, community_id, body.email)
     if membership is None:
@@ -62,7 +50,7 @@ def _to_admin_summary(
     """Project a freshly promoted membership row into the admin DTO."""
     profile = membership.get("profiles") or {}
     unit_code = membership.get("unit_code")
-    code_to_id = dash_repo.map_unit_codes_to_ids(
+    code_to_id = tenancy_repo.map_unit_codes_to_ids(
         client, community_id, [unit_code] if unit_code else []
     )
 

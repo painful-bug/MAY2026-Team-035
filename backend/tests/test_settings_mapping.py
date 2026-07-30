@@ -27,7 +27,6 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from app.domain.settings_schemas import (
-    ReplaceModulesRequest,
     UpdateSettingsRequest,
 )
 from app.domain.vocabularies import (
@@ -35,7 +34,6 @@ from app.domain.vocabularies import (
     community_type_label,
     late_fee_period_to_storage,
     late_fee_period_to_wire,
-    unit_label_for,
 )
 from app.services.settings_service import (
     _to_billing,
@@ -128,29 +126,6 @@ def test_community_type_label_falls_back_rather_than_raising():
     """An unknown type is a data problem, not a reason to 500 a settings screen."""
     assert community_type_label("townhouse") == "Apartment"
     assert community_type_label(None) == "Apartment"
-
-
-@pytest.mark.parametrize(
-    ("community_type", "word"),
-    [("apartment", "Flat"), ("layout_villa", "Villa")],
-)
-def test_unit_label_is_derived_the_same_way_python_and_sql_derive_it(
-    community_type, word
-):
-    """The SQL fallback in `community_settings_overview` is:
-
-        case when community_type = 'apartment' then 'Flat' else 'Villa' end
-
-    Python has to agree with it, because the API can be asked for the label by a
-    caller whose community has no settings row for the view to left-join.
-    """
-    assert unit_label_for(community_type) == word
-
-
-def test_unit_label_defaults_to_villa_for_anything_that_is_not_an_apartment():
-    """Matching the SQL `else` branch exactly, including for null."""
-    assert unit_label_for("townhouse") == "Villa"
-    assert unit_label_for(None) == "Villa"
 
 
 @pytest.mark.parametrize(
@@ -373,20 +348,3 @@ def test_visitor_code_ttl_bounds():
         UpdateSettingsRequest(visitorCodeTtlMinutes=1441)
 
 
-def test_replacing_the_module_set_requires_the_field():
-    """An empty array means every module off, which is legitimate. A missing field
-    means the caller forgot, and treating the two the same would let a client
-    disable the whole product by omission."""
-    assert ReplaceModulesRequest(moduleKeys=[]).module_keys == []
-    with pytest.raises(PydanticValidationError):
-        ReplaceModulesRequest()
-
-
-def test_the_switch_body_carries_a_boolean_not_an_absence():
-    """`PATCH .../modules/{key}` with `{}` is a 422 rather than a guess about
-    which direction the admin meant to move the switch."""
-    from app.domain.settings_schemas import ModuleToggleRequest
-
-    assert ModuleToggleRequest(enabled=False).enabled is False
-    with pytest.raises(PydanticValidationError):
-        ModuleToggleRequest()

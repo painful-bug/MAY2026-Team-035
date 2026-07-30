@@ -8,9 +8,10 @@ default, and a string reaching that ``reduce`` would concatenate rather than add
 -- "42504250" rendered as a rupee total, with nothing in the console to say so.
 
 So the float is the display format, and every total the API reports is computed
-by Postgres in ``numeric`` and read back, never summed in Python. The one place
-that rule would be easy to break is the collection summary, which is why it is a
-database aggregate rather than a loop over a page of rows.
+by Postgres in ``numeric`` and read back, never summed in Python. The Maintenance
+screen's tiles were the one place that rule would have been easy to break, which
+is why they were a database aggregate rather than a loop over a page of rows --
+the screen now computes them client-side and the endpoint is gone.
 
 The frontend's ``payments[]`` shape is reproduced exactly -- ``title``,
 ``amount``, ``dueDate``, ``status``, ``billPeriod``, ``userId``, ``flat``,
@@ -32,13 +33,9 @@ __all__ = [
     "InvoiceSummary",
     "InvoiceDetail",
     "PaymentSummary",
-    "CollectionSummaryDetail",
     "LineItemInput",
     "CreateInvoiceRequest",
     "RecordPaymentRequest",
-    "MaintenanceRunRequest",
-    "MaintenanceRunResult",
-    "VoidInvoiceRequest",
     "BillingSettings",
     "UpdateBillingSettingsRequest",
 ]
@@ -95,7 +92,7 @@ class InvoiceSummary(CamelModel):
     invoice_type: str
     # The full invoice value. NOT the outstanding balance -- the column is headed
     # "Amount" and means what the flat was billed. ``outstanding`` carries what is
-    # still owed, and the collection summary is the authority on the totals.
+    # still owed. ``Maintenance.jsx`` derives the screen totals from these rows.
     amount: float
     subtotal: float
     tax: float
@@ -148,36 +145,6 @@ class InvoiceDetail(InvoiceSummary):
     payments: list[PaymentSummary] = Field(default_factory=list)
 
 
-class CollectionSummaryDetail(CamelModel):
-    """The three tiles at the top of the Maintenance screen, plus what they hide.
-
-    **Computed over the whole community, not over a page.** The dashboard derives
-    these by summing the invoice array it happens to hold
-    (``Maintenance.jsx:11-17``), which is correct only while every invoice fits in
-    one response. This endpoint exists so the numbers stay right after that stops
-    being true -- see FRONTEND_MEETING_AGENDA.md item 11.
-
-    ``totalOutstanding`` is the sum of *balances*, not of the amounts of unpaid
-    invoices, so a partially paid invoice contributes only what is still owed. A
-    client summing ``amount`` over unpaid rows will read high; that difference is
-    the whole reason this is a server-side aggregate.
-    """
-
-    total_collected: float
-    total_outstanding: float
-    total_billed: float
-    paid_count: int
-    unpaid_count: int
-    invoice_count: int
-    # Integer percent, guarded at zero: a founding community has no invoices at
-    # all, and 0/0 must not reach the browser as NaN.
-    collection_percent: int
-    overdue_count: int
-    overdue_amount: float
-    currency: str
-    generated_at: datetime
-
-
 class LineItemInput(CamelModel):
     """One line on a new invoice."""
 
@@ -228,41 +195,6 @@ class RecordPaymentRequest(CamelModel):
     payer_profile_id: str | None = None
     paid_at: datetime | None = None
     notes: str | None = Field(default=None, max_length=500)
-
-
-class MaintenanceRunRequest(CamelModel):
-    """Bill every occupied flat for one period.
-
-    ``amount`` overrides the configured rate for this run only. With neither set
-    the call is refused rather than falling back to a number nobody chose.
-    """
-
-    amount: float | None = Field(default=None, gt=0, le=10_000_000)
-    period_start: date | None = None
-    period_end: date | None = None
-    due_date: date | None = None
-    title: str | None = Field(default=None, max_length=160)
-
-
-class MaintenanceRunResult(CamelModel):
-    """What a billing run did.
-
-    ``skipped`` counts flats already invoiced for the period. A second run of the
-    same period reports every flat as skipped and bills nobody -- the guard is a
-    partial unique index, so it holds even if two admins click at once.
-    """
-
-    invoiced: int
-    skipped: int
-    total_amount: float
-    period_start: date
-    period_end: date
-
-
-class VoidInvoiceRequest(CamelModel):
-    """Cancel an invoice. Refused once any payment has succeeded against it."""
-
-    reason: str | None = Field(default=None, max_length=500)
 
 
 class BillingSettings(CamelModel):

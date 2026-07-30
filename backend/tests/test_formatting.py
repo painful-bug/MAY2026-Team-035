@@ -12,8 +12,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.formatting import (
-    COMMUNITY_TZ,
-    day_ago,
     long_date,
     parse_instant,
     time_ago,
@@ -43,25 +41,6 @@ def test_time_ago_matches_the_frontend_vocabulary(delta, expected):
 def test_time_ago_never_renders_a_negative():
     """Clock skew must not produce '-3h ago' in front of a resident."""
     assert time_ago(NOW + timedelta(hours=3), now=NOW) == "Just now"
-
-
-@pytest.mark.parametrize(
-    ("delta", "expected"),
-    [
-        (timedelta(0), "Today"),          # notices.js n1
-        (timedelta(days=1), "Yesterday"),
-        (timedelta(days=4), "4d ago"),    # notices.js n3
-        (timedelta(days=8), "1w ago"),    # notices.js n4
-    ],
-)
-def test_day_ago_uses_the_notices_vocabulary(delta, expected):
-    assert day_ago(NOW - delta, now=NOW) == expected
-
-
-def test_day_boundaries_are_local_not_utc():
-    """01:00 IST is 'Today' to a resident but the previous day in UTC."""
-    local_early_morning = datetime(2026, 7, 8, 1, 0, tzinfo=COMMUNITY_TZ)
-    assert day_ago(local_early_morning, now=NOW) == "Today"
 
 
 def test_long_date_matches_the_notices_format():

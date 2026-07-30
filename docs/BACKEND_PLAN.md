@@ -1068,6 +1068,8 @@ Phases 5–7 are independent of each other once phase 4 lands — that is where 
   `core/exceptions.py`, and both test modules' structure.
 - `docs/plan.md` gets a header pointing here; root `AGENTS.md` / `docs/CLAUDE.md` / `README.md`
   still describe "no backend" and need updating at the end of phase 2.
+  *(Resolved 2026-07-30, session 19: `docs/plan.md` and `docs/CLAUDE.md` were both deleted upstream,
+  and root `AGENTS.md` now describes the FastAPI backend correctly.)*
 
 ---
 

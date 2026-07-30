@@ -123,12 +123,26 @@ handler wants it, but that handler currently calls a Zustand action instead. Wir
 we are not permitted to do. Until then these endpoints are correct, tested, and uncalled — which is the honest
 status, and the first item for the joint meeting.
 
-**And they are not runnable yet either.** Migrations `0010`–`0017` targeted the schema the baseline replaced, so
-they were quarantined to `backend/supabase/migrations/legacy-preauth/`. `0018_settings_on_baseline.sql` rebuilds
-what `GET`/`PUT /settings`, `GET`/`PUT /billing-settings` and `POST /notices` need. **The department, complaint,
-money and amenity SQL has not been rebuilt**, so those 30 endpoints pass their contract tests but would fail
-against a real baseline database. The rebuild order and the one open design question (our booking
-series/occurrences versus their single `amenity_bookings`) are in `legacy-preauth/README.md`.
+**And almost none of them are runnable yet.** Migrations `0010`–`0017` targeted the schema the baseline replaced,
+so they were quarantined to `backend/supabase/migrations/legacy-preauth/`. `0018_settings_on_baseline.sql` rebuilt
+`community_settings`, `community_billing_settings` and the two `notices` columns — **tables only, no views and no
+RPCs**. Counting honestly against a real baseline database, **3 of our 35 endpoints would run**:
+
+| Runs today | Needs a rebuild first |
+|---|---|
+| `POST /notices` (0018 added the columns) | `GET`/`PUT /settings` — the two `community_*_overview` views live in `0017` |
+| `POST /admins` (`community_memberships` is a baseline table) | `PUT /billing-settings` — needs the `update_billing_settings` RPC from `0015` |
+| `GET /billing-settings` (reads the 0018 table directly) | the 9 department, 2 complaint, 2 remaining money and 16 amenity endpoints |
+
+An earlier draft of this section claimed 0018 covered `GET`/`PUT /settings`; it does not, and 30 was an undercount.
+The rebuild order and the one open design question (our booking series/occurrences versus their single
+`amenity_bookings`) are in `legacy-preauth/README.md`.
+
+**One piece of C-11 is still open.** `GET /settings` reports the module collection from *our*
+`community_module_overview`, not from their `community_features`, so the duplication the module endpoints were
+deleted to remove survives on the read side. Repointing that read finishes the job and removes `0017`'s module
+tables from the rebuild entirely — left undone here because it changes which table is authoritative and the
+onboarding workstream owns the writer.
 
 ## 6. Two things the dashboard workstream should change
 

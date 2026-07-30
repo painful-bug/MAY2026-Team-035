@@ -66,7 +66,7 @@ from app.domain.vocabularies import (
     weekdays_to_wire,
 )
 from app.repositories import amenities_repository as repo
-from app.repositories import tenancy_repository as dash_repo
+from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 _CATEGORIES = ("Sports", "Fitness", "Recreation", "Events", "Utility")
@@ -97,7 +97,7 @@ def _community(client: Client, user_id: str) -> str:
     router layer has no repository call in it anywhere else and this is not the
     place to introduce the first one.
     """
-    return dash_repo.get_caller_community_id(client, user_id)
+    return tenancy_repo.get_caller_community_id(client, user_id)
 
 
 def _amount(value: object) -> float:
@@ -421,15 +421,6 @@ def save_amenity(
 
     saved_id = repo.save_amenity(client, community_id, amenity_id, payload)
     return _to_detail(repo.get_amenity(client, community_id, saved_id))
-
-
-def set_amenity_status(
-    client: Client, user_id: str, amenity_id: str, is_active: bool
-) -> AmenityDetail:
-    """Flip the card's availability toggle."""
-    community_id = _community(client, user_id)
-    repo.set_amenity_status(client, amenity_id, is_active)
-    return _to_detail(repo.get_amenity(client, community_id, amenity_id))
 
 
 def delete_amenity(client: Client, amenity_id: str) -> None:
