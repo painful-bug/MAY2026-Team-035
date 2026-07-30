@@ -130,7 +130,7 @@ export default function SecurityLayout() {
                 className={({ isActive }) =>
                   `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-colors ${
                     isActive
-                      ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-950'
+                      ? 'border-l-4 border-amber-400 bg-indigo-600 text-white shadow-lg shadow-indigo-950'
                       : 'text-slate-400 hover:bg-white/5 hover:text-white'
                   }`
                 }

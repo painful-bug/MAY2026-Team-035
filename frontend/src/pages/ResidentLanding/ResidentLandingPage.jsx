@@ -52,14 +52,14 @@ const FEATURES = [
     description:
       'Receive society announcements, service updates, and important safety information.',
     icon: BellRing,
-    tone: 'bg-sky-50 text-sky-600',
+    tone: 'bg-amber-50 text-amber-700',
   },
   {
     title: 'Role-based Access',
     description:
       'Residents and society staff see the tools permitted for their registered role.',
     icon: ShieldCheck,
-    tone: 'bg-violet-50 text-violet-600',
+    tone: 'bg-indigo-50 text-indigo-700',
   },
 ];
 
@@ -173,7 +173,7 @@ export default function ResidentLandingPage() {
       <main>
         <section className="relative overflow-hidden px-6 py-20 lg:py-28">
           <div className="absolute left-1/2 top-10 h-72 w-72 rounded-full bg-indigo-200/40 blur-3xl" />
-          <div className="absolute right-16 top-40 h-64 w-64 rounded-full bg-sky-200/40 blur-3xl" />
+          <div className="absolute right-16 top-40 h-64 w-64 rounded-full bg-amber-200/40 blur-3xl" />
           <div className="relative mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-12">
             <div className="space-y-6 text-center lg:col-span-6 lg:text-left">
               <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-3.5 py-1.5 text-xs font-bold text-indigo-700">
@@ -203,7 +203,7 @@ export default function ResidentLandingPage() {
             </div>
 
             <div className="relative lg:col-span-6">
-              <div className="absolute -inset-3 rounded-3xl bg-gradient-to-r from-indigo-500 to-sky-400 opacity-15 blur-2xl" />
+              <div className="absolute -inset-3 rounded-3xl bg-gradient-to-r from-indigo-500 to-amber-400 opacity-15 blur-2xl" />
               <div className="relative rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                   <div className="flex items-center gap-2">
