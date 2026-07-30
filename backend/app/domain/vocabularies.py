@@ -4,13 +4,27 @@ The database stores `in_progress`; the React app renders `In Progress` and puts
 that exact string in a `<select>`. Neither can change, so the mapping lives here
 -- in one testable place rather than sprinkled through the service layer.
 
+The complaint statuses target the baseline's ``public.complaint_status`` ENUM,
+which is a closed set: ``open``, ``acknowledged``, ``in_progress``, ``resolved``,
+``closed``, ``cancelled``. Writing anything else is not a bad value that lands in
+the row, it is a ``22P02`` from Postgres.
+
+That matters because this table used to map ``Pending -> 'pending'`` and
+``Reopened -> 'reopened'``, neither of which is a member of that enum. Those
+values came from the pre-baseline schema, where the column was text with a CHECK.
+Every ``PATCH /complaints/{id}`` sending either would have failed against a real
+database -- the endpoint's tests pass because they never reach one.
+
 Two mappings are deliberately **not** round-trips:
 
 * ``closed`` renders as ``Resolved`` -- the frontend's status select has only
   three options and closed is not one of them.
-* ``reopened`` renders as ``Pending`` -- which is what the frontend itself does:
-  ``reopenComplaint`` sets ``status: 'Pending'`` and increments a counter rather
-  than introducing a fourth status.
+* ``Reopened`` stores as ``open`` -- which is what reopening means to the
+  baseline, and what the frontend itself does: ``reopenComplaint`` sets
+  ``status: 'Pending'`` and increments a counter rather than introducing a fourth
+  status. The reopen *event* is preserved on the timeline by 0020, so the
+  distinction the old ``reopened`` value carried is not lost, only moved to where
+  it can be counted.
 
 So ``to_wire(to_storage(x))`` is stable, but ``to_storage(to_wire(x))`` is not.
 That asymmetry is the point: the database keeps a distinction the UI does not
@@ -19,13 +33,18 @@ show, instead of throwing it away to make a table symmetrical.
 
 from __future__ import annotations
 
+# Values on the right MUST be members of `public.complaint_status`.
 _STATUS_TO_STORAGE = {
-    "pending": "pending",
+    "pending": "open",
+    "open": "open",
+    "acknowledged": "acknowledged",
     "in progress": "in_progress",
     "in_progress": "in_progress",
     "resolved": "resolved",
     "closed": "closed",
-    "reopened": "reopened",
+    "reopened": "open",
+    "cancelled": "cancelled",
+    "canceled": "cancelled",
 }
 
 # A6: the frontend has exactly two department states, Active and Inactive;
