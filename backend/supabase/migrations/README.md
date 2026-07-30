@@ -16,10 +16,12 @@ applied to any database yet.
 | `0023_amenities_on_baseline.sql` | the 16 booking, ledger and report endpoints |
 | `0024_realtime_join_requests.sql` | `access_request.created` / `.decided` on the SSE outbox |
 
-Between them these create 10 views and 24 write RPCs. `pglast` — the real
-PostgreSQL parser — confirms every file above parses, that every RPC the
-repositories call is created by one of them, and that every column they select
-exists on the table or view selected from.
+Between them these create **11 views and 37 functions**, of which 24 are the
+write RPCs the repositories call; the other 13 are trigger functions and the
+shared RLS predicates. `pglast` — the real PostgreSQL parser — confirms every
+file above parses, that every RPC the repositories call is created by one of
+them, and that every column they select exists on the table or view selected
+from.
 
 ## The gap at 0009–0017
 
