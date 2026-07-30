@@ -117,19 +117,14 @@ alter table public.invoice_line_items
   add column if not exists unit_amount  numeric(12, 2) not null default 0,
   add column if not exists sort_order   integer not null default 0;
 
+-- Stated as a plain ALTER rather than hidden inside a DO block, so that a static
+-- reader -- ours included -- can see the column exists without executing SQL.
+alter table public.invoice_line_items
+  add column if not exists total_amount numeric(12, 2)
+  generated always as (round(quantity * unit_amount, 2)) stored;
+
 do $$
 begin
-  if not exists (
-    select 1 from information_schema.columns
-     where table_schema = 'public'
-       and table_name = 'invoice_line_items'
-       and column_name = 'total_amount'
-  ) then
-    alter table public.invoice_line_items
-      add column total_amount numeric(12, 2)
-      generated always as (round(quantity * unit_amount, 2)) stored;
-  end if;
-
   if not exists (
     select 1 from pg_constraint where conname = 'invoice_line_items_quantity_check'
   ) then
