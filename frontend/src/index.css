@@ -6,10 +6,18 @@
 
   /*
    * HomeBandhu palette
-   * Warm beige is the shared canvas, olive is the primary/secondary action
-   * colour, and marigold is reserved for highlights and attention states.
+   * Warm beige is the shared canvas, walnut brown is the primary/secondary
+   * action colour, and marigold is reserved for highlights and attention.
    */
   --color-white: #fffdf7;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.125rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  --radius-4xl: 2.5rem;
 
   --color-slate-50: #f8f3e8;
   --color-slate-100: #eee6d6;
@@ -32,22 +40,22 @@
   --color-slate-900: #24231e;
   --color-slate-950: #181914;
 
-  --color-indigo-50: #f1f2e5;
-  --color-indigo-100: #e1e5c9;
-  --color-indigo-150: #d5dab6;
-  --color-indigo-200: #cad1a5;
-  --color-indigo-300: #abb878;
-  --color-indigo-400: #889853;
-  --color-indigo-500: #6f8140;
-  --color-indigo-600: #586b32;
-  --color-indigo-650: #4f612d;
-  --color-indigo-655: #4c5e2b;
-  --color-indigo-700: #465728;
-  --color-indigo-750: #3d4d23;
-  --color-indigo-755: #3a4a21;
-  --color-indigo-800: #34431e;
-  --color-indigo-900: #2b381a;
-  --color-indigo-950: #202b13;
+  --color-indigo-50: #f7f1e8;
+  --color-indigo-100: #eadcc8;
+  --color-indigo-150: #e0ccb1;
+  --color-indigo-200: #d4b990;
+  --color-indigo-300: #bd9363;
+  --color-indigo-400: #b78656;
+  --color-indigo-500: #885936;
+  --color-indigo-600: #6f452b;
+  --color-indigo-650: #633c27;
+  --color-indigo-655: #603a25;
+  --color-indigo-700: #583522;
+  --color-indigo-750: #4d2e1e;
+  --color-indigo-755: #492b1c;
+  --color-indigo-800: #42271a;
+  --color-indigo-900: #362016;
+  --color-indigo-950: #271710;
 
   --color-amber-50: #fff6de;
   --color-amber-100: #fde8b0;
@@ -85,7 +93,7 @@ body {
 input,
 select,
 textarea {
-  accent-color: #586b32;
+  accent-color: #6f452b;
 }
 
 /* Custom scrollbar for premium look */
@@ -104,7 +112,7 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #889853;
+  background: #a57443;
 }
 
 /* Slide Up and Fade In animation for toast and modals */

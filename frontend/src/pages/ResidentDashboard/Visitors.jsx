@@ -67,7 +67,7 @@ export default function Visitors() {
       const qrDataUrl = await QRCode.toDataURL(payload, {
         width: 320,
         margin: 2,
-        color: { dark: '#2b381a', light: '#fffdf7' },
+        color: { dark: '#362016', light: '#fffdf7' },
         errorCorrectionLevel: 'M',
       });
       setGeneratedPass({ visitor, qrDataUrl });

@@ -116,7 +116,7 @@ export default function DashboardHome() {
         width: 320,
         margin: 2,
         color: {
-          dark: '#2b381a',
+          dark: '#362016',
           light: '#fffdf7',
         },
         errorCorrectionLevel: 'M',
