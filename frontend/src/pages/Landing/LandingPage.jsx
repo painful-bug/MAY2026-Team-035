@@ -82,11 +82,8 @@ export default function LandingPage() {
 
           {/* CTAs */}
           <div className="hidden md:flex items-center gap-3">
-            <Link to="/login" className="px-4 py-2 text-sm font-bold text-slate-650 hover:text-indigo-600 transition-colors">
-              Admin Login
-            </Link>
-            <Link to="/register" className="px-4.5 py-2.5 text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-sm shadow-indigo-100">
-              Register Association
+            <Link to="/login" className="px-4.5 py-2.5 text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-sm shadow-indigo-100">
+              Get Started
             </Link>
           </div>
 
@@ -132,19 +129,12 @@ export default function LandingPage() {
             </a>
             <hr className="border-slate-100" />
             <div className="flex flex-col gap-2">
-              <Link 
-                to="/login"
-                onClick={() => setMobileMenuOpen(false)}
-                className="w-full text-center py-2.5 text-sm font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl"
-              >
-                Admin Login
-              </Link>
               <Link
-                to="/register"
+                to="/login"
                 onClick={() => setMobileMenuOpen(false)}
                 className="w-full text-center py-2.5 text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl shadow-sm"
               >
-                Register Association
+                Get Started
               </Link>
             </div>
           </div>
@@ -172,14 +162,8 @@ export default function LandingPage() {
               to="/login"
               className="w-full sm:w-auto px-6 py-3.5 text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl flex items-center justify-center gap-2 transition-all shadow-md shadow-indigo-200 hover:-translate-y-0.5"
             >
-              Admin Sign In
+              Get Started
               <ArrowRight className="w-4 h-4" />
-            </Link>
-            <Link
-              to="/register"
-              className="w-full sm:w-auto px-6 py-3.5 text-sm font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl flex items-center justify-center transition-all hover:-translate-y-0.5"
-            >
-              Register Association
             </Link>
           </div>
         </div>

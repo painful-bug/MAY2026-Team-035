@@ -1,4 +1,4 @@
-import { Check, Mail, Phone, X } from 'lucide-react';
+import { Ban, Check, Mail, Phone, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { registrationApi } from '../../features/registration/registrationApi';
 
@@ -11,10 +11,15 @@ export default function PendingRegistrations() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['admin-access-requests'] });
   const approve = useMutation({ mutationFn: (id) => registrationApi.approveAccessRequest(id), onSuccess: invalidate });
   const reject = useMutation({ mutationFn: ({ id, reason }) => registrationApi.rejectAccessRequest(id, { reason }), onSuccess: invalidate });
+  const blacklist = useMutation({ mutationFn: ({ id, reason }) => registrationApi.blacklistAccessRequest(id, { reason }), onSuccess: invalidate });
 
   const rejectRequest = (id) => {
     const reason = window.prompt('Reason for rejecting this request:');
     if (reason?.trim()) reject.mutate({ id, reason: reason.trim() });
+  };
+  const blacklistRequest = (id) => {
+    const reason = window.prompt('Reason for blacklisting this resident:');
+    if (reason?.trim()) blacklist.mutate({ id, reason: reason.trim() });
   };
 
   if (requests.isLoading) return <p className="text-sm font-semibold text-slate-500">Loading registration requests…</p>;
@@ -39,15 +44,16 @@ export default function PendingRegistrations() {
                 {request.applicant_phone_e164 ? <p className="flex items-center gap-2"><Phone className="h-4 w-4 text-slate-400" />{request.applicant_phone_e164}</p> : null}
                 <p>Relationship: {request.requested_relationship.replace('_', ' ')}</p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={() => approve.mutate(request.id)} disabled={approve.isPending || reject.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white disabled:opacity-60"><Check className="h-4 w-4" />Accept</button>
-                <button type="button" onClick={() => rejectRequest(request.id)} disabled={approve.isPending || reject.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-60"><X className="h-4 w-4" />Reject</button>
+              <div className="grid grid-cols-3 gap-2">
+                <button type="button" onClick={() => approve.mutate(request.id)} disabled={approve.isPending || reject.isPending || blacklist.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white disabled:opacity-60"><Check className="h-4 w-4" />Accept</button>
+                <button type="button" onClick={() => rejectRequest(request.id)} disabled={approve.isPending || reject.isPending || blacklist.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-60"><X className="h-4 w-4" />Reject</button>
+                <button type="button" onClick={() => blacklistRequest(request.id)} disabled={approve.isPending || reject.isPending || blacklist.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 py-2.5 text-xs font-bold text-rose-700 disabled:opacity-60"><Ban className="h-4 w-4" />Blacklist</button>
               </div>
             </article>
           ))}
         </div>
       )}
-      {approve.error || reject.error ? <p role="alert" className="text-sm font-semibold text-rose-600">{(approve.error || reject.error).message}</p> : null}
+      {approve.error || reject.error || blacklist.error ? <p role="alert" className="text-sm font-semibold text-rose-600">{(approve.error || reject.error || blacklist.error).message}</p> : null}
     </div>
   );
 }

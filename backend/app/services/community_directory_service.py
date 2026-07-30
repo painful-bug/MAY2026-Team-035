@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from postgrest.exceptions import APIError
+
 from app.config import get_settings
-from app.core.exceptions import AuthorizationError, ValidationError
+from app.core.exceptions import AuthorizationError, ServiceUnavailableError, ValidationError
 from app.core.supabase_client import get_service_client
 from app.domain.schemas import (
     CommunitySearchItem,
@@ -14,7 +16,7 @@ from app.domain.schemas import (
 from app.repositories import communities_repository
 
 
-def search(query: str, limit: int | None) -> CommunitySearchResponse:
+def search(query: str, limit: int | None, profile_id: str) -> CommunitySearchResponse:
     normalized = " ".join(query.split())
     if len(normalized) < 2:
         raise ValidationError(
@@ -28,9 +30,26 @@ def search(query: str, limit: int | None) -> CommunitySearchResponse:
         max(limit or settings.community_search_default_limit, 1),
         settings.community_search_max_limit,
     )
-    rows = communities_repository.search_joinable_communities(
-        get_service_client(), query=normalized, limit=bounded_limit
-    )
+    try:
+        rows = communities_repository.search_joinable_communities(
+            get_service_client(),
+            query=normalized,
+            limit=bounded_limit,
+            profile_id=profile_id,
+        )
+    except APIError as exc:
+        # This is a deployment/schema mismatch, not a malformed user search.
+        # Do not fall back to the former two-argument RPC: it lacks the active
+        # blacklist exclusion and would expose communities that must stay hidden.
+        if exc.code == "PGRST202" and "search_joinable_communities" in exc.message:
+            raise ServiceUnavailableError(
+                "Community search is being updated. Please try again shortly.",
+                code="community_search_schema_unavailable",
+            ) from exc
+        raise ServiceUnavailableError(
+            "Community search is temporarily unavailable. Please try again.",
+            code="community_search_unavailable",
+        ) from exc
     return CommunitySearchResponse(items=[CommunitySearchItem(**row) for row in rows])
 
 

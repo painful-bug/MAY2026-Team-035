@@ -21,6 +21,7 @@ class Principal(BaseModel):
     phone: str | None = None
     email: str | None = None
     email_verified: bool = False
+    full_name: str | None = None
 
 
 class Profile(BaseModel):
@@ -83,7 +84,7 @@ class AmenityWrite(StrictModel):
 
 class AuthMethod(BaseModel):
     id: str
-    kind: Literal["redirect"]
+    kind: Literal["redirect", "credentials"]
     label: str
     enabled: bool = True
 
@@ -91,6 +92,41 @@ class AuthMethod(BaseModel):
 class AuthMethodsResponse(BaseModel):
     primary: str
     methods: list[AuthMethod]
+
+
+class PasswordSignUpRequest(StrictModel):
+    full_name: str = Field(min_length=2, max_length=160)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=15, max_length=256)
+    captcha_token: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("email")
+    @classmethod
+    def _email_shape(cls, value: str) -> str:
+        value = value.strip().casefold()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("A valid email address is required.")
+        return value
+
+
+class PasswordSignInRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+    captcha_token: str | None = Field(default=None, max_length=4096)
+
+
+class EmailTokenRequest(StrictModel):
+    token_hash: str = Field(min_length=8, max_length=4096)
+    verification_type: Literal["email", "signup", "recovery"] = "email"
+
+
+class PasswordResetRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    captcha_token: str | None = Field(default=None, max_length=4096)
+
+
+class PasswordResetCompleteRequest(StrictModel):
+    password: str = Field(min_length=15, max_length=256)
 
 
 # --- Invitations --------------------------------------------------------------
@@ -200,6 +236,10 @@ class ApproveAccessRequest(StrictModel):
 
 
 class RejectAccessRequest(StrictModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class BlacklistAccessRequest(StrictModel):
     reason: str = Field(min_length=3, max_length=500)
 
 

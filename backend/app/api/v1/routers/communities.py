@@ -16,16 +16,16 @@ router = APIRouter(prefix="/communities", tags=["communities"])
 
 
 @router.get("/search", response_model=CommunitySearchResponse)
-async def search_communities(
+def search_communities(
     q: str = Query(..., min_length=2, max_length=100),
     limit: int | None = Query(default=None, ge=1, le=20),
-    _: Principal = Depends(get_current_user),
+    principal: Principal = Depends(get_current_user),
 ) -> CommunitySearchResponse:
-    return community_directory_service.search(q, limit)
+    return community_directory_service.search(q, limit, principal.user_id)
 
 
 @router.get("/admin/units", response_model=CommunityUnitListResponse)
-async def list_admin_units(
+def list_admin_units(
     principal: Principal = Depends(get_current_user),
 ) -> CommunityUnitListResponse:
     return community_directory_service.admin_units(principal.user_id)

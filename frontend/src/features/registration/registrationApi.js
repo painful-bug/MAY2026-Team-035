@@ -14,6 +14,8 @@ export const registrationApi = {
     api(`/admin/access-requests/${requestId}/approve`, { method: 'POST', body: JSON.stringify(payload) }),
   rejectAccessRequest: (requestId, payload) =>
     api(`/admin/access-requests/${requestId}/reject`, { method: 'POST', body: JSON.stringify(payload) }),
+  blacklistAccessRequest: (requestId, payload) =>
+    api(`/admin/access-requests/${requestId}/blacklist`, { method: 'POST', body: JSON.stringify(payload) }),
   createInvitation: (payload) =>
     api('/admin/invitations', { method: 'POST', body: JSON.stringify(payload) }),
   adminUnits: () => api('/communities/admin/units'),

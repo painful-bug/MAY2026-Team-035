@@ -25,10 +25,8 @@ export default function ResidentLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = () => {
+    void logout();
     navigate(AUTH_ROUTES.RESIDENT_LANDING);
-    setTimeout(() => {
-      logout();
-    }, 50);
   };
 
   const navItems = [

@@ -11,6 +11,11 @@ Three clients are exposed, each for a distinct trust level:
     context, so it can only touch data exposed to anonymous visitors. Rarely
     used directly; prefer :func:`get_user_client` for request-scoped access.
 
+``get_auth_client()``
+    Creates a short-lived anonymous client for stateful GoTrue operations such
+    as PKCE code exchange and refresh. Those operations update the client's
+    in-memory auth session and must never share that state across browsers.
+
 ``get_service_client()``
     Uses the *service-role* key and **bypasses Row-Level Security**. Reserve it
     for narrowly audited privileged operations that RLS would otherwise block,
@@ -52,6 +57,11 @@ def _build_client(key: str) -> Client:
 @lru_cache
 def get_anon_client() -> Client:
     """Return the shared anon-key client (RLS applies, no user context)."""
+    return _build_client(get_settings().supabase_anon_key)
+
+
+def get_auth_client() -> Client:
+    """Return an isolated client for one stateful authentication transaction."""
     return _build_client(get_settings().supabase_anon_key)
 
 

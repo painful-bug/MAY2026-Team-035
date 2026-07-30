@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_active_membership, require_csrf, require_membership_role
@@ -17,7 +18,7 @@ async def get_dashboard_snapshot(
     membership: MembershipContext = Depends(get_active_membership),
 ) -> DashboardSnapshot:
     """Return the caller's current, tenant-authorized dashboard records."""
-    return dashboard_service.snapshot(membership)
+    return await run_in_threadpool(dashboard_service.snapshot, membership)
 
 
 @router.get("/events")
@@ -44,7 +45,8 @@ async def create_amenity(
         require_membership_role("admin", "manager")
     ),
 ) -> dict:
-    return dashboard_service.save_amenity(
+    return await run_in_threadpool(
+        dashboard_service.save_amenity,
         membership, amenity_id=None, payload=body.model_dump()
     )
 
@@ -57,7 +59,8 @@ async def update_amenity(
         require_membership_role("admin", "manager")
     ),
 ) -> dict:
-    return dashboard_service.save_amenity(
+    return await run_in_threadpool(
+        dashboard_service.save_amenity,
         membership, amenity_id=amenity_id, payload=body.model_dump()
     )
 
@@ -69,5 +72,5 @@ async def delete_amenity(
         require_membership_role("admin", "manager")
     ),
 ) -> dict:
-    dashboard_service.remove_amenity(membership, amenity_id)
+    await run_in_threadpool(dashboard_service.remove_amenity, membership, amenity_id)
     return {"id": amenity_id}

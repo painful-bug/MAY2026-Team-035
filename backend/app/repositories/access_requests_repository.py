@@ -119,3 +119,13 @@ def reject(
         },
     ).execute()
     return response.data[0] if isinstance(response.data, list) else response.data
+
+
+def blacklist(
+    client: Client, *, request_id: str, reviewer_profile_id: str, reason: str
+) -> dict:
+    response = client.rpc(
+        "blacklist_access_request",
+        {"p_request_id": request_id, "p_reviewer_profile_id": reviewer_profile_id, "p_reason": reason},
+    ).execute()
+    return response.data[0] if isinstance(response.data, list) else response.data

@@ -15,16 +15,25 @@ refresh attempt after an unauthorized response. `src/lib/auth/authService.js`
 and `src/store/authStore.js` use that boundary to:
 
 - fetch the server session;
-- start Google sign-in at `/api/v1/auth/google/start`;
+- start configured OAuth at `/api/v1/auth/oauth/{provider}/start` (with a
+  Google compatibility alias), submit email/password credentials to the BFF,
+  and complete explicit email-confirmation/password-recovery actions;
 - complete the callback by re-reading the server session;
 - redeem a previously prepared invitation; and
 - clear the client session after backend logout.
 
-Routes and pages for passwords, phone OTP, resident-local login, and direct
-Supabase authentication were removed. `AuthEntryPage`, `RegistrationPage`, and
+Phone OTP, resident-local login, and direct Supabase authentication remain
+removed. `AuthEntryPage`, `RegistrationPage`, and
 the registration feature provide the supported entry points: Google sign-in,
-create-community onboarding, community search, join requests, and invitation
-redemption.
+email/password backup, create-community onboarding, community search, join
+requests, and invitation redemption. When a `VITE_TURNSTILE_SITE_KEY` is
+configured, the small Turnstile component passes its token through the BFF to
+Supabase; it does not retain or validate the token locally.
+
+The Join Community tab debounces its database search, cancels stale requests,
+shows explicit empty/pending/rejected states, and lets applicants provide an
+optional E.164 phone number through separate country-code and local-number
+controls. The country code defaults to `+91` and can be changed before submit.
 
 ## Dashboard data flow
 
