@@ -278,7 +278,13 @@ def update_complaint(
                 f"Unknown status '{body.status}'.", code="unknown_status"
             )
 
-    profile = client.table("profiles").select("full_name").eq("id", user_id).limit(1).execute()
+    profile = (
+        client.table("profiles")
+        .select("full_name")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
     actor_label = (profile.data or [{}])[0].get("full_name") or "Management"
 
     repo.update_complaint(
@@ -302,7 +308,13 @@ def add_comment(
     community_id = dash_repo.get_caller_community_id(client, user_id)
     membership_id = _caller_membership(client, community_id, user_id)
 
-    profile = client.table("profiles").select("full_name").eq("id", user_id).limit(1).execute()
+    profile = (
+        client.table("profiles")
+        .select("full_name")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
     author_label = (profile.data or [{}])[0].get("full_name")
 
     repo.add_comment(

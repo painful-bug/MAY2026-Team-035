@@ -138,7 +138,12 @@ def list_residents(
     if search:
         # Escape PostgREST's filter delimiters. An unescaped comma would split
         # the `or` expression and silently widen the query.
-        safe = search.replace("%", r"\%").replace(",", " ").replace("(", " ").replace(")", " ")
+        safe = (
+            search.replace("%", r"\%")
+            .replace(",", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+        )
         pattern = f"%{safe}%"
         query = query.or_(
             f"full_name.ilike.{pattern},apartment_id.ilike.{pattern},"

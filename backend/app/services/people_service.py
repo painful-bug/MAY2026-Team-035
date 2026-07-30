@@ -110,7 +110,10 @@ def update_resident(
 
     if "designation" in supplied:
         repo.update_membership_fields(
-            client, community_id, membership_id, {"designation": supplied["designation"]}
+            client,
+            community_id,
+            membership_id,
+            {"designation": supplied["designation"]},
         )
 
 

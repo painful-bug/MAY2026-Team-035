@@ -45,7 +45,9 @@ async def list_admins(
 )
 async def update_resident(
     body: UpdateResidentRequest,
-    membership_id: str = Path(..., description="The membership id, not the profile id."),
+    membership_id: str = Path(
+        ..., description="The membership id, not the profile id."
+    ),
     principal=Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:

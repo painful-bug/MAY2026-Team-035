@@ -121,7 +121,8 @@ class AddCommentRequest(CamelModel):
 
     message: str = Field(..., min_length=1, max_length=2000)
     visibility: str = Field(
-        "resident", description="'resident' (visible to them) or 'internal' (admins only)"
+        "resident",
+        description="'resident' (visible to them) or 'internal' (admins only)",
     )
 
 
@@ -129,6 +130,8 @@ class RegisterAttachmentRequest(CamelModel):
     """Register a file already uploaded to Supabase Storage."""
 
     storage_path: str = Field(..., max_length=500)
-    attachment_type: str = Field("photo", description="photo | document | resolution_proof")
+    attachment_type: str = Field(
+        "photo", description="photo | document | resolution_proof"
+    )
     content_type: str | None = Field(None, max_length=200)
     size_bytes: int | None = Field(None, ge=0)

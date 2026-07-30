@@ -11,7 +11,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.formatting import COMMUNITY_TZ, day_ago, long_date, parse_instant, time_ago
+from app.core.formatting import (
+    COMMUNITY_TZ,
+    day_ago,
+    long_date,
+    parse_instant,
+    time_ago,
+)
 
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
 

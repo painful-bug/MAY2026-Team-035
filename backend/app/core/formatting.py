@@ -105,7 +105,9 @@ def day_ago(instant: datetime, *, now: datetime | None = None) -> str:
     instant = _as_utc(instant)
     current = _as_utc(now or datetime.now(timezone.utc))
 
-    days = (current.astimezone(COMMUNITY_TZ).date() - instant.astimezone(COMMUNITY_TZ).date()).days
+    today = current.astimezone(COMMUNITY_TZ).date()
+    then = instant.astimezone(COMMUNITY_TZ).date()
+    days = (today - then).days
     if days <= 0:
         return "Today"
     if days == 1:
