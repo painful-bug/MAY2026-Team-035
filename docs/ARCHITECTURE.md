@@ -90,8 +90,8 @@ sequenceDiagram
   application contact record.
 - `community_memberships` is the sole tenant-role source. Active, non-ended
   membership determines both community scope and portal authorization.
-- `resident_invites` stores opaque token/code hashes and binds redemption to a
-  verified Google email; it is not an authentication factor.
+- `resident_invites` stores opaque token/code hashes and binds redemption to
+  the authenticated account email; it is not an authentication factor.
 - `access_requests` is the resident join-request workflow. Approval creates
   the resident membership and optional `unit_residencies` record atomically.
 - `sse_events` is an internal, tenant-scoped refresh outbox. It does not expose
@@ -101,8 +101,11 @@ sequenceDiagram
 
 The ERD in `homebandhu_submission_erd.dbml` now mirrors the table, enum, key,
 and relationship definitions in `backend/supabase/migrations/0001_baseline.sql`.
-Compatibility migrations `0006` and `0007` exist only for an older hosted
-project; they do not change the fresh-baseline model.
+Compatibility migrations `0006`, `0007`, `0008`, and the timestamped
+20260730 migrations exist only for an older hosted project. They reconcile the
+legacy schema with the fresh baseline—without changing the fresh-baseline
+model—including community status normalization, access-request ownership, and
+resident decision RPCs.
 
 The amenity management CRUD flow is database-backed. Booking and ledger read
 models are loaded through the snapshot, but their remaining client-side action

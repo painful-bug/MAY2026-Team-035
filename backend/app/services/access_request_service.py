@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from app.core.exceptions import (
     AuthorizationError,
     ConflictError,
@@ -14,6 +16,7 @@ from app.domain.schemas import (
     AccessRequestListResponse,
     AccessRequestResponse,
     ApproveAccessRequest,
+    BlacklistAccessRequest,
     CreateAccessRequest,
     Principal,
     RejectAccessRequest,
@@ -80,9 +83,13 @@ def _require_active_admin(*, profile_id: str, community_id: str) -> dict:
 
 
 def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestResponse:
-    if not principal.email_verified or not principal.email:
+    # Google OAuth has already authenticated the account.  The join request is
+    # bound to that authenticated identity, not to Supabase's optional email
+    # confirmation claim (which is not consistently present in Google JWTs).
+    if not principal.email:
         raise ValidationError(
-            "A verified Google email is required.", code="email_not_verified"
+            "Your sign-in account must provide an email address.",
+            code="identity_email_missing",
         )
     service = get_service_client()
     try:
@@ -125,6 +132,20 @@ def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestR
             "You already belong to this community.", code="membership_already_active"
         )
 
+    blocked = (
+        service.table("blacklisted_residents")
+        .select("id")
+        .eq("community_id", request.community_id)
+        .eq("profile_id", principal.user_id)
+        .is_("revoked_at", None)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if blocked:
+        raise NotFoundError("Community not found.", code="community_not_found")
+
     existing = access_requests_repository.find_pending(
         service, profile_id=principal.user_id, community_id=request.community_id
     )
@@ -132,6 +153,21 @@ def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestR
         raise ConflictError(
             "A request to join this community is already pending.",
             code="access_request_pending",
+        )
+
+    recent_rejection = next(
+        (
+            row for row in access_requests_repository.list_for_profile(service, principal.user_id)
+            if row.get("community_id") == request.community_id and row.get("status") == "rejected"
+            and row.get("reviewed_at")
+            and datetime.fromisoformat(str(row["reviewed_at"]).replace("Z", "+00:00")) > datetime.now(UTC) - timedelta(hours=24)
+        ),
+        None,
+    )
+    if recent_rejection:
+        raise ConflictError(
+            "Your previous application was rejected. You can apply again after 24 hours.",
+            code="access_request_rejected_cooldown",
         )
 
     if request.requested_unit_id:
@@ -274,3 +310,17 @@ def reject(request_id: str, body: RejectAccessRequest, principal: Principal) -> 
             "This access request cannot be rejected.",
             code="access_request_not_pending",
         ) from exc
+
+
+def blacklist(request_id: str, body: BlacklistAccessRequest, principal: Principal) -> dict:
+    service = get_service_client()
+    request = access_requests_repository.get(service, request_id)
+    if request is None:
+        raise NotFoundError("Access request not found.", code="access_request_not_found")
+    _require_active_admin(profile_id=principal.user_id, community_id=request["community_id"])
+    try:
+        return access_requests_repository.blacklist(
+            service, request_id=request_id, reviewer_profile_id=principal.user_id, reason=body.reason.strip()
+        )
+    except Exception as exc:  # pragma: no cover - provider error is intentionally hidden
+        raise ConflictError("This access request cannot be blacklisted.", code="access_request_not_pending") from exc

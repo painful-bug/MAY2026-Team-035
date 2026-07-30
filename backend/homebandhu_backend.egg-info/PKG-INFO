@@ -5,7 +5,7 @@ Summary: HomeBandhu backend — FastAPI service over Supabase (Postgres, Auth, S
 Requires-Python: >=3.10
 Requires-Dist: fastapi>=0.115
 Requires-Dist: uvicorn[standard]>=0.30
-Requires-Dist: supabase>=2.9
+Requires-Dist: supabase==2.31.0
 Requires-Dist: pydantic>=2.7
 Requires-Dist: pydantic-settings>=2.3
 Requires-Dist: pyjwt[crypto]>=2.9
