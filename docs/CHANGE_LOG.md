@@ -17,6 +17,63 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-07-30 — Session 18: merged, and cut the API down to what the frontend calls
+
+PO instruction: merge their work in via git so the folder never has to be shared again, wire our backend to what
+the frontend and their backend actually provide, **edit or remove every endpoint of ours with no frontend call**,
+do not edit their work, and leave the branch so merging it to `main` produces no conflicts. — `PO`
+
+Merged `origin/main` @ `94556e5` into `backend/planning/1`. Three conflicts, all resolved: `.gitignore` (union),
+`backend/app/api/v1/__init__.py` (their list plus one line for our router), `docs/CLAUDE.md` (kept ours; they
+deleted it). Verified with `git merge-tree` that merging this branch into `main` now reports **zero** conflicts.
+
+### `docs/FRONTEND_WIRING_AUDIT.md` — **new file**
+
+- **The organising rule that settled every endpoint:** *their snapshot is the read path; ours is the write path
+  plus the reads the snapshot cannot serve.* Recorded because it is only coherent thanks to the SSE outbox
+  (addendum C-13) — our writes fire triggers that make the frontend re-snapshot, so a write needs no matching
+  read of ours. Without that fact the removals would look like losing functionality. — `DERIVED`
+- **32 operations removed, 87 → 59** (ours: 35). Includes our whole dashboard-overview router, which resolves
+  conflict **C-2** by deletion rather than by keeping two dashboard APIs, and the six amenity CRUD endpoints their
+  `/dashboard/amenities` already serves. Per-endpoint reasoning is tabulated in the doc so each removal can be
+  argued with individually. — `PO`/`AUDIT`
+- **Two endpoints added**, both dead frontend interactions with no endpoint anywhere: `POST /notices`
+  (`addNotice`) and `POST /admins` (`addAdmin`). — `AUDIT`
+- **`POST /admins` promotes an existing member rather than inviting one.** Their invitation flow hardcodes
+  `intended_role = 'resident'` (`invitations_repository.py:40`) and `CreateInvitationRequest` has no role field, so
+  an admin-bound invite cannot be minted without duplicating token machinery this workstream does not own.
+  Promotion is also the flow `roles.md` describes. It 404s for a non-member, which is a frontend-facing
+  consequence and is on the agenda. — `DERIVED`
+- **Corrected mid-audit:** `GET /complaint-categories` was first justified as "the page derives its filter list
+  from complaints it has". The real reason is that `CreateDepartment.jsx` collects categories as **free text**, so
+  no vocabulary is ever fetched. Same outcome, but the wrong reason would have made re-adding it look safe. — `AUDIT`
+- **Two survivals recorded as judgement calls, not callers.** `POST /invoices` and `POST /invoices/{id}/payments`
+  have no UI caller; they are kept because `PUT /billing-settings` is called and billing settings over a system
+  that cannot issue or settle an invoice configure nothing. Logged explicitly so the deviation from the PO's rule
+  is visible rather than silent. — `DERIVED`
+- **`payInvoice` must not be wired to the payment endpoint.** It settles an invoice, so exposing it to the payer
+  lets a resident clear their own dues by assertion. Resident self-service needs a gateway webhook. — `AUDIT`
+- **§6 lists two one-line changes the dashboard workstream should make** (department staff stub; notices dropping
+  `category`/`urgency`). Written as a request rather than made as an edit, because both files are theirs. — `AUDIT`
+
+### `backend/supabase/migrations/legacy-preauth/README.md` — **new file**
+
+- **Migrations `0010`–`0017` quarantined.** 7 315 lines with **256 references to tables the baseline deleted**.
+  Kept rather than deleted because the reasoning in the comments is the expensive part and the rebuild is a
+  translation, not a redesign. Moved rather than left in place because two mutually exclusive sets of unapplied SQL
+  in one directory — the baseline needing a fresh project, `0010`–`0017` assuming `0001`–`0003` — made applying the
+  wrong set a way to lose a database. The README carries the full rename map and the rebuild order. — `AUDIT`
+- **The amenities design question is left open on purpose**, with the cheapest additive path recorded: add
+  `amenity_booking_series` plus a nullable `amenity_bookings.booking_series_id`, treating their rows as our
+  occurrences. Noted that their `dashboard_service.py` already reads `booking_series_id` in its legacy branch, and
+  that their own ERD models series + occurrences — so on amenities their artifacts side with our design. — `DERIVED`
+
+### `docs/openapi.yaml`
+
+- Regenerated: **50 paths, 59 operations**. Generated, never hand-edited, per the API docs standard. — `DERIVED`
+
+---
+
 ## 2026-07-30 — Session 17: the rest of the handover — they rewrote the frontend
 
 PO instruction: *"did you look at all the others in the folder I shared above or just the backend? compare all

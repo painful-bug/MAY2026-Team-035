@@ -2,6 +2,44 @@
 
 **Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-07-30
 
+> ## ⚠ Sections 5–11 are being revised down to the post-merge surface
+>
+> `origin/main` @ `94556e5` merged into this branch, and the frontend wiring audit removed **32 of our
+> operations** — every read the shared `GET /dashboard/snapshot` already serves, plus the amenity CRUD their
+> `/dashboard/amenities` already serves. **The generated [`openapi.yaml`](openapi.yaml) and `/docs` are correct
+> right now; the prose in §5–§11 still describes removed endpoints.**
+>
+> Until that prose is pruned, read this file with **[FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md)** beside
+> it — it lists every removal and its evidence. The live surface is 59 operations: 24 from the auth/dashboard
+> workstream and the 35 below.
+>
+> **Our 35 operations, post-audit**
+>
+> | Section | Live | Removed by the audit |
+> |---|---|---|
+> | §5 Admin dashboard | *(none — router deleted)* | `GET /dashboard/admin`, `GET /communities/current`, `GET /notices`, `GET /residents` |
+> | §6 People | `POST /admins` **(new)** | `GET /admins`, `GET`/`PATCH`/`DELETE /residents…`, `GET /registrations`, `POST /registrations/{id}/approve\|reject` |
+> | §7 Complaints | `PATCH /complaints/{id}`, `POST /complaints/{id}/comments` | `GET /complaints`, `GET /complaints/{id}`, `POST …/read`, `POST …/attachments` |
+> | §8 Departments | all 8 (reads included — the snapshot stubs `staff: []`) | `GET /complaint-categories` |
+> | §9 Money | `POST /invoices`, `POST /invoices/{id}/payments`, `GET`/`PUT /billing-settings` | `GET /invoices`, `GET /invoices/{id}`, `GET /invoices/summary`, `GET /payments`, `POST …/void`, `POST /maintenance-runs` |
+> | §10 Amenities | 16 — bookings, approvals, blocks, ledger, reports | the 6 catalogue endpoints |
+> | §11 Settings | `GET`/`PUT /settings` | `GET`/`PUT /settings/modules`, `PATCH /settings/modules/{key}` |
+> | *new* Notices | `POST /notices` **(new)** | — |
+>
+> **Two contract-wide changes that apply to every endpoint below.**
+>
+> 1. **Authentication is cookie-first.** A signed HTTP-only session cookie is the normal credential; the bearer
+>    header still works, because their `_extract_token` accepts either. Role checks resolve from
+>    `community_memberships` in Postgres, not from a JWT claim — the access-token hook that produced that claim was
+>    deleted with the old baseline.
+> 2. **Every unsafe request needs `X-CSRF-Token`.** All our writes now enforce it. Reads do not send or require it.
+>    A missing or mismatched token is **403** with code `csrf_invalid`, and a wrong `Origin` is **403**
+>    `csrf_origin_invalid`.
+>
+> **Nothing below runs against a database yet.** Migrations `0010`–`0017` were quarantined to
+> `backend/supabase/migrations/legacy-preauth/`; only `0018` was rebuilt on the baseline, covering `§11 Settings`,
+> `GET`/`PUT /billing-settings` and `POST /notices`.
+
 This document is the contract between the backend and the React frontend. It is
 **normative**: if the code and this document disagree, that is a bug in one of them.
 
@@ -2647,7 +2685,108 @@ accident.
 
 ---
 
-## 12. Not yet implemented
+## 12. Notices and administrator promotion
+
+Added after the merge. Both serve a frontend handler that had **no endpoint anywhere** — the screens have been
+writing to browser memory, and since `appStore` stopped persisting tenant data those writes are lost on refresh.
+
+### 12.1 `POST /notices` — post a notice
+
+Admin only. Publishes immediately: there is no draft state and no schedule control on the screen, so a nullable
+`publishedAt` left unset would create notices no reader could ever see.
+
+Field names match `addNotice({title, description, category, urgency})` exactly, so the screen needs no payload
+mapping. `description` is stored in `notices.body`.
+
+**Request**
+
+```json
+{
+  "title": "Water tank cleaning on Saturday",
+  "description": "Supply will be interrupted between 10:00 and 14:00.",
+  "category": "Maintenance",
+  "urgency": "important"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `title` | string | yes | 1–200 chars |
+| `description` | string | yes | 1–5 000 chars |
+| `category` | string | no | Free text, 1–80 chars. Defaults to `General`. Not an enum — an association's notice categories are its own business, and a CHECK would make "add a category" a migration. |
+| `urgency` | string | no | `Info` \| `Important` \| `Urgent`, case-insensitive. Stored lowercase. Defaults to `Info`. |
+
+**Response `201`**
+
+```json
+{
+  "id": "8f14e45f-…",
+  "title": "Water tank cleaning on Saturday",
+  "description": "Supply will be interrupted between 10:00 and 14:00.",
+  "category": "Maintenance",
+  "urgency": "important",
+  "publishedAt": "2026-07-30T09:15:00Z",
+  "createdAt": "2026-07-30T09:15:00Z"
+}
+```
+
+| Status | Error code | When |
+|---|---|---|
+| `201` | | Posted. Fires the `notices` SSE trigger, so every connected client re-snapshots. |
+| `401` | `authentication_error` | No valid session cookie or bearer token |
+| `403` | `community_role_required` | Caller is not an admin of the community |
+| `403` | `csrf_invalid` / `csrf_origin_invalid` | Missing `X-CSRF-Token`, or wrong `Origin` |
+| `403` | `active_membership_required` | Authenticated but in no active community |
+| `422` | `validation_error` | `urgency` outside the vocabulary |
+| `422` | `request_validation_error` | `title` or `description` missing, empty or over length |
+
+> **Known gap, not a bug here.** `category` and `urgency` are stored (migration 0018 adds both columns) but
+> `dashboard_service.py:202` projects notices as `{id, title, description, date, createdAt}` and drops them, so
+> they round-trip through this response but not through the snapshot. Adding them there is a one-line change owned
+> by the dashboard workstream.
+
+### 12.2 `POST /admins` — promote a member to administrator
+
+Admin only. **Promotes an existing member; it does not invite one.**
+
+The obvious implementation — mint an admin-bound invitation — is not available: the shared invitation contract
+hardcodes `intended_role = 'resident'` (`invitations_repository.py:40`) and `CreateInvitationRequest` has no role
+field, so an admin invite cannot be issued without duplicating token machinery this workstream does not own.
+Promotion is also the flow `roles.md` describes — *"Resident → Committee members → Admin"*.
+
+**Request**
+
+```json
+{ "email": "asha@example.com", "name": "Asha R", "phone": "+919812345678", "tower": "B", "flat": "B-1204" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `email` | string | yes | Matched case-insensitively against `profiles.display_email`, which is `citext` with a unique index, so it cannot match two people. |
+| `name`, `phone`, `tower`, `flat` | string | no | **Accepted and ignored.** The Admins screen sends them, but the member already has all four on their profile and residency, and letting a promotion silently rewrite someone's flat would be a worse bug than ignoring the fields. |
+
+**Response `200`** — the promoted member as an `AdminSummary` (`id`, `profileId`, `name`, `email`, `phone`, `role`,
+`displayRole`, `designation`, `flat`, `unitId`, `status`, `joinedAt`).
+
+| Status | Error code | When |
+|---|---|---|
+| `200` | | Promoted |
+| `401` | `authentication_error` | No valid session |
+| `403` | `community_role_required` | Caller is not an admin |
+| `403` | `csrf_invalid` / `csrf_origin_invalid` | CSRF header or origin wrong |
+| `404` | `not_found` | **No active member of this community uses that email.** The message tells the caller to invite them first and promote once they have joined. |
+| `409` | `conflict` | That member is already an administrator |
+
+> **Frontend consequence — agenda item.** The form accepts any address, so typing a non-member's email returns 404.
+> Either pre-filter the field to existing members or surface the 404 as *"invite them first"*.
+>
+> **Scope note.** This grants the `admin` *role*; it does not touch `community_admin_terms`, which records who holds
+> the community's single designated admin office and is guarded by the `community_admin_one_active` partial unique
+> index. Writing that here would either violate the index or silently depose the sitting admin.
+
+---
+
+## 13. Not yet implemented
 
 Planned in the build order (`ADMIN_DASHBOARD_BUILD_PLAN.md` §4). Listed so the frontend team can see
 what is coming and in what order — **none of these exist yet**, and calling them returns `404`.
@@ -2670,10 +2809,11 @@ one shared invite; we mint one invite per phone instead, which is agenda item 5 
 
 ---
 
-## 13. Changelog
+## 14. Changelog
 
 | Date | Change |
 |---|---|
+| 2026-07-30 | **Merged `origin/main` @ `94556e5`; cut the surface to what the frontend calls.** 32 operations removed — every read the shared `GET /dashboard/snapshot` serves, the amenity CRUD their `/dashboard/amenities` serves, and the registration-review trio duplicating their `/admin/access-requests`. Adds §12: `POST /notices` and `POST /admins`. Two contract-wide changes: cookie-first auth with roles resolved from `community_memberships` instead of a JWT claim, and `X-CSRF-Token` required on every unsafe request. §5–§11 prose still describes removed endpoints — see [FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md). |
 | 2026-07-30 | Build step 9 — Settings. Adds five endpoints plus six fields on `/billing-settings`. Records that the admin Settings screen has never persisted anything, so its field names are ours; that the four toggles belong to two different tables; that three of them are stored and acted on by nothing; and that module enforcement and community rename were deliberately not built. Answers A10 (community timezone). |
 | 2026-07-30 | Build step 8 — Amenities. Adds twenty-two endpoints across the catalogue, bookings, approvals, the booking ledger and reports. Records that approval now covers a whole request rather than one day, that the cleaning buffer no longer blocks shared bookings, and that the frontend has two unrelated amenity models. |
 | 2026-07-29 | Build step 7 — Money. Adds ten endpoints across invoices, payments, maintenance runs and billing settings. `dashboard.collection` stops being a placeholder. Records that the product has no maintenance amount anywhere, and that `isOverdue` is derived rather than stored. |

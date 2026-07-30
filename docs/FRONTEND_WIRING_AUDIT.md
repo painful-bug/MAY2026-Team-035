@@ -51,7 +51,11 @@ Since `appStore` no longer persists tenant data, those writes are lost on refres
 | Settings | 4 toggles, `handleSave` only toasts | ✗ dead | **kept** (step 9) |
 
 Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartment` (Profile) are also dead.
-`payInvoice` is why the invoice write path survives.
+
+**`payInvoice` must not be wired to `POST /invoices/{id}/payments`.** That endpoint marks money as *received* and
+settles the invoice, so exposing it to the payer would let a resident clear their own dues by asserting they had
+paid. It stays admin-only. Resident self-service needs a payment gateway whose webhook calls it — unbuilt, though
+the baseline's `payments.provider` and `unique(community_id, idempotency_key)` now support it.
 
 ## 3. What was removed, and why
 
@@ -65,7 +69,7 @@ Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartmen
 | `GET /registrations`, `POST /registrations/{id}/approve\|reject` | Duplicated their `/admin/access-requests` trio, which the frontend already calls. |
 | `GET /notices` | Snapshot `notices[]`. |
 | `GET /complaints`, `GET /complaints/{id}` | Snapshot `complaints[]`, with comments and history embedded. |
-| `GET /complaint-categories` | The page derives its filter list from the complaints it already has. |
+| `GET /complaint-categories` | `CreateDepartment.jsx` collects categories as **free-text inputs** (`useState([''])`), not from a vocabulary, and `Departments.jsx` reads `department.categories` off the department. Nothing fetches a category list. |
 | `POST /complaints/{id}/attachments` | No upload control on any admin screen, and the Storage bucket is still unbuilt (F2). |
 | `POST /complaints/{id}/read` | No read-receipt UI exists. |
 | `GET /amenities`, `GET /amenities/{id}` | Snapshot `amenities[]`. |
@@ -76,7 +80,14 @@ Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartmen
 | `POST /maintenance-runs` | No caller and no scheduler. See the warning in §5. |
 | `GET`/`PUT /settings/modules`, `PATCH /settings/modules/{moduleKey}` | Module selection exists only in onboarding, which writes their `community_features`. Ours duplicated it (C-11). |
 
-That is **31 operations removed**, and it deletes conflict C-2 outright.
+That is **32 operations removed** — 87 total down to 59, of which 35 are ours and 24 theirs. It deletes conflict
+C-2 outright.
+
+Two survived on a judgement call rather than a caller, and both are flagged rather than buried. `POST /invoices`
+and `POST /invoices/{id}/payments` have no UI caller, because the Maintenance screen is read-only. They are kept
+because `GET`/`PUT /billing-settings` *is* called by the Settings screen, and settings that govern late fees and
+maintenance amounts over a system with no way to issue or settle an invoice configure nothing at all. Deleting them
+would have left the money domain with two config endpoints and no verbs.
 
 ## 4. What was added
 
@@ -111,3 +122,21 @@ code reads. That was already logged as A22 and it has not improved.
 handler wants it, but that handler currently calls a Zustand action instead. Wiring them up is frontend work that
 we are not permitted to do. Until then these endpoints are correct, tested, and uncalled — which is the honest
 status, and the first item for the joint meeting.
+
+**And they are not runnable yet either.** Migrations `0010`–`0017` targeted the schema the baseline replaced, so
+they were quarantined to `backend/supabase/migrations/legacy-preauth/`. `0018_settings_on_baseline.sql` rebuilds
+what `GET`/`PUT /settings`, `GET`/`PUT /billing-settings` and `POST /notices` need. **The department, complaint,
+money and amenity SQL has not been rebuilt**, so those 30 endpoints pass their contract tests but would fail
+against a real baseline database. The rebuild order and the one open design question (our booking
+series/occurrences versus their single `amenity_bookings`) are in `legacy-preauth/README.md`.
+
+## 6. Two things the dashboard workstream should change
+
+Neither was edited here, because both are in files that workstream owns.
+
+1. **`dashboard_service.py:203` stubs department staff** as `{"staff": [], "categories": []}`. Either fill it, or
+   treat `GET /departments` as the supported source and drop the empty keys so the frontend cannot mistake them for
+   "this department has no staff".
+2. **`dashboard_service.py:202` drops `category` and `urgency` from notices.** `POST /notices` now stores both
+   (migration 0018), so adding them to that projection is a one-line change that makes the Notices screen's two
+   selects mean something.
