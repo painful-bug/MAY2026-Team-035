@@ -89,7 +89,7 @@ export default function ResidentLayout() {
                 className={({ isActive }) => `
                   flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200
                   ${isActive 
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' 
+                    ? 'border-l-4 border-amber-400 bg-indigo-600 text-white shadow-md shadow-indigo-100'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}
                 `}
               >

@@ -47,13 +47,13 @@ export default function LandingPage() {
       title: 'Amenities Operations',
       desc: 'Configure facilities, booking modes, approvals, schedules, capacity, and usage reporting.',
       icon: Calendar,
-      color: 'text-teal-600 bg-teal-50'
+      color: 'text-indigo-700 bg-indigo-50'
     },
     {
       title: 'Administrative Control',
       desc: 'Manage administrators, departments, permissions, and community activity from one workspace.',
       icon: HeartHandshake,
-      color: 'text-sky-600 bg-sky-50'
+      color: 'text-amber-700 bg-amber-50'
     },
   ];
 
@@ -186,7 +186,7 @@ export default function LandingPage() {
 
         {/* Mockup Dashboard Preview */}
         <div className="lg:col-span-6 relative">
-          <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-indigo-500 to-sky-500 opacity-20 blur-2xl z-0" />
+          <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-indigo-500 to-amber-400 opacity-20 blur-2xl z-0" />
           <div className="relative bg-white border border-slate-100 rounded-2xl shadow-2xl p-6 space-y-6 z-10">
             {/* Header Mockup */}
             <div className="flex justify-between items-center pb-4 border-b border-slate-50">
@@ -230,7 +230,7 @@ export default function LandingPage() {
       <section id="features" className="py-20 bg-white border-t border-b border-slate-100/80 px-6">
         <div className="max-w-7xl mx-auto w-full space-y-12">
           <div className="text-center space-y-3 max-w-2xl mx-auto">
-            <span className="text-xs font-bold uppercase text-indigo-650 tracking-widest bg-indigo-50 border border-indigo-100/50 px-3 py-1 rounded-full">Portal Highlights</span>
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-widest text-amber-800">Portal Highlights</span>
             <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Everything Your Management Team Needs</h2>
             <p className="text-slate-500 font-medium text-sm sm:text-base leading-relaxed">
               Designed for transparent operations, faster service delivery, and accountable society administration.

@@ -1,10 +1,16 @@
 # HomeBandhu authentication and registration implementation plan
 
-Status: implementation-ready design, subject to the policy decisions called out
-in Section 1.
+Status: historical implementation plan. The described Google-only
+authentication, unified registration, access-request, invitation, and
+database-dashboard foundations were implemented in commit `94556e5` on
+2026-07-29. The remaining gap is end-to-end staging verification and durable
+booking/ledger mutations; see `docs/ARCHITECTURE.md` for the current design and
+`docs/FRONTEND_CHANGES.md` / `docs/BACKEND_CHANGES.md` for the implementation
+record.
 
-Prepared from the working tree on 2026-07-29. This document is a plan, not a
-claim that the described target state has already been implemented or tested.
+Prepared from the working tree on 2026-07-29. Sections marked “current state”
+are the pre-implementation assessment retained for design rationale, not a
+description of the current source tree.
 
 ## 1. Executive decision
 

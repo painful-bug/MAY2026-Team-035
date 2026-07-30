@@ -22,3 +22,10 @@ cd backend && uv run uvicorn app.main:app --reload
 Copy `backend/.env.example` to `backend/.env`, use a fresh Supabase project,
 apply `backend/supabase/migrations/0001_baseline.sql`, then configure Google
 OAuth to redirect to `/api/v1/auth/google/callback` on the backend.
+
+## Architecture and data model
+
+- [Current component and data-flow architecture](docs/ARCHITECTURE.md)
+- [Current clean-baseline ERD/DBML](docs/homebandhu_submission_erd.dbml)
+- [Frontend implementation record](docs/FRONTEND_CHANGES.md)
+- [Backend implementation record](docs/BACKEND_CHANGES.md)

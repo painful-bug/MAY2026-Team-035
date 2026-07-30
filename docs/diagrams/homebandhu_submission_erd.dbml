@@ -1,0 +1,639 @@
+// HomeBandhu — current clean-baseline ERD
+// Source of truth: backend/supabase/migrations/0001_baseline.sql
+// Paste into https://dbdiagram.io. Database: PostgreSQL.
+
+Project homebandhu_submission_erd {
+  database_type: 'PostgreSQL'
+  Note: 'Current clean-baseline model. Google identity is external auth.users; community permissions come only from active community_memberships. PK = primary key, FK = foreign key, UQ = unique.'
+}
+
+Enum membership_role {
+  resident
+  worker
+  security
+  manager
+  admin
+}
+
+Enum membership_status {
+  pending
+  active
+  suspended
+  ended
+}
+
+Enum invite_status {
+  issued
+  redeemed
+  revoked
+  expired
+}
+
+Enum residency_relationship {
+  owner
+  tenant
+  family_member
+  caregiver
+  other
+}
+
+Enum complaint_status {
+  open
+  acknowledged
+  in_progress
+  resolved
+  closed
+  cancelled
+}
+
+Enum visitor_status {
+  expected
+  pending_approval
+  approved
+  denied
+  checked_in
+  checked_out
+  expired
+  cancelled
+}
+
+Enum booking_status {
+  requested
+  approved
+  rejected
+  cancelled
+  completed
+  no_show
+}
+
+Enum invoice_status {
+  draft
+  issued
+  partially_paid
+  paid
+  overdue
+  void
+}
+
+Enum payment_status {
+  initiated
+  succeeded
+  failed
+  refunded
+}
+
+// Identity, community, and residency
+Table auth.users [headercolor: #102A43] {
+  id uuid [pk]
+  email text [unique]
+  email_confirmed_at timestamptz
+  created_at timestamptz
+  Note: 'EXTERNAL: Supabase Auth. Google is the only configured provider.'
+}
+
+Table profiles [headercolor: #102A43] {
+  id uuid [pk, ref: - auth.users.id]
+  full_name text
+  display_email citext
+  phone_e164 varchar(20)
+  avatar_media_id uuid
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { display_email [unique, note: 'Partial: only when non-null'] }
+  Note: 'Identity/contact record. It has no tenant role.'
+}
+
+Table communities [headercolor: #102A43] {
+  id uuid [pk]
+  name text [not null]
+  community_type text [not null, note: 'apartment | layout_villa']
+  status text [not null, default: 'active']
+  address_line1 text [not null]
+  address_line2 text
+  city text [not null]
+  state text [not null]
+  postal_code text [not null]
+  country_code char(2) [not null, default: 'IN']
+  timezone text [not null, default: 'Asia/Kolkata']
+  active_admin_membership_id uuid
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table buildings [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  code text [not null]
+  building_type text [not null, default: 'block']
+  map_x numeric(8,5)
+  map_y numeric(8,5)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (community_id, code) [unique] }
+}
+
+Table units [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  building_id uuid [ref: > buildings.id]
+  unit_code text [not null]
+  unit_type text [not null, default: 'flat']
+  floor_number text
+  map_x numeric(8,5)
+  map_y numeric(8,5)
+  status text [not null, default: 'active']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (community_id, unit_code) [unique] }
+}
+
+Table feature_catalog [headercolor: #102A43] {
+  code text [pk]
+  name text [not null]
+  description text [not null, default: '']
+  default_enabled boolean [not null, default: false]
+  is_active boolean [not null, default: true]
+}
+
+Table community_features [headercolor: #102A43] {
+  community_id uuid [pk, not null, ref: > communities.id]
+  feature_code text [pk, not null, ref: > feature_catalog.code]
+  is_enabled boolean [not null]
+  updated_by_membership_id uuid [ref: > community_memberships.id]
+  updated_at timestamptz [not null]
+}
+
+Table departments [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  description text
+  category text
+  hours jsonb [not null]
+  manager_membership_id uuid [ref: > community_memberships.id]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (community_id, name) [unique] }
+}
+
+Table community_memberships [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  department_id uuid [ref: > departments.id]
+  role membership_role [not null]
+  status membership_status [not null, default: 'pending']
+  joined_at timestamptz [not null]
+  ended_at timestamptz
+  is_default_community boolean [not null, default: false]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (community_id, profile_id) [unique, note: 'Partial: ended_at is null']
+    profile_id [unique, note: 'Partial: active default membership']
+  }
+  Note: 'Tenant authorization source. A role is valid only on an active, non-ended membership.'
+}
+
+Table community_admin_terms [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  admin_membership_id uuid [not null, ref: > community_memberships.id]
+  designation text
+  started_at timestamptz [not null]
+  ended_at timestamptz
+  transferred_by_membership_id uuid [ref: > community_memberships.id]
+  transfer_note text
+  indexes { community_id [unique, note: 'Partial: ended_at is null'] }
+}
+
+Table unit_residencies [headercolor: #0F766E] {
+  id uuid [pk]
+  unit_id uuid [not null, ref: > units.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  relationship_type residency_relationship [not null]
+  is_primary_contact boolean [not null, default: false]
+  started_at date [not null]
+  ended_at date
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (unit_id, membership_id) [unique, note: 'Partial: ended_at is null'] }
+}
+
+// Joining and staffing
+Table resident_invites [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  intended_unit_id uuid [ref: > units.id]
+  invitee_email citext [not null]
+  invitee_phone_e164 varchar(20)
+  invitee_name text
+  intended_role membership_role [not null, default: 'resident']
+  token_hash text [not null, unique]
+  code_hash text [not null, unique]
+  status invite_status [not null, default: 'issued']
+  expires_at timestamptz [not null]
+  redeemed_at timestamptz
+  redeemed_by_profile_id uuid [ref: > profiles.id]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  Note: 'Stores only hashes. Redemption requires the invitee verified Google email.'
+}
+
+Table access_requests [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  requested_unit_id uuid [ref: > units.id]
+  applicant_profile_id uuid [not null, ref: > profiles.id]
+  applicant_name text [not null]
+  applicant_email citext [not null]
+  applicant_phone_e164 varchar(20)
+  requested_relationship residency_relationship [not null, default: 'tenant']
+  status text [not null, default: 'pending', note: 'pending | approved | rejected | withdrawn']
+  reviewed_by_membership_id uuid [ref: > community_memberships.id]
+  reviewed_at timestamptz
+  rejection_reason text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (community_id, applicant_profile_id) [unique, note: 'Partial: status is pending'] }
+}
+
+Table vendors [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  contact_name text
+  phone_e164 varchar(20)
+  email citext
+  service_category text
+  status text [not null, default: 'active']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table staff_assignments [headercolor: #B7791F] {
+  id uuid [pk]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  department_id uuid [ref: > departments.id]
+  vendor_id uuid [ref: > vendors.id]
+  employment_type text [not null]
+  designation text
+  started_at date [not null]
+  ended_at date
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table skills [headercolor: #B7791F] {
+  id uuid [pk]
+  name text [not null, unique]
+  category text
+  description text
+}
+
+Table staff_skills [headercolor: #B7791F] {
+  staff_assignment_id uuid [pk, ref: > staff_assignments.id]
+  skill_id uuid [pk, ref: > skills.id]
+  proficiency_level smallint
+}
+
+Table worker_availability_rules [headercolor: #B7791F] {
+  id uuid [pk]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  weekday smallint [not null]
+  start_time time [not null]
+  end_time time [not null]
+  effective_from date [not null]
+  effective_to date
+}
+
+Table worker_unavailability [headercolor: #B7791F] {
+  id uuid [pk]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  reason text
+}
+
+// Complaints and work
+Table complaints [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  raised_by_membership_id uuid [not null, ref: > community_memberships.id]
+  category text [not null]
+  title text [not null]
+  description text
+  status complaint_status [not null, default: 'open']
+  aggregate_version integer [not null, default: 1]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  resolved_at timestamptz
+}
+
+Table complaint_events [headercolor: #C53030] {
+  id uuid [pk]
+  complaint_id uuid [not null, ref: > complaints.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  payload jsonb [not null]
+  created_at timestamptz [not null]
+}
+
+Table complaint_comments [headercolor: #C53030] {
+  id uuid [pk]
+  complaint_id uuid [not null, ref: > complaints.id]
+  author_membership_id uuid [not null, ref: > community_memberships.id]
+  body text [not null]
+  created_at timestamptz [not null]
+}
+
+Table complaint_read_state [headercolor: #C53030] {
+  complaint_id uuid [pk, ref: > complaints.id]
+  membership_id uuid [pk, ref: > community_memberships.id]
+  last_read_at timestamptz [not null]
+}
+
+Table work_orders [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  complaint_id uuid [ref: > complaints.id]
+  status text [not null, default: 'open']
+  priority text [not null, default: 'normal']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table work_order_assignments [headercolor: #C53030] {
+  id uuid [pk]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  staff_assignment_id uuid [ref: > staff_assignments.id]
+  assigned_at timestamptz [not null]
+  ended_at timestamptz
+}
+
+// Visitors, amenities, and finance
+Table visitor_requests [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  requested_by_membership_id uuid [not null, ref: > community_memberships.id]
+  visitor_name text [not null]
+  visitor_phone_e164 varchar(20)
+  status visitor_status [not null, default: 'expected']
+  pass_hash text [unique]
+  valid_from timestamptz
+  valid_until timestamptz
+  approved_by_membership_id uuid [ref: > community_memberships.id]
+  checked_in_at timestamptz
+  checked_out_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table visitor_events [headercolor: #6B46C1] {
+  id uuid [pk]
+  visitor_request_id uuid [not null, ref: > visitor_requests.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  created_at timestamptz [not null]
+}
+
+Table amenities [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  description text
+  booking_rules jsonb [not null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (community_id, name) [unique] }
+}
+
+Table amenity_operating_hours [headercolor: #2F855A] {
+  id uuid [pk]
+  amenity_id uuid [not null, ref: > amenities.id]
+  weekday smallint [not null]
+  opens_at time [not null]
+  closes_at time [not null]
+}
+
+Table amenity_maintenance_blocks [headercolor: #2F855A] {
+  id uuid [pk]
+  amenity_id uuid [not null, ref: > amenities.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  reason text
+}
+
+Table amenity_bookings [headercolor: #2F855A] {
+  id uuid [pk]
+  amenity_id uuid [not null, ref: > amenities.id]
+  community_id uuid [not null, ref: > communities.id]
+  booked_by_membership_id uuid [not null, ref: > community_memberships.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  status booking_status [not null, default: 'requested']
+  aggregate_version integer [not null, default: 1]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  Note: 'The baseline uses a GiST exclusion constraint to prevent overlapping requested/approved times for an amenity.'
+}
+
+Table booking_charges [headercolor: #2F855A] {
+  id uuid [pk]
+  booking_id uuid [not null, ref: > amenity_bookings.id]
+  amount numeric(12,2) [not null]
+  kind text [not null]
+  status text [not null, default: 'pending']
+  created_at timestamptz [not null]
+}
+
+Table booking_refunds [headercolor: #2F855A] {
+  id uuid [pk]
+  booking_charge_id uuid [not null, ref: > booking_charges.id]
+  amount numeric(12,2) [not null]
+  reason text
+  created_at timestamptz [not null]
+}
+
+Table invoices [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  status invoice_status [not null, default: 'draft']
+  due_at timestamptz
+  total_amount numeric(12,2) [not null, default: 0]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table invoice_line_items [headercolor: #2F855A] {
+  id uuid [pk]
+  invoice_id uuid [not null, ref: > invoices.id]
+  description text [not null]
+  amount numeric(12,2) [not null]
+}
+
+Table payments [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  invoice_id uuid [ref: > invoices.id]
+  provider text [not null, default: 'offline']
+  provider_reference text
+  amount numeric(12,2) [not null]
+  status payment_status [not null, default: 'initiated']
+  idempotency_key text
+  created_at timestamptz [not null]
+  indexes { (community_id, idempotency_key) [unique] }
+}
+
+Table payment_events [headercolor: #2F855A] {
+  id uuid [pk]
+  payment_id uuid [not null, ref: > payments.id]
+  event_type text [not null]
+  payload jsonb [not null]
+  created_at timestamptz [not null]
+}
+
+// Communication, audit, and infrastructure
+Table notices [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  author_membership_id uuid [ref: > community_memberships.id]
+  title text [not null]
+  body text [not null]
+  published_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table notifications [headercolor: #2B6CB0] {
+  id uuid [pk]
+  recipient_membership_id uuid [not null, ref: > community_memberships.id]
+  kind text [not null]
+  payload jsonb [not null]
+  read_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table member_activity [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  payload jsonb [not null]
+  created_at timestamptz [not null]
+}
+
+Table audit_events [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [ref: > communities.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  action text [not null]
+  payload jsonb [not null]
+  created_at timestamptz [not null]
+}
+
+Table media [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  storage_path text [not null, unique]
+  mime_type text [not null]
+  byte_size bigint [not null]
+  uploaded_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  Note: 'Metadata only; object content is in external Supabase Storage.'
+}
+
+Table idempotency_records [headercolor: #718096] {
+  community_id uuid [pk, ref: > communities.id]
+  key text [pk]
+  request_hash text [not null]
+  response jsonb
+  created_at timestamptz [not null]
+}
+
+Table rate_limit_buckets [headercolor: #718096] {
+  bucket text [pk]
+  count integer [not null, default: 0]
+  window_ends_at timestamptz [not null]
+}
+
+Table sse_events [headercolor: #718096] {
+  id bigint [pk]
+  community_id uuid [not null, ref: > communities.id]
+  topic text [not null]
+  payload jsonb [not null]
+  created_at timestamptz [not null]
+  indexes { (community_id, id) }
+  Note: 'Tenant-scoped dashboard refresh outbox. Browser clients consume the backend SSE projection, not database subscriptions.'
+}
+
+// Deliberately separate to make the community/member circular relationship
+// acceptable to dbdiagram.io.
+Ref: communities.active_admin_membership_id > community_memberships.id
+
+TableGroup identity_and_residency {
+  auth.users
+  profiles
+  communities
+  buildings
+  units
+  feature_catalog
+  community_features
+  community_memberships
+  community_admin_terms
+  unit_residencies
+}
+
+TableGroup joining_and_people {
+  resident_invites
+  access_requests
+  departments
+  vendors
+  staff_assignments
+  skills
+  staff_skills
+  worker_availability_rules
+  worker_unavailability
+}
+
+TableGroup service_and_access {
+  complaints
+  complaint_events
+  complaint_comments
+  complaint_read_state
+  work_orders
+  work_order_assignments
+  visitor_requests
+  visitor_events
+}
+
+TableGroup amenities_and_finance {
+  amenities
+  amenity_operating_hours
+  amenity_maintenance_blocks
+  amenity_bookings
+  booking_charges
+  booking_refunds
+  invoices
+  invoice_line_items
+  payments
+  payment_events
+}
+
+TableGroup communication_and_platform {
+  notices
+  notifications
+  member_activity
+  audit_events
+  media
+  idempotency_records
+  rate_limit_buckets
+  sse_events
+}
