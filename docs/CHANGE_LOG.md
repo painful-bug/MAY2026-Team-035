@@ -17,13 +17,90 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-07-30 — Session 17: the rest of the handover — they rewrote the frontend
+
+PO instruction: *"did you look at all the others in the folder I shared above or just the backend? compare all
+the files in it?"* — Session 16 reviewed `backend/` and the ERD only. This session compared the whole tree and
+produced an addendum rather than editing the plan, so the plan stays readable as the SQL/repository document. — `PO`
+
+### `docs/RECONCILIATION_ADDENDUM.md` — **new file**
+
+- **`3116027..94556e5` changes 166 files outside `backend/`: 93 in `frontend/` alone, 5 907 deletions.** The
+  session-16 plan missed all of it. — `AUDIT`
+- **The frontend is no longer a dummy-data demo.** Every fixture in `frontend/src/data/` is deleted; `appStore.js`
+  is now a render cache whose collections *"begin empty"*; the whole dashboard hydrates from
+  `GET /dashboard/snapshot` and refreshes on SSE `dashboard.refresh`. Recorded because it retires the standing
+  assumption that frontend data shapes are throwaway — a real serializer must now produce them, so they are
+  contractual. — `AUDIT`
+- **C-8: none of our 70 operations has a frontend caller.** The client calls 19 paths, and amenity mutations go to
+  `/dashboard/amenities`, not our `/amenities`. Logged as the honest status — our API surface is now a *proposal*,
+  not the implementation of an existing contract — because it is the one finding that changes what nine build
+  steps are worth, and it is a joint-meeting decision, not a code change. — `AUDIT`
+- **C-9: `require_csrf` appears zero times in all nine of our routers**, while their client sends `X-CSRF-Token` on
+  every unsafe method. Under cookie auth that makes our 47 writes a CSRF hole. Fix is nine router-level lines in
+  Phase 1. Consuming their primitive, not editing it, so it stays inside the "leave auth to its owner" boundary. — `AUDIT`
+- **C-10: `docs/frontend-documentation.md` (3 305 lines) is deleted upstream** — that is gate 1 of the five-gate
+  check. Also `docs/AGENTS.md`, `docs/CLAUDE.md`, `docs/plan.md`. Gate 1's source is to be repointed at
+  `docs/FRONTEND_CHANGES.md` + live `frontend/src/`, so the gate keeps meaning instead of citing a deleted file. — `DERIVED`
+- **C-11: step 9's `module_catalogue` duplicates their `feature_catalog`, with byte-identical ten keys and
+  defaults** — both derived from `onboardingModules.js`. Resolution is to fold our `sort_order`/`backend_status`/
+  `backend_note` into their table. Cheapest fix in the reconciliation, and it keeps all of step 9's documentation. — `AUDIT`
+- **C-13 corrects a session-16 worry in our favour.** I expected to add outbox emission to 47 writes. The outbox is
+  `AFTER INSERT/UPDATE/DELETE … FOR EACH ROW` triggers over twelve tables, so **our writes refresh the UI for free,
+  including writes inside our RPCs**. All twelve tables verified to carry `community_id`. Phase 5 shrinks. — `AUDIT`
+- **C-14: their baseline closes F2, F3 and F4** — `media`, `rate_limit_buckets`, `idempotency_records`, and
+  `aggregate_version` on `complaints`/`amenity_bookings`. Schema only, no Python reads them, but three open
+  questions become implementation tasks. — `AUDIT`
+- **C-15: our error envelope already matches their client exactly** (`{error:{code,message,details}}`), verified
+  against `client.js`. Independent convergence; no change needed. — `AUDIT`
+- **C-16 sharpens the amenity argument.** Set-comparing their ERD against their baseline: 20 ERD tables absent from
+  the baseline, 15 baseline tables absent from the ERD. The ERD models `amenity_booking_series`,
+  `amenity_booking_occurrences` and a typed `amenity_rules` — **our step-8 design, not their `booking_rules jsonb`**.
+  Their baseline deviates from their own submitted ERD, which is a stronger case for our typed design than our
+  own preference is. — `AUDIT`
+
+### `docs/SCHEMA_RECONCILIATION_PLAN.md`
+
+- Pointer added to the addendum at the head of the file. The plan's phases are amended by addendum §3 rather than
+  edited in place, so the approved document is not silently changed under the PO. — `DERIVED`
+
+---
+
 ## 2026-07-30 — Session 16: the auth team's `origin/main` turns out to contain the whole domain
 
 PO instruction: a copy of `origin/main` was handed over as *"the changes made by the backend team with
 regard to login and authentication"*, with the ask to refactor our work onto it, find the conflicts, and
 **produce a plan before implementing anything**. No code or migration has been changed yet. — `PO`
 
-### `docs/SCHEMA_RECONCILIATION_PLAN.md` — **new file**
+### `docs/SCHEMA_RECONCILIATION_PLAN.md` — **new file, then rewritten the same session**
+
+- **The handed-over folder was one commit stale, and the missing commit invalidated the first draft.**
+  `origin/main` is at `94556e5`, which **deletes migrations `0001`–`0005` and replaces them with a single
+  263-line `0001_baseline.sql`** headed *"apply only to a new Supabase project"* — reshaping and renaming
+  the tables **again**. Their schema has now been rewritten twice in two days. The plan was rewritten
+  against `94556e5` alone, and the churn itself became an argument in it: a translation layer we own
+  (our views) is the right place for that risk to sit. — `AUDIT`
+- **The deepest conflict is not tables, it is where authorization lives.** Their baseline enables RLS on
+  **6 of 46 tables** with 7 SELECT policies, and guards everything else in Python over a service-role
+  client. Our build plan commits to *"RLS as the enforcement boundary"*, and our `get_request_client()`
+  reaches those tables with a **user** token — where no policy exists. Recommended fix is additive (RLS
+  for the ~14 tables we read), because it asks them to change nothing and returns the cross-tenant
+  guarantee to the database. **This gates every repository change**, so it is decision 1. — `AUDIT`
+- **There are now two dashboard APIs, in three files with identical paths** — they wrote
+  `dashboard.py`, `dashboard_service.py` and `dashboard_repository.py` too, so git will report
+  *both-added* conflicts. Judged complementary rather than duplicated (their one-shot snapshot + SSE for
+  the home screen; our resource endpoints for anything that pages, filters or writes), so the
+  recommendation is to rename ours and keep both. — `AUDIT`
+- **Their auth seam is friendlier than their own notes suggest**: `_extract_token` accepts a bearer
+  header *or* the new session cookie, so our documented contract and all seven routers' identity
+  dependencies keep working. What does break is `require_role`, now `require_membership_role` over a
+  membership row rather than a JWT claim — and adopting it lets us **delete** `get_caller_community_id()`
+  rather than repair it, removing our worst single point of failure. — `AUDIT`
+- **Their ERD documents a schema that no longer exists** — the `.dbml` still describes the deleted
+  `0004` tables. Flagged for them. — `AUDIT`
+- **F1 got worse, and this is the one to act on soonest.** There are now two mutually exclusive sets of
+  unrun SQL — their baseline demands a fresh project, our `0010`–`0017` assume `0001`–`0003` — so
+  **applying the wrong set first is now a way to lose a database.** — `DERIVED`
 
 - **The premise of the handover is wrong, and that is the finding.** Commit `0fffb68` is not an auth
   change: it ships **1,831 lines of SQL implementing the entire application domain** — 48 tables, RLS on

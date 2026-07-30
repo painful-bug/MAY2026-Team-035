@@ -1,315 +1,266 @@
-# Schema reconciliation plan — our dashboard work vs. `origin/main`
+# Reconciliation plan — our dashboard work vs. `origin/main`
 
 **Raised:** 2026-07-30 · **From:** backend (admin dashboard workstream)
-**Compared:** our working tree (`backend/planning/1`, uncommitted) against
-`C:\Users\serve\Documents\GitHub\MAY2026-Team-035` at `32dbb49`
-**Status:** plan only. **Nothing has been changed yet.**
+**Revised:** 2026-07-30, **after fetching `origin/main` and finding the handed-over folder is stale.**
+**Baseline compared against:** `origin/main` @ `94556e5` *"feat: complete Google auth and realtime dashboards"*
+**Status:** plan only. Our work is committed (`8729782`); **no merge has been performed.**
+
+> **Scope limit — read [RECONCILIATION_ADDENDUM.md](RECONCILIATION_ADDENDUM.md) with this file.**
+> This plan was written from `backend/` and the ERD. The same commit range also changes **166 files outside
+> `backend/`**, including a rewrite of the frontend from a dummy-data demo into a real API client. The addendum
+> covers that, adds conflicts **C-8 – C-16**, amends the phases in its §3, and corrects one claim here in our
+> favour (the realtime outbox needs no work from us). Two of its findings — the frontend contract (C-8) and CSRF
+> on our writes (C-9) — rank alongside C-1 in importance.
 
 ---
 
-## 0. The headline: this is not an auth change
+## 0. Two corrections to what we were told
 
-The repo was handed over as *"changes made by the backend team with regard to login and
-authentication."* It is much larger than that. Commit `0fffb68` ships **1,831 lines of new SQL** across
-two migrations that implement **the entire application domain** — 48 tables, RLS for all of them, and
-three workflow RPCs — plus a new 868-line ERD that matches it.
+**First: the handover was described as *"changes with regard to login and authentication."* It is not.**
+It is a complete parallel implementation of the application domain **and** a competing dashboard API.
 
-**Sixteen of those tables are tables we also built**, under the same names, with different columns.
+**Second: the folder handed over (`Documents\GitHub\...`, at `32dbb49`) is one commit behind
+`origin/main`, and that one commit changes almost everything the first draft of this plan analysed.**
+`94556e5` **deletes migrations `0001`–`0005` and replaces them with a single 263-line
+`0001_baseline.sql`**, whose header reads *"Apply only to a new Supabase project."* Table names and
+shapes changed again in the process.
 
-| | Ours (uncommitted) | Theirs (`origin/main`) |
-|---|---|---|
-| Migrations | `0010`–`0017`, 7,568 lines | `0004`–`0005`, 1,831 lines |
-| Tables created | 28 | 48 |
-| **Table names in both** | **16** | **16** |
-| Applied to a database | no | no |
-| Committed | **no** | **yes, merged to `main`** |
+So there have been **three** versions of their schema in two days:
 
-So the job is not "adapt to a new auth flow". It is **reconciling two independent implementations of
-the same domain**, where theirs is merged and ours is not. That changes the shape of the work, and it
-is the reason this document exists before any code moves.
+| | `0001`–`0003` | `+ 0004`–`0005` (the folder we were given) | `0001_baseline` + `0006` + `0007` (**actual `main`**) |
+|---|---|---|---|
+| Tables | 5 | 48 | 46, **renamed and reshaped again** |
+| Amenity bookings | — | `amenity_booking_series` + `_occurrences` | **`amenity_bookings`**, one table |
+| Amenity config | — | `amenity_rules` (6 fields) | **`amenities.booking_rules jsonb`** |
+| Invoices attach to | — | `liable_unit_id` | **`membership_id`** |
+| Complaint read state | — | — | `complaint_read_state` |
+| RLS | global admin policies | 50 SELECT policies + per-community helpers | **6 tables, 7 policies** |
 
-**One piece of good news up front, and it is the load-bearing fact in this plan:** our API layer talks
-to the database almost entirely through **our own views and RPCs**, not through raw tables. Across
-`app/`, there are only **11 references** to any table the rename touched. The blast radius is
-concentrated in SQL, where we control both sides — not spread through 70 endpoints.
+**This plan is written against `94556e5` only.** Anything in the given folder that `94556e5` deleted is
+treated as history. Note the corollary: **their schema has been rewritten twice in two days, so a
+plan that hard-codes its details will go stale again.** That is an argument for putting our
+translation in views we own, which §5 does.
 
 ---
 
-## 1. What they shipped, and what it closes for us
+## 1. What their work closes for us — re-verified against `94556e5`
 
-Genuinely good work, and it resolves seven of our open items. **These are wins, not conflicts.**
+Real wins, and they are the reason adopting their base is right.
 
-| Our item | Status now | How |
+| Our item | Status | How |
 |---|---|---|
-| **§1.1** privilege escalation via signup metadata (critical) | ✅ **fixed** | `handle_new_user()` no longer reads `raw_user_meta_data ->> 'role'` at all. Role comes only from `community_memberships`, resolved by `custom_access_token_hook`. |
-| **§1.2** unscoped `is_admin()` (high) | ✅ **closed differently** | `is_admin()` still exists and is still global — **but it is used by zero policies.** All 50 read policies use new per-community helpers (`current_user_has_community_role(community_id, roles[])` and friends). The old global `associations_admin_write` policies are explicitly dropped (`0005:284-292`). |
-| **C1** add `email` to `handle_new_user()` | ✅ **done, different column** | They added `profiles.display_email citext`, maintained in the trigger and backfilled from `auth.users`. **We added `profiles.email` in `0012` — that is now a duplicate column.** |
-| **C2** migrations `0004`–`0009` reserved for auth | ✅ **honoured** | They took exactly `0004` and `0005`. Our `0010`+ numbering was correct. |
-| **C3** `current_association_id()` is theirs | ✅ **resolved better** | They did not write it. They wrote a family of *community-scoped* helpers instead — the same conclusion we reached, arrived at independently. |
-| **C6 / F5** `backend/.venv` committed | ✅ **removed** | `0fffb68` deletes it and fixes `.gitignore`. |
-| **D1** `associations`/`units`/`apartments` renamed "later" | ✅ **done now** | `associations`→`communities`, `units`→`buildings`, `apartments`→`units`, `invitations`→`resident_invites`. The rename we deferred has happened. |
+| **§1.1** privilege escalation via signup metadata (critical) | ✅ **gone entirely** | There is no role in signup metadata any more. `BACKEND_CHANGES.md`: *"no browser-supplied role or JWT role claims authorize a request."* |
+| **§1.2** unscoped `is_admin()` (high) | ✅ **gone entirely** | `is_admin()`, `jwt_role()` and `custom_access_token_hook()` appear **zero times** in `0001_baseline` or `0006`. Authorization is `require_membership_role(...)` over a membership row read from Postgres. |
+| **C1** `email` on profiles | ✅ | `profiles.display_email citext`, unique where not null. |
+| **C2** migrations `0004`–`0009` reserved | ✅ | They used `0001`, `0006`, `0007`. |
+| **C3** `current_association_id()` | ✅ **resolved better than either of us proposed** | `get_active_membership()` returns a `MembershipContext` carrying `community_id`, `role` and `department_id`, ordered by `is_default_community`. This is our `get_caller_community_id()` done properly, including the multi-community case ours had no answer for. |
+| **C5** what identifies an invitee under OAuth | ✅ **answered** | `resident_invites.invitee_email citext not null` — email, with phone optional. Google is the sole identity provider. |
+| **C6 / F5** `.venv` committed | ✅ | Removed and ignored. |
+| **D1** `associations`/`units`/`apartments` naming | ✅ **moot** | The baseline starts with `communities` / `buildings` / `units`. Nothing to rename. |
+| **A10** community timezone | ✅ **theirs** | `communities.timezone not null default 'Asia/Kolkata'`. Our `community_settings.timezone` is now a duplicate. |
+| **F3** rate limiting | 🟡 **table exists** | `rate_limit_buckets`. Nothing enforces it yet, but the storage is there. |
+| **F4** optimistic concurrency | 🟡 **partly** | `complaints.aggregate_version` and `amenity_bookings.aggregate_version`. Not on the other edit surfaces. |
+| **E14** payment idempotency | ✅ **theirs too** | `payments.idempotency_key` with `unique (community_id, idempotency_key)`, plus a general `idempotency_records` table. Same conclusion, reached independently. |
 
-Two more things they added that we should simply adopt rather than duplicate:
-`communities.timezone` (which **answers A10 in the schema**, one migration before we did), and Storage
-policies on `storage.objects`.
-
-**Their JWT contract is compatible with ours.** `custom_access_token_hook` emits `user_role` in
-**uppercase** (`upper(cm.role::text)`), which is exactly what our `deps.py` and `roles.py` already
-parse. No change needed to the auth seam.
+**Their auth seam is compatible with our routers, which is better news than their own notes imply.**
+`deps.py` keeps `get_current_user` and `get_request_client` with identical signatures, and
+`_extract_token` accepts **either** an `Authorization: Bearer` header **or** the new session cookie. So
+our documented bearer contract still works and every `Depends(get_current_user)` in our seven routers
+is unaffected.
 
 ---
 
 ## 2. The conflicts, worst first
 
-### C-1 🔴 `get_caller_community_id()` — one function, 70 endpoints, currently broken
+### C-1 🔴 We disagree about *where authorization lives*, and that is architectural
 
-`dashboard_repository.get_caller_community_id()` reads **`profiles.association_id`**. Their `0004`
-renames that column to `legacy_community_id` and stops maintaining it — membership is the source of
-truth now. **Every one of our 70 operations calls this function**, directly or transitively.
+This is the biggest item and it is not about tables.
 
-It is also a **one-function fix**: resolve the community from `community_memberships` instead. Their
-`memberships_repository.py` already demonstrates the query. This is the single highest
-impact-to-effort item in the whole reconciliation.
-
-### C-2 🔴 Sixteen colliding tables, all structurally different
-
-Not name clashes to be renamed around — the same concept modelled differently. The four that matter:
-
-| Table | Ours | Theirs | Consequence |
-|---|---|---|---|
-| `community_memberships` | `public.user_role` enum (UPPERCASE), `status text`, **`unique (id, community_id)`** | `membership_role` enum (lowercase), `membership_status` enum incl. `pending`/`ended`, `department_id`, `is_default_community` | Two role vocabularies **and** two status vocabularies. Their table has no `(id, community_id)` unique constraint, which **every composite FK in our `0011`–`0017` depends on.** |
-| `unit_residencies` | has `community_id`, composite FKs to unit and membership | **no `community_id`** — tenancy flows through `unit_id` | Our whole "a child row cannot point at another community's parent" strategy (R4) has no anchor. |
-| `amenity_booking_occurrences` | `booking_date date` + `starts_at time` + `ends_at time`, exclusion constraint scoped `where is_exclusive`, plus an advisory-lock trigger | `starts_at`/`ends_at timestamptz`, **blanket** `exclude using gist (amenity_id with =, tstzrange &&)` | See C-3 — this is a live bug in their schema. |
-| `complaints` | `department_id`, `category_id`, `due_at`, `assignee_label`, SLA engine | no department, no category table, no `due_at`, no assignee; routing goes complaint → `work_orders` → `work_order_assignments` | **Our entire SLA design (A1, A2, A3, `complaint_due_at()`) has nowhere to live.** Their model is arguably better — it has real work orders — but it answers none of the SLA questions. |
-
-Also colliding with different columns: `departments` (theirs has no `sla_hours`, no
-`department_kind`, no category claims), `invoices` (`due_at timestamptz`, `total_amount`, and
-`overdue` **as a stored enum value** — the thing our D6 deliberately derives), `payments` (enum
-status, `provider_reference`), `notices`, `staff_assignments`, `complaint_events`,
-`amenity_booking_series`, `amenity_booking_charges`, `amenity_financial_events`, `invoice_line_items`.
-
-### C-3 🔴 Their exclusion constraint reproduces the bug we filed as A18
-
-Their occurrence table carries a **blanket** overlap exclusion on `amenity_id`. Their `amenities`
-table carries a `capacity` column and a `booking_mode`. **Those two facts cannot both be honoured:**
-a blanket exclusion means one booking at a time per amenity, so `capacity` is a number nothing can
-ever reach.
-
-This is precisely the frontend bug we documented as `DECISIONS_NEEDED.md` **A18** and **E17** — the
-cleaning buffer making shared capacity unreachable — now reproduced in the database, and for the same
-reason the ERD note originally gave. Our `0016` solved it with a **scoped** exclusion plus an
-advisory-lock trigger, because an `EXCLUDE` predicate is per-row and cannot express "conflict if
-*either* side is exclusive", nor count.
-
-**Whatever else is decided, this one needs fixing in their schema, not worked around in ours.**
-
-### C-4 🟡 No admin write policy exists on any domain table
-
-Their `0005` has **50 SELECT policies, 3 resident INSERT policies, 1 UPDATE policy** (notifications)
-and 2 Storage policies. That is all. There is **no admin write path through RLS at all** — every
-admin mutation must go through a `SECURITY DEFINER` RPC or the service-role key.
-
-Our design mostly agrees: **32 of our 41 write paths are already RPCs.** But **9 are direct
-PostgREST `.insert()`/`.update()`/`.delete()` calls** which currently rely on the admin write
-policies *our* migrations create. Under their schema those 9 will fail silently (empty result) or as
-`42501`. They must become RPCs or gain policies.
-
-### C-5 🟡 Duplicate columns and tables we would be adding twice
-
-| Ours | Theirs | Action |
+|  | Ours | Theirs (`94556e5`) |
 |---|---|---|
-| `profiles.email` (`0012`) | `profiles.display_email` (`0004`) | Drop ours, read theirs |
-| `community_settings.timezone` (`0017`) | `communities.timezone` (`0004`) | Drop ours, read theirs |
-| `module_catalogue` + `community_modules` (`0011`, `0017`) | `feature_catalog` + `community_features` (`0004`) | Same ten keys, same concept. Theirs wins on name; **ours carries `sort_order`, `backend_status`, `backend_note`, and per-key `updated_at`/`updated_by`, which theirs lacks** — add those as columns on theirs. |
-| `registration_requests` (`0012`) | `community_registration_requests` (`0004`) | Theirs wins on name; check column coverage |
+| Client used for domain reads | user-scoped (`get_request_client`) | **service-role** (`get_service_client`) |
+| Tenant boundary | **RLS in Postgres**, on every table | **Python**, in `get_active_membership` / `require_membership_role` |
+| Tables with RLS enabled | all of ours | **6 of 46** (`profiles`, `communities`, `community_memberships`, `units`, `resident_invites`, `access_requests`) |
+| Policies | ~40 read + admin write | **7, all SELECT** |
 
-Note their `feature_catalog` defaults differ from ours on one key: they seed
-`maintenance-billing` **enabled**, we seed it from `onboardingModules.js` — worth one line of
-verification against the frontend when we get there.
+Our build plan's Supabase gate commits us to *"RLS as the enforcement boundary."* Their baseline
+leaves **~40 tables with no RLS at all** — including `complaints`, `invoices`, `payments`,
+`amenity_bookings` and `notices`. That is safe **only** while every query goes through the service-role
+key and a Python guard. The moment anything reaches those tables with a user token — which is exactly
+what our `get_request_client()` does — there is no boundary left.
 
-### C-6 🟡 `roles.py` is a true two-sided merge conflict
+**So this must be decided before any of our repositories are re-pointed**, because the answer changes
+every one of them:
 
-The only Python file where both sides edited the same lines.
+- **(a) Add RLS for the tables we use** (~14 tables, policies modelled on their 7). Keeps our design
+  and our tests' meaning, keeps defence in depth, and is work they will benefit from.
+- **(b) Adopt their service-role + Python-guard model.** Less SQL, but it deletes the boundary our
+  cross-tenant regression test exists to prove, and one forgotten guard becomes a tenant leak.
 
-- **They** renamed `Role.TECHNICIAN` → `Role.WORKER` and added a `parse_role` normaliser mapping
-  `TECHNICIAN`/`SERVICEMAN` → `WORKER`.
-- **We** added `_DISPLAY_ROLE` and `display_role()` — whose table still contains `"TECHNICIAN"`.
+**Recommendation: (a).** It is additive, it does not ask them to change anything, and "an admin of
+community A reads zero rows of community B" stops being a claim about our Python and goes back to being
+a claim about the database.
 
-Both changes are wanted. The merge is small and mechanical: take their rename and normaliser, keep
-our `display_role`, re-key the display table to `WORKER`.
+### C-2 🔴 There are now two dashboard APIs, in files with the same names
 
-`core/exceptions.py` also differs but **only because we extended it** (three extra handlers unifying
-the error envelope). That is a clean fast-forward, no conflict. Every other shared Python file is
-**identical modulo line endings** — the auth team did not touch them.
+They built `GET /dashboard/snapshot` (one payload transformed *"into the existing frontend shape"*),
+`GET /dashboard/events` (SSE), and admin-guarded amenity create/update/delete. We built 70 endpoints
+across eight surfaces.
 
-### C-7 🟡 Our API.md documents an invitation shape that no longer exists
+**Three files were authored by both teams under the same path** — git will report them as
+*both-added* conflicts:
 
-`POST /admin/invitations` in `API.md` §4 documents `{ phone, apartment_id, full_name, role }`. Their
-`schemas.py` now requires `{ community_id, intended_unit_id, phone, full_name, email }` — no
-`apartment_id`, no `role`. Their `invitation_service.py` and `invitations_repository.py` changed with
-it. **Our §4 is now wrong**, and it is the one section of `API.md` we did not write.
+- `app/api/v1/routers/dashboard.py`
+- `app/services/dashboard_service.py`
+- `app/repositories/dashboard_repository.py`
 
-### C-8 🟢 Their own ERD and their own migration disagree
+This is a genuine product question, not a merge mechanic: **one snapshot endpoint plus SSE, or a
+resource-per-surface REST API?** They are not equivalent — theirs refreshes a whole dashboard in one
+round trip and pairs with realtime; ours pages, filters and writes per resource, which a snapshot
+cannot do. My reading is that **they are complementary and both should live**: keep their
+`/dashboard/snapshot` and `/dashboard/events` for the read-heavy home screen, keep our resource
+endpoints for everything that lists, filters, pages or writes. That requires renaming our three files
+so both survive.
 
-`docs/homebandhu_submission_erd.dbml` has 48 tables and **does not include `feature_catalog` or
-`community_features`**, which `0004` creates and `0005` writes policies for. Minor, but it is exactly
-the class of drift our D-section exists to catch, and worth telling them rather than silently
-absorbing.
+### C-3 🔴 Sixteen-plus colliding tables, reshaped *again* in `94556e5`
 
----
+The collisions from the first draft still exist, but several changed shape. The ones that cost us:
 
-## 3. The decision this plan hangs on
+| Table | Ours | Theirs @ `94556e5` | Cost |
+|---|---|---|---|
+| `amenities` | 30-field `amenity_settings` table | **`booking_rules jsonb`**, no `capacity`, no `booking_mode` | Our settings tab has ~30 typed fields; a jsonb blob cannot be constrained or queried the same way. Our D7 argument now applies to a blob. |
+| `amenity_bookings` | series + occurrences, wall-clock `date`+`time`, scoped exclusion + advisory lock | one table, `timestamptz`, exclusion scoped `where status in ('requested','approved')` | Their exclusion is **better than `0004`'s** (status-scoped) but still blanket across booking modes. With `capacity` gone there is no contradiction left — but **shared//multi-occupancy booking is now unrepresentable**, and the gym's capacity of 24 was a product fact. |
+| `invoices` | attach to the **unit**, `invoice_number`, derived `isOverdue` | attach to **`membership_id`**, no `invoice_number`, `overdue` **stored** in the enum | Reverses their own `0004`. Our E15 privacy rule (a new tenant must not see the previous occupant's arrears) was built on unit liability; membership liability changes who owes what when someone moves out — that is F6, still unanswered. |
+| `complaints` | `department_id`, `category_id`, `due_at`, assignee, SLA | `category text`, no department, no `due_at`; routing via `work_orders` | **Our SLA engine (A1/A2/A3) has no home.** Their `aggregate_version` is a genuine improvement we should adopt. |
+| `departments` | `sla_hours`, `department_kind`, category claims | `category text`, `hours jsonb`, `manager_membership_id` | A1's tie-break question becomes unanswerable — there is nothing to tie-break. |
+| `complaint_read_state` | `complaint_read_receipts` | `complaint_read_state` | Same concept, rename only. |
+| `feature_catalog` / `community_features` | `module_catalogue` / `community_modules` | theirs | Rename, **plus** ours carries `sort_order`, `backend_status`, `backend_note` and per-key `updated_by`, which theirs lacks and the settings screen needs. |
 
-Three of the sixteen collisions are not "rename and move on" — they are **different answers to the
-same design question**, and only one can be in the database:
+Ours-only and still needed, so still additive: `community_billing_settings` (A13 — **the maintenance
+amount still does not exist anywhere in their schema either**), `complaint_categories`,
+`department_categories`, `community_settings` (minus `timezone`), `complaint_attachments`.
 
-1. **Amenity occurrences** — wall-clock `date`+`time` (ours) vs `timestamptz` (theirs)
-2. **Overlap and capacity** — scoped exclusion + advisory lock (ours) vs blanket exclusion (theirs)
-3. **Complaint routing and SLA** — category/department/`due_at` (ours) vs work orders (theirs)
+### C-4 🟡 `roles.py` is the one true two-sided Python conflict
 
-**Recommendation: their schema is the base; ours becomes additive on top of it.**
+They renamed `Role.TECHNICIAN` → `Role.WORKER` and added a `parse_role` normaliser; we added
+`_DISPLAY_ROLE` / `display_role()` whose table still says `"TECHNICIAN"`. Both wanted; the merge is
+mechanical.
 
-Reasons, in order of weight:
+Everything else in Python is clean: our `exceptions.py` work is purely additive (it unified the error
+envelope, which their new `code=`-carrying errors will slot straight into), and every other shared file
+was **identical modulo line endings** before `94556e5`.
 
-- **Theirs is merged to `main` and ours is not.** Reversing that means asking another team to drop
-  1,831 lines of shipped work; making ours additive costs us rewriting SQL that has never run.
-- **Neither has been applied to a database**, so both are equally unproven — but theirs is the one
-  the rest of the team, the new ERD and the frontend documentation now describe.
-- **Their model is broader where it overlaps least with us** — work orders, visitors, notifications,
-  audit events, media assets, policies are all things we never built and the product needs.
-- **Our value survives the move.** What we actually contributed is the **API layer** — 70
-  documented operations, 275 tests, the DTO/vocabulary translation to the frontend's exact shapes —
-  plus the surfaces they have no answer for: billing settings and the maintenance amount (A13),
-  complaint categories and SLA, amenity settings beyond their 6-field `amenity_rules`, module
-  metadata, and the settings screen. Those become **additive migrations `0018`+**.
+### C-5 🟡 `require_role` no longer exists — all seven of our routers call it
 
-**Three exceptions where I recommend we push back rather than adopt:**
+Replaced by `require_membership_role(*roles: str)` taking lowercase strings and checking a **membership
+row**, not a JWT claim. This is strictly better, and adopting it also lets us delete
+`get_caller_community_id()` in favour of the injected `MembershipContext.community_id` — which removes
+our worst single point of failure rather than fixing it.
 
-- **C-3, the blanket exclusion constraint, must be fixed.** Not our preference — their `capacity`
-  column is unreachable as written. This is a bug report with a patch attached.
-- **`community_memberships` needs `unique (id, community_id)`** added. One line, no behaviour change,
-  and it is what lets any cross-tenant composite FK exist at all.
-- **`amenity_booking_occurrences` should keep a wall-clock representation** (or a generated one), for
-  the reason in D7: "07:00" must survive somebody correcting the community timezone. Now that
-  `communities.timezone` exists, a generated column can bridge both.
+### C-6 🟡 Our `API.md` §4 documents an invitation shape that no longer exists
 
----
+Now `{ community_id, intended_unit_id, invitee_email, ... }`, email-keyed, Google-only. Our §4 predates
+all of it. §1.2 (Authentication) also needs the cookie option documented beside the bearer token, and
+`require_csrf` needs a mention for unsafe cookie-authenticated calls.
 
-## 4. Implementation plan
+### C-7 🟢 Their own artifacts disagree with each other
 
-Seven phases. Each ends somewhere the suite is green, so the work can stop between any two.
-
-### Phase 0 — Get the two trees into one repo *(no code changes)*
-
-1. `git fetch origin` in our working tree; confirm `0fffb68`/`32dbb49` are reachable.
-2. Commit our current work on `backend/planning/1` **first**, so the reconciliation is a reviewable
-   diff and not an unrecoverable mix of two teams' edits. *(Nothing has been committed this whole
-   workstream — this is the moment that stops being safe.)*
-3. Merge `origin/main`. Expect conflicts in exactly three files: `app/domain/roles.py` (C-6),
-   `.gitignore`, and `backend/pyproject.toml`. Take theirs for the venv/gitignore changes.
-4. **Do not** delete our `0010`–`0017` yet. They are the specification for phases 3–5.
-
-### Phase 1 — The auth seam *(small, unblocks everything)*
-
-5. Merge `roles.py` by hand: their `WORKER` + normaliser, our `display_role`, display table re-keyed.
-6. Rewrite `get_caller_community_id()` against `community_memberships` (C-1). Add the multi-community
-   case explicitly — their `is_default_community` flag is the right tiebreak, and our current
-   single-value read has no answer for a person in two communities.
-7. Add a role/status vocabulary layer for their two enums (lowercase `membership_role`,
-   `membership_status` with `pending`/`ended`) alongside our existing `Role`. `vocabularies.py` is
-   already the home for exactly this.
-8. Fix `API.md` §4 to their invitation shape (C-7).
-
-### Phase 2 — Decide and confirm the base *(gate)*
-
-9. Take §3's decision. If it lands as recommended, the three push-backs go to the auth team as a
-   short patch proposal — ideally a `0006` they own, not a `0018` we own, because
-   `community_memberships` and `amenity_booking_occurrences` are theirs now.
-
-### Phase 3 — Rewrite our views onto their tables
-
-**This is where the leverage is.** Our 12 views are the seam between their schema and our API. Rewrite
-the views, and most of `services/` and all of `domain/` survive untouched.
-
-10. `department_overview`, `department_staff_overview` → their `departments` + `staff_assignments` +
-    `skills`.
-11. `complaint_overview` → their `complaints` + `complaint_events` (+ `work_orders` for assignment).
-12. `invoice_overview`, `payment_overview`, `collection_summary` → their `invoices`/`payments`,
-    deriving `isOverdue` rather than reading their stored `overdue` enum value (D6 still stands).
-13. `amenity_overview`, `amenity_booking_overview`, `amenity_ledger_overview`,
-    `amenity_ledger_summary` → their amenity tables.
-14. `community_settings_overview`, `community_module_overview` → their `communities.timezone` +
-    `feature_catalog`/`community_features`, plus our additive columns.
-
-### Phase 4 — Additive migrations `0018`+ for what they have no answer for
-
-15. `0018_billing_settings.sql` — `community_billing_settings` and the maintenance amount (A13),
-    unchanged in substance from `0015`'s section.
-16. `0019_complaint_taxonomy.sql` — `complaint_categories`, `department_categories`, `sla_hours`,
-    `due_at` and `complaint_due_at()`, attached to **their** `complaints` and `departments`.
-17. `0020_amenity_settings.sql` — our ~30-field `amenity_settings`, as a superset beside their
-    6-field `amenity_rules` (D7 point 1 argument is unchanged and now applies to a real table).
-18. `0021_module_metadata.sql` — `sort_order`, `backend_status`, `backend_note`, `updated_by` on
-    **their** `feature_catalog`/`community_features`.
-19. `0022_settings.sql` — what is left of `community_settings` once `timezone` moves out:
-    `unit_label_singular`, `invite_ttl_hours`, `visitor_code_ttl_minutes`, the two policy toggles,
-    `version`.
-20. Re-add our complaint side-tables (`complaint_comments`, `complaint_attachments`,
-    `complaint_read_receipts`, `amenity_booking_guests` → check against their `booking_guests` first).
-
-### Phase 5 — Rewrite the 9 direct writes, and re-home the RPCs
-
-21. Convert the 9 direct `.insert()`/`.update()`/`.delete()` calls to RPCs (C-4), since their RLS
-    grants no admin write anywhere.
-22. Re-point our 32 RPCs at the renamed tables and their column names. Mechanical but broad.
-23. Replace our `assert_community_admin` with their
-    `current_user_has_community_role(community_id, array['admin'])` so there is **one** admin check in
-    the database, not two.
-
-### Phase 6 — Verify, and re-document
-
-24. Run the suite. Expect real failures in `test_settings_mapping.py`, the department and money
-    mapping tests, and anything asserting a vocabulary we have just changed.
-25. Regenerate `openapi.yaml`; confirm 70 operations still stand or record deliberately dropped ones.
-26. Update, in this order: `API.md` (§4 invitation shape, plus any changed field), `DECISIONS_NEEDED.md`
-    (close §1.1, §1.2, C1, C2, C3, C6, D1, A10; **add** the new C-items for the three push-backs;
-    rewrite D6/D7/D8 against the new ERD), `CHANGE_LOG.md` (Session 16), the build plan's five-gate
-    table, and `FRONTEND_MEETING_AGENDA.md` if any wire shape moved.
+`docs/homebandhu_submission_erd.dbml` still describes the **`0004`** schema — `amenity_booking_series`,
+`amenity_booking_occurrences`, `liable_unit_id`, `visitor_access_requests` — none of which exist in
+`0001_baseline`. It also omits `feature_catalog`/`community_features`, which the baseline creates. So
+**their ERD documents a schema that was deleted.** Worth telling them; it is the same drift our
+D-section exists to catch.
 
 ---
 
-## 5. What this costs, honestly
+## 3. Decisions needed before implementation
 
-**Survives unchanged:** all 9 DTO modules (`domain/*_schemas.py`), `vocabularies.py`,
-`formatting.py`, `pg_errors.py`, `common_schemas.py`, the 7 routers, most of `services/`, and the
-error-envelope work in `exceptions.py`. That is the bulk of the 70 documented operations.
-
-**Needs rewriting:** 12 views, 32 RPCs, 9 direct writes, `get_caller_community_id`, and the parts of
-7 `repositories/` modules that name a renamed table. Call it **the SQL layer and a thin slice of the
-repositories.**
-
-**At risk of being lost, and needing a product answer:**
-
-- **Our SLA engine** (A1/A2/A3) — their model has no `due_at`. Phase 4 step 16 preserves it, but if
-  they intend work-order due dates to replace complaint SLAs, that is a real product decision and
-  three of our documented questions change meaning.
-- **`isOverdue` derived vs stored** (D6) — their `invoice_status` enum contains `overdue`. Ours
-  derives it. Both cannot be true; ours is right for the reason D6 gives, but theirs is in the ERD.
-- **Amenity wall-clock times** (D7) — see §3.
-
-**Not addressed by any of this, still open:** F1 (nothing applied to any database — now **more**
-urgent, because there are two schemas' worth of unrun SQL), F2 (the Storage bucket — note they added
-`storage.objects` policies for `community_media`, which may or may not cover our
-`complaint-attachments`), F3 (rate limiting), F4 (concurrency).
+1. **C-1, the enforcement boundary** — add RLS for the tables we touch *(recommended)*, or adopt their
+   service-role + Python-guard model? **This gates all repository work.**
+2. **C-2, the two dashboards** — keep both *(recommended)*, or drop ours in favour of their snapshot?
+3. **Which of our four contested designs to preserve as additive work**, and which to concede:
+   SLA/`due_at`, unit-vs-membership invoice liability, typed `amenity_settings` vs `booking_rules jsonb`,
+   derived vs stored `overdue`. My recommendation is to preserve all four and raise the two that touch
+   *their* tables with them — but each is a product call, not a technical one.
 
 ---
 
-## 6. What I need before implementing
+## 4. Revised implementation plan
 
-1. **Confirm §3's direction** — their schema as the base, ours additive. If you would rather keep our
-   amenity/complaint models and ask them to adapt, the plan inverts and phases 3–5 change completely.
-2. **Confirm Phase 0 step 2** — may I commit our work on `backend/planning/1` before merging? Nothing
-   has been committed this entire workstream, and merging 1,831 lines of someone else's SQL into an
-   uncommitted tree of ours is the one step here that could lose work irrecoverably.
-3. **Who takes the three push-backs to the auth team** — the blanket exclusion constraint (a real bug),
-   the `(id, community_id)` unique constraint, and the wall-clock question. These are their tables now.
+### Phase 0 — Merge *(mechanical, ~1 sitting)*
+
+1. ✅ **Done:** our work committed as `8729782` on `backend/planning/1`, with compiled Python untracked
+   so the reconciliation is a readable diff.
+2. Merge `origin/main` (`94556e5`). Expect **both-added** conflicts in the three dashboard files (C-2)
+   and a content conflict in `roles.py` (C-4); take theirs for `.gitignore`, `config.toml`, and every
+   auth file we never touched.
+3. Rename our three dashboard files to `admin_dashboard.*` so both APIs survive, pending decision 2.
+4. Keep our `0010`–`0017` in the tree, unapplied. They are the specification for Phase 3, not
+   migrations to run — **and they must not be applied to a project holding the new baseline.**
+
+### Phase 1 — Auth seam *(small, unblocks everything)*
+
+5. Merge `roles.py` by hand (C-4).
+6. Replace `require_role(Role.ADMIN)` with `require_membership_role("admin")` across the seven routers.
+7. **Delete `get_caller_community_id()`**; inject `MembershipContext` instead. This is the single
+   highest-leverage change in the whole reconciliation — it removes the linchpin rather than repairing it.
+8. Add the vocabulary layer for their two enums (lowercase `membership_role`, `membership_status` with
+   `pending`/`ended`) in `vocabularies.py`, where every other translation already lives.
+
+### Phase 2 — Decide *(gate — §3)*
+
+### Phase 3 — Our views, rebuilt on their tables
+
+Our 12 views are the seam. Rewrite them and most of `services/` and all of `domain/` survives — and,
+given their schema has moved twice in two days, a view we own is the right place for that risk to sit.
+
+9. `department_overview`, `department_staff_overview` → their `departments` + `staff_assignments` + `skills`.
+10. `complaint_overview` → their `complaints` + `complaint_events` + `complaint_comments` (+ `work_orders`).
+11. `invoice_overview`, `payment_overview`, `collection_summary` → their `invoices`/`payments`.
+12. The four amenity views → their `amenities` + `amenity_bookings` + `booking_charges`/`booking_refunds`.
+13. `community_settings_overview`, `community_module_overview` → `communities.timezone` +
+    `feature_catalog`/`community_features` + our additive columns.
+14. If decision 1 is (a): `0018_dashboard_rls.sql`, RLS for the ~14 tables we read, modelled on their 7.
+
+### Phase 4 — Additive migrations `0018`+
+
+15. `community_billing_settings` + the maintenance amount (A13) — **still missing from their schema too.**
+16. `complaint_categories`, `department_categories`, `sla_hours`, `due_at`, `complaint_due_at()`.
+17. `amenity_settings` as a typed superset beside `booking_rules jsonb`.
+18. Module metadata columns on `feature_catalog` / `community_features`.
+19. `community_settings` minus `timezone`; `complaint_attachments`.
+
+### Phase 5 — Writes
+
+20. Re-point our 32 RPCs at their table and column names.
+21. Convert the 9 direct PostgREST writes per decision 1.
+22. Delete our `assert_community_admin` in favour of one admin check, wherever decision 1 puts it.
+
+### Phase 6 — Verify and re-document
+
+23. Run the suite; expect real failures in the mapping tests wherever a vocabulary moved.
+24. Regenerate `openapi.yaml`. Their six routers plus our seven will change the operation count.
+25. Update `API.md` (§1.2 auth, §4 invitations, every changed field), `DECISIONS_NEEDED.md` (close §1.1,
+    §1.2, C1, C2, C3, C5, C6, D1, A10, E14; add the C-items above; **rewrite D6/D7/D8 against a baseline
+    that has replaced the ERD they were written against**), `CHANGE_LOG.md`, the build plan's five-gate
+    table, and the agenda if a wire shape moved.
+
+---
+
+## 5. What this costs
+
+**Survives unchanged:** all nine DTO modules, `vocabularies.py`, `formatting.py`, `pg_errors.py`,
+`common_schemas.py`, the error-envelope work, and the bulk of `services/`. Our bearer contract still
+works because their `_extract_token` accepts both.
+
+**Rewritten:** 12 views, 32 RPCs, 9 direct writes, the seven routers' auth dependency, and the parts of
+seven repositories that name a table. **The SQL layer and a thin slice above it.**
+
+**At risk without a product answer:** the SLA engine, unit-vs-membership invoice liability (and with it
+E15's privacy rule and F6), typed amenity settings, derived `overdue`, and multi-occupancy amenity
+booking — which their single-table model cannot currently express.
+
+**Still open and untouched by any of this:** F1 — **now worse.** There are two schemas' worth of unrun
+SQL, they are mutually exclusive (`0001_baseline` says *"apply only to a new Supabase project"*, our
+`0010`–`0017` assume `0001`–`0003`), and **applying the wrong set first is now a way to lose a
+database.** F2 (Storage bucket) is partly answered by their `media` table and Storage policies.
