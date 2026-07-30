@@ -44,7 +44,7 @@ export default function Profile() {
             </div>
             <div>
               <h3 className="text-lg font-extrabold text-slate-855">{currentUser?.name}</h3>
-              <p className="text-xs font-semibold text-slate-450">{currentUser?.role === 'Admin' ? 'Society Administrator' : 'Resident Owner'}</p>
+              <p className="text-xs font-semibold text-slate-450">{currentUser?.role === 'Admin' ? 'Society Administrator' : currentUser?.role}</p>
               <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full inline-block mt-1.5 uppercase tracking-wider">
                 {currentUser?.status} Account
               </span>

@@ -18,8 +18,6 @@ import {
 } from 'lucide-react';
 import { BOOKING_MODE } from '../../features/amenities/constants/bookingModes.js';
 import { BOOKING_STATUS_LABELS } from '../../features/amenities/constants/bookingStatuses.js';
-import { AMENITIES_STORAGE_KEY } from '../../features/amenities/persistence/amenitiesPersistence.js';
-import { AMENITY_BOOKINGS_STORAGE_KEY } from '../../features/amenities/persistence/amenityBookingsPersistence.js';
 import {
   cancelResidentAmenityBookingDays,
   createResidentAmenityBookingSeries,
@@ -240,25 +238,15 @@ export default function Amenities() {
     fetchAmenities();
     loadUserBookings();
 
-    const handleStorage = (event) => {
-      if (
-        event.key === AMENITIES_STORAGE_KEY &&
-        event.newValue !== event.oldValue
-      ) {
-        fetchAmenities();
-      }
-
-      if (
-        event.key === AMENITY_BOOKINGS_STORAGE_KEY &&
-        event.newValue !== event.oldValue
-      ) {
-        loadUserBookings();
-        setBookingRevision((revision) => revision + 1);
-      }
+    const handleRefresh = () => {
+      fetchAmenities();
+      loadUserBookings();
+      setBookingRevision((revision) => revision + 1);
     };
 
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    window.addEventListener('homebandhu:dashboard-refresh', handleRefresh);
+    return () =>
+      window.removeEventListener('homebandhu:dashboard-refresh', handleRefresh);
   }, [fetchAmenities, loadUserBookings]);
 
   useEffect(() => {

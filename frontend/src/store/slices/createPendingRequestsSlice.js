@@ -1,12 +1,11 @@
 import { genId } from '../../lib/ids';
 import { todayISO } from '../../lib/dates';
-import { initialPendingRequests } from '../../data/pendingRequests';
 
 // Self-signup requests awaiting admin approval. Approving one promotes it to a
 // resident user + seeds a default unpaid maintenance invoice (touches the users
 // and payments slices via a single combined set — they all share this store).
 export const createPendingRequestsSlice = (set, get) => ({
-  pendingRequests: initialPendingRequests,
+  pendingRequests: [],
 
   addPendingRequest: (formData) => {
     const newRequest = {

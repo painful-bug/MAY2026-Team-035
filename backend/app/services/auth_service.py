@@ -1,93 +1,172 @@
-"""Authentication service: phone SMS OTP login, refresh, and profile lookup.
-
-Wraps Supabase GoTrue so routers stay thin. Supabase remains the identity
-authority — this layer only translates SDK calls and errors into our domain
-types and :class:`AppError` responses.
-
-Login is intentionally restricted to already-provisioned numbers
-(``should_create_user=False``); new members join only through the admin invite
-flow (see :mod:`app.services.invitation_service`).
-"""
+"""Backend-owned Google OAuth, cookie refresh, and browser session context."""
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from urllib.parse import urlencode
 
-from app.core.exceptions import AppError, AuthenticationError
-from app.core.logging import get_logger
-from app.core.supabase_client import get_anon_client
-from app.domain.roles import parse_role
-from app.domain.schemas import Principal, Profile, Session
+from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError
+from app.core.supabase_client import (
+    get_anon_client,
+    get_service_client,
+    get_user_client,
+)
+from app.core.web_session import pkce_challenge, random_urlsafe
+from app.domain.schemas import MembershipContext, Principal, SessionContext
 from app.repositories import profiles_repository
 from supabase import Client
 
-_logger = get_logger(__name__)
+
+@dataclass(frozen=True)
+class SupabaseSession:
+    access_token: str
+    refresh_token: str
+    expires_in: int | None
 
 
-def request_login_otp(phone: str) -> None:
-    """Send a login OTP over SMS to an existing member's ``phone``.
+def safe_return_path(value: str | None) -> str:
+    path = value or "/auth/callback"
+    if not path.startswith("/") or path.startswith("//") or "\\" in path:
+        raise ValidationError("Invalid return path.", code="invalid_return_path")
+    return path
 
-    Does not reveal whether the number is registered (to avoid user
-    enumeration); unknown numbers simply never receive a code because
-    ``should_create_user`` is False.
+
+def start_google_oauth() -> tuple[str, dict[str, str]]:
+    """Build the Google/Supabase authorize redirect and its PKCE transaction.
+
+    GoTrue generates the provider ``state`` value for this endpoint. Supplying
+    our own opaque state causes GoTrue to reject the provider callback as
+    ``bad_oauth_state``. The signed, HTTP-only transaction cookie binds this
+    browser to its PKCE verifier instead.
     """
-    try:
-        get_anon_client().auth.sign_in_with_otp(
-            {
-                "phone": phone,
-                "options": {"channel": "sms", "should_create_user": False},
-            }
-        )
-    except Exception as exc:  # noqa: BLE001 - normalize SDK errors to AppError
-        _logger.warning("OTP request failed for phone ending %s", phone[-4:])
-        raise AppError("Could not send the login code. Try again.") from exc
+    from app.config import get_settings
+
+    settings = get_settings()
+    verifier = random_urlsafe(64)
+    callback = f"{settings.backend_base_url.rstrip('/')}/api/v1/auth/google/callback"
+    query = urlencode(
+        {
+            "provider": "google",
+            "redirect_to": callback,
+            "code_challenge": pkce_challenge(verifier),
+            "code_challenge_method": "s256",
+        }
+    )
+    url = f"{settings.supabase_url.rstrip('/')}/auth/v1/authorize?{query}"
+    return url, {"verifier": verifier}
 
 
-def verify_login_otp(phone: str, token: str) -> Session:
-    """Verify an SMS OTP and return the resulting Supabase session."""
+def exchange_google_code(code: str, verifier: str) -> SupabaseSession:
     try:
-        result = get_anon_client().auth.verify_otp(
-            {"phone": phone, "token": token, "type": "sms"}
+        result = get_anon_client().auth.exchange_code_for_session(
+            {"auth_code": code, "code_verifier": verifier}
         )
     except Exception as exc:  # noqa: BLE001
-        raise AuthenticationError("Invalid or expired code.") from exc
+        raise AuthenticationError("Google sign-in could not be completed.") from exc
+    if result.session is None:
+        raise AuthenticationError("Google sign-in could not be completed.")
+    return _session_from_result(result.session)
 
-    if result.session is None or result.user is None:
-        raise AuthenticationError("Invalid or expired code.")
-    return _to_session(result.session, result.user)
 
-
-def refresh_session(refresh_token: str) -> Session:
-    """Exchange a refresh token for a fresh session ('remember me')."""
+def refresh_session(refresh_token: str) -> SupabaseSession:
     try:
         result = get_anon_client().auth.refresh_session(refresh_token)
     except Exception as exc:  # noqa: BLE001
-        raise AuthenticationError("Could not refresh the session.") from exc
-
-    if result.session is None or result.user is None:
-        raise AuthenticationError("Could not refresh the session.")
-    return _to_session(result.session, result.user)
-
-
-def get_me(client: Client, principal: Principal) -> Profile:
-    """Return the caller's profile, read under their own RLS scope.
-
-    Args:
-        client: A caller-scoped Supabase client (from ``get_request_client``).
-        principal: The verified caller.
-    """
-    return profiles_repository.get_profile(client, principal.user_id)
+        raise AuthenticationError("Session refresh failed.") from exc
+    if result.session is None:
+        raise AuthenticationError("Session refresh failed.")
+    return _session_from_result(result.session)
 
 
-def _to_session(session: Any, user: Any) -> Session:
-    """Map a GoTrue session/user pair to our :class:`Session` DTO."""
-    role = parse_role(
-        (getattr(user, "user_metadata", None) or {}).get("role")
+def revoke_session(access_token: str) -> None:
+    try:
+        get_user_client(access_token).auth.sign_out()
+    except Exception:
+        # Cookie clearing remains important even if the provider already
+        # invalidated the session or is temporarily unavailable.
+        return
+
+
+def get_session_context(
+    client: Client,
+    principal: Principal,
+    access_token: str,
+) -> SessionContext:
+    """Resolve context and materialize a harmless identity profile on first login."""
+    try:
+        profile = profiles_repository.get_profile(client, principal.user_id)
+    except NotFoundError:
+        identity = google_identity(access_token)
+        profile = profiles_repository.upsert_profile(
+            get_service_client(), user_id=identity.user_id, full_name=None,
+            phone=None, email=identity.email,
+        )
+    rows = (
+        get_service_client().table("community_memberships")
+        .select("id, community_id, role, department_id, is_default_community")
+        .eq("profile_id", principal.user_id)
+        .eq("status", "active")
+        .is_("ended_at", None)
+        .order("is_default_community", desc=True)
+        .limit(1)
+        .execute().data
+        or []
     )
-    return Session(
-        access_token=session.access_token,
-        refresh_token=session.refresh_token,
-        expires_at=getattr(session, "expires_at", None),
+    if not rows:
+        return SessionContext(identity=profile, onboarding_eligible=True)
+    membership = rows[0]
+    residency = (
+        get_service_client().table("unit_residencies")
+        .select("unit_id")
+        .eq("membership_id", membership["id"])
+        .is_("ended_at", None)
+        .limit(1)
+        .execute().data
+        or []
+    )
+    role = str(membership["role"]).lower()
+    portal = (
+        "security-manager"
+        if role == "manager" and membership.get("department_id")
+        else role
+    )
+    capabilities = [role]
+    if role == "admin":
+        capabilities.append("resident")
+    return SessionContext(
+        identity=profile,
+        membership=MembershipContext(
+            id=membership["id"], community_id=membership["community_id"], role=role,
+            department_id=membership.get("department_id"),
+            unit_id=residency[0].get("unit_id") if residency else None,
+        ),
+        portal=portal,
+        capabilities=capabilities,
+    )
+
+
+def google_identity(access_token: str) -> Principal:
+    """Ask GoTrue for current identity before an email-bound sensitive claim."""
+    try:
+        result = get_anon_client().auth.get_user(access_token)
+        user = result.user
+    except Exception as exc:  # noqa: BLE001
+        raise AuthenticationError("Could not verify the Google identity.") from exc
+    if user is None or not user.email or not getattr(user, "email_confirmed_at", None):
+        raise AuthenticationError(
+            "A verified Google email is required.", code="email_not_verified"
+        )
+    return Principal(
         user_id=user.id,
-        role=role,
+        email=user.email,
+        phone=user.phone,
+        email_verified=True,
     )
+
+
+def _session_from_result(session: object) -> SupabaseSession:
+    access = getattr(session, "access_token", None)
+    refresh = getattr(session, "refresh_token", None)
+    if not access or not refresh:
+        raise AuthenticationError("Google sign-in did not create a session.")
+    return SupabaseSession(access, refresh, getattr(session, "expires_in", None))

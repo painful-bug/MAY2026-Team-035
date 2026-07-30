@@ -19,18 +19,20 @@ def test_resident_does_not_satisfy_admin() -> None:
 
 def test_staff_roles_are_independent() -> None:
     assert role_satisfies(Role.SECURITY, Role.RESIDENT) is False
-    assert role_satisfies(Role.TECHNICIAN, Role.SECURITY) is False
+    assert role_satisfies(Role.WORKER, Role.SECURITY) is False
     assert role_satisfies(Role.MANAGER, Role.ADMIN) is False
 
 
 def test_satisfies_any() -> None:
     assert satisfies_any(Role.ADMIN, (Role.MANAGER, Role.RESIDENT)) is True
-    assert satisfies_any(Role.SECURITY, (Role.MANAGER, Role.TECHNICIAN)) is False
+    assert satisfies_any(Role.SECURITY, (Role.MANAGER, Role.WORKER)) is False
 
 
 def test_parse_role_is_case_insensitive_and_safe() -> None:
     assert parse_role("admin") is Role.ADMIN
     assert parse_role("ADMIN") is Role.ADMIN
+    assert parse_role("technician") is Role.WORKER
+    assert parse_role("serviceman") is Role.WORKER
     assert parse_role("nope") is None
     assert parse_role(None) is None
     assert parse_role("") is None

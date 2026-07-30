@@ -1,234 +1,82 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
 import { useAppStore } from './appStore';
-import { demoAuthAccounts } from '../data/authentication';
 import {
-  findRegisteredAdmin,
-  verifyAdminOtp,
-} from '../services/adminAuthService';
-import {
-  isValidMobileNumber,
-  normalizePhoneNumber,
-  sanitizePhoneInput,
-} from '../utils/phone';
-import { findSecurityCommunityAccount } from '../lib/securityAccounts';
-
-export const ADMIN_REGISTRATION_STATUS = Object.freeze({
-  UNKNOWN: 'unknown',
-  REGISTERED: 'registered',
-  NEW_ADMIN: 'new_admin',
-});
+  applicationUser, getApplicationSession, logoutSession, redeemPreparedInvitation,
+} from '../lib/auth/authService';
 
 export const AUTH_FLOW_STATE = Object.freeze({
-  IDLE: 'idle',
-  CHECKING_REGISTRATION: 'checking_registration',
-  OTP_REQUIRED: 'otp_required',
-  OTP_SUBMITTING: 'otp_submitting',
-  REGISTRATION_REQUIRED: 'registration_required',
-  AUTHENTICATED: 'authenticated',
+  IDLE: 'idle', INITIALIZING: 'initializing', REDIRECTING: 'redirecting', AUTHENTICATED: 'authenticated', ERROR: 'error',
 });
 
-const initialAdminAuthState = {
-  currentPhone: '',
-  registrationStatus: ADMIN_REGISTRATION_STATUS.UNKNOWN,
-  authFlowState: AUTH_FLOW_STATE.IDLE,
-  pendingAdmin: null,
-};
+export const SESSION_STATUS = Object.freeze({
+  LOADING: 'loading', ANONYMOUS: 'anonymous', ONBOARDING: 'onboarding', MEMBER: 'member', ERROR: 'error',
+});
 
-// Auth is scoped per-tab on purpose: currentUser persists to sessionStorage, so
-// a resident tab and an admin tab stay independently logged in (both reading the
-// same shared domain data from useAppStore). login/logout reach into the app
-// store at call time (not import time) — the circular import is safe because
-// nothing crosses stores during module evaluation.
-export const useAuthStore = create(
-  persist(
-    (set, get) => ({
-      currentUser: null,
-      ...initialAdminAuthState,
+const initialState = { currentUser: null, sessionContext: null, sessionStatus: SESSION_STATUS.LOADING, authFlowState: AUTH_FLOW_STATE.IDLE, authError: '', isAuthReady: false };
 
-      setCurrentUser: (currentUser) =>
-        set({
-          currentUser,
-          authFlowState: currentUser
-            ? AUTH_FLOW_STATE.AUTHENTICATED
-            : AUTH_FLOW_STATE.IDLE,
-        }),
+function sessionState(context) {
+  return {
+    sessionContext: context,
+    currentUser: applicationUser(context),
+    sessionStatus: context.membership ? SESSION_STATUS.MEMBER : SESSION_STATUS.ONBOARDING,
+    authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
+    isAuthReady: true,
+  };
+}
 
-      setCurrentPhone: (phone) =>
-        set({
-          currentPhone: sanitizePhoneInput(phone),
-          registrationStatus: ADMIN_REGISTRATION_STATUS.UNKNOWN,
-          authFlowState: AUTH_FLOW_STATE.IDLE,
-          pendingAdmin: null,
-        }),
+function startGoogle(next = '/auth/callback') {
+  window.location.assign(`/api/v1/auth/google/start?next=${encodeURIComponent(next)}`);
+}
 
-      startAdminAuthentication: async () => {
-        const phone = normalizePhoneNumber(get().currentPhone);
+export const useAuthStore = create((set) => ({
+  ...initialState,
 
-        if (!isValidMobileNumber(phone)) {
-          return {
-            success: false,
-            message: 'Please enter a valid 10-digit mobile number.',
-          };
-        }
-
-        set({
-          currentUser: null,
-          authFlowState: AUTH_FLOW_STATE.CHECKING_REGISTRATION,
-        });
-
-        try {
-          const admin = await findRegisteredAdmin(phone);
-
-          if (admin) {
-            set({
-              currentPhone: phone,
-              registrationStatus: ADMIN_REGISTRATION_STATUS.REGISTERED,
-              authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED,
-              pendingAdmin: admin,
-            });
-            return { success: true, isRegistered: true };
-          }
-
-          set({
-            currentPhone: phone,
-            registrationStatus: ADMIN_REGISTRATION_STATUS.NEW_ADMIN,
-            authFlowState: AUTH_FLOW_STATE.REGISTRATION_REQUIRED,
-            pendingAdmin: null,
-          });
-          return { success: true, isRegistered: false };
-        } catch {
-          set({ authFlowState: AUTH_FLOW_STATE.IDLE });
-          return {
-            success: false,
-            message: 'Unable to check admin registration. Please try again.',
-          };
-        }
-      },
-
-      // Task 1 fix: model submission and authentication as separate states.
-      // The mock service accepts every OTP; its async contract matches the
-      // future verify-OTP API boundary.
-      submitAdminOtp: async (otp) => {
-        const { currentPhone, registrationStatus, authFlowState } = get();
-
-        if (
-          registrationStatus !== ADMIN_REGISTRATION_STATUS.REGISTERED ||
-          authFlowState !== AUTH_FLOW_STATE.OTP_REQUIRED
-        ) {
-          return {
-            success: false,
-            message: 'Start the admin login flow before submitting an OTP.',
-          };
-        }
-
-        set({ authFlowState: AUTH_FLOW_STATE.OTP_SUBMITTING });
-
-        try {
-          const result = await verifyAdminOtp({ phone: currentPhone, otp });
-
-          if (!result.success) {
-            set({ authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED });
-            return result;
-          }
-
-          set({
-            currentUser: result.admin,
-            authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
-            pendingAdmin: null,
-          });
-          useAppStore
-            .getState()
-            .showToast(`Welcome back, ${result.admin.name}!`, 'success');
-          return { success: true, user: result.admin };
-        } catch {
-          set({ authFlowState: AUTH_FLOW_STATE.OTP_REQUIRED });
-          return {
-            success: false,
-            message: 'Unable to submit the OTP. Please try again.',
-          };
-        }
-      },
-
-      resetAdminAuthentication: () =>
-        set({ currentUser: null, ...initialAdminAuthState }),
-
-      // Temporary direct login used only by the Resident/Admin demonstration
-      // shortcut buttons retained until the Resident Portal is replaced.
-      login: (phone) => {
-        const app = useAppStore.getState();
-        const users = app.users;
-        const cleanPhone = normalizePhoneNumber(phone);
-
-        const foundUser = users.find((u) => {
-          const userPhone = normalizePhoneNumber(u.phone);
-          return userPhone === cleanPhone;
-        });
-        const securityUser = findSecurityCommunityAccount(
-          app.departments,
-          cleanPhone
-        );
-        const communityUser = foundUser || securityUser;
-
-        if (communityUser) {
-          if (communityUser.status !== 'Active') {
-            return {
-              success: false,
-              message: 'This account is inactive. Contact your society administrator.',
-            };
-          }
-          set({
-            currentUser: communityUser,
-            currentPhone: cleanPhone,
-            registrationStatus:
-              communityUser.role === 'Admin'
-                ? ADMIN_REGISTRATION_STATUS.REGISTERED
-                : ADMIN_REGISTRATION_STATUS.UNKNOWN,
-            authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
-            pendingAdmin: null,
-          });
-          app.showToast(`Welcome back, ${communityUser.name}!`, 'success');
-          return { success: true, user: communityUser };
-        }
-
-        const demoAccount = demoAuthAccounts.find(
-          (account) => normalizePhoneNumber(account.phone) === cleanPhone
-        );
-
-        if (demoAccount) {
-          const u =
-            users.find((user) => user.id === demoAccount.userId) ||
-            users.find((user) => user.role === demoAccount.role);
-
-          if (!u) {
-            return { success: false, message: 'Demo account is unavailable.' };
-          }
-
-          set({
-            currentUser: u,
-            currentPhone: cleanPhone,
-            registrationStatus:
-              demoAccount.role === 'Admin'
-                ? ADMIN_REGISTRATION_STATUS.REGISTERED
-                : ADMIN_REGISTRATION_STATUS.UNKNOWN,
-            authFlowState: AUTH_FLOW_STATE.AUTHENTICATED,
-            pendingAdmin: null,
-          });
-          app.showToast(`Logged in as ${demoAccount.role}: ${u.name}`, 'success');
-          return { success: true, user: u };
-        }
-
-        return { success: false, message: 'Invalid credentials. Phone number not registered.' };
-      },
-
-      logout: () => {
-        set({ currentUser: null, ...initialAdminAuthState });
-        useAppStore.getState().showToast('Logged out successfully', 'info');
-      },
-    }),
-    {
-      name: 'homebandhu-auth',
-      storage: createJSONStorage(() => sessionStorage),
+  initializeAuth: async () => {
+    set({ authFlowState: AUTH_FLOW_STATE.INITIALIZING, isAuthReady: false, authError: '' });
+    try {
+      const context = await getApplicationSession();
+      set(sessionState(context));
+    } catch {
+      set({ ...initialState, sessionStatus: SESSION_STATUS.ANONYMOUS, isAuthReady: true });
     }
-  )
-);
+  },
+
+  beginGoogleSignIn: (next) => {
+    set({ authFlowState: AUTH_FLOW_STATE.REDIRECTING, authError: '' });
+    startGoogle(next);
+  },
+
+  completeExternalLogin: async () => {
+    try {
+      const context = await getApplicationSession();
+      set(sessionState(context));
+      return { success: true, user: applicationUser(context), context, onboardingEligible: context.onboarding_eligible };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to complete Google sign-in.';
+      set({ ...initialState, sessionStatus: SESSION_STATUS.ERROR, authFlowState: AUTH_FLOW_STATE.ERROR, authError: message, isAuthReady: true });
+      return { success: false, message };
+    }
+  },
+
+  redeemInvite: async () => {
+    try {
+      await redeemPreparedInvitation();
+      return useAuthStore.getState().completeExternalLogin();
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Unable to redeem this invitation.' };
+    }
+  },
+
+  refreshSession: async () => {
+    const context = await getApplicationSession();
+    set(sessionState(context));
+    return context;
+  },
+
+  logout: async () => {
+    try { await logoutSession(); } finally {
+      set({ ...initialState, sessionStatus: SESSION_STATUS.ANONYMOUS, isAuthReady: true });
+      useAppStore.getState().showToast('Logged out successfully', 'info');
+    }
+  },
+}));

@@ -1,6 +1,6 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const validateAdminProfile = ({ fullName, email, unitNumber }) => {
+export const validateAdminProfile = ({ fullName, email, unitNumber, founderStructureId }) => {
   const errors = {};
   const normalizedName = fullName.trim();
 
@@ -18,6 +18,10 @@ export const validateAdminProfile = ({ fullName, email, unitNumber }) => {
 
   if (!unitNumber.trim()) {
     errors.unitNumber = 'Residence number is required.';
+  }
+
+  if (!founderStructureId) {
+    errors.founderStructureId = 'Select your block or villa.';
   }
 
   return errors;

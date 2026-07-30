@@ -8,7 +8,7 @@ Capability model:
 
 * ``ADMIN`` is a superset of ``RESIDENT`` — an administrator is also a resident
   of the community, so any resident-gated resource is reachable by an admin.
-* ``MANAGER``, ``TECHNICIAN`` and ``SECURITY`` are distinct staff capabilities
+* ``MANAGER``, ``WORKER`` and ``SECURITY`` are distinct staff capabilities
   that do not imply one another or resident access.
 
 :func:`role_satisfies` is the single source of truth for "does this role meet
@@ -42,7 +42,7 @@ class Role(str, Enum):
 
     RESIDENT = "RESIDENT"
     MANAGER = "MANAGER"
-    TECHNICIAN = "TECHNICIAN"
+    WORKER = "WORKER"
     SECURITY = "SECURITY"
     ADMIN = "ADMIN"
 
@@ -76,7 +76,13 @@ def parse_role(value: str | None) -> Role | None:
     """Parse a raw claim/string into a :class:`Role`, or None if invalid."""
     if not value:
         return None
+    normalized = value.upper()
+    # The browser prototype used Technician and Serviceman as global roles.
+    # They are worker specialisations in the membership-based model.
+    normalized = {"TECHNICIAN": "WORKER", "SERVICEMAN": "WORKER"}.get(
+        normalized, normalized
+    )
     try:
-        return Role(value.upper())
+        return Role(normalized)
     except ValueError:
         return None

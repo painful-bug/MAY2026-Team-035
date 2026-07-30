@@ -28,6 +28,12 @@ import {
 
 const createInitialOnboardingState = () => ({
   associationName: '',
+  addressLine1: '',
+  addressLine2: '',
+  city: '',
+  state: '',
+  postalCode: '',
+  countryCode: 'IN',
   communityType: COMMUNITY_TYPES.APARTMENT,
   blocks: [createInitialBlock()],
   villas: [createInitialVilla()],
@@ -60,6 +66,13 @@ export const useOnboardingStore = create(
       ...createOnboardingCompletionSlice(set, get),
 
       setAssociationName: (associationName) => set({ associationName }),
+      setAddressField: (field, value) => {
+        const fields = {
+          addressLine1: 'addressLine1', addressLine2: 'addressLine2', city: 'city',
+          state: 'state', postalCode: 'postalCode', countryCode: 'countryCode',
+        };
+        if (fields[field]) set({ [fields[field]]: value });
+      },
 
       setCommunityType: (communityType) =>
         set((state) => ({
@@ -155,6 +168,12 @@ export const useOnboardingStore = create(
       completeAssociationStep: () =>
         set((state) => ({
           associationName: state.associationName.trim(),
+          addressLine1: state.addressLine1.trim(),
+          addressLine2: state.addressLine2.trim(),
+          city: state.city.trim(),
+          state: state.state.trim(),
+          postalCode: state.postalCode.trim(),
+          countryCode: state.countryCode.trim().toUpperCase(),
           onboardingStep: ONBOARDING_STEPS.MAP_CONFIGURATION,
           currentSelectedBlock:
             state.communityType === COMMUNITY_TYPES.APARTMENT
@@ -279,7 +298,7 @@ export const useOnboardingStore = create(
     {
       name: 'homebandhu-admin-onboarding',
       storage: createJSONStorage(() => sessionStorage),
-      version: 5,
+      version: 6,
       migrate: (persistedState) => {
         const {
           boundaryCoordinates: _boundaryCoordinates,
@@ -288,6 +307,12 @@ export const useOnboardingStore = create(
 
         return {
           ...currentState,
+          addressLine1: currentState.addressLine1 ?? '',
+          addressLine2: currentState.addressLine2 ?? '',
+          city: currentState.city ?? '',
+          state: currentState.state ?? '',
+          postalCode: currentState.postalCode ?? '',
+          countryCode: currentState.countryCode ?? 'IN',
           villas:
             currentState.villas?.length > 0
               ? currentState.villas

@@ -2,6 +2,12 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
+## Authentication
+
+The browser calls only same-origin `/api/v1` and never connects to Supabase.
+HomeBandhu uses backend-owned Google OAuth with HTTP-only session cookies.
+Invitations are redeemed only by the matching verified Google email.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)

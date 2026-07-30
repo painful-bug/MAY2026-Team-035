@@ -1,79 +1,53 @@
-import React from 'react';
-import { useApp } from '../../store/useApp';
-import { UserCheck, Mail, Phone, Home, Check, X, ShieldAlert } from 'lucide-react';
+import { Check, Mail, Phone, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { registrationApi } from '../../features/registration/registrationApi';
 
 export default function PendingRegistrations() {
-  const { pendingRequests, acceptRequest, rejectRequest } = useApp();
+  const queryClient = useQueryClient();
+  const requests = useQuery({
+    queryKey: ['admin-access-requests', 'pending'],
+    queryFn: () => registrationApi.adminAccessRequests('pending'),
+  });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['admin-access-requests'] });
+  const approve = useMutation({ mutationFn: (id) => registrationApi.approveAccessRequest(id), onSuccess: invalidate });
+  const reject = useMutation({ mutationFn: ({ id, reason }) => registrationApi.rejectAccessRequest(id, { reason }), onSuccess: invalidate });
+
+  const rejectRequest = (id) => {
+    const reason = window.prompt('Reason for rejecting this request:');
+    if (reason?.trim()) reject.mutate({ id, reason: reason.trim() });
+  };
+
+  if (requests.isLoading) return <p className="text-sm font-semibold text-slate-500">Loading registration requests…</p>;
+  if (requests.error) return <p role="alert" className="text-sm font-semibold text-rose-600">{requests.error.message}</p>;
+  const items = requests.data?.items || [];
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Pending Registrations</h1>
-        <p className="text-xs font-semibold text-slate-400 mt-1">Approve or reject flat registration requests from new residents.</p>
+        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Pending Registrations</h1>
+        <p className="mt-1 text-xs font-semibold text-slate-400">Database-backed requests to join your community.</p>
       </div>
-
-      {pendingRequests.length === 0 ? (
-        <div className="bg-white border border-slate-100 p-12 text-center rounded-2xl shadow-sm space-y-3">
-          <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-            <Check className="w-6 h-6" />
-          </div>
-          <h3 className="font-extrabold text-slate-800 text-sm">All Caught Up!</h3>
-          <p className="text-xs font-semibold text-slate-450 max-w-sm mx-auto">
-            There are no pending flat registration requests at the moment. All signups have been approved or rejected.
-          </p>
-        </div>
+      {items.length === 0 ? (
+        <div className="rounded-2xl border border-slate-100 bg-white p-12 text-center shadow-sm"><Check className="mx-auto h-6 w-6 text-emerald-600" /><p className="mt-3 text-sm font-bold text-slate-700">All caught up</p></div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {pendingRequests.map((req) => (
-            <div key={req.id} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-4 hover:shadow-md transition-shadow">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="font-extrabold text-slate-850 text-sm">{req.name}</h3>
-                  <span className="text-[10px] font-bold text-slate-400 mt-0.5 block">Requested on {req.date}</span>
-                </div>
-                <span className="bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
-                  <Home className="w-3 h-3" />
-                  Flat {req.flat}
-                </span>
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {items.map((request) => (
+            <article key={request.id} className="space-y-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div><h2 className="font-extrabold text-slate-800">{request.applicant_name}</h2><p className="text-xs font-semibold text-slate-400">Requested {request.community.name}</p></div>
+              <div className="space-y-2 border-y border-slate-50 py-3 text-xs font-semibold text-slate-600">
+                <p className="flex items-center gap-2"><Mail className="h-4 w-4 text-slate-400" />{request.applicant_email}</p>
+                {request.applicant_phone_e164 ? <p className="flex items-center gap-2"><Phone className="h-4 w-4 text-slate-400" />{request.applicant_phone_e164}</p> : null}
+                <p>Relationship: {request.requested_relationship.replace('_', ' ')}</p>
               </div>
-
-              {/* Resident profile details */}
-              <div className="space-y-2.5 pt-3 border-t border-slate-50 text-xs font-semibold text-slate-600">
-                <div className="flex items-center gap-2">
-                  <Mail className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span>{req.email}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Phone className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span>{req.phone}</span>
-                </div>
-                <div className="flex items-center gap-2 font-bold text-slate-700">
-                  <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold">Tower Location:</span>
-                  <span>Tower {req.tower}</span>
-                </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => approve.mutate(request.id)} disabled={approve.isPending || reject.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white disabled:opacity-60"><Check className="h-4 w-4" />Accept</button>
+                <button type="button" onClick={() => rejectRequest(request.id)} disabled={approve.isPending || reject.isPending} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-60"><X className="h-4 w-4" />Reject</button>
               </div>
-
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-50">
-                <button
-                  onClick={() => acceptRequest(req.id)}
-                  className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm shadow-indigo-100 text-xs flex items-center justify-center gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Accept Request
-                </button>
-                <button
-                  onClick={() => rejectRequest(req.id)}
-                  className="py-2.5 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 text-slate-600 font-bold rounded-xl transition-all text-xs flex items-center justify-center gap-1.5"
-                >
-                  <X className="w-4 h-4" />
-                  Reject Request
-                </button>
-              </div>
-            </div>
+            </article>
           ))}
         </div>
       )}
+      {approve.error || reject.error ? <p role="alert" className="text-sm font-semibold text-rose-600">{(approve.error || reject.error).message}</p> : null}
     </div>
   );
 }

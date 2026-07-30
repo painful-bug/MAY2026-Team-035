@@ -4,11 +4,10 @@ import {
   generateVisitorSecurityCode,
   getVisitorSecurityCode,
 } from '../../lib/visitorPasses';
-import { initialVisitors } from '../../data/visitors';
 import { useAuthStore } from '../authStore';
 
 export const createVisitorsSlice = (set, get) => ({
-  visitors: initialVisitors,
+  visitors: [],
 
   preapproveVisitor: (visitorData) => {
     const currentUser = useAuthStore.getState().currentUser;

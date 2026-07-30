@@ -1,12 +1,11 @@
 import { genId } from '../../lib/ids';
-import { initialUsers } from '../../data/users';
 
 // The people directory: residents + admins. Also owns admin resident-management
 // (add via invite, edit, remove) and the resident self-service "add another
 // number to my flat". Invite minting itself lives in the invitations slice;
 // addResident just calls get().issueInvite after creating the records.
 export const createUsersSlice = (set, get) => ({
-  users: initialUsers,
+  users: [],
 
   addAdmin: (adminData) => {
     const newAdmin = {

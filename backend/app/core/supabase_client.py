@@ -13,9 +13,9 @@ Three clients are exposed, each for a distinct trust level:
 
 ``get_service_client()``
     Uses the *service-role* key and **bypasses Row-Level Security**. Reserve it
-    for trusted privileged operations that RLS would otherwise block — creating
-    auth users, sending OTPs, and provisioning invited residents. Never build a
-    service client from request-supplied data without an explicit role guard.
+    for narrowly audited privileged operations that RLS would otherwise block,
+    such as atomic membership claims. Never build a service client from
+    request-supplied data without an explicit authorization check.
 
 ``get_user_client(access_token)``
     An anon client with the caller's JWT attached, so PostgREST runs queries as

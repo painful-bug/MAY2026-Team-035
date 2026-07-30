@@ -12,7 +12,6 @@ import {
   communityTypeOptions,
 } from '../../data/onboarding';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
-import { useAuthStore } from '../../store/authStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
 import {
   canAddBlock,
@@ -24,6 +23,12 @@ export default function AssociationRegistrationPage() {
   const navigate = useNavigate();
   const associationName = useOnboardingStore((state) => state.associationName);
   const communityType = useOnboardingStore((state) => state.communityType);
+  const addressLine1 = useOnboardingStore((state) => state.addressLine1);
+  const addressLine2 = useOnboardingStore((state) => state.addressLine2);
+  const city = useOnboardingStore((state) => state.city);
+  const stateName = useOnboardingStore((state) => state.state);
+  const postalCode = useOnboardingStore((state) => state.postalCode);
+  const countryCode = useOnboardingStore((state) => state.countryCode);
   const blocks = useOnboardingStore((state) => state.blocks);
   const villas = useOnboardingStore((state) => state.villas);
   const setAssociationName = useOnboardingStore(
@@ -32,6 +37,7 @@ export default function AssociationRegistrationPage() {
   const setCommunityType = useOnboardingStore(
     (state) => state.setCommunityType
   );
+  const setAddressField = useOnboardingStore((state) => state.setAddressField);
   const updateBlock = useOnboardingStore((state) => state.updateBlock);
   const addBlock = useOnboardingStore((state) => state.addBlock);
   const removeBlock = useOnboardingStore((state) => state.removeBlock);
@@ -46,9 +52,6 @@ export default function AssociationRegistrationPage() {
   );
   const resetOnboarding = useOnboardingStore(
     (state) => state.resetOnboarding
-  );
-  const resetAdminAuthentication = useAuthStore(
-    (state) => state.resetAdminAuthentication
   );
   const [errors, setErrors] = useState({});
 
@@ -71,15 +74,24 @@ export default function AssociationRegistrationPage() {
     clearError('villas');
   };
 
+  const handleAddressChange = (field) => (event) => {
+    setAddressField(field, event.target.value);
+    clearError(field);
+  };
+
   const handleBack = () => {
     resetOnboarding();
-    resetAdminAuthentication();
-    navigate(AUTH_ROUTES.LOGIN, { replace: true });
+    navigate(`${AUTH_ROUTES.GET_STARTED}?tab=create`, { replace: true });
   };
 
   const handleNext = () => {
     const validationErrors = validateAssociationDetails({
       associationName,
+      addressLine1,
+      city,
+      state: stateName,
+      postalCode,
+      countryCode,
       communityType,
       blocks,
       villas,
@@ -161,6 +173,36 @@ export default function AssociationRegistrationPage() {
             </p>
           )}
         </div>
+
+        <SectionCard
+          icon={Building2}
+          title="Association address"
+          description="This helps residents identify the correct community when they search."
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="space-y-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 sm:col-span-2">
+              Address line 1
+              <input value={addressLine1} onChange={handleAddressChange('addressLine1')} aria-invalid={Boolean(errors.addressLine1)} className="block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-indigo-500" placeholder="12 Palm Grove Road" />
+              {errors.addressLine1 ? <span className="block normal-case text-xs text-rose-600">{errors.addressLine1}</span> : null}
+            </label>
+            <label className="space-y-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 sm:col-span-2">
+              Address line 2 <span className="text-slate-400">(optional)</span>
+              <input value={addressLine2} onChange={handleAddressChange('addressLine2')} className="block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-indigo-500" placeholder="Near the community park" />
+            </label>
+            {[
+              ['city', 'City', city, errors.city],
+              ['state', 'State', stateName, errors.state],
+              ['postalCode', 'Postal code', postalCode, errors.postalCode],
+              ['countryCode', 'Country code', countryCode, errors.countryCode],
+            ].map(([field, label, value, error]) => (
+              <label key={field} className="space-y-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                {label}
+                <input value={value} onChange={handleAddressChange(field)} aria-invalid={Boolean(error)} className="block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-indigo-500" />
+                {error ? <span className="block normal-case text-xs text-rose-600">{error}</span> : null}
+              </label>
+            ))}
+          </div>
+        </SectionCard>
 
         <SegmentedToggle
           label="Community Type"

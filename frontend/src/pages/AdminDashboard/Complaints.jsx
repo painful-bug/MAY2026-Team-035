@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
-import { AlertOctagon, Edit2, CheckCircle2, User, Home, Clock, Check } from 'lucide-react';
+import { Edit2, CheckCircle2, User, Home, Clock, Check } from 'lucide-react';
 
 export default function Complaints() {
   const { complaints, updateComplaint, addComplaintComment } = useApp();

@@ -1,12 +1,7 @@
-import { amenitiesManagementMock } from '../../../data/amenitiesManagement.js';
-import { genId } from '../../../lib/ids.js';
-import {
-  loadAmenities,
-  saveAmenities,
-} from '../persistence/amenitiesPersistence.js';
+import { getDashboardSnapshot } from '../../../lib/dashboard/dashboardApi.js';
+import { api } from '../../../lib/api/client.js';
 import {
   createAmenitySettingsFormValues,
-  formatAmenityOperatingHours,
   mergeAmenitySettings,
   normalizeAmenityRecord,
 } from '../utils/amenitySettingsModel.js';
@@ -14,8 +9,8 @@ import { validateAmenitySettings } from '../utils/validateAmenitySettings.js';
 
 const cloneAmenity = (amenity) => normalizeAmenityRecord(amenity);
 
-const readAmenities = () =>
-  loadAmenities(amenitiesManagementMock).map(normalizeAmenityRecord);
+const readAmenities = async () =>
+  (await getDashboardSnapshot()).amenities.map(normalizeAmenityRecord);
 
 const normalizeBookingConfiguration = (amenityData, currentAmenity = {}) => {
   const bookingMode = amenityData.bookingMode ?? currentAmenity.bookingMode;
@@ -56,43 +51,21 @@ const findAmenityIndex = (amenities, amenityId) => {
 export const getAmenities = async () => readAmenities();
 
 export const getAmenityById = async (amenityId) => {
-  const amenities = readAmenities();
+  const amenities = await readAmenities();
   const amenity = amenities.find((item) => item.id === amenityId);
   return amenity ? cloneAmenity(amenity) : null;
 };
 
 export const createAmenity = async (amenityData) => {
-  const amenities = readAmenities();
-  const isActive = amenityData.isActive ?? true;
-  const amenity = normalizeAmenityRecord({
-    id: genId('amenity'),
-    name: amenityData.name,
-    description: amenityData.description ?? '',
-    category: amenityData.category ?? 'Utility',
-    image: amenityData.image ?? '',
-    status: isActive ? 'Active' : 'Inactive',
-    ...normalizeBookingConfiguration(amenityData),
-    openingTime: amenityData.openingTime,
-    closingTime: amenityData.closingTime,
-    openingHours:
-      amenityData.openingHours ??
-      (amenityData.openingTime && amenityData.closingTime
-        ? formatAmenityOperatingHours(
-            amenityData.openingTime,
-            amenityData.closingTime
-          )
-        : ''),
-    pendingRequests: Number(amenityData.pendingRequests) || 0,
-    outstandingDues: Number(amenityData.outstandingDues) || 0,
-    isActive,
+  const created = await api('/dashboard/amenities', {
+    method: 'POST',
+    body: JSON.stringify(toAmenityWrite(amenityData)),
   });
-
-  saveAmenities([...amenities, amenity]);
-  return cloneAmenity(amenity);
+  return (await getAmenityById(created.id));
 };
 
 export const updateAmenity = async (amenityId, amenityData) => {
-  const amenities = readAmenities();
+  const amenities = await readAmenities();
   const amenityIndex = findAmenityIndex(amenities, amenityId);
   const currentAmenity = amenities[amenityIndex];
   const isActive = amenityData.isActive ?? currentAmenity.isActive;
@@ -105,23 +78,22 @@ export const updateAmenity = async (amenityId, amenityData) => {
     isActive,
   });
 
-  const updatedAmenities = amenities.map((amenity, index) =>
-    index === amenityIndex ? updatedAmenity : amenity
-  );
-  saveAmenities(updatedAmenities);
-
-  return cloneAmenity(updatedAmenity);
+  await api(`/dashboard/amenities/${amenityId}`, {
+    method: 'PUT',
+    body: JSON.stringify(toAmenityWrite(updatedAmenity)),
+  });
+  return getAmenityById(amenityId);
 };
 
 export const removeAmenity = async (amenityId) => {
-  const amenities = readAmenities();
+  const amenities = await readAmenities();
   findAmenityIndex(amenities, amenityId);
-  saveAmenities(amenities.filter((amenity) => amenity.id !== amenityId));
+  await api(`/dashboard/amenities/${amenityId}`, { method: 'DELETE' });
   return amenityId;
 };
 
 export const setAmenityActiveStatus = async (amenityId) => {
-  const amenities = readAmenities();
+  const amenities = await readAmenities();
   const amenityIndex = findAmenityIndex(amenities, amenityId);
   const currentAmenity = amenities[amenityIndex];
   const isActive = !currentAmenity.isActive;
@@ -131,16 +103,11 @@ export const setAmenityActiveStatus = async (amenityId) => {
     isActive,
   };
 
-  const updatedAmenities = amenities.map((amenity, index) =>
-    index === amenityIndex ? updatedAmenity : amenity
-  );
-  saveAmenities(updatedAmenities);
-
-  return cloneAmenity(updatedAmenity);
+  return updateAmenity(amenityId, updatedAmenity);
 };
 
 export const updateAmenitySettings = async (amenityId, settings) => {
-  const amenities = readAmenities();
+  const amenities = await readAmenities();
   const amenityIndex = findAmenityIndex(amenities, amenityId);
   const updatedAmenity = mergeAmenitySettings(
     amenities[amenityIndex],
@@ -154,11 +121,17 @@ export const updateAmenitySettings = async (amenityId, settings) => {
     throw new Error(Object.values(validationErrors)[0]);
   }
 
-  saveAmenities(
-    amenities.map((amenity, index) =>
-      index === amenityIndex ? updatedAmenity : amenity
-    )
-  );
-
-  return cloneAmenity(updatedAmenity);
+  return updateAmenity(amenityId, updatedAmenity);
 };
+
+const toAmenityWrite = (amenity) => ({
+  name: amenity.name,
+  description: amenity.description ?? '',
+  category: amenity.category ?? 'Utility',
+  location: amenity.location ?? '',
+  capacity: amenity.capacity == null || amenity.capacity === '' ? null : Number(amenity.capacity),
+  booking_mode: amenity.bookingMode ?? 'Exclusive',
+  approval_required: Boolean(amenity.requireApproval),
+  hourly_rate: Number(amenity.hourlyRate ?? 0),
+  is_active: amenity.isActive ?? true,
+});

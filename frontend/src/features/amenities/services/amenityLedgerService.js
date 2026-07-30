@@ -1,4 +1,3 @@
-import { amenityLedgerMock } from '../../../data/amenityLedger.js';
 import { genId } from '../../../lib/ids.js';
 import { BOOKING_STATUS } from '../constants/bookingStatuses.js';
 import {
@@ -6,16 +5,16 @@ import {
   PAYMENT_STATUS,
 } from '../constants/ledgerStatuses.js';
 import {
-  loadAmenityLedger,
-  saveAmenityLedger,
-} from '../persistence/amenityLedgerPersistence.js';
-import {
   calculateLedgerSummary,
   normalizeLedgerTransaction,
 } from '../utils/amenityLedgerModel.js';
 import { forceCancelAmenityBooking } from './amenityBookingsService.js';
 
-const getAllTransactions = () => loadAmenityLedger(amenityLedgerMock);
+// Ledger actions are rendered from the server-backed booking data. Financial
+// records without a database row must never be invented in browser storage.
+let transactionCache = [];
+
+const getAllTransactions = () => transactionCache.map((transaction) => ({ ...transaction }));
 
 const getLedgerResult = (amenityId) => {
   const transactions = getAllTransactions()
@@ -45,12 +44,8 @@ const getTransactionOrThrow = (transactionId) => {
 };
 
 const saveTransaction = (transactions, updatedTransaction) => {
-  saveAmenityLedger(
-    transactions.map((transaction) =>
-      transaction.id === updatedTransaction.id
-        ? updatedTransaction
-        : transaction
-    )
+  transactionCache = transactions.map((transaction) =>
+    transaction.id === updatedTransaction.id ? updatedTransaction : transaction
   );
   const ledger = getLedgerResult(updatedTransaction.amenityId);
 

@@ -1,14 +1,12 @@
-"""Data access for the ``profiles`` table.
+"""Data access for identity-only ``profiles`` rows.
 
-Reads use a caller-scoped client so Row-Level Security applies; privileged
-writes performed during provisioning use the service-role client passed in by
-the service layer.
+Community membership and residency intentionally live in their own tables;
+this repository must never use ``profiles`` as an authorization source.
 """
 
 from __future__ import annotations
 
 from app.core.exceptions import NotFoundError
-from app.domain.roles import Role
 from app.domain.schemas import Profile
 from supabase import Client
 
@@ -34,28 +32,24 @@ def get_profile(client: Client, user_id: str) -> Profile:
     return _to_profile(rows[0])
 
 
-def upsert_profile_role(
+def upsert_profile(
     service_client: Client,
     *,
     user_id: str,
-    role: Role,
     full_name: str | None,
     phone: str | None,
-    apartment_id: str | None,
-    association_id: str | None = None,
+    email: str | None = None,
 ) -> Profile:
-    """Create or update a profile's role/placement (service-role only).
+    """Create or update a user's identity profile (service-role only).
 
-    Used by the invite-redeem flow after the auth user is provisioned. Runs with
-    the service client because it may write rows the new user cannot yet see.
+    Used after Supabase Auth provisioning.  It may write a row the newly
+    created user cannot yet read, so it deliberately receives a service client.
     """
     payload = {
         "id": user_id,
-        "role": role.value,
         "full_name": full_name,
-        "phone": phone,
-        "apartment_id": apartment_id,
-        "association_id": association_id,
+        "phone_e164": phone,
+        "display_email": email,
     }
     payload = {key: value for key, value in payload.items() if value is not None}
     response = (
@@ -68,10 +62,8 @@ def _to_profile(row: dict) -> Profile:
     """Map a raw table row to a :class:`Profile`."""
     return Profile(
         id=row["id"],
-        role=Role(row["role"]),
         full_name=row.get("full_name"),
-        phone=row.get("phone"),
-        apartment_id=row.get("apartment_id"),
-        association_id=row.get("association_id"),
-        status=row.get("status", "Active"),
+        phone=row.get("phone_e164"),
+        email=row.get("display_email"),
+        is_active=row.get("is_active", True),
     )

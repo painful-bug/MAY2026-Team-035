@@ -4,7 +4,6 @@ import {
   Camera,
   Home,
   Mail,
-  Phone,
   UserRound,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -14,10 +13,9 @@ import SectionCard from '../../components/onboarding/SectionCard';
 import { adminDesignations } from '../../data/adminDesignations';
 import { COMMUNITY_TYPES, ONBOARDING_STEPS } from '../../data/onboarding';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
-import { useAuthStore } from '../../store/authStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
+import { useAuthStore } from '../../store/authStore';
 import { validateAdminProfile } from '../../utils/adminProfile';
-import { formatPhoneNumber } from '../../utils/phone';
 
 const getInputClassName = (hasError, readOnly = false) =>
   `w-full rounded-xl border py-3 pl-10 pr-4 text-sm font-medium outline-none transition-all ${
@@ -32,17 +30,16 @@ const getInputClassName = (hasError, readOnly = false) =>
 
 export default function AdminProfilePage() {
   const navigate = useNavigate();
-  const currentPhone = useAuthStore((state) => state.currentPhone);
   const communityType = useOnboardingStore((state) => state.communityType);
+  const blocks = useOnboardingStore((state) => state.blocks);
+  const villas = useOnboardingStore((state) => state.villas);
   const adminProfile = useOnboardingStore((state) => state.adminProfile);
   const setAdminProfileField = useOnboardingStore(
     (state) => state.setAdminProfileField
   );
+  const identity = useAuthStore((state) => state.sessionContext?.identity);
   const setAdminProfileImage = useOnboardingStore(
     (state) => state.setAdminProfileImage
-  );
-  const syncAdminProfilePhone = useOnboardingStore(
-    (state) => state.syncAdminProfilePhone
   );
   const setOnboardingStep = useOnboardingStore(
     (state) => state.setOnboardingStep
@@ -54,8 +51,16 @@ export default function AdminProfilePage() {
 
   useEffect(() => {
     setOnboardingStep(ONBOARDING_STEPS.ADMIN_PROFILE);
-    syncAdminProfilePhone(currentPhone);
-  }, [currentPhone, setOnboardingStep, syncAdminProfilePhone]);
+  }, [setOnboardingStep]);
+
+  useEffect(() => {
+    if (!adminProfile.email && identity?.email) {
+      setAdminProfileField('email', identity.email);
+    }
+    if (!adminProfile.fullName && identity?.full_name) {
+      setAdminProfileField('fullName', identity.full_name);
+    }
+  }, [adminProfile.email, adminProfile.fullName, identity, setAdminProfileField]);
 
   const handleFieldChange = (field) => (event) => {
     setAdminProfileField(field, event.target.value);
@@ -79,12 +84,13 @@ export default function AdminProfilePage() {
     }
 
     completeAdminProfileStep();
-    navigate(AUTH_ROUTES.ONBOARDING_OTP);
+    navigate(AUTH_ROUTES.ONBOARDING_REVIEW);
   };
 
   const apartmentMode = communityType === COMMUNITY_TYPES.APARTMENT;
   const unitLabel = apartmentMode ? 'Flat Number' : 'Villa Number';
   const unitPlaceholder = apartmentMode ? 'A-302' : 'Villa-17';
+  const structures = apartmentMode ? blocks : villas;
 
   return (
     <OnboardingLayout
@@ -179,35 +185,15 @@ export default function AdminProfilePage() {
         <SectionCard
           icon={Mail}
           title="Contact Information"
-          description="The login phone is fixed for this administrator profile."
+          description="Email is used for contact information; Google remains the only sign-in method."
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <label
-                htmlFor="admin-phone"
-                className="text-[11px] font-bold uppercase tracking-wider text-slate-500"
-              >
-                Mobile Number
-              </label>
-              <div className="relative">
-                <Phone className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  id="admin-phone"
-                  type="text"
-                  value={formatPhoneNumber(adminProfile.phone)}
-                  readOnly
-                  aria-readonly="true"
-                  className={getInputClassName(false, true)}
-                />
-              </div>
-            </div>
-
             <div className="space-y-2">
               <label
                 htmlFor="admin-email"
                 className="text-[11px] font-bold uppercase tracking-wider text-slate-500"
               >
-                Email Address
+                Verified Google email
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -215,10 +201,10 @@ export default function AdminProfilePage() {
                   id="admin-email"
                   type="email"
                   value={adminProfile.email}
-                  onChange={handleFieldChange('email')}
+                  readOnly
                   aria-invalid={Boolean(errors.email)}
                   placeholder="admin@example.com"
-                  className={getInputClassName(Boolean(errors.email))}
+                  className={getInputClassName(Boolean(errors.email), true)}
                 />
               </div>
               {errors.email && (
@@ -236,6 +222,25 @@ export default function AdminProfilePage() {
           description="Connect this administrator to their resident home inside the association."
         >
           <div className="max-w-sm space-y-2">
+            <label
+              htmlFor="founder-structure"
+              className="text-[11px] font-bold uppercase tracking-wider text-slate-500"
+            >
+              {apartmentMode ? 'Your block' : 'Your villa'}
+            </label>
+            <select
+              id="founder-structure"
+              value={adminProfile.founderStructureId}
+              onChange={handleFieldChange('founderStructureId')}
+              aria-invalid={Boolean(errors.founderStructureId)}
+              className={getInputClassName(Boolean(errors.founderStructureId))}
+            >
+              <option value="">Select {apartmentMode ? 'a block' : 'a villa'}</option>
+              {structures.map((structure) => (
+                <option key={structure.id} value={structure.id}>{structure.name}</option>
+              ))}
+            </select>
+            {errors.founderStructureId && <p role="alert" className="text-xs font-semibold text-rose-600">{errors.founderStructureId}</p>}
             <label
               htmlFor="admin-unit-number"
               className="text-[11px] font-bold uppercase tracking-wider text-slate-500"
@@ -261,6 +266,7 @@ export default function AdminProfilePage() {
             )}
           </div>
         </SectionCard>
+        {errors.submit && <p role="alert" className="text-sm font-semibold text-rose-600">{errors.submit}</p>}
       </div>
     </OnboardingLayout>
   );

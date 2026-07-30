@@ -131,7 +131,7 @@ export default function ResidentLandingPage() {
 
           <div className="hidden items-center gap-3 md:flex">
             <Link
-              to={AUTH_ROUTES.RESIDENT_LOGIN}
+              to={AUTH_ROUTES.LOGIN}
               className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-indigo-100 hover:bg-indigo-700"
             >
               Sign In
@@ -161,7 +161,7 @@ export default function ResidentLandingPage() {
               Who can access
             </a>
             <Link
-              to={AUTH_ROUTES.RESIDENT_LOGIN}
+              to={AUTH_ROUTES.LOGIN}
               className="block rounded-xl bg-indigo-600 py-2.5 text-center text-sm font-bold text-white"
             >
               Sign In
@@ -190,7 +190,7 @@ export default function ResidentLandingPage() {
               </p>
               <div className="flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
                 <Link
-                  to={AUTH_ROUTES.RESIDENT_LOGIN}
+                  to={AUTH_ROUTES.LOGIN}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-3.5 text-sm font-bold text-white shadow-md shadow-indigo-200 transition-all hover:-translate-y-0.5 hover:bg-indigo-700 sm:w-auto"
                 >
                   Sign In to Community Portal
@@ -338,7 +338,7 @@ export default function ResidentLandingPage() {
                 </div>
               </div>
               <Link
-                to={AUTH_ROUTES.RESIDENT_LOGIN}
+                to={AUTH_ROUTES.LOGIN}
                 className="flex shrink-0 items-center gap-2 rounded-xl bg-white px-5 py-3 text-xs font-bold text-slate-900 hover:bg-indigo-50"
               >
                 Continue to Sign In
@@ -359,7 +359,7 @@ export default function ResidentLandingPage() {
           </div>
           <div className="flex items-center gap-5 text-xs font-bold">
             <Link
-              to={AUTH_ROUTES.RESIDENT_LOGIN}
+              to={AUTH_ROUTES.LOGIN}
               className="text-indigo-300 hover:text-white"
             >
               Community Sign In

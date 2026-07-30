@@ -1,16 +1,10 @@
-import { amenityBookingsMock } from '../../../data/amenityBookings.js';
-import { initialPayments } from '../../../data/payments.js';
-import { initialUsers } from '../../../data/users.js';
+import { getDashboardSnapshot } from '../../../lib/dashboard/dashboardApi.js';
 import { genId } from '../../../lib/ids.js';
 import {
   BOOKING_STATUS,
   isCancelledBooking,
 } from '../constants/bookingStatuses.js';
 import { BOOKING_TIMELINE_STATE } from '../constants/bookingTimelineStates.js';
-import {
-  loadAmenityBookings,
-  saveAmenityBookings,
-} from '../persistence/amenityBookingsPersistence.js';
 import {
   createHourlySlots,
   createTimelineBlocks,
@@ -32,7 +26,18 @@ const timeToMinutes = (time) => {
 const intervalsOverlap = (firstStart, firstEnd, secondStart, secondEnd) =>
   firstStart < secondEnd && firstEnd > secondStart;
 
-const getAllBookings = () => loadAmenityBookings(amenityBookingsMock);
+let bookingCache = [];
+
+const refreshBookings = async () => {
+  bookingCache = (await getDashboardSnapshot()).bookings.map(cloneBooking);
+  return bookingCache;
+};
+
+const getAllBookings = () => bookingCache.map(cloneBooking);
+const saveAmenityBookings = (bookings) => {
+  bookingCache = bookings.map(cloneBooking);
+  return getAllBookings();
+};
 
 const sortBookings = (bookings) =>
   [...bookings].sort((firstBooking, secondBooking) =>
@@ -58,23 +63,13 @@ const isAvailabilityBlockingBooking = (booking) =>
     booking.status
   );
 
-const getOutstandingDues = (residentId) =>
-  initialPayments
-    .filter(
-      (payment) =>
-        payment.userId === residentId && payment.status === 'Unpaid'
-    )
-    .reduce((total, payment) => total + Number(payment.amount || 0), 0);
+const getOutstandingDues = () => 0;
 
 const createApprovalRecord = (booking) => {
-  const resident = initialUsers.find(
-    (user) => user.id === booking.residentId
-  );
-
   return {
     ...cloneBooking(booking),
-    residentFlat: resident?.flat ?? booking.residentFlat ?? null,
-    outstandingDues: getOutstandingDues(booking.residentId),
+    residentFlat: booking.residentFlat ?? null,
+    outstandingDues: getOutstandingDues(),
   };
 };
 
@@ -109,7 +104,7 @@ const assertValidBookingDetails = (bookingData) => {
 };
 
 export const getAmenityBookings = async (amenityId, date) =>
-  getAllBookings()
+  (await refreshBookings())
     .filter(
       (booking) =>
         booking.amenityId === amenityId &&
@@ -122,14 +117,14 @@ export const getAmenityBookings = async (amenityId, date) =>
     .map(cloneBooking);
 
 export const getAllAmenityBookings = async () =>
-  getAllBookings()
+  (await refreshBookings())
     .map(cloneBooking)
     .sort((firstBooking, secondBooking) =>
       secondBooking.date.localeCompare(firstBooking.date)
     );
 
 export const getResidentAmenityBookings = async (residentId) =>
-  getAllBookings()
+  (await refreshBookings())
     .filter((booking) => booking.residentId === residentId)
     .map(cloneBooking)
     .sort((firstBooking, secondBooking) => {
@@ -143,14 +138,14 @@ export const getResidentAmenityBookings = async (residentId) =>
     });
 
 export const getBookableResidents = async () =>
-  initialUsers
+  (await getDashboardSnapshot()).users
     .filter(
       (user) => user.role === 'Resident' && user.status === 'Active'
     )
     .map((resident) => ({ ...resident }));
 
 export const getAmenityApprovalRequests = async (amenityId) =>
-  getAllBookings()
+  (await refreshBookings())
     .filter(
       (booking) =>
         booking.amenityId === amenityId &&
@@ -267,6 +262,7 @@ export const validateBookingSlot = async ({
   guestCount = 0,
   capacity = null,
 }) => {
+  await refreshBookings();
   assertValidTimeRange(startTime, endTime);
 
   const proposedStart = timeToMinutes(startTime);

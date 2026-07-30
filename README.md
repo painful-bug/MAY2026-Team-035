@@ -1,50 +1,24 @@
 # HomeBandhu
 
-Residential society / apartment management app for residents and association
-administrators. This repository is an npm-workspaces monorepo.
+HomeBandhu is a residential-community platform with a React frontend, FastAPI
+backend, and Supabase/Postgres persistence.
 
-## What is included
+## Authentication
 
-- Separate resident and admin dashboards with role-based routing
-- Visitors, complaints, notices, maintenance, payments, and resident management
-- Amenity booking, approvals, ledger, reports, and configuration flows
-- Association onboarding and single-use resident invite links
-- Browser-persisted demo data with cross-tab synchronization
+Google is the only sign-in provider. FastAPI owns the OAuth PKCE transaction,
+HTTP-only session cookies, refresh rotation, CSRF validation, and tenant
+authorization. The browser calls `/api/v1` only and has no Supabase client.
+Invitations are opaque, single-use artifacts bound to the recipient's verified
+Google email. Phone numbers are optional contact information.
 
-```
-.
-├── frontend/   # React 19 + Vite + Tailwind v4 SPA (all app code)
-└── backend/    # reserved — no server yet
-```
-
-The frontend has **no backend**. Domain state lives in a Zustand store
-persisted to browser storage, which also gives it realtime cross-tab sync
-(a change in one tab shows up in others without a reload). See
-`frontend/src/store/`.
-
-## Getting started
+## Local development
 
 ```bash
-npm install          # once, from repo root — installs the frontend workspace
-npm run dev          # start Vite dev server
+npm install
+npm run dev
+cd backend && uv run uvicorn app.main:app --reload
 ```
 
-Open the local URL printed by Vite after running `npm run dev`. All root scripts
-proxy to the `frontend` workspace (`-w frontend`).
-
-## Demo logins
-
-- Resident: phone `9876543210`
-- Admin: phone `9999988888`
-
-OTP is simulated — any 4–6 digit code works. Admins can switch between the
-admin and resident dashboards from the sidebar.
-
-## Development notes
-
-- App routes are defined in `frontend/src/App.jsx`.
-- Seed data lives in `frontend/src/data/`; shared application state lives in
-  `frontend/src/store/`.
-- There is no configured test runner yet. Invite-token and redemption logic can
-  be checked with `node frontend/src/lib/selfcheck.mjs`.
-- Use the root `package-lock.json` with npm; avoid mixing package managers.
+Copy `backend/.env.example` to `backend/.env`, use a fresh Supabase project,
+apply `backend/supabase/migrations/0001_baseline.sql`, then configure Google
+OAuth to redirect to `/api/v1/auth/google/callback` on the backend.
