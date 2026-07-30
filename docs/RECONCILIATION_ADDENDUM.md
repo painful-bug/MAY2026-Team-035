@@ -171,6 +171,15 @@ Two gaps worth one additive migration: the trigger list omits the tables step 9 
 (`community_settings`, `community_billing_settings`, `complaint_comments`), and it skips rows whose table has no
 `community_id`. Extending the loop is a five-line migration.
 
+> **Amended 2026-07-30, after building the live-update path.** The heading above is too generous and the word
+> "free" is wrong twice over. The outbox does fire on our writes, but (a) a `dashboard.refresh` carrying only
+> `{"table": …}` cannot *notify* — it cannot distinguish a new join request from a rejected one, which is what
+> the admin badge needed, so `0024` adds specific `access_request.created` / `.decided` topics; and (b) the
+> reader on the other end could not have scaled, independently of the trigger design. See
+> [FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md) §7 and the *Live updates* section of
+> [ARCHITECTURE.md](ARCHITECTURE.md). The two trigger gaps named in this paragraph are **still open** — `0024`
+> did not extend the loop — and are now recorded under *Guarantees and limits* in `ARCHITECTURE.md`.
+
 ### C-14 🟢 Their baseline closes three of our long-standing open items
 
 | Our item | Status before | What their baseline provides |

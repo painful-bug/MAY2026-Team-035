@@ -79,7 +79,7 @@ single in-process poller.** Concretely, three parts:
 
 | Part | Where | Job |
 | --- | --- | --- |
-| Outbox | `sse_events` + `AFTER` triggers | Every domain write records that it happened. |
+| Outbox | `sse_events` + `AFTER` triggers | A domain write records that it happened, on the tables carrying a trigger (see *Guarantees and limits*). |
 | Poller | `app/core/realtime.py` | One task reads the outbox on a global cursor and routes rows to subscribers by `community_id`. |
 | Transport | `GET /dashboard/events` | Same-origin `text/event-stream`; the browser uses the native `EventSource`. |
 
@@ -128,6 +128,19 @@ lag, it would starve unrelated requests across the whole process.
   than raising the poll interval.
 - **Delivery is at-most-once** and the payload is a hint, never the source of
   truth. The snapshot is authoritative; an event only says "re-read".
+- **Trigger coverage is the 12 tables `0007` names**, plus the specific
+  `access_requests` topics `0024` adds. The tables introduced by `0018`–`0023`
+  — community settings, billing settings, the two category tables, and the
+  amenity guest/charge/financial-event tables — carry no trigger, so a write to
+  one of them pushes nothing. The admin who made the change sees it because
+  their own request re-reads; a *second* admin with the same screen open does
+  not, until they act or reload. Closing this is one additive migration
+  extending the `to_regclass`-guarded loop, and is not yet scheduled.
+- **Retention** is `prune_sse_events()`, which drops rows older than two hours.
+  `0024` schedules it every 15 minutes **only where `pg_cron` is installed** —
+  the migration's `do` block is a no-op otherwise, and on a project without the
+  extension the outbox grows without bound until someone calls the function.
+  Enable `pg_cron` from the Supabase dashboard, or schedule the call yourself.
 
 ### Topics
 

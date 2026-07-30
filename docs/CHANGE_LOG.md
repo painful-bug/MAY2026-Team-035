@@ -84,6 +84,39 @@ badge would have ticked up while the page behind it went stale. Four lines, hung
 `homebandhu:dashboard-refresh` window event the bootstrap already dispatched. It remains the only frontend
 file this branch has touched.
 
+### Documentation audit of the above — four corrections — `AUDIT`
+
+PO asked for a check that the live-update work is fully documented, including `openapi.yaml`, and that nothing
+stale or dead was recorded. Four things did not survive it.
+
+**`openapi.yaml` described the stream as JSON.** FastAPI cannot infer a media type from a `StreamingResponse`
+return, so it fell back to `application/json` — meaning `GET /dashboard/events` was published as a JSON
+endpoint, and a client generated from the spec would have tried to decode a live stream. The route now declares
+`text/event-stream` explicitly, plus the `401`/`403` that `API.md` §5.1 already listed and the spec did not.
+This is the only code edit of the audit.
+
+**`ARCHITECTURE.md` overstated the outbox.** The parts table read *"Every domain write records that it
+happened."* That is false for the seven tables `0018`–`0023` add: none carries a trigger, so a settings or
+billing change pushes nothing, and a second admin with that screen open does not see it. Now stated as a
+limit, with what closes it (one additive migration extending the `0007` loop) and the note that it is not
+scheduled. **This is a real gap in the feature as shipped, not just a wording fix.**
+
+**Retention had no prose anywhere.** `0024`'s comment pointed readers at the *Live updates* section for who
+calls `prune_sse_events`; that section never mentioned it. The pointer is now true, and it records the part
+that actually matters operationally: the `*/15` schedule exists **only where `pg_cron` is installed**, and on
+a project without the extension the outbox grows unbounded.
+
+**Two of our own earlier claims are now false.** `RECONCILIATION_ADDENDUM.md` C-13 — *"their realtime outbox
+works on our writes for free"* — was written before we tried to build on it, and both halves of the finding
+turned out wrong: `dashboard.refresh` carries too little to notify with, and the reader could not scale. C-13
+and the pointer to it in `SCHEMA_RECONCILIATION_PLAN.md` §0 now carry dated amendments rather than being
+rewritten, since the reasoning at the time is the part worth keeping. The two trigger gaps C-13 itself named
+are recorded as still open.
+
+No dead code found: every symbol added this session is reachable, `read_events` survives as the
+community-scoped backfill read (distinct from the global-cursor `read_events_since`), and ruff reports zero
+findings across all six files the session touched.
+
 ---
 
 ## 2026-07-30 — Session 20: rebuilt every quarantined migration onto the baseline

@@ -9,7 +9,8 @@
 > This plan was written from `backend/` and the ERD. The same commit range also changes **166 files outside
 > `backend/`**, including a rewrite of the frontend from a dummy-data demo into a real API client. The addendum
 > covers that, adds conflicts **C-8 – C-16**, amends the phases in its §3, and corrects one claim here in our
-> favour (the realtime outbox needs no work from us). Two of its findings — the frontend contract (C-8) and CSRF
+> favour (the realtime outbox needs no work from us — **since amended in the addendum's own C-13: it needed
+> migration `0024` and a rewritten reader**). Two of its findings — the frontend contract (C-8) and CSRF
 > on our writes (C-9) — rank alongside C-1 in importance.
 
 ---

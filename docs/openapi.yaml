@@ -5589,9 +5589,12 @@ paths:
       responses:
         '200':
           content:
-            application/json:
-              schema: {}
-          description: Successful Response
+            text/event-stream: {}
+          description: 'Event stream. Frame format and topics: docs/API.md 5.1.'
+        '401':
+          description: No session.
+        '403':
+          description: No active membership.
         '422':
           content:
             application/json:
