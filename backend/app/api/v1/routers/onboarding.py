@@ -10,7 +10,7 @@ router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
 
 @router.post("/community", response_model=CommunityOnboardingResponse, dependencies=[Depends(require_csrf)])
-async def create_community(
+def create_community(
     body: CommunityOnboardingRequest,
     access_token: str = Depends(get_request_token),
 ) -> CommunityOnboardingResponse:

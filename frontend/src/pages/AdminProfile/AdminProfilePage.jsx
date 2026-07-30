@@ -193,7 +193,7 @@ export default function AdminProfilePage() {
                 htmlFor="admin-email"
                 className="text-[11px] font-bold uppercase tracking-wider text-slate-500"
               >
-                Verified Google email
+                Verified email
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

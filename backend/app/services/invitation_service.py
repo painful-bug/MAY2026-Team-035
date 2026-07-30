@@ -95,8 +95,11 @@ def evaluate_invitation(invite: dict | None, *, now: datetime | None = None) -> 
 
 
 def redeem_pending_invitation(invite: dict, identity: Principal) -> dict:
-    if not identity.email_verified or not identity.email:
-        raise ValidationError("A verified Google email is required.", code="email_not_verified")
+    if not identity.email:
+        raise ValidationError(
+            "Your sign-in account must provide an email address.",
+            code="identity_email_missing",
+        )
     if normalized_email(identity.email) != normalized_email(str(invite.get("invitee_email") or "")):
         raise ValidationError("This invitation cannot be used.", code="invite_unavailable")
     service = get_service_client()

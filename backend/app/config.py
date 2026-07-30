@@ -41,7 +41,12 @@ class Settings(BaseSettings):
     cookie_secure: bool | None = Field(None, alias="COOKIE_SECURE")
     invite_ttl_hours: int = Field(72, alias="INVITE_TTL_HOURS")
     auth_primary_method: str = Field("google", alias="AUTH_PRIMARY_METHOD")
-    auth_enabled_methods: str = Field("google", alias="AUTH_ENABLED_METHODS")
+    auth_enabled_methods: str = Field("google,email_password", alias="AUTH_ENABLED_METHODS")
+    auth_session_idle_days: int = Field(30, ge=1, le=90, alias="AUTH_SESSION_IDLE_DAYS")
+    auth_captcha_enabled: bool = Field(False, alias="AUTH_CAPTCHA_ENABLED")
+    auth_provider_timeout_seconds: float = Field(
+        8.0, gt=0, alias="AUTH_PROVIDER_TIMEOUT_SECONDS"
+    )
     community_search_default_limit: int = Field(10, alias="COMMUNITY_SEARCH_DEFAULT_LIMIT")
     community_search_max_limit: int = Field(20, alias="COMMUNITY_SEARCH_MAX_LIMIT")
     cors_origins: str = Field("http://localhost:5173", alias="CORS_ORIGINS")
@@ -73,11 +78,11 @@ class Settings(BaseSettings):
         return list(dict.fromkeys(method for method in methods if method))
 
     def validate_auth_configuration(self) -> None:
-        """Fail closed: this project intentionally permits Google only today."""
+        """Fail closed when the provider configuration is unsafe or unknown."""
         enabled = self.enabled_auth_methods
         if not enabled or self.auth_primary_method.lower() not in enabled:
             raise ValueError("AUTH_PRIMARY_METHOD must be one of AUTH_ENABLED_METHODS")
-        unsupported = set(enabled) - {"google"}
+        unsupported = set(enabled) - {"google", "email_password"}
         if unsupported:
             raise ValueError(
                 "Unsupported authentication methods configured: "

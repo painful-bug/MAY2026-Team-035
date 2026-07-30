@@ -15,6 +15,8 @@ import LoginPage from './pages/Login/LoginPage';
 import RegistrationPage from './pages/Registration/RegistrationPage';
 import GetStartedPage from './pages/GetStarted/GetStartedPage';
 import AuthCallbackPage from './pages/AuthCallback/AuthCallbackPage';
+import EmailConfirmationPage from './pages/Auth/EmailConfirmationPage';
+import PasswordRecoveryPage from './pages/Auth/PasswordRecoveryPage';
 import AssociationRegistrationPage from './pages/AssociationRegistration/AssociationRegistrationPage';
 import MapConfigurationPage from './pages/MapConfiguration/MapConfigurationPage';
 import FeatureConfigurationPage from './pages/FeatureConfiguration/FeatureConfigurationPage';
@@ -121,6 +123,9 @@ export default function App() {
           <Route path={AUTH_ROUTES.LOGIN} element={<LoginPage />} />
           <Route path={AUTH_ROUTES.REGISTER} element={<RegistrationPage />} />
           <Route path={AUTH_ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
+          <Route path={AUTH_ROUTES.CONFIRM_EMAIL} element={<EmailConfirmationPage />} />
+          <Route path={AUTH_ROUTES.FORGOT_PASSWORD} element={<PasswordRecoveryPage />} />
+          <Route path={AUTH_ROUTES.RESET_PASSWORD} element={<PasswordRecoveryPage />} />
           <Route path={AUTH_ROUTES.GET_STARTED} element={<GetStartedPage />} />
           <Route
             path={AUTH_ROUTES.ACCOUNT}

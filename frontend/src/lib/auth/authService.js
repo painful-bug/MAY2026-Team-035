@@ -1,4 +1,4 @@
-import { api } from '../api/client';
+import { api, API_TIMEOUTS, prepareAnonymousCsrf } from '../api/client';
 
 const ROLE_LABELS = Object.freeze({
   ADMIN: 'Admin', MANAGER: 'Manager', WORKER: 'Worker', SECURITY: 'Security', RESIDENT: 'Resident',
@@ -8,12 +8,45 @@ export async function getApplicationSession() {
   return api('/auth/session');
 }
 
-export async function getAuthMethods() {
-  return api('/auth/methods');
+export async function getAuthMethods(options = {}) {
+  // This endpoint is public. It must not wait for a stale-session refresh.
+  return api('/auth/methods', options, { retry: false, timeoutMs: API_TIMEOUTS.authMethods });
 }
 
 export async function logoutSession() {
-  return api('/auth/logout', { method: 'POST' });
+  return api('/auth/logout', { method: 'POST' }, {
+    retry: false,
+    timeoutMs: API_TIMEOUTS.logout,
+  });
+}
+
+export async function signUpWithPassword(payload) {
+  await prepareAnonymousCsrf();
+  return api('/auth/password/sign-up', { method: 'POST', body: JSON.stringify(payload) }, { retry: false });
+}
+
+export async function signInWithPassword(payload) {
+  await prepareAnonymousCsrf();
+  return api('/auth/password/sign-in', { method: 'POST', body: JSON.stringify(payload) }, { retry: false });
+}
+
+export async function verifyEmailToken(token_hash, verification_type = 'email') {
+  await prepareAnonymousCsrf();
+  return api('/auth/email/verify', { method: 'POST', body: JSON.stringify({ token_hash, verification_type }) }, { retry: false });
+}
+
+export async function requestPasswordReset(email) {
+  await prepareAnonymousCsrf();
+  return api('/auth/password/reset/request', { method: 'POST', body: JSON.stringify({ email }) }, { retry: false });
+}
+
+export async function verifyPasswordReset(token_hash) {
+  await prepareAnonymousCsrf();
+  return api('/auth/password/reset/verify', { method: 'POST', body: JSON.stringify({ token_hash }) }, { retry: false });
+}
+
+export async function completePasswordReset(password) {
+  return api('/auth/password/reset/complete', { method: 'POST', body: JSON.stringify({ password }) }, { retry: false });
 }
 
 export async function prepareInvitation({ token, code }) {

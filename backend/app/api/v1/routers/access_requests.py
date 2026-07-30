@@ -9,6 +9,7 @@ from app.domain.schemas import (
     AccessRequestListResponse,
     AccessRequestResponse,
     ApproveAccessRequest,
+    BlacklistAccessRequest,
     CreateAccessRequest,
     Principal,
     RejectAccessRequest,
@@ -24,7 +25,7 @@ router = APIRouter(tags=["access requests"])
     status_code=201,
     dependencies=[Depends(require_csrf)],
 )
-async def create_access_request(
+def create_access_request(
     body: CreateAccessRequest,
     principal: Principal = Depends(get_current_user),
 ) -> AccessRequestResponse:
@@ -32,7 +33,7 @@ async def create_access_request(
 
 
 @router.get("/access-requests/mine", response_model=AccessRequestListResponse)
-async def my_access_requests(
+def my_access_requests(
     principal: Principal = Depends(get_current_user),
 ) -> AccessRequestListResponse:
     return access_request_service.mine(principal)
@@ -43,7 +44,7 @@ async def my_access_requests(
     response_model=AccessRequestResponse,
     dependencies=[Depends(require_csrf)],
 )
-async def withdraw_access_request(
+def withdraw_access_request(
     request_id: str,
     principal: Principal = Depends(get_current_user),
 ) -> AccessRequestResponse:
@@ -51,7 +52,7 @@ async def withdraw_access_request(
 
 
 @router.get("/admin/access-requests", response_model=AccessRequestListResponse)
-async def admin_access_requests(
+def admin_access_requests(
     status: str = Query("pending", pattern="^(pending|approved|rejected|withdrawn)$"),
     limit: int = Query(25, ge=1, le=100),
     principal: Principal = Depends(get_current_user),
@@ -63,7 +64,7 @@ async def admin_access_requests(
     "/admin/access-requests/{request_id}/approve",
     dependencies=[Depends(require_csrf)],
 )
-async def approve_access_request(
+def approve_access_request(
     request_id: str,
     body: ApproveAccessRequest,
     principal: Principal = Depends(get_current_user),
@@ -75,9 +76,21 @@ async def approve_access_request(
     "/admin/access-requests/{request_id}/reject",
     dependencies=[Depends(require_csrf)],
 )
-async def reject_access_request(
+def reject_access_request(
     request_id: str,
     body: RejectAccessRequest,
     principal: Principal = Depends(get_current_user),
 ) -> dict:
     return access_request_service.reject(request_id, body, principal)
+
+
+@router.post(
+    "/admin/access-requests/{request_id}/blacklist",
+    dependencies=[Depends(require_csrf)],
+)
+def blacklist_access_request(
+    request_id: str,
+    body: BlacklistAccessRequest,
+    principal: Principal = Depends(get_current_user),
+) -> dict:
+    return access_request_service.blacklist(request_id, body, principal)

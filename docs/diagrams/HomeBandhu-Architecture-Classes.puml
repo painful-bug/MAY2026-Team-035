@@ -22,6 +22,7 @@ package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
     + initializeAuth()
     + beginGoogleSignIn(next)
     + completeExternalLogin()
+    + authGeneration : Number
     + logout()
   }
   class DashboardDataBootstrap <<React component>> {
@@ -46,8 +47,12 @@ package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
 
 package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
   class AuthRouter <<router>> {
-    + google_start(next)
-    + google_callback(code)
+    + oauth_start(provider, next)
+    + oauth_callback(provider, code)
+    + password_sign_up()
+    + password_sign_in()
+    + verify_email()
+    + password_reset()
     + session()
     + refresh()
     + logout()
@@ -61,6 +66,7 @@ package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
     + mine()
     + approve()
     + reject()
+    + blacklist()
   }
   class InvitationsRouter <<router>> {
     + prepare()
@@ -94,6 +100,10 @@ package "Application services" #FFF3E0 {
   class AuthService <<service>> {
     + start_google_oauth()
     + exchange_google_code()
+    + sign_up_with_password()
+    + sign_in_with_password()
+    + verify_email_token()
+    + complete_password_recovery()
     + refresh_session()
     + get_session_context()
   }
@@ -107,6 +117,7 @@ package "Application services" #FFF3E0 {
     + withdraw()
     + approve()
     + reject()
+    + blacklist()
   }
   class InvitationService <<service>> {
     + create_invitation()
@@ -189,10 +200,12 @@ package "External systems and data" #FAFAFA {
     + authorize()
     + exchange_code_for_session()
     + refresh_session()
+    + sign_in_with_password()
+    + verify_otp()
   }
   database "Supabase Postgres" as Postgres {
     class "profiles / community_memberships" as MembershipTables
-    class "resident_invites / access_requests" as RegistrationTables
+    class "resident_invites / access_requests / blacklisted_residents" as RegistrationTables
     class "dashboard domain tables" as DomainTables
     class "sse_events" as SseEvents
   }

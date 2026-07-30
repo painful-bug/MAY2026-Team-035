@@ -4,7 +4,7 @@
 
 Project homebandhu_submission_erd {
   database_type: 'PostgreSQL'
-  Note: 'Current clean-baseline model. Google identity is external auth.users; community permissions come only from active community_memberships. PK = primary key, FK = foreign key, UQ = unique.'
+  Note: 'Current clean-baseline model. Supabase Auth identity is external auth.users; Google OAuth is primary and email/password is secondary. Community permissions come only from active community_memberships. PK = primary key, FK = foreign key, UQ = unique.'
 }
 
 Enum membership_role {
@@ -88,7 +88,7 @@ Table auth.users [headercolor: #102A43] {
   email text [unique]
   email_confirmed_at timestamptz
   created_at timestamptz
-  Note: 'EXTERNAL: Supabase Auth. Google is the only configured provider.'
+  Note: 'EXTERNAL: Supabase Auth. Google OAuth is primary; verified email/password is an optional secondary provider.'
 }
 
 Table profiles [headercolor: #102A43] {
@@ -260,6 +260,18 @@ Table access_requests [headercolor: #102A43] {
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
   indexes { (community_id, applicant_profile_id) [unique, note: 'Partial: status is pending'] }
+}
+
+Table blacklisted_residents [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  blacklisted_by_membership_id uuid [not null, ref: > community_memberships.id]
+  reason text [not null]
+  created_at timestamptz [not null]
+  revoked_at timestamptz
+  revoked_by_membership_id uuid [ref: > community_memberships.id]
+  Note: 'A reversible community-specific join blacklist. At most one active row per community and profile.'
 }
 
 Table vendors [headercolor: #B7791F] {

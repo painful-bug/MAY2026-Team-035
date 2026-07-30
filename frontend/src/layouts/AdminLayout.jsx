@@ -24,10 +24,8 @@ export default function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = () => {
+    void logout();
     navigate('/');
-    setTimeout(() => {
-      logout();
-    }, 50);
   };
 
   const navItems = [

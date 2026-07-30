@@ -3,21 +3,28 @@
 ## Security and authentication boundary
 
 FastAPI owns the full authentication lifecycle. Google OAuth is started and
-completed by backend routes using Supabase PKCE; the browser receives signed,
+completed by backend routes using Supabase PKCE, while verified email/password
+uses the same request-scoped Supabase Auth client and session issuer; the browser receives signed,
 HTTP-only session and refresh cookies instead of provider tokens. Unsafe API
 requests require the CSRF token exposed in the companion CSRF cookie.
 
 The settings contract fails startup when the server-side Supabase configuration
-or `COOKIE_SIGNING_SECRET` is missing. Only Google is accepted by the current
-authentication configuration. Membership context is loaded from an active
+or `COOKIE_SIGNING_SECRET` is missing. `AUTH_PRIMARY_METHOD` and
+`AUTH_ENABLED_METHODS` allow `google` and `email_password` to swap display
+priority without affecting RBAC. Membership context is loaded from an active
 `community_memberships` row and is used for tenant scope and role checks; no
 browser-supplied role or JWT role claims authorize a request.
+
+Google OAuth authentication is sufficient for normal onboarding and
+email-bound invitation redemption. Those flows require the authenticated
+account to supply an email address for ownership and matching, but do not rely
+on Supabase's optional `email_confirmed_at` claim being present in an OAuth JWT.
 
 ## Registration and community access
 
 The API router aggregates dedicated routers for:
 
-- authentication and session management;
+- provider-neutral authentication, session management, email confirmation, and recovery;
 - community directory search;
 - resident access requests and administrator decisions;
 - invitations prepared before Google OAuth and redeemed after it;
@@ -68,6 +75,17 @@ after a change. Keepalive comments allow intermediaries to retain the stream.
   legacy project does not already provide it.
 - `0007_dashboard_realtime_outbox.sql` is an idempotent compatibility bridge
   for realtime dashboard refreshes.
+- `0008_blacklisted_residents.sql` adds the reversible registration blacklist
+  and blacklist-aware community directory search for existing projects.
+- `20260730163759_normalize_community_statuses.sql` normalizes legacy
+  title-cased community statuses and enforces canonical lower-case values.
+- `20260730164555_add_access_request_applicant_profile.sql` adds authenticated
+  request ownership and pending-request uniqueness without rewriting historic
+  requests.
+- `20260730165410_add_resident_access_request_decision_rpcs.sql` supplies the
+  BFF's resident approval/rejection RPC contracts alongside legacy overloads.
+- `20260730170036_make_resident_approval_legacy_index_compatible.sql` makes
+  approval idempotent across the different legacy and fresh membership indexes.
 
 The bridges are intentionally forward-only. They support an already-created
 project without changing the fresh baseline's design.
@@ -75,7 +93,7 @@ project without changing the fresh baseline's design.
 ## Validation
 
 - `python3 -m compileall -q app` checks backend import/compile health.
-- The backend test suite covers the Google-only configuration, OAuth PKCE URL,
+- The backend test suite covers provider configuration, OAuth PKCE URL,
   registration contracts, migration guards, and unauthenticated dashboard
   route rejection.
 - An authenticated smoke test should verify the snapshot contains only the
