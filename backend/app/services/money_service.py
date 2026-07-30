@@ -40,7 +40,7 @@ from app.domain.vocabularies import (
     payment_method_to_storage,
     payment_method_to_wire,
 )
-from app.repositories import dashboard_repository as dash_repo
+from app.repositories import admin_overview_repository as dash_repo
 from app.repositories import money_repository as repo
 from supabase import Client
 

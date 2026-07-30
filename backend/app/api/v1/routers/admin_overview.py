@@ -18,7 +18,7 @@ from app.domain.dashboard_schemas import (
     ResidentSummary,
 )
 from app.domain.roles import Role
-from app.services import dashboard_service
+from app.services import admin_overview_service
 from supabase import Client
 
 router = APIRouter(tags=["dashboard"])
@@ -42,7 +42,7 @@ async def get_admin_dashboard(
 ) -> AdminDashboard:
     """Counts for the admin home tiles, in one request instead of five."""
     response.headers["Cache-Control"] = _NO_STORE
-    return dashboard_service.get_admin_dashboard(client, principal.user_id)
+    return admin_overview_service.get_admin_dashboard(client, principal.user_id)
 
 
 @router.get(
@@ -59,7 +59,7 @@ async def get_current_community(
     Open to any authenticated member, not admins only: the resident shell needs
     the community name in its header too.
     """
-    return dashboard_service.get_community(client, principal.user_id)
+    return admin_overview_service.get_community(client, principal.user_id)
 
 
 @router.get(
@@ -82,7 +82,7 @@ async def list_residents(
     Returns ``{"items": [], "total": 0}`` with HTTP 200 when there are none --
     never a 404, so the frontend has one shape to render either way.
     """
-    return dashboard_service.list_residents(
+    return admin_overview_service.list_residents(
         client, principal.user_id, search=search, page=page, page_size=page_size
     )
 
@@ -101,6 +101,6 @@ async def list_notices(
 ) -> Page[NoticeSummary]:
     """Published notices, newest first. Readable by any member of the community."""
     response.headers["Cache-Control"] = _NO_STORE
-    return dashboard_service.list_notices(
+    return admin_overview_service.list_notices(
         client, principal.user_id, page=page, page_size=page_size
     )

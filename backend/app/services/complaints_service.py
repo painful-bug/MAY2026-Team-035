@@ -24,8 +24,8 @@ from app.domain.vocabularies import (
     status_to_wire,
     urgency_to_wire,
 )
+from app.repositories import admin_overview_repository as dash_repo
 from app.repositories import complaints_repository as repo
-from app.repositories import dashboard_repository as dash_repo
 from app.repositories import people_repository as people_repo
 from supabase import Client
 

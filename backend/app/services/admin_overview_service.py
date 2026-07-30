@@ -20,7 +20,7 @@ from app.domain.dashboard_schemas import (
     ResidentSummary,
 )
 from app.domain.roles import display_role
-from app.repositories import dashboard_repository as repo
+from app.repositories import admin_overview_repository as repo
 from app.repositories import money_repository
 from supabase import Client
 

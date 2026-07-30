@@ -20,7 +20,7 @@ _RECEIPTS = "complaint_read_receipts"
 
 #: Embeds resolve through single foreign keys, so PostgREST handles them; the
 #: unit does not, because complaints -> apartments is a composite key (see
-#: dashboard_repository.map_unit_codes_to_ids).
+#: admin_overview_repository.map_unit_codes_to_ids).
 _COMPLAINT_SELECT = (
     "id, title, description, raised_by_membership_id, raised_by_label, unit_id,"
     "category_id, department_id, status, urgency, progress_percent, location,"

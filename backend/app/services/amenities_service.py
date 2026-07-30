@@ -65,8 +65,8 @@ from app.domain.vocabularies import (
     weekdays_to_storage,
     weekdays_to_wire,
 )
+from app.repositories import admin_overview_repository as dash_repo
 from app.repositories import amenities_repository as repo
-from app.repositories import dashboard_repository as dash_repo
 from supabase import Client
 
 _CATEGORIES = ("Sports", "Fitness", "Recreation", "Events", "Utility")
