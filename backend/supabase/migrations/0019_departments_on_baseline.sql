@@ -1,10 +1,13 @@
 -- ===========================================================================
 -- Step 6 rebuilt: department and staff management, on the baseline schema.
 --
--- This replaces `legacy-preauth/0014_departments.sql`, which was written against
--- `0001_init.sql` and cannot be applied. The reasoning it carries is preserved;
--- only the table and column names are retargeted. Read that file for the full
--- derivation of each number on the departments screen.
+-- This replaces the pre-baseline `0014_departments.sql`, which was written
+-- against `0001_init.sql` and cannot be applied. The reasoning it carries is
+-- preserved; only the table and column names are retargeted. That file is no
+-- longer in the tree — for the full derivation of each number on the
+-- departments screen, read it out of history:
+--
+--   git show e593084:backend/supabase/migrations/legacy-preauth/0014_departments.sql
 --
 -- WHY THIS ONE MATTERS MOST
 --

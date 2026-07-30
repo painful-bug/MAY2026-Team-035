@@ -1,19 +1,19 @@
 """Data access for amenities, bookings, approvals and the booking ledger.
 
-Reads go through the four views from migration 0016, all ``security_invoker`` so
-the caller's RLS still applies. Every write goes through an RPC, for the reason
-0015 gives: PostgREST has no client-side transaction, and a booking request
-writes a series, its occurrences, its guests and its charges. Half of that is a
-resident holding a reservation with no charge against it, or a charge against a
-reservation that does not exist.
+Reads go through the four views ``0023_amenities_on_baseline.sql`` creates, all
+``security_invoker`` so the caller's RLS still applies. Every write goes through
+an RPC, for the reason 0020 gives: PostgREST has no client-side transaction, and
+one booking request writes the bookings, their guests and their charges. Half of
+that is a resident holding a reservation with no charge against it, or a charge
+against a reservation that does not exist.
 
 Nothing in this module computes a total. The ledger's eight summary figures and
 the amenity card's outstanding-dues badge are both database aggregates.
 
-**None of these database objects exist on the baseline yet.** ``0016_amenities.sql``
-is quarantined in ``supabase/migrations/legacy-preauth/`` awaiting a rebuild, so
-the endpoints in this domain pass their contract tests but would fail against a
-real database. See ``legacy-preauth/README.md``.
+**Nothing here has been applied to a database.** 0023 creates every object this
+module names, but no migration in this project has been run yet, so these
+endpoints pass their contract tests and would still fail against a real
+database. That is true of the whole admin-dashboard surface, not just amenities.
 """
 
 from __future__ import annotations

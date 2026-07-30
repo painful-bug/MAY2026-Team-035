@@ -6,8 +6,8 @@
 -- Migrations 0010–0017 were written against the pre-baseline schema
 -- (`associations`, `apartments`, `profiles.association_id`, a two-table amenity
 -- booking model). `0001_baseline.sql` replaced all of it, so those files no
--- longer apply — they have been moved to `legacy-preauth/` and are kept for
--- reference only. See `legacy-preauth/README.md`.
+-- longer apply. They were rebuilt as `0018`–`0023` and removed from the tree;
+-- see `README.md` in this directory for the numbering gap and how to read one.
 --
 -- This migration re-creates, on baseline tables, only what the endpoints that
 -- survived the frontend wiring audit actually need:

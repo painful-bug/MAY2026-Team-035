@@ -158,7 +158,7 @@ pending a rebuild.
 submission ERD (`db85c04`) removed `amenity_booking_series` and `amenity_booking_occurrences`, siding with the
 baseline. `0023` keeps their single `amenity_bookings` as the only booking table and adds one nullable
 `booking_group_id` column — which preserves atomic approval of a multi-date request without reintroducing the
-tables upstream deleted. Reasoning in `legacy-preauth/README.md`.
+tables upstream deleted. Reasoning in the header of `0023_amenities_on_baseline.sql`.
 
 ## 6. Two things the dashboard workstream should change
 

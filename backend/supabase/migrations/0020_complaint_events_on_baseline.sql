@@ -1,7 +1,7 @@
 -- ===========================================================================
 -- Step 5 rebuilt: complaint edits and their timeline, on the baseline schema.
 --
--- This replaces `legacy-preauth/0013_complaint_events.sql`.
+-- This replaces the pre-baseline `0013_complaint_events.sql` (see `README.md`).
 --
 -- The baseline already has all four tables -- `complaints`, `complaint_events`,
 -- `complaint_comments`, `complaint_read_state` -- so unlike departments this is

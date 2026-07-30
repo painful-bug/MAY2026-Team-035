@@ -25,3 +25,7 @@ temp/
 
 # Python build artefacts
 *.egg-info/
+
+# Local tool output
+graphify-out/
+.claude/worktrees/

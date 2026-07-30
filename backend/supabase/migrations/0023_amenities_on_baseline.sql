@@ -1,8 +1,8 @@
 -- ===========================================================================
 -- Step 8 rebuilt: amenities, bookings and the amenity ledger, on the baseline.
 --
--- This replaces `legacy-preauth/0016_amenities.sql`, the largest of the
--- quarantined files and the only one that was a genuine design conflict rather
+-- This replaces the pre-baseline `0016_amenities.sql`, the largest of the
+-- superseded files and the only one that was a genuine design conflict rather
 -- than a rename.
 --
 -- THE DESIGN CONFLICT, AND HOW IT IS SETTLED

@@ -1,7 +1,7 @@
 -- ===========================================================================
 -- Step 7 rebuilt: invoices, payments and billing settings, on the baseline.
 --
--- This replaces `legacy-preauth/0015_money.sql`.
+-- This replaces the pre-baseline `0015_money.sql` (see `README.md`).
 --
 -- THE GAP THIS CLOSES IS MOSTLY COLUMNS, NOT TABLES
 --

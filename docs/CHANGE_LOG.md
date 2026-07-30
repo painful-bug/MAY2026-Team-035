@@ -17,6 +17,61 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-07-31 — Session 22: consolidating onto `backend/admin_dashboard`
+
+The whole of `backend/planning/1` was fast-forwarded onto `backend/admin_dashboard`, which sat at
+`94556e5` — an ancestor, so no merge commit and no conflicts, and the branch also came up to date
+with `origin/main`, which it was 8 commits behind. PO then asked for the stale and irrelevant
+material to come out.
+
+### `backend/supabase/migrations/legacy-preauth/` — **deleted**, 9 files — `PO`
+
+The eight pre-baseline migrations and their README. PO's ruling, against the recommendation to keep
+them: a branch handed on for review should carry only migrations that will actually be applied, and
+the superseded versions stay recoverable in git.
+
+*What that cost, recorded because it is not obvious from the diff:* four of the rebuilt migrations
+carried their reasoning by reference rather than repeating it, and `0019` said outright "read that
+file for the full derivation of each number on the departments screen". Deleting the folder made
+eleven references dangle. Each was repaired rather than dropped — `0019` now gives the `git show`
+command that reads the original out of history, and the other four name the file without a path.
+
+The two entries below in Session 20 and Session 18 that point at `legacy-preauth/README.md` are left
+as written, per this file's convention; they were true when written.
+
+### `backend/supabase/migrations/README.md` — **new file** — `DERIVED`
+
+Forced by the deletion. The directory now jumps `0008` → `0018`, and a reader with no context cannot
+tell whether nine migrations are missing or were never written. It records the gap and why the
+numbers are not reused, the mapping from each rebuilt file to what it serves, the `git show` recipe,
+and the three tables `dashboard_repository.py` reads in its `legacy=True` branch that are
+deliberately never created.
+
+### `FRONTEND_WIRING_AUDIT.md` §5 — repointed — `DERIVED`
+
+The amenities `booking_group_id` reasoning was cited as living in `legacy-preauth/README.md`. It
+also lives in the header of `0023_amenities_on_baseline.sql`, which survives, so the citation now
+goes there.
+
+### `amenities_repository.py` — stale module docstring — `AUDIT`
+
+Not a `docs/` artifact, recorded here because it was a false claim of the same kind this file exists
+to catch. The docstring still said **"None of these database objects exist on the baseline yet"** and
+pointed at the quarantine — written before `0023` rebuilt them, and untrue since. It also cited the
+pre-baseline `0016` and `0015` for the views and the RPC rationale (now `0023` and `0020`), and
+described a booking request as writing "a series, its occurrences, its guests and its charges" — the
+two-table model `0023` deliberately abandoned. Corrected on all four points. What replaces it is the
+weaker true statement: nothing has been applied to a database yet, and that is true of the whole
+admin-dashboard surface rather than amenities specifically.
+
+### `.gitignore` — two entries — `AUDIT`
+
+`graphify-out/` (2.4 MB of code-graph tool output) and `.claude/worktrees/` (agent worktree
+checkouts). The latter was excluded only through `.git/info/exclude`, which is per-machine and never
+shared, so every teammate was carrying it in their own working tree.
+
+---
+
 ## 2026-07-30 — Session 21: live updates for join requests
 
 Pulled `origin/main` @ `ecc8a10` (3 new commits, the unified-auth PR #13). PO asked for a notification on the
