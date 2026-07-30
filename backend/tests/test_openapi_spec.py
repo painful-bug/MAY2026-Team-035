@@ -30,11 +30,33 @@ _SPEC_PATH = Path(__file__).resolve().parents[2] / "docs" / "openapi.yaml"
 #: logout legitimately declare none. Each is listed individually rather than
 #: skipping the whole ``/auth`` prefix, so a new authenticated auth route cannot
 #: inherit an exemption by sitting next to a public one.
+# Endpoints that are unauthenticated on purpose. Everything here is reachable
+# *before* the caller has a session, which is why none of them can require one.
+# Adding a path to this set is a security decision: it says "anyone on the
+# internet may call this", so it belongs in review, not in a quick fix to make
+# the test below go green.
 _PUBLIC_PATHS = {
     "/health",
     "/api/v1/auth/methods",
+    # Issues the CSRF token that the sign-in POST must carry, so it necessarily
+    # precedes any session.
+    "/api/v1/auth/csrf",
+    # OAuth redirect handshake. `google/*` is the original pair; `oauth/{provider}/*`
+    # generalised it in the unified-auth work and both are still routed.
     "/api/v1/auth/google/start",
     "/api/v1/auth/google/callback",
+    "/api/v1/auth/oauth/{provider}/start",
+    "/api/v1/auth/oauth/{provider}/callback",
+    # Password and email-confirmation flows. Every one of these is either how a
+    # session is obtained or how an account is recovered when the user cannot
+    # sign in, so requiring a session would make them unusable.
+    "/api/v1/auth/password/sign-up",
+    "/api/v1/auth/password/sign-in",
+    "/api/v1/auth/password/reset/request",
+    "/api/v1/auth/password/reset/verify",
+    "/api/v1/auth/password/reset/complete",
+    "/api/v1/auth/email/verify",
+    "/api/v1/auth/email/resend",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
     # Exchanges an invite token+code for a short-lived signed cookie. Called

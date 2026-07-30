@@ -627,43 +627,6 @@ components:
       - timestamp
       title: AuditEntry
       type: object
-    AuthMethod:
-      properties:
-        enabled:
-          default: true
-          title: Enabled
-          type: boolean
-        id:
-          title: Id
-          type: string
-        kind:
-          const: redirect
-          title: Kind
-          type: string
-        label:
-          title: Label
-          type: string
-      required:
-      - id
-      - kind
-      - label
-      title: AuthMethod
-      type: object
-    AuthMethodsResponse:
-      properties:
-        methods:
-          items:
-            $ref: '#/components/schemas/AuthMethod'
-          title: Methods
-          type: array
-        primary:
-          title: Primary
-          type: string
-      required:
-      - primary
-      - methods
-      title: AuthMethodsResponse
-      type: object
     BillingSettings:
       description: 'The community''s billing configuration.
 
@@ -789,6 +752,18 @@ components:
       - lateFeePeriod
       - lateFeePeriodLabel
       title: BillingToggles
+      type: object
+    BlacklistAccessRequest:
+      additionalProperties: false
+      properties:
+        reason:
+          maxLength: 500
+          minLength: 3
+          title: Reason
+          type: string
+      required:
+      - reason
+      title: BlacklistAccessRequest
       type: object
     BlockSlotRequest:
       description: 'An administrative reservation. Always exclusive: a hall closed for repairs
@@ -1569,6 +1544,12 @@ components:
             type: object
           title: Payments
           type: array
+        pendingRequests:
+          items:
+            additionalProperties: true
+            type: object
+          title: Pendingrequests
+          type: array
         users:
           items:
             additionalProperties: true
@@ -1677,6 +1658,26 @@ components:
       - createdAt
       - updatedAt
       title: DepartmentDetail
+      type: object
+    EmailTokenRequest:
+      additionalProperties: false
+      properties:
+        token_hash:
+          maxLength: 4096
+          minLength: 8
+          title: Token Hash
+          type: string
+        verification_type:
+          default: email
+          enum:
+          - email
+          - signup
+          - recovery
+          title: Verification Type
+          type: string
+      required:
+      - token_hash
+      title: EmailTokenRequest
       type: object
     ForceCancelRequest:
       properties:
@@ -2612,6 +2613,90 @@ components:
       - pageSize
       - hasMore
       title: Page[LedgerTransaction]
+      type: object
+    PasswordResetCompleteRequest:
+      additionalProperties: false
+      properties:
+        password:
+          maxLength: 256
+          minLength: 15
+          title: Password
+          type: string
+      required:
+      - password
+      title: PasswordResetCompleteRequest
+      type: object
+    PasswordResetRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+      required:
+      - email
+      title: PasswordResetRequest
+      type: object
+    PasswordSignInRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+        password:
+          maxLength: 256
+          minLength: 1
+          title: Password
+          type: string
+      required:
+      - email
+      - password
+      title: PasswordSignInRequest
+      type: object
+    PasswordSignUpRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+        full_name:
+          maxLength: 160
+          minLength: 2
+          title: Full Name
+          type: string
+        password:
+          maxLength: 256
+          minLength: 15
+          title: Password
+          type: string
+      required:
+      - full_name
+      - email
+      - password
+      title: PasswordSignUpRequest
       type: object
     PaymentSummary:
       description: 'One payment against one invoice.
@@ -3819,6 +3904,43 @@ paths:
       summary: Approve Access Request
       tags:
       - access requests
+  /api/v1/admin/access-requests/{request_id}/blacklist:
+    post:
+      operationId: blacklist_access_request_api_v1_admin_access_requests__request_id__blacklist_post
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          title: Request Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlacklistAccessRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Blacklist Access Request Api V1 Admin Access Requests  Request Id  Blacklist
+                  Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Blacklist Access Request
+      tags:
+      - access requests
   /api/v1/admin/access-requests/{request_id}/reject:
     post:
       operationId: reject_access_request_api_v1_admin_access_requests__request_id__reject_post
@@ -4798,6 +4920,69 @@ paths:
       summary: Amenity activity report
       tags:
       - amenities
+  /api/v1/auth/csrf:
+    get:
+      operationId: csrf_api_v1_auth_csrf_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+      summary: Csrf
+      tags:
+      - auth
+  /api/v1/auth/email/resend:
+    post:
+      operationId: resend_email_api_v1_auth_email_resend_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Resend Email
+      tags:
+      - auth
+  /api/v1/auth/email/verify:
+    post:
+      operationId: verify_email_api_v1_auth_email_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTokenRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Verify Email
+      tags:
+      - auth
   /api/v1/auth/google/callback:
     get:
       operationId: google_callback_api_v1_auth_google_callback_get
@@ -4867,16 +5052,205 @@ paths:
       - auth
   /api/v1/auth/methods:
     get:
-      description: Expose only server-enabled, browser-safe authentication methods.
       operationId: auth_methods_api_v1_auth_methods_get
       responses:
         '200':
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/AuthMethodsResponse'
+              schema: {}
           description: Successful Response
       summary: Auth Methods
+      tags:
+      - auth
+  /api/v1/auth/oauth/{provider}/callback:
+    get:
+      operationId: oauth_callback_api_v1_auth_oauth__provider__callback_get
+      parameters:
+      - in: path
+        name: provider
+        required: true
+        schema:
+          title: Provider
+          type: string
+      - in: query
+        name: code
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Code
+      responses:
+        '307':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Oauth Callback
+      tags:
+      - auth
+  /api/v1/auth/oauth/{provider}/start:
+    get:
+      operationId: oauth_start_api_v1_auth_oauth__provider__start_get
+      parameters:
+      - in: path
+        name: provider
+        required: true
+        schema:
+          title: Provider
+          type: string
+      - in: query
+        name: next
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next
+      responses:
+        '307':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Oauth Start
+      tags:
+      - auth
+  /api/v1/auth/password/reset/complete:
+    post:
+      operationId: password_reset_complete_api_v1_auth_password_reset_complete_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetCompleteRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Reset Complete
+      tags:
+      - auth
+  /api/v1/auth/password/reset/request:
+    post:
+      operationId: password_reset_request_api_v1_auth_password_reset_request_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Reset Request
+      tags:
+      - auth
+  /api/v1/auth/password/reset/verify:
+    post:
+      operationId: password_reset_verify_api_v1_auth_password_reset_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTokenRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Reset Verify
+      tags:
+      - auth
+  /api/v1/auth/password/sign-in:
+    post:
+      operationId: password_sign_in_api_v1_auth_password_sign_in_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordSignInRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Sign In
+      tags:
+      - auth
+  /api/v1/auth/password/sign-up:
+    post:
+      operationId: password_sign_up_api_v1_auth_password_sign_up_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordSignUpRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Sign Up
       tags:
       - auth
   /api/v1/auth/refresh:

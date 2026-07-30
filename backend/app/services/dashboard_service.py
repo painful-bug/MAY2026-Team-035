@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import datetime
-from time import sleep
 from typing import Any
 
 from app.core.exceptions import NotFoundError
+from app.core.realtime import hub
 from app.core.supabase_client import get_service_client
 from app.domain.schemas import DashboardSnapshot, MembershipContext
 from app.repositories import dashboard_repository
@@ -202,12 +202,19 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
     notices = [{"id": r["id"], "title": r["title"], "description": r.get("body") or "", "date": _iso_date(r.get("published_at") or r.get("created_at")), "createdAt": r.get("created_at")} for r in dashboard_repository.list_notices(client, membership.community_id)]
     departments = [{"id": r["id"], "name": r["name"], "description": r.get("description") or "", "status": "Active" if r.get("is_active") else "Inactive", "staff": [], "categories": []} for r in dashboard_repository.list_departments(client, membership.community_id)]
     activities = [{"id": r["id"], "text": r.get("action", "Community activity"), "time": r.get("created_at"), "type": "general"} for r in dashboard_repository.list_activity(client, membership.community_id)]
+    # Join requests carry other people's name, email and phone, so only an admin
+    # gets them. Everyone else gets the empty list the field defaults to.
+    pending_requests = (
+        dashboard_repository.list_pending_access_requests(client, membership.community_id)
+        if membership.role == "admin"
+        else []
+    )
     if membership.role == "resident":
         current_profile_id = users_by_membership.get(membership.id, {}).get("id")
         complaints = [row for row in complaints if row.get("userId") == current_profile_id]
         visitors = [row for row in visitors if row.get("userId") == current_profile_id]
         payments = [row for row in payments if row.get("isMine")]
-    return DashboardSnapshot(users=users, complaints=complaints, visitors=visitors, amenities=amenities, bookings=bookings, payments=payments, notices=notices, departments=departments, activities=activities)
+    return DashboardSnapshot(users=users, complaints=complaints, visitors=visitors, amenities=amenities, bookings=bookings, payments=payments, notices=notices, departments=departments, activities=activities, pendingRequests=pending_requests)
 
 
 def save_amenity(
@@ -237,16 +244,17 @@ def remove_amenity(membership: MembershipContext, amenity_id: str) -> None:
         raise NotFoundError("Amenity not found.")
 
 
-def event_stream(membership: MembershipContext, last_event_id: int) -> Iterator[str]:
-    """Yield tenant-authorized SSE events and heartbeat comments."""
-    client = get_service_client()
-    cursor = max(last_event_id, 0)
-    while True:
-        events = dashboard_repository.read_events(client, community_id=membership.community_id, after_id=cursor)
-        if events:
-            for event in events:
-                cursor = int(event["id"])
-                yield f"id: {cursor}\nevent: {event['topic']}\ndata: {event['payload']}\n\n"
-        else:
-            yield ": keepalive\n\n"
-            sleep(5)
+async def event_stream(
+    membership: MembershipContext, last_event_id: int
+) -> AsyncIterator[str]:
+    """Yield tenant-authorized SSE frames and heartbeat comments.
+
+    Delegates to the process-wide outbox poller in `app.core.realtime`. The
+    tenant check is here and only here: a subscriber is bound to the community
+    on its verified membership, so a client cannot widen its own stream by
+    replaying someone else's `Last-Event-ID`.
+    """
+    async for frame in hub.subscribe(
+        membership.community_id, last_event_id=max(last_event_id, 0)
+    ):
+        yield frame
