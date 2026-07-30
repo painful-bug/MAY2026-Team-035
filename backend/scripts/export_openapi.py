@@ -33,6 +33,7 @@ _PLACEHOLDERS = {
     "SUPABASE_ANON_KEY": "placeholder-anon-key",
     "SUPABASE_SERVICE_ROLE_KEY": "placeholder-service-role-key",
     "SUPABASE_JWT_SECRET": "placeholder-jwt-secret",
+    "COOKIE_SIGNING_SECRET": "placeholder-cookie-signing-secret-0123456789",
 }
 for _key, _value in _PLACEHOLDERS.items():
     os.environ.setdefault(_key, _value)

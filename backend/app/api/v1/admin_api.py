@@ -16,17 +16,17 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.routers import (
-    admin_overview,
     amenities,
     complaints,
     departments,
     money,
+    notices,
     people,
     settings,
 )
 
 admin_router = APIRouter()
-admin_router.include_router(admin_overview.router)
+admin_router.include_router(notices.router)
 admin_router.include_router(people.router)
 admin_router.include_router(complaints.router)
 admin_router.include_router(departments.router)

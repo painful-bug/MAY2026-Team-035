@@ -26,8 +26,8 @@ from app.domain.vocabularies import (
     department_status_to_storage,
     department_status_to_wire,
 )
-from app.repositories import admin_overview_repository as dash_repo
 from app.repositories import departments_repository as repo
+from app.repositories import tenancy_repository as dash_repo
 from supabase import Client
 
 _VALID_KINDS = ("service", "security")

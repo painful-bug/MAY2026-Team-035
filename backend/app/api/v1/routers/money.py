@@ -1,109 +1,46 @@
 """Invoice, payment and billing-settings routes.
 
-The admin dashboard's Maintenance screen is **read-only** -- it lists invoices
-and shows three tiles, and there is no way to bill anybody from it. The write
-endpoints here exist anyway, because a collections screen over a system that
-cannot issue an invoice reports on an empty table forever. Raised with the
-frontend team as agenda item 12.
+The money *reads* were removed after the frontend wiring audit
+(``docs/FRONTEND_WIRING_AUDIT.md``): ``GET /dashboard/snapshot`` projects
+``payments[]`` with invoices and payments already merged, and the Maintenance
+screen computes its three tiles client-side from that.
+
+What is left is the minimum coherent write path plus the two billing settings the
+Settings screen toggles. **Neither write has a UI caller today** -- Maintenance is
+read-only. They are kept rather than deleted because ``GET``/``PUT
+/billing-settings`` configures late fees and maintenance amounts, and settings that
+govern a billing engine with no way to issue or settle an invoice configure
+nothing at all. Raised with the frontend team as agenda item 12.
+
+**Recording a payment is admin-only, deliberately.** The resident Payments screen
+has a dead ``payInvoice`` action, and it must not be wired here: this endpoint
+marks money as *received* and settles the invoice, so exposing it to the payer
+would let a resident clear their own dues by asserting they had paid. Resident
+self-service needs a payment gateway whose webhook calls this, which is
+unbuilt (F2-adjacent, and now unblocked by the baseline's ``payments.provider`` and
+``idempotency_key`` columns).
 """
 
 from __future__ import annotations
 
-from datetime import date
+from fastapi import APIRouter, Depends, Path, status
 
-from fastapi import APIRouter, Depends, Path, Query, status
-
-from app.api.deps import get_current_user, get_request_client, require_role
-from app.domain.common_schemas import Page
+from app.api.admin_deps import require_admin, require_csrf_unsafe
+from app.api.deps import get_current_user, get_request_client
 from app.domain.money_schemas import (
     BillingSettings,
-    CollectionSummaryDetail,
     CreateInvoiceRequest,
     InvoiceDetail,
-    InvoiceSummary,
-    MaintenanceRunRequest,
-    MaintenanceRunResult,
-    PaymentSummary,
     RecordPaymentRequest,
     UpdateBillingSettingsRequest,
-    VoidInvoiceRequest,
 )
-from app.domain.roles import Role
 from app.services import money_service
 from supabase import Client
 
-router = APIRouter(tags=["money"], dependencies=[Depends(require_role(Role.ADMIN))])
-
-
-@router.get("/invoices", response_model=Page[InvoiceSummary], summary="List invoices")
-async def list_invoices(
-    search: str | None = Query(
-        None,
-        max_length=100,
-        alias="q",
-        description=(
-            "Matches the invoice title, its number, the flat code and the "
-            "current resident's name -- the fields the collections search box "
-            "covers."
-        ),
-    ),
-    status_filter: str | None = Query(
-        None,
-        alias="status",
-        description="Paid | Unpaid | Void | All. A partially paid invoice is Unpaid.",
-    ),
-    unit_id: str | None = Query(None, alias="unitId"),
-    invoice_type: str | None = Query(
-        None, alias="invoiceType", description="maintenance | amenity | penalty | misc"
-    ),
-    overdue_only: bool = Query(False, alias="overdueOnly"),
-    issued_from: date | None = Query(None, alias="issuedFrom"),
-    issued_to: date | None = Query(None, alias="issuedTo"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> Page[InvoiceSummary]:
-    """The maintenance collections table, newest due date first.
-
-    ``amount`` is what the flat was billed, not what it still owes -- the column
-    is headed "Amount". ``outstanding`` carries the balance, and
-    ``GET /invoices/summary`` is the authority on the totals: deriving them by
-    summing this page gives the total of a page, not of the community.
-    """
-    return money_service.list_invoices(
-        client,
-        principal.user_id,
-        search=search,
-        status=status_filter,
-        unit_id=unit_id,
-        invoice_type=invoice_type,
-        overdue_only=overdue_only,
-        issued_from=issued_from,
-        issued_to=issued_to,
-        page=page,
-        page_size=page_size,
-    )
-
-
-@router.get(
-    "/invoices/summary",
-    response_model=CollectionSummaryDetail,
-    summary="Collection totals",
+router = APIRouter(
+    tags=["money"],
+    dependencies=[Depends(require_admin), Depends(require_csrf_unsafe)],
 )
-async def get_collection_summary(
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> CollectionSummaryDetail:
-    """The three tiles at the top of the Maintenance screen.
-
-    Aggregated by Postgres over every invoice in the community, so the figures do
-    not change when the list is paged. ``totalOutstanding`` sums the outstanding
-    *balances*, so a partially paid invoice contributes only what is still owed.
-
-    A community with no invoices reports zeros with HTTP 200, never a 404.
-    """
-    return money_service.get_collection_summary(client, principal.user_id)
 
 
 @router.post(
@@ -128,18 +65,6 @@ async def create_invoice(
     date precedes the issue date.
     """
     return money_service.create_invoice(client, principal.user_id, body)
-
-
-@router.get(
-    "/invoices/{invoice_id}", response_model=InvoiceDetail, summary="Get an invoice"
-)
-async def get_invoice(
-    invoice_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> InvoiceDetail:
-    """One invoice with its line items and every payment recorded against it."""
-    return money_service.get_invoice(client, principal.user_id, invoice_id)
 
 
 @router.post(
@@ -167,88 +92,6 @@ async def record_payment(
     """
     return money_service.record_payment(
         client, principal.user_id, invoice_id, body
-    )
-
-
-@router.post(
-    "/invoices/{invoice_id}/void",
-    response_model=InvoiceDetail,
-    summary="Void an invoice",
-)
-async def void_invoice(
-    body: VoidInvoiceRequest,
-    invoice_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> InvoiceDetail:
-    """Cancel an invoice.
-
-    **There is no DELETE for money.** The invoice, its lines and its number stay
-    in place and are marked void -- an invoice number that vanishes is a gap
-    somebody has to account for later.
-
-    Returns 409 once any payment has succeeded against it: cancelling a bill
-    somebody has already paid would strand their money against nothing.
-    """
-    return money_service.void_invoice(
-        client, principal.user_id, invoice_id, body.reason
-    )
-
-
-@router.post(
-    "/maintenance-runs",
-    response_model=MaintenanceRunResult,
-    status_code=status.HTTP_201_CREATED,
-    summary="Run maintenance billing",
-)
-async def run_maintenance_billing(
-    body: MaintenanceRunRequest,
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> MaintenanceRunResult:
-    """Issue one maintenance invoice per **occupied** flat for a billing period.
-
-    **Safe to repeat.** A second run for the same period reports every flat as
-    skipped and bills nobody; the guard is a partial unique index, so it holds
-    even if two admins click at the same moment.
-
-    The amount comes from ``billingSettings.defaultMaintenanceAmount`` unless
-    overridden here. With neither set the call returns **409** rather than
-    falling back to a number nobody chose -- the frontend's hardcoded 4250 is a
-    demo value and adopting it would bill a real community by accident.
-
-    Vacant flats are not billed, because nothing in the product records who owns
-    an empty one (DECISIONS_NEEDED A14).
-    """
-    return money_service.run_maintenance_billing(client, principal.user_id, body)
-
-
-@router.get("/payments", response_model=Page[PaymentSummary], summary="List payments")
-async def list_payments(
-    search: str | None = Query(None, max_length=100, alias="q"),
-    method: str | None = Query(
-        None,
-        description="UPI | Credit Card | Net Banking | Cash | Cheque | Bank Transfer",
-    ),
-    invoice_id: str | None = Query(None, alias="invoiceId"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> Page[PaymentSummary]:
-    """The collection log the Maintenance screen's subtitle promises.
-
-    Every payment received, newest first, across all invoices -- which is a
-    different question from "what does this flat owe" and needs its own list.
-    """
-    return money_service.list_payments(
-        client,
-        principal.user_id,
-        search=search,
-        method=method,
-        invoice_id=invoice_id,
-        page=page,
-        page_size=page_size,
     )
 
 

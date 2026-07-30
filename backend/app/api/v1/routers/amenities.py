@@ -9,28 +9,33 @@ Two routes are deliberately not admin-only:
 
 * ``POST /amenities/{id}/bookings/request`` is the resident's booking flow. It is
   here in an admin-scoped build because otherwise the approvals tab is a screen
-  that can never have anything on it -- the same argument step 7 made for the
-  invoice write endpoints.
+  that can never have anything on it.
 * ``POST /amenity-bookings/cancel`` serves both. Which days you may cancel is
   decided by the database from your role, not by a flag in the body.
 
 Everything else requires ADMIN.
+
+**Amenity CRUD is not here.** ``POST``/``PUT``/``DELETE /dashboard/amenities``
+already serves it and ``features/amenities/services/amenitiesService.js`` already
+calls it, so our six catalogue endpoints were removed as duplicates -- see
+``docs/FRONTEND_WIRING_AUDIT.md``. What survives is the booking, approval, ledger
+and report surface, which is the "follow-up integration boundary" their own
+``docs/FRONTEND_CHANGES.md`` names: 17 booking service functions and 5 ledger
+functions that make zero API calls today.
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.api.deps import get_current_user, get_request_client, require_role
+from app.api.admin_deps import require_admin, require_csrf_unsafe
+from app.api.deps import get_current_user, get_request_client
 from app.domain.amenity_schemas import (
     AddChargeRequest,
     AdminBookingRequest,
-    AmenityDetail,
     AmenityReport,
-    AmenityStatusRequest,
-    AmenitySummary,
     ApprovalRequest,
     BlockSlotRequest,
     BookingSummary,
@@ -43,169 +48,18 @@ from app.domain.amenity_schemas import (
     RefundDepositRequest,
     RejectBookingRequest,
     ResidentBookingRequest,
-    SaveAmenityRequest,
 )
 from app.domain.common_schemas import MessageResult, Page
-from app.domain.roles import Role
 from app.services import amenities_service
 from supabase import Client
 
-router = APIRouter(tags=["amenities"])
+router = APIRouter(tags=["amenities"], dependencies=[Depends(require_csrf_unsafe)])
 
-_admin = Depends(require_role(Role.ADMIN))
+_admin = Depends(require_admin)
 
 
 # ---------------------------------------------------------------------------
 # Catalogue
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/amenities",
-    response_model=Page[AmenitySummary],
-    summary="List amenities",
-    dependencies=[_admin],
-)
-async def list_amenities(
-    search: str | None = Query(None, max_length=100, alias="q"),
-    category: str | None = Query(
-        None, description="Sports | Fitness | Recreation | Events | Utility"
-    ),
-    status_filter: str | None = Query(
-        None, alias="status", description="Active | Inactive | All"
-    ),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(24, ge=1, le=100, alias="pageSize"),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> Page[AmenitySummary]:
-    """The catalogue grid, alphabetically.
-
-    ``pendingRequests`` and ``outstandingDues`` are derived from the approvals
-    queue and the ledger rather than stored, so the two badges on a card cannot
-    disagree with the tabs they link to. The seeded data stores both as constants
-    and they are already wrong there.
-
-    Inactive amenities are included: the resident screen renders them greyed out
-    rather than hiding them, so filtering them away here would change what
-    residents see.
-    """
-    return amenities_service.list_amenities(
-        client,
-        principal.user_id,
-        search=search,
-        category=category,
-        status=status_filter,
-        page=page,
-        page_size=page_size,
-    )
-
-
-@router.post(
-    "/amenities",
-    response_model=AmenityDetail,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create an amenity",
-    dependencies=[_admin],
-)
-async def create_amenity(
-    body: SaveAmenityRequest,
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> AmenityDetail:
-    """Create an amenity, with a full settings row from the defaults.
-
-    Returns 409 when the community already has an amenity of that name -- one
-    unique index, so two admins creating "Clubhouse Gym" at the same moment
-    cannot both succeed.
-    """
-    return amenities_service.save_amenity(client, principal.user_id, body)
-
-
-@router.get(
-    "/amenities/{amenity_id}",
-    response_model=AmenityDetail,
-    summary="Get an amenity",
-    dependencies=[_admin],
-)
-async def get_amenity(
-    amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> AmenityDetail:
-    """One amenity with all five settings groups the settings tab edits."""
-    return amenities_service.get_amenity(client, principal.user_id, amenity_id)
-
-
-@router.patch(
-    "/amenities/{amenity_id}",
-    response_model=AmenityDetail,
-    summary="Update an amenity",
-    dependencies=[_admin],
-)
-async def update_amenity(
-    body: SaveAmenityRequest,
-    amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> AmenityDetail:
-    """Update the catalogue fields, the settings, or both, in one transaction.
-
-    The settings tab saves thirty fields on one click; splitting that across two
-    calls would let the second fail after the first had already been written.
-    A field left out is left alone.
-    """
-    return amenities_service.save_amenity(
-        client, principal.user_id, body, amenity_id=amenity_id
-    )
-
-
-@router.patch(
-    "/amenities/{amenity_id}/status",
-    response_model=AmenityDetail,
-    summary="Activate or deactivate an amenity",
-    dependencies=[_admin],
-)
-async def set_amenity_status(
-    body: AmenityStatusRequest,
-    amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> AmenityDetail:
-    """The availability toggle on the card.
-
-    Its own route rather than a partial update, because the toggle sends one
-    boolean and routing it through a twelve-field patch is how a toggle ends up
-    blanking a description.
-    """
-    return amenities_service.set_amenity_status(
-        client, principal.user_id, amenity_id, body.is_active
-    )
-
-
-@router.delete(
-    "/amenities/{amenity_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an amenity",
-    dependencies=[_admin],
-)
-async def delete_amenity(
-    amenity_id: str = Path(...),
-    client: Client = Depends(get_request_client),
-) -> Response:
-    """Delete an amenity nobody has booked.
-
-    Returns 409 once anything has been booked on it, naming the count and
-    pointing at deactivation instead: the cascade would take the bookings, their
-    charges and their financial events with it, including deposits residents are
-    still owed.
-    """
-    amenities_service.delete_amenity(client, amenity_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ---------------------------------------------------------------------------
-# Bookings
 # ---------------------------------------------------------------------------
 
 

@@ -1,18 +1,26 @@
 """Department and staff routes.
 
-Complaints belonging to a department are *not* served here -- ``GET
-/api/v1/complaints?departmentId=...`` already does that, and a second endpoint
-returning the same rows in the same shape is a second thing to keep correct.
+**These reads survived the wiring audit, unlike every other read we built.** The
+shared ``GET /dashboard/snapshot`` does project ``departments[]``, but it builds
+each one as ``{"staff": [], "categories": []}`` -- literally empty lists
+(``dashboard_service.py:203``). ``Departments.jsx`` (1 095 lines) and
+``DepartmentDetail.jsx`` (713 lines) are built around staff rosters, so the
+snapshot cannot feed them and these endpoints are the only source. See
+``docs/FRONTEND_WIRING_AUDIT.md``.
+
+Complaints belonging to a department are *not* served here. That used to point at
+``GET /api/v1/complaints?departmentId=...``, which the audit removed; the queue now
+comes from the snapshot's ``complaints[]``, which carries ``departmentId``.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.api.deps import get_current_user, get_request_client, require_role
+from app.api.admin_deps import require_admin, require_csrf_unsafe
+from app.api.deps import get_current_user, get_request_client
 from app.domain.common_schemas import MessageResult, Page
 from app.domain.department_schemas import (
-    ComplaintCategorySummary,
     CreateDepartmentRequest,
     DepartmentDetail,
     ReplaceStaffRequest,
@@ -21,12 +29,12 @@ from app.domain.department_schemas import (
     UpdateDepartmentRequest,
     UpdateStaffMemberRequest,
 )
-from app.domain.roles import Role
 from app.services import departments_service
 from supabase import Client
 
 router = APIRouter(
-    tags=["departments"], dependencies=[Depends(require_role(Role.ADMIN))]
+    tags=["departments"],
+    dependencies=[Depends(require_admin), Depends(require_csrf_unsafe)],
 )
 
 
@@ -247,22 +255,3 @@ async def remove_staff_member(
         client, principal.user_id, department_id, staff_id
     )
     return MessageResult(message="Staff member removed.")
-
-
-@router.get(
-    "/complaint-categories",
-    response_model=Page[ComplaintCategorySummary],
-    summary="List complaint categories",
-)
-async def list_categories(
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> Page[ComplaintCategorySummary]:
-    """The category vocabulary behind the department form's checkbox list.
-
-    ``departmentIds`` carries every department claiming the category. More than
-    one entry is the case where the SLA tie-break in migration 0011 decides which
-    deadline applies -- exposed rather than hidden, because it is the open
-    product question in `DECISIONS_NEEDED.md` A1.
-    """
-    return departments_service.list_categories(client, principal.user_id)

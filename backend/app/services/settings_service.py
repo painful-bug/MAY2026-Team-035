@@ -38,8 +38,8 @@ from app.domain.vocabularies import (
     community_type_label,
     late_fee_period_to_wire,
 )
-from app.repositories import admin_overview_repository as dash_repo
 from app.repositories import settings_repository as repo
+from app.repositories import tenancy_repository as dash_repo
 from supabase import Client
 
 __all__ = [

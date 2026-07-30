@@ -1,28 +1,16 @@
-"""DTOs for the People surfaces: residents, admins, registration requests."""
+"""DTOs for the People surface: administrators.
+
+The resident, registration-request and resident-update DTOs were removed with
+their endpoints -- see ``docs/FRONTEND_WIRING_AUDIT.md``.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.domain.common_schemas import CamelModel
-
-
-class RegistrationRequestSummary(CamelModel):
-    """One pending self-signup awaiting admin review."""
-
-    id: str
-    name: str
-    email: str | None = None
-    phone: str
-    # `flat` is the canonical code ('C-505'); `tower` is derived from it for the
-    # frontend, which renders the two separately.
-    flat: str
-    tower: str | None = None
-    status: str
-    date: str
-    submitted_at: datetime
 
 
 class AdminSummary(CamelModel):
@@ -44,39 +32,25 @@ class AdminSummary(CamelModel):
     joined_at: datetime
 
 
-class UpdateResidentRequest(CamelModel):
-    """Editable fields on a resident.
+class PromoteAdminRequest(CamelModel):
+    """Body for ``POST /admins``.
 
-    Every field is optional: this is a PATCH, and omitting a field leaves it
-    unchanged. Explicitly sending ``null`` clears it.
+    ``email`` identifies an existing member. The other four fields are accepted
+    and ignored: the Admins screen sends them, but a promotion must not rewrite
+    the member's profile or move them to a different flat. See the endpoint
+    docstring.
     """
 
+    email: str = Field(min_length=3, max_length=320)
     name: str | None = Field(None, max_length=200)
-    email: str | None = Field(None, max_length=320)
     phone: str | None = Field(None, max_length=32)
-    designation: str | None = Field(None, max_length=100)
+    tower: str | None = Field(None, max_length=50)
+    flat: str | None = Field(None, max_length=50)
 
-
-class RejectRegistrationRequest(CamelModel):
-    """Body for rejecting a registration request."""
-
-    reason: str | None = Field(None, max_length=500)
-
-
-class ApprovedRegistration(CamelModel):
-    """Result of approving a registration request.
-
-    Approval mints an **invitation**, it does not create an active account: the
-    invite token is a mandatory second factor. ``link`` and ``code`` are shown to
-    the admin exactly once and are never recoverable -- only their digests are
-    stored.
-    """
-
-    request_id: str
-    invitation_id: str
-    link: str
-    code: str
-    phone: str
-    flat: str
-    name: str | None = None
-    expires_at: datetime
+    @field_validator("email")
+    @classmethod
+    def _email_shape(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("A valid email address is required.")
+        return value

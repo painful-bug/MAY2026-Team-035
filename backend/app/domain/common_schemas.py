@@ -1,6 +1,6 @@
 """DTO building blocks shared by every dashboard surface.
 
-Lifted out of ``dashboard_schemas`` once a second surface (people) needed them:
+Lifted out of the old dashboard schemas once a second surface (people) needed them:
 a module named for one screen is the wrong home for the base class every screen
 inherits.
 """
@@ -18,7 +18,7 @@ T = TypeVar("T")
 class CamelModel(BaseModel):
     """Base DTO: accepts snake_case in Python, emits camelCase on the wire.
 
-    See ``app/domain/dashboard_schemas`` for why ``/auth/*`` does not use this.
+    See ``docs/API.md`` for why ``/auth/*`` does not use this.
     """
 
     model_config = ConfigDict(

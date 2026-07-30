@@ -23,12 +23,23 @@ _SPEC_PATH = Path(__file__).resolve().parents[2] / "docs" / "openapi.yaml"
 
 #: Everything reachable without a token. Adding to this list is a security
 #: decision, so it is written out here rather than inferred.
+#:
+#: The OTP and redeem entries are gone: Google-only OAuth replaced them and the
+#: routes no longer exist. What replaced them is cookie-based, and a cookie is not
+#: an OpenAPI security scheme the generator can see -- so the sign-in handshake and
+#: logout legitimately declare none. Each is listed individually rather than
+#: skipping the whole ``/auth`` prefix, so a new authenticated auth route cannot
+#: inherit an exemption by sitting next to a public one.
 _PUBLIC_PATHS = {
     "/health",
-    "/api/v1/auth/otp/request",
-    "/api/v1/auth/otp/verify",
+    "/api/v1/auth/methods",
+    "/api/v1/auth/google/start",
+    "/api/v1/auth/google/callback",
     "/api/v1/auth/refresh",
-    "/api/v1/auth/redeem",
+    "/api/v1/auth/logout",
+    # Exchanges an invite token+code for a short-lived signed cookie. Called
+    # before the user has signed in -- that is the point of it.
+    "/api/v1/invitations/prepare",
 }
 
 
@@ -55,20 +66,22 @@ def test_checked_in_spec_matches_the_code():
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v1/dashboard/admin",
-        "/api/v1/residents",
+        # Ours, one per surviving router.
         "/api/v1/admins",
-        "/api/v1/registrations",
-        "/api/v1/complaints",
+        "/api/v1/notices",
+        "/api/v1/complaints/{complaint_id}",
         "/api/v1/departments",
-        "/api/v1/complaint-categories",
         "/api/v1/invoices",
-        "/api/v1/payments",
         "/api/v1/billing-settings",
-        "/api/v1/amenities",
         "/api/v1/amenity-reports",
         "/api/v1/settings",
-        "/api/v1/settings/modules",
+        # Theirs. Listed because our admin_router is mounted from the same
+        # aggregator, so a mistake there could drop their routes instead of ours.
+        "/api/v1/dashboard/snapshot",
+        "/api/v1/auth/session",
+        "/api/v1/admin/access-requests",
+        "/api/v1/communities/search",
+        "/api/v1/onboarding/community",
     ],
 )
 def test_every_router_is_mounted(path):
@@ -79,6 +92,30 @@ def test_every_router_is_mounted(path):
     notice is whoever calls them.
     """
     assert path in _spec()["paths"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/dashboard/admin",
+        "/api/v1/residents",
+        "/api/v1/registrations",
+        "/api/v1/complaints",
+        "/api/v1/complaint-categories",
+        "/api/v1/payments",
+        "/api/v1/amenities",
+        "/api/v1/settings/modules",
+    ],
+)
+def test_retired_endpoints_stay_retired(path):
+    """Paths deliberately removed by the frontend wiring audit.
+
+    Each was either duplicating an endpoint the frontend already calls or serving
+    a read the shared dashboard snapshot serves. Re-adding one is a decision, not
+    an accident, so it should have to delete a line here first. See
+    ``docs/FRONTEND_WIRING_AUDIT.md``.
+    """
+    assert path not in _spec()["paths"]
 
 
 def test_no_protected_endpoint_is_missing_its_auth_dependency():

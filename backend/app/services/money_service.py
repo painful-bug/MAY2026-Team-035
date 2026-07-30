@@ -40,8 +40,8 @@ from app.domain.vocabularies import (
     payment_method_to_storage,
     payment_method_to_wire,
 )
-from app.repositories import admin_overview_repository as dash_repo
 from app.repositories import money_repository as repo
+from app.repositories import tenancy_repository as dash_repo
 from supabase import Client
 
 _VALID_INVOICE_TYPES = ("maintenance", "amenity", "penalty", "misc")
