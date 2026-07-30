@@ -3,12 +3,89 @@
 
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+  /*
+   * HomeBandhu palette
+   * Warm beige is the shared canvas, olive is the primary/secondary action
+   * colour, and marigold is reserved for highlights and attention states.
+   */
+  --color-white: #fffdf7;
+
+  --color-slate-50: #f8f3e8;
+  --color-slate-100: #eee6d6;
+  --color-slate-150: #e8deca;
+  --color-slate-200: #ddd1b9;
+  --color-slate-300: #c7b89b;
+  --color-slate-350: #b5a78c;
+  --color-slate-400: #786f5d;
+  --color-slate-450: #756c5b;
+  --color-slate-500: #716958;
+  --color-slate-550: #625c4d;
+  --color-slate-600: #554f42;
+  --color-slate-650: #494439;
+  --color-slate-700: #403c32;
+  --color-slate-750: #38352c;
+  --color-slate-800: #302e27;
+  --color-slate-805: #2e2c25;
+  --color-slate-850: #2a2922;
+  --color-slate-855: #282720;
+  --color-slate-900: #24231e;
+  --color-slate-950: #181914;
+
+  --color-indigo-50: #f1f2e5;
+  --color-indigo-100: #e1e5c9;
+  --color-indigo-150: #d5dab6;
+  --color-indigo-200: #cad1a5;
+  --color-indigo-300: #abb878;
+  --color-indigo-400: #889853;
+  --color-indigo-500: #6f8140;
+  --color-indigo-600: #586b32;
+  --color-indigo-650: #4f612d;
+  --color-indigo-655: #4c5e2b;
+  --color-indigo-700: #465728;
+  --color-indigo-750: #3d4d23;
+  --color-indigo-755: #3a4a21;
+  --color-indigo-800: #34431e;
+  --color-indigo-900: #2b381a;
+  --color-indigo-950: #202b13;
+
+  --color-amber-50: #fff6de;
+  --color-amber-100: #fde8b0;
+  --color-amber-200: #f8d77b;
+  --color-amber-300: #f3c454;
+  --color-amber-400: #eeac2d;
+  --color-amber-500: #e7971f;
+  --color-amber-600: #b45f0d;
+  --color-amber-605: #b05d0d;
+  --color-amber-700: #a9580e;
+  --color-amber-800: #874511;
+  --color-amber-900: #713a13;
+}
+
+html {
+  background-color: #f4efe3;
 }
 
 body {
+  margin: 0;
   font-family: var(--font-sans);
-  background-color: #f8fafc;
-  color: #1e293b;
+  background-color: #f4efe3;
+  color: #302e27;
+}
+
+::selection {
+  background: #f3c454;
+  color: #24231e;
+}
+
+:focus-visible {
+  outline-color: #e7971f;
+}
+
+input,
+select,
+textarea {
+  accent-color: #586b32;
 }
 
 /* Custom scrollbar for premium look */
@@ -22,12 +99,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #c7b89b;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #889853;
 }
 
 /* Slide Up and Fade In animation for toast and modals */

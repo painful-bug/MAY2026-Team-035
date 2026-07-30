@@ -116,8 +116,8 @@ export default function DashboardHome() {
         width: 320,
         margin: 2,
         color: {
-          dark: '#1e1b4b',
-          light: '#ffffff',
+          dark: '#2b381a',
+          light: '#fffdf7',
         },
         errorCorrectionLevel: 'M',
       });

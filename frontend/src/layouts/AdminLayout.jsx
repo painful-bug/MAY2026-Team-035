@@ -90,7 +90,7 @@ export default function AdminLayout() {
                 className={({ isActive }) => `
                   flex items-center justify-between px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200
                   ${isActive 
-                    ? 'bg-indigo-650 text-white shadow-md shadow-indigo-900/30' 
+                    ? 'border-l-4 border-amber-400 bg-indigo-650 text-white shadow-md shadow-indigo-900/30'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'}
                 `}
               >
