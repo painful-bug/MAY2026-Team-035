@@ -50,3 +50,8 @@ tmp/
 temp/
 *.tmp
 *.temp
+
+# Python
+__pycache__/
+*.pyc
+.venv/

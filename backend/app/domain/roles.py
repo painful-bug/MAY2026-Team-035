@@ -17,6 +17,23 @@ this requirement" and is used by both the API guards and the tests.
 
 from __future__ import annotations
 
+# The stored vocabulary is uppercase (public.user_role); the React app renders
+# 'Admin' / 'Resident' / 'Security'. Mapping lives here rather than in the
+# database so that open decision 2 (reconciling the enum with the ERD's lowercase
+# vocabulary) stays free to be settled either way.
+_DISPLAY_ROLE = {
+    "RESIDENT": "Resident",
+    "ADMIN": "Admin",
+    "MANAGER": "Manager",
+    "TECHNICIAN": "Technician",
+    "SECURITY": "Security",
+}
+
+
+def display_role(role: str) -> str:
+    """Return the label the frontend renders for a stored role value."""
+    return _DISPLAY_ROLE.get(role, role.title())
+
 from enum import Enum
 
 

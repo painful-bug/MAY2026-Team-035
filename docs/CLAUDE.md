@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 "HomeBandhu" — a residential society/apartment management app. React 19 + Vite + Tailwind CSS v4. There is **no backend**: all data lives in a Zustand store seeded from static arrays in `frontend/src/data/`. State is persisted to browser storage, so it survives reloads and syncs across tabs.
 
-Monorepo (npm workspaces): all app code is in `frontend/`; `backend/` is an empty placeholder for a future server.
+Monorepo (npm workspaces): all frontend code is in `frontend/`. **`backend/` is not empty** — it holds a FastAPI + Supabase service (`app/` layered as `api` → `services` → `repositories`, with `supabase/migrations/*.sql`) covering auth, invitations and the admin dashboard. It is not yet wired to the frontend: the frontend still runs entirely on its seeded Zustand store, so everything below describes a demo that works with no server running. See `docs/ADMIN_DASHBOARD_BUILD_PLAN.md`.
 
 ## Commands
 

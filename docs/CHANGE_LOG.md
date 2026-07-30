@@ -1,0 +1,1420 @@
+# Design change log
+
+Every change made to the design artifacts in `docs/`, with the reason for it.
+
+This file exists because the backend design is being derived from a frontend prototype, a class
+diagram, an ERD and a component design that were written independently and disagree with each other
+in places. When one of them changes, the *reason* is the part that is expensive to reconstruct later
+— six weeks from now "why is `department_kind` not a list of trades?" is a much harder question than
+"what is `department_kind`?". So the reason is recorded here, next to the change, at the time.
+
+**Scope.** Design artifacts under `docs/` only. Application code has its own history in git.
+
+**Convention for new entries.** Newest session first. Within a session, group by artifact. Each entry
+names *what* changed, *why*, and *who decided* — `PO` for a product-owner ruling, `DERIVED` for a
+consequence of one, `AUDIT` for something found by comparing artifacts against each other. A ruling
+that overturns something already written says so explicitly, including what it overturned.
+
+---
+
+## 2026-07-30 — Session 16: the auth team's `origin/main` turns out to contain the whole domain
+
+PO instruction: a copy of `origin/main` was handed over as *"the changes made by the backend team with
+regard to login and authentication"*, with the ask to refactor our work onto it, find the conflicts, and
+**produce a plan before implementing anything**. No code or migration has been changed yet. — `PO`
+
+### `docs/SCHEMA_RECONCILIATION_PLAN.md` — **new file**
+
+- **The premise of the handover is wrong, and that is the finding.** Commit `0fffb68` is not an auth
+  change: it ships **1,831 lines of SQL implementing the entire application domain** — 48 tables, RLS on
+  all of them, three workflow RPCs — plus a new 868-line ERD that matches it. **Sixteen of those tables
+  are tables we also built, under the same names, with different columns.** So the task is reconciling
+  two independent implementations of one domain, not adapting to a new login flow. Recorded first,
+  because it changes what "refactor" means. — `AUDIT`
+- **Seven of our open items are closed by their work**, and the plan says so before it lists a single
+  conflict: §1.1 (privilege escalation — `handle_new_user()` no longer reads the role from signup
+  metadata), §1.2 (closed **differently** — `is_admin()` is still global but is now used by *zero*
+  policies; all 50 read policies use new per-community helpers), C1 (email, as `display_email`), C2
+  (they took exactly `0004`–`0005`), C3 (they reached our set-returning conclusion independently), C6/F5
+  (`.venv` untracked), D1 (the rename we deferred has happened). — `AUDIT`
+- **Their JWT contract is compatible with ours** — the access-token hook emits `user_role` uppercase,
+  which is what our `deps.py` already parses. The auth seam needs no change, which is the one thing the
+  handover *was* about. — `AUDIT`
+- **The blast radius is SQL, not Python.** Our API layer reaches the database through our own views and
+  RPCs; across `app/` there are only **11** references to any renamed table. Rewriting 12 views is what
+  buys back most of 70 endpoints — this is the fact the whole plan is built on. — `DERIVED`
+- **One function is the linchpin.** `get_caller_community_id()` reads `profiles.association_id`, which
+  their `0004` renames to `legacy_community_id` and stops maintaining. **Every one of our 70 operations
+  calls it**, and it is a one-function fix. — `AUDIT`
+- **Their exclusion constraint reproduces the bug we filed as A18.** `amenity_booking_occurrences` has a
+  **blanket** overlap exclusion while `amenities` carries `capacity` and `booking_mode` — so capacity is
+  unreachable, exactly the frontend bug (A18/E17) now in the database. Logged as a push-back with a patch
+  rather than something to work around: **their tables now, so their fix.** — `AUDIT`
+- **Their RLS grants no admin write anywhere** — 50 SELECT policies, 3 resident INSERTs, 1 UPDATE. Our 32
+  RPC writes fit that model; our **9 direct PostgREST writes do not** and must become RPCs. — `AUDIT`
+- **Recommendation recorded with its reasoning, not just its conclusion:** their schema becomes the base
+  and ours becomes additive `0018`+, because theirs is merged and ours is not, because neither has been
+  applied so both are equally unproven, and because what we actually contributed — the API layer, the
+  vocabulary translation, billing settings, the SLA taxonomy, amenity settings, module metadata — all
+  survives the move. **Three push-backs are named** where adopting theirs would be wrong. — `DERIVED`
+- **Their ERD and their migration disagree**: the `.dbml` has 48 tables and omits `feature_catalog` and
+  `community_features`, which `0004` creates and `0005` writes policies for. Flagged for them rather than
+  absorbed. — `AUDIT`
+- **Two questions are held open rather than assumed**: whether the recommended direction is accepted, and
+  whether our work may be committed before merging 1,831 lines of someone else's SQL into an uncommitted
+  tree — the one step in the plan that could lose work irrecoverably. — `PO`
+
+---
+
+## 2026-07-30 — Session 15: build step 9 (settings — community preferences and feature modules)
+
+PO instruction: **proceed with step 9**, then, partway through: *"break it down into smaller sub steps
+that you can do one at a time."* The build plan's line for this step is one sentence — *"Only
+`community_modules` and real community settings. Billing and late fines are not settings."* — and the
+work under it turned out to be the widest of any step relative to that sentence. **Working order is now
+the PO's to set**, and the documentation pass was done as five separately-reported sub-steps rather
+than one. — `PO`
+
+### The finding that made this step different from every other one — `AUDIT`
+
+**The admin Settings screen has never saved anything.** `pages/AdminDashboard/Settings.jsx` is 135
+lines: four `useState` toggles and
+
+```js
+const handleSave = () => { showToast('Admin Settings Saved Successfully', 'success'); };
+```
+
+No store slice, no service module, no persistence. An admin flips four switches, is told they saved,
+and loses all four on reload. It is the only screen in the product whose save button is a lie.
+
+**The consequence for this step is structural, not cosmetic**: every other section of `API.md`
+reproduces a shape the frontend already has, and here there was nothing to match, so **the field names
+are ours**. That is worth the frontend team's attention *now*, while nothing depends on them — raised
+as `DECISIONS_NEEDED.md` B17 and agenda item 17.
+
+### The second finding: the four toggles are four different kinds of thing — `AUDIT`
+
+One card, four switches, and no two of them belong to the same subsystem:
+
+| Screen label | What it actually is | Where it landed |
+|---|---|---|
+| Automated Monthly Maintenance | billing | `community_billing_settings.auto_billing_enabled` |
+| Late Payment Fine Charges | billing, for a feature that does not exist | `community_billing_settings.late_fee_enabled` |
+| Gate Security App Pre-approvals | a visitor policy, with no visitor backend | `community_settings.require_visitor_preapproval` |
+| Urgent Notice SMS Broadcast | a notification policy, with no SMS provider | `community_settings.notice_sms_broadcast_enabled` |
+
+**One table would have been the mistake.** The first two are money and money already had a home from
+`0015` — which is what the build plan's "billing and late fines are not settings" means in practice.
+The last two describe features that exist only as frontend dummy data. All four are readable in one
+`GET /settings` because the screen draws them together; **the billing pair is read-only there**, since
+two writers is how one rate starts disagreeing with itself. — `DERIVED`
+
+**Three of the four are stored and read by nothing, and `API.md` §11 says so out loud** rather than
+leaving it to be discovered: nothing runs billing on a schedule, nothing charges a late fee, and there
+is no visitor table or SMS provider in the repository. Storing them is still the point — the screen
+currently *loses* them. Raised as A22 (🔴) and A23 (🟡).
+
+### `0017_settings.sql` — **new migration**, two tables, two views, five functions
+
+- **The ERD's `enabled_modules jsonb` became a table.** A jsonb array cannot record **when** a module
+  was switched off or **by whom**, and that is the first question anyone asks after it happens.
+  `community_modules` (from `0011`) already carried both columns; `0017` adds `module_catalogue` beside
+  it, because the ERD names a home for the module *selection* and none for the module *definitions*.
+  — `AUDIT`
+- **The catalogue drives both views, not `community_modules`.** `cross join` the catalogue, `left join`
+  the community's rows: a community missing a row for a key reads as that key's default with
+  `isDefault: true` rather than the key vanishing from the list. An eleventh module added later appears
+  everywhere immediately. — `DERIVED`
+- **Module enforcement was deliberately not implemented**, and the two reasons are only visible from
+  the seed data. `amenities-booking` ships **disabled** (`onboardingModules.js` has
+  `defaultEnabled: false`, and `0011` seeded it that way), so enforcing the rule would `403` **all
+  twenty-two step-8 endpoints on every community that exists** — a data-driven outage rather than a
+  feature. And six of the ten modules have no backend to gate, so the rule would be real for four keys
+  and decorative for six. **What replaced it is `module_catalogue.backend_status`**
+  (`implemented` / `partial` / `none`) plus a per-module note, so the state is reported honestly rather
+  than enforced wrongly. A24 (🔴). — `AUDIT`
+- **Nothing in the frontend gates on a module either.** `AdminLayout.jsx:34-43` is a fixed ten-item nav
+  array, and no route, screen or store reads `enabledModules` — so enabling or disabling a module
+  currently changes nothing anywhere, on either side. — `AUDIT`
+- **`community_settings` holds only what had no home**: `timezone`, `unit_label_singular`,
+  `invite_ttl_hours`, `visitor_code_ttl_minutes`, the two policy toggles, and `version`. The ERD also
+  puts `default_currency_code` and `invoice_number_prefix` here; `0015` had already put them in
+  `community_billing_settings`. Recorded with the rest as D8. — `DERIVED`
+- **This step answers A10, and it vindicates `0016` rather than reversing it.** `timezone` now exists
+  and is a real IANA name. A booking made for 07:00 must still read 07:00 after somebody *corrects* a
+  wrong timezone, which is only true because `0016` stores wall-clock `date` + `time`. What the
+  timezone unlocks is anything needing an absolute instant. — `DERIVED`
+- **The timezone is validated in the RPC against `pg_timezone_names`, not by a `CHECK`.** A `CHECK` must
+  be immutable and the timezone catalogue is loaded from the host and changes between Postgres
+  releases. The catalogue's spelling is what gets stored, so `asia/kolkata` saves as `Asia/Kolkata`.
+  — `DERIVED`
+- **Two cross-field `CHECK`s give the billing toggles teeth**: `auto_billing_enabled` cannot be true
+  while `default_maintenance_amount` is null, and `late_fee_enabled` cannot be true without
+  `late_fee_amount > 0`. A `BEFORE` trigger raises `HB409` with a message naming the field; the
+  `CHECK`s remain as backstops against direct SQL. **A patch that silently ignored the key would be
+  worse than one that fails** — the API would return `200` and the toggle would spring back on the next
+  read, which is the exact bug the current frontend has. — `DERIVED`
+- **`late_fee_amount` is nullable and null means "not configured".** The screen's prose mentions ₹100;
+  adopting it as a default would repeat exactly the A13 mistake — a number nobody chose, indistinguishable
+  from one they did. — `AUDIT`
+- **`unit_label_singular` is nullable and null means "derive it"** — `Flat` for `apartment`, `Villa`
+  otherwise — because a stored default goes stale the day a community changes type. The rule
+  necessarily exists twice, in SQL and in Python (`vocabularies.unit_label_for`), so the two are tested
+  against each other. — `DERIVED`
+- **`update_billing_settings` was replaced in full rather than extended alongside**, keeping the same
+  signature so `0015`'s grants survive, with six new key-presence branches. — `DERIVED`
+- **`module_catalogue` has a read policy and no write policy at all.** It is seed data; it changes by
+  migration. — `DERIVED`
+- **No endpoint writes `associations`, so an admin cannot rename their community.** It is the one table
+  this build plan touches whose admin write policy carries no community clause (build plan §1.2, owned
+  by the auth workstream), and a rename would be the first of seventy operations to depend on it. A real
+  gap in the settings screen, left deliberately. C7 (🔴). — `AUDIT`
+- **One verification query in the footer can legitimately return rows** — stale `community_modules`
+  keys with no catalogue entry, since `0011` seeded keys before the catalogue existed and no FK was
+  added on purpose. Noted in the file so whoever runs it does not read a real result as a failure.
+  — `DERIVED`
+
+### `API.md` — new §11, two sections renumbered
+
+- **§11 Settings** documents five endpoints with full status-code tables, the four-toggle table, the
+  ten-module catalogue table, and an explicit subsection on **the two things this step declined to
+  build**. §11/§12 became §12/§13. — `PO` standing rule
+- **`GET`/`PUT /billing-settings` extended** with the six new fields, the two `409` cross-field rules,
+  and corrected `422` bounds. — `DERIVED`
+- **`GET /settings/modules` is readable by any authenticated role**, unlike the rest of the section: if
+  module state ever gates navigation then every shell needs it, and a resident learning the marketplace
+  is off discloses nothing. — `DERIVED`
+- **§12 "Not yet implemented" no longer lists any endpoints.** The build order is exhausted, so it now
+  points at what actually remains — the unapplied migrations, the Storage bucket, rate limiting,
+  concurrency — plus the two frontend surfaces with no backend at all (visitors, and writing notices).
+  — `DERIVED`
+
+### `openapi.yaml`
+
+- Regenerated: **70 operations across 55 paths**, up from 65/52. Test count 237 → **275**, including a
+  test pinning the Python unit-label rule against the SQL one and another pinning the module counts the
+  snapshot computes in SQL against the ones the module list computes in Python — the same screen showing
+  two different counts is worse than showing neither. — `PO` standing rule
+
+### `DECISIONS_NEEDED.md`
+
+- **A10 answered** — the timezone is real, and the answer is written up as vindicating `0016` rather
+  than reversing it. First item in this file to be closed by a later step.
+- **A22** 🔴 automatic billing and late fines are labels for machinery that does not exist
+- **A23** 🟡 two toggles stored and read by nothing, with the reasoning for their defaults
+- **A24** 🔴 should turning a module off actually switch the feature off?
+- **B17** 🔴 the Settings screen saves nothing, so its field names are ours
+- **C7** 🔴 §1.2 is now the only thing between an admin and renaming their community
+- **C8** 🟡 `invite_ttl_hours` is stored; `invitation_service.py` still reads the env var
+- **D8** 🟡 four `community_settings` deviations, **and the ERD's "nine feature modules" should read
+  ten** — ten in `onboardingModules.js`, ten seeded by `0011`, ten in the catalogue
+- **E21–E24** added; **E1** refreshed to `0010`–`0017` / 275 tests; **E19** notes that step 9 made the
+  UTC-completion problem fixable and did not fix it; **B7** raised 🟢 → 🔴 now that the endpoints it was
+  waiting for exist; **F1** widened to eight migrations; **F4** notes that `version` increments on every
+  write and nothing checks it, making `PUT /settings` the cheapest place to prove the pattern. — `AUDIT`
+
+### `FRONTEND_MEETING_AGENDA.md`
+
+- **Item 17** — the Settings screen persists nothing, and the onboarding wizard's promise that
+  *"These features can be changed later from the Admin Settings page"* (`FeatureConfigurationPage.jsx:79`)
+  is kept by no screen. — `AUDIT`
+
+---
+
+## 2026-07-30 — Session 14: build step 8 (amenities — catalogue, bookings, ledger)
+
+PO instruction: **proceed with step 8.** No new standing rules; the five-gate check, the change log,
+`API.md` and `openapi.yaml` all applied as usual.
+
+### The finding that has no workaround — `AUDIT`
+
+**The frontend has two unrelated amenity products.** `features/amenities/` is a 114-file subsystem
+with a catalogue, a four-tab per-amenity workspace, multi-day resident bookings and a financial
+ledger. `data/amenities.js` + `store/slices/createAmenitiesSlice.js` is a second one: ids `a1`–`a4`, a
+`timing` display string, a status vocabulary of `Available` | `Bookable` | `Open` |
+`Under Maintenance`, and bookings whose time is the string `'07:00 AM - 08:30 AM'`. Nothing links
+them. The resident Amenities screen reads the first; ResidentLandingPage reads the second, and both
+are live.
+
+**No backend can serve both shapes at once**, which makes this the first item on the frontend agenda
+where "we already absorbed it" is not available. We built the first, because it is the one the admin
+dashboard uses and the one the ERD describes. Raised as `DECISIONS_NEEDED.md` A17 and agenda item 14.
+
+### The live bug that changes our behaviour — `AUDIT`
+
+**The cleaning buffer makes shared capacity unreachable.** `validateBookingSlot` rejects any booking
+overlapping a buffer block **in every mode**. On the seeded gym — `Shared`, capacity 24, buffer 15
+minutes — an existing 07:00–09:00 booking produces a buffer at 09:00–09:15, so a second resident
+asking for 07:30–09:30 is refused, and so is every other overlapping request. A shared amenity with a
+non-zero buffer accepts exactly one booking at a time and its capacity of 24 can never be reached.
+The seed data hides it: no two gym bookings overlap.
+
+Here the buffer applies only between uses that occupy the amenity **exclusively**. **This means the
+API accepts bookings the demo refuses**, which is a deliberate behavioural difference and is written
+up as A18 (🔴, with an answer box) and agenda item 15 rather than buried.
+
+### `0016_amenities.sql` — **new migration**, seven tables
+
+- **Overlap is guarded twice, because neither guard alone is enough.** The ERD's note says to use a
+  time-range exclusion constraint; **that is only correct for exclusive amenities** — a blanket one
+  would make every shared amenity single-occupancy and `capacity` a number nothing reads. So: an
+  `EXCLUDE USING gist` constraint scoped `where is_exclusive` for the strict case, **plus** a `BEFORE`
+  trigger for what an `EXCLUDE` predicate cannot express. A predicate is per-row: it cannot say
+  "conflict if *either* side is exclusive", and it cannot count against capacity. — `DERIVED`
+- **The trigger takes `pg_advisory_xact_lock` on the amenity before it looks**, so it is a real
+  constraint rather than the check-then-act race a service-layer check would be. Two residents
+  booking the last place serialise; the second loses. — `DERIVED`
+- **The trigger recomputes the time ranges rather than reading `NEW.slot`.** PostgreSQL fills
+  generated columns *after* before-triggers run, so both would be NULL and every `&&` would return
+  NULL — a guard that passes everything while looking like it checks. Found while writing it. — `AUDIT`
+- **Approval belongs to the series, not the day.** `createResidentAmenityBookingSeries` creates N
+  records and `approveAmenityBookingRequest` approves one, so a three-day request can be approved on
+  Monday and rejected on Tuesday. The ERD's series/occurrence split puts the decision where it
+  belongs. `GET /approvals` returns one row per request with `dayCount` and `dates`. — `DERIVED`
+- **Occurrences carry no personal data on purpose.** RLS cannot hide a column, and a resident must be
+  able to see that 15:00–17:00 is taken without seeing who took it — so the privacy boundary had to
+  be a table boundary. Residents read every occurrence in their community and only their own series.
+  — `DERIVED`
+- **Four stored values became derived**: `pendingRequests` and `outstandingDues` on the card (the mock
+  stores 5 against 1 real request, and 4800 against 1600 in charges), `paymentStatus` on the ledger
+  row, and the `completed` booking status — which means "approved and in the past", a fact about the
+  clock. Same argument that kept `overdue` out of `0015`. — `AUDIT`
+- **Nothing stores a balance.** Charges say what is owed; `amenity_financial_events` says what moved.
+  There is no balance to drift, which is `0015`'s rule reached by having nothing to recompute. — `DERIVED`
+- **A refund's amount is computed in Postgres and is not a request parameter.** A refund whose amount
+  the caller chooses is a refund somebody can ask to be larger. The frontend already sends none. — `DERIVED`
+- **`assert_billing_admin` was redefined to delegate to a new `assert_community_admin`** rather than
+  copy-pasted under a second name — the exact mistake `0015`'s own comment warns about. — `AUDIT`
+- **`invoice_line_items.amenity_booking_charge_id` added**, the column `0015` deferred on the grounds
+  that a nullable pointer to a table that does not exist is a pointer nothing checks. — `DERIVED`
+- **Five deliberate ERD deviations**, all recorded as D7: `amenity_settings` replaces the versioned,
+  weekday-scoped `amenity_rules` (which covers 8 of ~30 settings fields and has no screen writing
+  either of its axes); local `date` + `time` rather than `timestamptz`, because there is no community
+  timezone field anywhere to resolve "07:00" against; `booking_guests` renamed for prefix consistency;
+  `location` and `image_url` added; `blocked` and `pending` added to occurrence status. — `DERIVED`
+
+### `API.md` — new §10, two sections renumbered
+
+- **§10 Amenities** documents twenty-two endpoints with full status-code tables. §10/§11 became
+  §11/§12. — `PO` standing rule
+- **`POST /amenities/{id}/bookings/request` is not admin-only.** It is here in an admin-scoped build
+  because the approvals tab is otherwise a screen that can never have anything on it — the same
+  argument step 7 made for the invoice write endpoints. — `DERIVED`
+- **`GET /amenity-reports` splits rows from KPIs.** `rows` is a page; `kpis` is an RPC aggregate over
+  every matching row. `calculateAmenityReports` computes all six in the browser, one of them labelled
+  **Total Revenue** — the same failure as the money tiles. — `AUDIT`
+
+### `openapi.yaml`
+
+- Regenerated: **65 operations across 52 paths**, up from 43/34. `tests/test_openapi_spec.py` gained
+  two more mounted-router assertions. Test count 161 → **237**. — `PO` standing rule
+
+### `DECISIONS_NEEDED.md`
+
+- **A17** 🔴 two unrelated amenity products — which one is real?
+- **A18** 🔴 the cleaning buffer made shared capacity unreachable; confirm the fix
+- **A19** 🟡 one click now approves a whole multi-day request
+- **A20** 🟡 an amenity with bookings cannot be deleted, only deactivated
+- **A21** 🟢 deposits are money held, tracked separately from invoices
+- **B14–B16**, **D7**, **E16–E20** added; **E1** refreshed to `0010`–`0016` / 237 tests and widened
+  (this is the first migration resting on things only Postgres can do); **F1** sharpened; **F4**
+  re-dated to "before step 9" with six last-write-wins surfaces. — `AUDIT`
+
+### `FRONTEND_MEETING_AGENDA.md`
+
+- **Item 14** — two unrelated amenity products. The one item on the list where "we absorbed it" is
+  not available.
+- **Item 15** — the cleaning buffer bug, and the behavioural difference it forced.
+- **Item 16** — the approvals row cannot say how many days it is approving. — `AUDIT`
+
+---
+
+## 2026-07-29 — Session 13: build step 7 (money — invoices and payments)
+
+PO instruction: **proceed with step 7.** No new standing rules; the five-gate check, the change log,
+`API.md` and `openapi.yaml` all applied as usual.
+
+### The finding that shaped the whole step — `AUDIT`
+
+**There is no maintenance amount anywhere in this product.** Not in the frontend, not in the ERD, not
+in any settings screen. It exists as the literal `4250` inside `createPendingRequestsSlice.js`'s
+approval handler, repeated in `data/payments.js`. The first thing a real backend needs in order to
+bill anybody was missing, and the demo hides it because the invoice array is seeded.
+
+Consequence: `community_billing_settings` is a **new table with no counterpart in the ERD**, holding
+the rate, the due day, the currency, the tax percent and the invoice-number counter. It is
+deliberately **not** named `community_settings` — `0011` already chose a `community_modules` *table*
+over the ERD's `community_settings.enabled_modules` jsonb, so that name is already not the shape the
+ERD describes, and claiming it here would collide with step 9. Raised as `DECISIONS_NEEDED.md` A13.
+
+### A build-plan line that was overtaken by an earlier ruling — `DERIVED`
+
+`0012_people.sql` recorded that the invoice half of *"approve creates residency AND first invoice in
+one transaction"* would slot into `approve_registration_request()` in step 7. **It does not, and the
+premise is what changed.**
+
+The frontend seeds an invoice inside `acceptRequest()` because there, approval creates an *active
+resident*. Ours does not — the standing ruling is that the invite token is a mandatory second factor,
+so approval mints an invitation and nothing else. **Nobody has moved in at that moment.** Seeding an
+invoice there would put a receivable against a flat that may never be occupied, and it would land in
+the admin's "Outstanding Receivables" tile as money nobody owes.
+
+The equivalent moment is redemption — which today creates a profile but no residency at all, a gap in
+the auth workstream's half. So billing is explicit instead: `run_maintenance_billing()` bills every
+**occupied** unit for a period, on the same cycle as every other flat rather than on the anniversary
+of one approval. Recorded in the `0015` header and as A13/A14.
+
+### `0015_money.sql` — **new migration**
+
+- **`invoices.unit_id` is NOT NULL and there is no membership foreign key.** Liability attaches to
+  the unit: a resident who moves out does not take the arrears with them, and a new occupant does not
+  get a clean slate. `userId` on the wire is the flat's *current* occupant, resolved by the view for
+  display only. — `DERIVED` (class diagram `{billing}` note, made structural)
+- **`invoices.title` added — not in the ERD.** The dashboard renders `payments[].title` verbatim
+  (`"Maintenance Fee - July 2026"`, `"Clubhouse Event Charge"`). Deriving it from type + period works
+  for the first and not the second. — `AUDIT`
+- **Three deliberate ERD deviations**, each recorded as `DECISIONS_NEEDED.md` D6: invoice numbers
+  unique **per community** (the prefix defaults to `INV` for everyone, so a global constraint would
+  stop the second community issuing its first invoice); **no `overdue` status** (derived in the view
+  from due date and balance — a stored flag is correct only until the next midnight, and a value
+  legal to store invites someone to store it); **nullable `payer_profile_id`** (an admin recording
+  cash for a vacated flat has no payer to name). — `DERIVED`
+- **The double-billing guard is a partial unique index**, not an API check:
+  `(community_id, unit_id, billing_period_start) where invoice_type = 'maintenance' and status <>
+  'void'`. A check in the service layer loses the race; an index does not. A repeat run reports every
+  flat as `skipped` rather than failing. — `DERIVED`
+- **Recording a payment is idempotent on `provider_reference`**, checked in the RPC *and* enforced by
+  a unique index, so a replayed webhook returns the existing payment instead of double-crediting.
+  — `DERIVED`
+- **Overpayment is refused, not clamped.** Clamping accepts money and then loses it. `409`. — `PO`-adjacent, raised as A16
+- **`outstanding_amount` is recomputed from the payment rows, never decremented**, and a CHECK
+  constraint rejects any balance that disagrees with its own status. This is why money needs no
+  optimistic concurrency: there is no read-modify-write to lose. — `DERIVED`
+- **Nothing is ever deleted.** `void_invoice` cancels and keeps the invoice, its lines and its
+  number; a number that disappears is a gap an auditor has to explain. Refused once any payment has
+  succeeded. — `DERIVED`
+- **Resident RLS is bounded by `issued_on >= residency.start_date`.** Liability follows the unit, so
+  a flat's invoice history outlives its occupants — showing a new tenant the previous occupant's
+  arrears would disclose one resident's debts to another. — `AUDIT`
+- **`collection_summary` is a database aggregate**, not a loop in the service layer, and it sums
+  outstanding *balances* rather than the amounts of unpaid invoices. — `DERIVED`
+
+### `API.md` — new §9, three sections renumbered
+
+- **§9 Money** documents all ten endpoints with full status-code tables. §9/§10 became §10/§11. — `PO` standing rule
+- **`dashboard.collection` stops being a placeholder.** It now reads the same aggregate that serves
+  `GET /invoices/summary`, so the home page and the collections screen cannot disagree about how much
+  has been collected. — `DERIVED`
+- **§1.7** records that the money endpoints carry no relative time and stay cacheable — `billPeriod`
+  is a fixed calendar range, unlike `timeAgo`. — `DERIVED`
+- **§1.10** records that optimistic concurrency has now slipped past two steps (four last-write-wins
+  surfaces), and that money is the exception for a structural reason rather than because it was
+  fixed. — `AUDIT`
+
+### `openapi.yaml`
+
+- Regenerated: **43 operations across 34 paths**, up from 33/26. `tests/test_openapi_spec.py` gained
+  three more mounted-router assertions. — `PO` standing rule
+
+### `DECISIONS_NEEDED.md`
+
+- **A13** 🔴 no maintenance amount exists anywhere — what is it, and is it per-flat?
+- **A14** 🟡 billing runs skip vacant flats, because nothing records ownership
+- **A15** 🟢 a partially paid invoice reads `Unpaid`; its `amount` stays the full value
+- **A16** 🟢 overpayment is refused rather than clamped
+- **B11–B13**, **D6**, **E12–E15**, **F6** added; **E1** refreshed to `0010`–`0015` / 161 tests;
+  **E7** struck through (the collection tile is real); **F4** re-dated to "before step 8". — `AUDIT`
+
+### `FRONTEND_MEETING_AGENDA.md`
+
+- **Item 11** — the money tiles are summed in the browser, so paging silently reports the total of
+  one page. In rupees, plausibly.
+- **Item 12** — **there is no way to bill anybody.** No screen creates an invoice, records an offline
+  payment, runs a billing cycle or sets the rate. The largest single gap found so far.
+- **Item 13** — a live rendering bug: `Payments.jsx:113` prints literal asterisks around the payment
+  method. — `AUDIT`
+
+---
+
+## 2026-07-29 — Session 12: build step 6 (departments and staff); OpenAPI YAML made a standing rule
+
+PO ruling: **a machine-readable API description is maintained alongside `API.md`, for every endpoint,
+backfilled to cover everything already built.** — `PO`
+
+### `openapi.yaml` — **new file**, generated
+
+- **`docs/openapi.yaml` added**, covering all 33 operations across 26 paths — steps 3–6 plus the
+  pre-existing auth and invitation endpoints. Generated by `backend/scripts/export_openapi.py` from
+  the running FastAPI app. — `PO`
+- **Generated, never hand-edited, and enforced.** `--check` fails when the file is stale and
+  `backend/tests/test_openapi_spec.py` runs that check in the suite. The reasoning: a hand-maintained
+  spec drifts the first time a field is renamed, and a *stale* spec is worse than no spec, because
+  clients generate types from it and the drift becomes real code. — `DERIVED`
+- **`API.md` is not replaced by it.** The generator can emit shapes; it cannot emit why a delete is
+  really a deactivation, or which guard returns `409`. The two are complementary and both are
+  required on every backend change. — `DERIVED`
+- Two things the generator cannot know are injected by the script: the `servers` list (a deployment
+  fact, so FastAPI omits it, and without it a generated client has no base URL) and per-tag
+  descriptions. — `DERIVED`
+
+### `API.md`
+
+- **§8 "Departments and staff" added** — ten endpoints with full status-code tables; §"Not yet
+  implemented" and §"Changelog" renumbered to 9 and 10, and step 6 removed from the former.
+- **§1.3 gained a note** that path *placeholders* render `{membership_id}` in the generated spec and
+  `{membershipId}` here. A placeholder is not part of any URL a client sends, so this is a Python
+  parameter-naming artefact and not a second convention. Recorded so nobody "fixes" one to match the
+  other. — `AUDIT`
+
+### `DECISIONS_NEEDED.md`
+
+- **A11, A12, B9, B10, D5 added; E1, E8, F4 updated.** New questions for the product owner (is a
+  department delete really a delete? does removing staff deactivate?), the frontend team (the two
+  category screens disagree; `head` is free text), and the ERD owners (should the column say
+  `inactive`?).
+- **F4 corrected rather than left standing**: it said optimistic concurrency was due "before step 6".
+  Step 6 shipped without it, so the entry now says so and moves the target to step 7. An action item
+  that quietly slips is worse than one that is renegotiated. — `AUDIT`
+
+### `ADMIN_DASHBOARD_BUILD_PLAN.md`
+
+- **Step 6's archive rule was wrong and is corrected.** It said *"a department cannot be archived
+  while it owns unresolved complaints"*. The frontend blocks **deletion** on that condition and
+  offers **deactivation as the escape hatch** — `Departments.jsx:569` renders a "Deactivate" button
+  precisely when deletion is refused. Guarding deactivation too would remove the only remaining
+  action and leave the admin stuck. The guard therefore belongs on `DELETE` alone. — `AUDIT`
+
+### Code (logged here only because it decides design questions; git owns the history)
+
+- **`0014_departments.sql` written, not applied.** Two `security_invoker` views
+  (`department_overview`, `department_staff_overview`) and four RPCs. Three design decisions are
+  recorded in the file's own header rather than only here, so they are visible to whoever reads the
+  schema:
+  1. **`head` is a name, not a link.** `departments[].head` is free text that also appears in
+     `staff[]`. `0011` modelled the head as `staff_assignments.rank = 'head'` (R8), which is the
+     better shape, so naming a head **promotes** the matching roster row — or creates one if nothing
+     matches — demoting the incumbent in the same transaction. One source of truth, and the
+     frontend's field still round-trips exactly. — `DERIVED`
+  2. **Categories are upserted by name.** The two create screens disagree: one is a fixed checkbox
+     list of six, the other a free-text box whose placeholder is *"e.g. Leaking pipes"* — a symptom,
+     not a category. Rejecting unknown names breaks one screen. Cost: a typo becomes a category.
+     Raised as B9. — `AUDIT`
+  3. **Removing staff deactivates.** `complaints.assignee_label` records staff by name (C1), so
+     deleting the row turns a past assignment into an unattributable string. — `DERIVED`
+- **A view, not an RPC, for the department list.** A list endpoint needs filtering, ordering, paging
+  and an exact count; PostgREST gives all four on a view for free, and an RPC would reimplement them
+  as parameters. `security_invoker = true` is what keeps RLS applying to the caller — without it a
+  view is a hole straight through RLS. — `DERIVED`
+- **A precomputed `search_text` column** exists because the dashboard's one search box spans name,
+  description, head, email, category names *and* staff names, which no combination of PostgREST
+  filters across embedded tables can express. — `DERIVED`
+- **Assignment counting uses `left(assignee_label, length(display_name)) = display_name`, not
+  `ilike display_name || '%'`.** A staff name is user-supplied, so a `%` or `_` inside it would be
+  read as a wildcard and silently overcount. `left()` is the exact prefix test the frontend's
+  `startsWith` actually means. — `AUDIT`
+- **`tests/conftest.py` added**, which makes `app.main` importable under pytest for the first time —
+  `Settings` requires four Supabase values at import time. This is what allows the suite to assert
+  that every router is mounted and that no endpoint is missing its auth dependency; both are failure
+  modes with no other alarm. 111 tests pass (was 80). — `DERIVED`
+
+---
+
+## 2026-07-29 — Session 11: security work split off; first migration written
+
+PO ruling: **the auth-adjacent security fixes (§1.1 privilege escalation, §1.2 unscoped `is_admin()`)
+are owned by another developer, working in parallel.** This stream does not touch them. — `PO`
+
+### `ADMIN_DASHBOARD_BUILD_PLAN.md`
+
+- **§1 — ownership banner added**, marking §1.1/§1.2 as reassigned and §1.3 (`.venv`) as unowned and
+  not auth-adjacent. — `PO`
+- **§1.4 added — "Running two migration streams in parallel".** Splitting the work created two
+  collisions that are cheap now and painful later, so both were decided rather than discovered:
+  1. **Migration numbers reserved by range** — `0004`–`0009` to the auth stream, `0010`+ to the
+     dashboard. Both streams would otherwise reach for `0004`, producing a merge conflict in schema
+     *ordering*, which is the worst place to have one. — `DERIVED`
+  2. **The dashboard does not inherit §1.2 while the fix is in flight.** Every new table carries
+     `community_id` and its policies are community-scoped from the first line instead of reusing bare
+     `is_admin()`. This is the finding that unblocked the stream: the ten new surfaces are not exposed
+     by the unscoped-admin hole, so the dashboard need not wait on §1.2. Its cost is that this stream
+     must not define `current_association_id()` — that name belongs to §1.2 — so `0010` uses
+     `current_community_ids()`, set-returning because a person may belong to several communities.
+     — `AUDIT`
+- **Where the streams touch, they compose** — the fixed `handle_new_user()` owns the profile INSERT and
+  defaults to `RESIDENT`; `0010`'s trigger owns every later change to `profiles.role`. Checked rather
+  than assumed, because a collision here would have been silent. — `AUDIT`
+- **§4 renumbered** (old step 1 reassigned; steps 4–10 became 3–9) and **§6 decision 1 closed** —
+  additive-now/rename-later was *assumed and proceeded on* rather than blocked, on the grounds that it
+  touches no auth code and reversing costs deleting one unapplied file. Recorded as an assumption, not
+  a ruling. — `DERIVED`
+
+### `CLAUDE.md`
+
+- **Corrected the claim that `backend/` is "an empty placeholder for a future server".** It has been
+  false since the FastAPI service landed, and it is the first thing anyone reads. Replaced with what
+  is actually there, plus the fact that still makes the rest of the file true — the frontend is not
+  wired to it and the demo runs with no server. — `AUDIT`
+
+### Code (logged here only because it decides design questions; git owns the history)
+
+- **`backend/supabase/migrations/0010_memberships.sql` written, not applied.** `community_memberships`
+  + `unit_residencies` in ERD shape, backfilled from `profiles.role`/`association_id`/`apartment_id`,
+  with `profiles.role` kept as a trigger-maintained compat column so no auth code changes.
+- Two judgement calls in it worth preserving:
+  - **`is_primary` is granted to exactly one occupant per flat on backfill**, the earliest-created.
+    `unit_residencies_primary_uq` permits one; flagging every occupant primary would have made the
+    index reject all but the first and **silently drop the rest of the household**. Only visible
+    because the constraint and the backfill were written together. — `AUDIT`
+  - **Flats are created from `profiles.apartment_id` on first reference**, since that free-text column
+    holds codes for flats with no `apartments` row — the frontend never had a flat-creation step.
+    Matches the find-or-create rule already promised in `FRONTEND_MEETING_AGENDA.md`. — `DERIVED`
+
+### Deliberate zeros
+
+- **`frontend/` — nothing changed.** Still the standing constraint.
+- **ERD, class diagram, `design-of-components.md` — not edited.** `0010` adopts ERD *column* names
+  (`community_id`, `unit_id`) while pointing at today's tables, so the ERD needs no revision and the
+  eventual rename stays one mechanical migration.
+- **No migration applied and nothing committed.**
+
+### `0011_dashboard_core.sql` — step 2 (same session, after PO said "go ahead")
+
+Ten tables covering the dashboard's non-money, non-amenity surfaces. Written, **not applied**. Four
+assumptions are recorded in the migration header as `A1`–`A4` rather than only in this log, so that
+anyone reading the schema meets them there.
+
+**A correction to the build plan, found by opening the column instead of trusting the plan.**
+`ADMIN_DASHBOARD_BUILD_PLAN.md` said R1's two partial unique indexes belonged on `apartments`, *"whose
+current `unique (association_id, code)` has exactly the defect R1 describes."* It does not. R1 addresses
+a **block-relative** label (`101` recurring per building) where a nullable `building_id` makes NULLs
+distinct. `apartments.code` is community-wide by construction — the frontend builds it as
+`` `${tower}-${flatNumber}` `` — so the block is already inside the string and per-community uniqueness
+is correct. **Applying R1 would have loosened a working constraint, the opposite of its purpose.**
+R1 is parked until the ERD's separate `unit_label` column exists. — `AUDIT`
+
+**Assumptions, each isolated in one function or column so reversing is cheap:**
+
+- **A1 — role vocabulary left undecided.** Staff `rank` and `job_title` are plain text, not members of
+  `user_role`, because they are department-local descriptions that never reach a JWT. Open decision 2
+  stays genuinely open instead of being settled by a side effect. — `DERIVED`
+- **A2 — SLA tie-break** (open decision 3): category override wins, else lowest `sla_hours` among
+  active claiming departments. One function, `resolve_category_sla_hours()`. Still a workaround. — `PO`
+- **A3 — urgency multiplier: invented, and flagged as such.** R9 required `due_at` to derive from "the
+  category SLA and urgency" but never said how urgency applies. Assumed high = ½, medium = 1×,
+  low = 2×. **This is the one assumption in the file with no evidence behind it**, so it is now open
+  decision 4 rather than a silent default. — `DERIVED`
+
+**Three modelling decisions with reasons that are expensive to reconstruct:**
+
+- **`staff_assignments.job_title` is stored, not derived from `rank`.** R8's rank/title split invites
+  deriving the displayed string from the rank. The seed data proves the mapping is not a function:
+  `dept-plumbing`'s head renders as `Supervisor` and `dept-facilities`' as `Manager` — same rank,
+  different label. A derivation rule would silently rewrite one of them. — `AUDIT`
+- **`complaints.department_id` is stored, not derived.** Re-resolving routing on read would make an
+  edit to the category mapping retroactively rewrite where past complaints went. — `DERIVED`
+- **`notices.category` stays free text while complaint categories are a table.** The difference is
+  behavioural, not stylistic: a complaint category routes to a department and carries an SLA; a notice
+  category is a display label with nothing attached. A table would add a join and a seeding step to
+  buy nothing. — `DERIVED`
+- **`complaint_categories.sla_hours` survives R5 as a nullable override.** C2 moved ownership to the
+  join table, but an explicit value ends the ambiguity for that category outright — the escape hatch
+  if the frontend meeting rules two owners legitimate. — `DERIVED`
+
+**Also in the file:** module keys and defaults copied verbatim from
+`frontend/src/data/onboardingModules.js` (a key that drifts silently disables a working feature, so
+this is a copy of a contract, not a guess); assignment columns on `complaints` rather than
+`work_orders`, per R9's resolution principle, named there as a conscious duplication;
+`complaint_comments` kept separate from the event stream because collapsing an audit log into a
+user-facing conversation yields either a leaky log or a useless one.
+
+**Two bugs caught before they shipped**, both from writing the SQL out rather than describing it:
+
+1. `complaint_due_at()` multiplied a `numeric` by an `interval`. Postgres defines `interval * float8`
+   but has no `numeric * interval` operator, and an unqualified `0.5` is `numeric` — it would have
+   failed on the first complaint insert. Fixed with explicit `::float8` casts.
+2. **`ON DELETE SET NULL` on a composite FK nulls *every* column of the key**, including the `NOT NULL`
+   `community_id`. Nine constraints were written that way, so deleting any referenced membership,
+   category, department or flat would have raised a not-null violation instead of clearing the
+   reference — and only in production, on the first time anyone removed a resident. Fixed with
+   `on delete set null (the_pointer_column)`, which is **Postgres 15+ only**; noted in the file header
+   since it is now a floor on the database version. — `AUDIT`
+
+### `DECISIONS_NEEDED.md` — new
+
+PO ruling: **collect every assumption made so far into a document teammates can answer directly.** —
+`PO`
+
+Created [`DECISIONS_NEEDED.md`](DECISIONS_NEEDED.md): 10 product decisions, 8 frontend items, 6
+coordination items for the auth workstream, 4 for the ERD owners, 8 statements of surprising current
+state, 5 ownerless work items, and an appendix listing every assumption with its reversal cost. Each
+item states *what we assumed*, *why*, *cost if wrong*, and carries a blank `Answer:` line, so it can be
+edited and committed rather than discussed and lost. Priority-tagged 🔴/🟡/🟢, and grouped by **who
+answers** rather than by topic. — `PO`
+
+### Step 5 — Complaints (`0013_complaint_events.sql` + six endpoints)
+
+**A3 retracted, and the retraction is the finding.** `0011` assumed `due_at` = category SLA × an
+invented urgency multiplier. Reading `createComplaintsSlice.js:5` showed the frontend **already** has a
+concrete rule — High 24h / Medium 48h / Low 72h, from **urgency alone, ignoring the category**. So the
+product carries **two independent SLA systems that never meet**: `departments[].slaHours` (4–48h) and
+this urgency table. They have never collided only because complaints do not reference departments in
+the frontend at all. A Low-urgency *security* complaint is due in 72h by one rule and 4h by the other —
+**an 18× disagreement**. New precedence: category override → department SLA → urgency table, no
+multiplier (urgency already picks the fallback; multiplying would count it twice). Which system should
+win is a product question, raised as `DECISIONS_NEEDED.md` A1. — `AUDIT`
+
+**Two gaps in `0011`, both found by reading the frontend rather than the resolutions:**
+
+- **`complaint_events` was never created.** R9 resolved "management notes" with *"no column —
+  `complaint_events` already has `note`"*, but that table existed only in the ERD. The frontend keeps
+  `comments[]` and `timeline[]` as **separate** things and the admin's "Resident-visible Update" box
+  writes the timeline. Now created, and **append-only structurally** — no `UPDATE`/`DELETE` policy, so
+  it cannot be edited even by an admin. R9's distinction between an audit stream and a conversation is
+  now enforced by Postgres rather than by convention. — `AUDIT`
+- **`complaints.location` was missing** — a free-text "where in the building", distinct from the flat
+  the complaint belongs to. — `AUDIT`
+
+**Design decisions:**
+
+- **`reopened`/`closed` render as `Pending`/`Resolved`.** The frontend's select has three options and
+  `reopenComplaint` sets status back to `Pending` plus a counter. The database keeps a distinction the
+  UI does not show, rather than discarding it to make the mapping symmetrical — so `to_wire` round-trips
+  but `to_storage` deliberately does not. — `DERIVED`
+- **`due_at` is writable, not purely derived** — `Complaints.jsx` has a `datetime-local` input for
+  "Expected Resolution", so the admin can override the computed deadline. — `AUDIT`
+- **`isBreaching` = deadline passed **and** still open.** A resolved complaint that took too long is
+  *late*, not breaching; the tile counts work outstanding now. Computed server-side so every screen
+  agrees on the definition. — `DERIVED`
+- **Read state is per person**, from a receipt row, not a flag on the complaint. The frontend's single
+  `hasUnreadUpdate` boolean cannot represent an admin and a resident having seen different versions.
+  — `DERIVED`
+- **Attachment bytes never pass through the API** — the client uploads to Supabase Storage and
+  registers the path. Requires a **private** bucket `complaint-attachments`; a public one would make
+  every complaint photo world-readable by URL, bypassing RLS entirely. Signing failures degrade to a
+  null URL rather than failing the request — one broken attachment must not take down the complaint.
+  — `DERIVED`
+- **`update_complaint` and `add_complaint_comment` are RPCs**, per the step-4 finding: a status change
+  must not be able to land without its timeline entry. An audit trail with holes is worse than none,
+  because it looks complete. — `DERIVED`
+
+**Tests: 57 → 80**, adding the vocabulary mapping (including that an unknown status is *rejected*
+rather than silently becoming `pending`, and that the wire round-trip is stable).
+
+### Step 4 — People (`0012_people.sql` + six endpoints)
+
+**The finding that shaped the step: PostgREST has no client-side transaction.** Each
+`.table(...).insert()/.update()` from supabase-py is its own transaction, so any FastAPI operation
+spanning two tables can half-succeed. Approving a registration is exactly that — mark the request
+approved *and* mint the invitation — and a crash between them leaves a request approved that nobody
+can act on, with no way to fix it from the UI. **Atomicity through PostgREST requires a Postgres
+function**, so approve / reject / deactivate live in SQL and are called via RPC. Each takes a row lock,
+so two admins clicking Approve at the same instant serialise and the second gets a 409 rather than a
+duplicate invitation. This generalises: every future multi-table write is an RPC. — `AUDIT`
+
+**`SECURITY DEFINER` means RLS does not run.** Each of the three functions performs its own
+authorization check as its first statement. A `SECURITY DEFINER` function without an explicit check is
+a hole with an API in front of it. — `DERIVED`
+
+**Not everything became an RPC, deliberately.** `PATCH /residents` also writes two tables but stays
+plain: a partial failure leaves some fields updated and others not, which the admin sees and retries.
+There is no invariant between those two writes; approval has one. The distinction is what a partial
+failure *costs*, not how many tables are touched. — `DERIVED`
+
+**Three product decisions:**
+
+- **Approval mints an invitation rather than creating an active account**, because the invite token is
+  a mandatory second factor (standing ruling). This differs from the demo, where `acceptRequest`
+  creates an `Active` resident immediately — but the admin still sees the request leave the pending
+  list, which is what the screen reacts to. — `PO`
+- **"Remove resident" deactivates; there is no hard delete.** Complaints, invoices and payments
+  reference the membership, so deleting the row would cascade them away or fail outright. — `DERIVED`
+- **An admin cannot remove their own membership** (409). There is no recovery path in the product from
+  locking a community out of its own dashboard. — `DERIVED`
+
+**A live frontend bug, found while building approval.**
+`createPendingRequestsSlice.js:36` builds `` `${tower}-${flat}` ``, but the seeded requests in
+`data/pendingRequests.js` already store `flat: 'C-505'` — so approving a seeded request produces
+**`C-C-505`**, a flat that does not exist, while a form-submitted request (bare `505`) produces the
+correct `C-505`. Two code paths disagree about what `flat` holds. Absorbed by `app/domain/units.py`
+and raised as **agenda item 8** — the first item on that list that is a bug rather than a design
+mismatch. — `AUDIT`
+
+**Schema decisions:**
+
+- **`community_memberships.designation`** — President / Secretary / Treasurer / etc. is a **third
+  axis**, distinct from `role` (what the system permits) and staff `job_title` (what a worker does).
+  Free text, no check constraint: the list is a frontend display vocabulary that will grow, and a
+  constraint would turn every addition into a migration. — `DERIVED`
+- **`profiles.email` backfilled from `auth.users`**, which this migration can read as table owner.
+  **Keeping it current for new users belongs in `handle_new_user()`, which the auth workstream owns**,
+  so it is not edited here — a coordination item, not a silent gap. Their fix to that function does not
+  otherwise collide with ours: invite redeem sets the role explicitly afterwards
+  (`invitation_service.py:187`), so dropping the client-supplied metadata role is safe for our paths.
+  — `AUDIT`
+- **One *pending* request per phone per community**, partial index — so a rejected applicant may apply
+  again and both attempts survive in the history. — `DERIVED`
+- **Custom SQLSTATEs `HB403`/`HB404`/`HB409`** rather than message matching, so rewording a message
+  cannot silently turn a 403 into a 500. Postgres' own constraint messages are **not** forwarded to
+  callers — they can quote a row value. — `DERIVED`
+
+**Refactor:** `CamelModel`/`Page` moved to `domain/common_schemas.py` and `display_role`/`parse_instant`
+to `domain/roles.py` / `core/formatting.py`, once a second surface needed them. A module named for one
+screen is the wrong home for the base class every screen inherits.
+
+**Tests: 14 → 57.** New coverage for flat-code normalisation (including that it is idempotent — the
+exact shape of the frontend bug), SQLSTATE mapping (including that Postgres text never leaks to a
+caller), and the formatting contract (the exact strings from `complaints.js` and `notices.js`, plus
+the negative-duration and local-day-boundary cases).
+
+### `API.md` — new, and now a standing rule
+
+PO ruling: **every backend implementation also produces API documentation in `docs/`, to current
+industry standards, including error and other status codes — as a standard rule from now on, whether
+or not it is asked for.** — `PO`
+
+Created [`API.md`](API.md): conventions (versioning, auth, the error envelope, the full status-code
+table, pagination, caching, rate limiting, date handling, optimistic concurrency) followed by every
+endpoint — the four new dashboard reads **and** the pre-existing auth and invitation endpoints, which
+had never been documented. Includes a "not yet implemented" table so the frontend team can see what is
+coming and in what order.
+
+Two things the document had to admit rather than paper over: `/auth/*` still describes phone/SMS OTP
+because that is what the code does, even though the ruling is OAuth; and **nothing is rate-limited**,
+including the two unauthenticated secret-guessing surfaces (`/auth/otp/request`, `/auth/redeem`). Both
+are flagged in place. — `AUDIT`
+
+### Step 3 — the read-only shell (endpoints)
+
+Four endpoints in `backend/app/`, following the existing layering. Imports verified, routes verified
+via the generated OpenAPI schema, **all 14 existing tests still pass.**
+
+**Three defects found by running the code rather than reading it:**
+
+- **The app would not have started on Windows.** `zoneinfo.ZoneInfo("Asia/Kolkata")` raises
+  `ZoneInfoNotFoundError` at *import time* unless `tzdata` is installed, and it is not. Replaced with a
+  fixed `UTC+05:30`. This is not a workaround: India has never observed daylight saving, so the offset
+  is exactly correct year-round; `tzdata` becomes a genuine dependency only if a DST-observing
+  community is ever supported. — `AUDIT`
+- **Three error shapes existed on the wire, not one.** `register_exception_handlers` documented itself
+  as handling uncaught exceptions but registered only `AppError` — so validation failures returned
+  FastAPI's `{"detail": [...]}` and crashes returned `{"detail": "Internal Server Error"}`. A client
+  cannot branch generically across three shapes. Added handlers for `RequestValidationError`,
+  `StarletteHTTPException` and bare `Exception`. The 500 message is fixed text on purpose: an
+  exception string can carry a table name or a connection string. — `AUDIT`
+- **`residents[].email` is a real gap.** `profiles` has no email column; the address is in `auth.users`
+  behind the service-role key. Returned `null` and documented, rather than silently dropping a field
+  the Residents screen renders. `profiles.email` lands in step 4. — `AUDIT`
+
+**Conventions set here, deliberately, because every later surface copies them:**
+
+- **`Page` envelope identical whether or not there is data** — `{items: [], total: 0}` with HTTP 200,
+  never a 404. Directly serves `FRONTEND_MEETING_AGENDA.md` item 7: the dashboard has never rendered an
+  empty state, and one shape to design against is the cheapest help available from this side. — `DERIVED`
+- **`Cache-Control: no-store` applied per endpoint, not as middleware**, so responses without a
+  relative time stay cacheable. Every such DTO also carries the raw ISO instant, so `no-store` can be
+  dropped per endpoint as screens adopt client-side formatting. — `DERIVED`
+- **Two `timeAgo` vocabularies, on purpose.** Notices render `Today`/`1w ago`; complaints render
+  `2h ago`. Two formatters rather than one with a flag, because the two frontend lists genuinely
+  disagree and a single formatter would have to pick a winner. — `AUDIT`
+- **`/auth/*` stays snake_case while new surfaces are camelCase.** The frontend reads camelCase and
+  cannot change; the auth DTOs are being edited in parallel by the security workstream, so converting
+  them here would be a drive-by edit to someone else's in-flight work. Recorded in `API.md` §1.3 as a
+  seam with a fix, not left implicit. — `DERIVED`
+- **`pendingRequests` and `collection` are hardcoded zeros** until steps 4 and 7, present from day one
+  so the response shape never changes, and marked as placeholders in `API.md` rather than passing for
+  real counts. — `DERIVED`
+- **Flat codes are resolved to ids by a second query, not a PostgREST embed.** The path from a
+  membership to a flat runs through `unit_residencies`, whose FKs are composite; PostgREST does not
+  reliably embed across composite keys, and a silently-empty embed is worse than an extra round trip.
+  — `AUDIT`
+
+### Deliberate zeros, step 2
+
+- **`frontend/` — nothing changed.**
+- **ERD / class diagram / component design — not edited.**
+- **R1 not applied** (see above), and `apartments`' existing constraint left alone.
+- **Nothing applied, nothing committed.** Neither migration has been run — there is no Postgres,
+  `psql`, Supabase CLI or Docker on this machine, so both files are reasoned through but **unverified
+  by execution**.
+
+---
+
+## 2026-07-29 — Session 10: scope narrowed to the admin dashboard; the existing backend found
+
+PO rulings: **ignore login and registration**, assume done; work on the **admin dashboard only**; code
+goes in `backend/`, docs in `docs/`; **do not touch `frontend/` at all** — conflicts beyond the
+backend's reach go to a document for the frontend meeting. — `PO`
+
+### `backend/` is not the empty placeholder `docs/CLAUDE.md` describes
+
+It contains a working, cleanly layered FastAPI service — `core/supabase_client.py` as the single
+client factory with three trust levels, `domain/schemas.py` DTOs deliberately separate from row
+shapes, `require_role(...)` guards — plus three applied migrations (`0001_init`, `0002_rls`,
+`0003_access_token_hook`). Planning had been proceeding as though none of it existed. — `AUDIT`
+
+### C3 retracted
+
+`IMPLEMENTATION_PLAN.md` §2 argued for **no bespoke API server** — views and RPC instead. **Written
+without knowing this service existed, and wrong for this team.** The FastAPI layer is the better
+answer to the problem C3 was about: it is where the frontend's exact response shapes get composed,
+and unlike a Postgres view it can do that without pushing display concerns into the schema. — `AUDIT`
+
+### Three findings that outrank the dashboard
+
+| # | Finding | Severity |
+|---|---|---|
+| 1 | **`handle_new_user()` reads the role from `raw_user_meta_data`**, which is client-supplied — `signUp({options:{data:{role:'ADMIN'}}})` yields an ADMIN profile, and the access-token hook then mints an ADMIN claim that both RLS and the FastAPI guards trust. Held shut today only by `should_create_user=false` on the OTP path; **the OAuth switch opens it**, because OAuth creates users by design. | **Critical** |
+| 2 | **`is_admin()` is global, not per-community.** `profiles_self_select` and `associations_admin_write` use it unscoped, so any admin reads every profile in the database and writes every association. Admins are exactly the role this dashboard serves, so all ten new surfaces would inherit the hole. | **High** |
+| 3 | **`backend/.venv` is committed** — 4,100+ tracked files including Windows `.pyd` binaries. `.env.example` is correctly committed and holds no secrets. | Medium |
+
+Both 1 and 2 are step 1 of the build, before any feature work.
+
+### The schema in the database is not the schema in the ERD
+
+`associations`≠`communities`; role and placement live on `profiles` rather than in
+`community_memberships` / `unit_residencies`; the role enum has `TECHNICIAN` where the ERD has
+`worker`. **The dangerous one: `units` means a block in the live DB and a flat in the ERD — exact
+opposites.** A query written from the ERD returns the wrong entity with no type error. — `AUDIT`
+
+Resolution: **additive now, rename by agreement** — dashboard tables take ERD names, the four live
+tables stay, a naming map is published, and the rename stays one mechanical migration. But
+`community_memberships` lands in step 2 rather than later, because every dashboard table needs an
+actor FK and pointing those at `profiles` means repointing all of them afterwards. **Coordination cost
+is zero:** `profiles.role` is kept as a trigger-maintained compat column, so the access-token hook,
+`jwt_role()`, `is_admin()` and every existing guard keep working with **no auth code changed**. — `DERIVED`
+
+Also worth recording: the live `invitations` table already stores both a `token_hash` and a
+`code_hash` — arriving independently at exactly what R2 proposed. A point in favour of the working
+schema.
+
+### Two withdrawals reinstated, because the premise moved again
+
+With `frontend/` now strictly off-limits, **R24** (`timeAgo` in responses, and the un-cacheable
+response class it forces) and **R23** (label *and* id on every DTO) come back. **C1** free-text
+assignee is accepted as `assignee_label` plus a nullable FK. All three are on the meeting agenda
+rather than being silently absorbed. — `DERIVED`
+
+**C2 has now had three positions** — join table → one-to-many → join table. Not circular: it turns on
+whether the UI can be changed, and that premise moved twice. With the multi-select unchangeable, the
+schema must accept what the UI emits. **The SLA ambiguity remains genuinely unresolved** — "lowest
+`sla_hours` wins" is a workaround, and it is agenda item 2. — `AUDIT`
+
+### `docs/ADMIN_DASHBOARD_BUILD_PLAN.md` — **new file**
+
+Ten steps. Steps 1–3 ship no endpoints: security fixes, `0004_memberships.sql`,
+`0005_dashboard_core.sql`. Then the ten surfaces in dependency order. Follows the existing service's
+conventions rather than proposing new ones.
+
+### `docs/FRONTEND_MEETING_AGENDA.md` — **new file**
+
+Seven items only, each with what the frontend does today, why it is a problem, what we need, and
+**the cost of doing nothing** — because for several of them doing nothing is a legitimate answer. Also
+lists five things that looked like conflicts and turned out to need nothing from them, so the meeting
+is not spent on those.
+
+### Deliberate zeros
+
+- **No code written, no migration applied, no artifact edited.** The three security findings are
+  documented, not fixed — fixing them touches auth code the PO scoped out, so they need a decision
+  first.
+- **`frontend/` untouched**, and now permanently so.
+
+---
+
+## 2026-07-29 — Session 9: the demo reframe, and the implementation plan
+
+The PO disclosed that the frontend was **deliberately built on seeded dummy data** so the team could
+demonstrate how much work had been done. — `PO`
+
+**This changes the operative constraint from "never change the frontend" to "never break the demo",**
+and those are very different rules. Earlier sessions assumed the first one and paid for it. — `AUDIT`
+
+### Standing instruction added
+
+Every proposal from now on is checked against **all five artifacts plus Supabase** — frontend, ERD /
+DBML, class diagram, design of components, and whether a Supabase feature removes the need for custom
+code — and the impact on each is stated, **even when the request does not mention them**. "No impact"
+must be said, not omitted; a silent gate reads as an unchecked one. — `PO`
+
+### `docs/IMPLEMENTATION_PLAN.md` — **new file**
+
+Nine phases (0–8), each ending with the demo running. Two seams — a client repository module with
+`mock` and `supabase` implementations, and `security_invoker` views plus `SECURITY DEFINER` RPC on
+the server — and **no bespoke API server**, which is what resolved C3. — `DERIVED`
+
+### Three earlier compromises withdrawn
+
+All three existed only because the frontend was assumed unchangeable. — `AUDIT`
+
+| Was | Now | Why it was wrong |
+|---|---|---|
+| **R24** — ship `timeAgo: "2h ago"` beside the ISO instant | **Dropped.** Instants only; the frontend formats. | It forced `Cache-Control: no-store` on an entire response class and put the server's clock and locale into a client concern — a real architectural cost paid to preserve a seed convenience. |
+| **R23** — every entity carries label *and* id, permanently | **Transition measure**, removed in Phase 8. | Freezing `assignee: "Ramesh - Plumber"` into the API would have made the demo's shortcuts permanent product debt. |
+| **C1** — nullable FK plus `assignee_label`, indefinitely | **Interim only**; closed in Phase 6 by `auth.admin.createUser` shadow accounts. | Supabase can create an account for someone who never signs in, turning a permanent retreat from referential integrity into a two-phase migration. |
+
+### One recommendation reversed on the merits, not on the reframe
+
+**C2 — complaint categories.** I proposed a `department_categories` join table because the UI's
+multi-select permits two departments to claim "Plumbing". Reversed to **one-to-many**: with N:M,
+*"which department's SLA applies to this complaint?"* has no answer, and the join table would push
+that ambiguity into every complaint ever filed. Smaller schema and smaller frontend change than the
+join table. Still a product decision — it is question 1 in §8, and the join table stays available if
+a category genuinely needs two owners. — `AUDIT`
+
+### Demo continuity — raised because nobody had
+
+Two mechanisms break silently under a real backend and needed to be on the record before Phase 5, not
+after a demo is lost: the hardcoded demo logins (`9876543210` / `9999988888`, with the OTP unchecked)
+do not survive OAuth, and `mock` mode must stay a **supported build** rather than scaffolding to
+delete — it is the offline demo, the fallback when the Supabase project is down mid-presentation, and
+the only thing that keeps a two-implementation seam honest. Resolution: `supabase/seed.sql` rebuilds
+the demo dataset server-side and the presenter's real Google account is seeded as its admin. — `DERIVED`
+
+### Deliberate zeros
+
+- **No artifact was edited and no code was written.** Phase 1 is where the ERD, class diagram and
+  component design change, and it has not started.
+- **No frontend work was done.** Five frontend work packages are *specified* in §7 for the frontend
+  team; the rule that we do not touch `frontend/src/` without them is unchanged and was strengthened,
+  not relaxed, by the demo framing.
+- **Eight decisions left open** (§8) rather than decided by default.
+
+---
+
+## 2026-07-29 — Session 8: resolving the audited conflicts
+
+The product owner asked for the conflicts catalogued in `MILESTONE1_ARTIFACT_ISSUES.md` to be
+resolved one by one. — `PO`
+
+### `docs/CONFLICT_RESOLUTIONS.md` — **new file**
+
+One resolution (R1–R35) for every issue in the audit, each naming its decision, its cost against the
+v1 ERD as submitted, and the person who has to make the edit. **Nothing was applied to any artifact**
+— the ERD, class diagrams and component design are maintained by other people, so this file proposes
+and does not change. — `DERIVED`
+
+Three constraints were carried in from earlier rulings and every resolution had to satisfy all three:
+zero frontend conflicts, minimal change to the three artifacts, and resolve in the layer that owns
+the truth. — `PO` (restated)
+
+Net effect on the v1 ERD if all are accepted: **+5 tables, ~33 columns, 0 tables deleted, 0 frontend
+files changed.** Eight tables that a less careful pass would have added were resolved without one —
+recorded in §6 of the file, because "what we chose not to add" is the part that is expensive to
+reconstruct later.
+
+### Decisions worth flagging out of the 35
+
+| Decision | Why it is worth reading |
+|---|---|
+| **R3** — use `updated_at` as the optimistic-concurrency token instead of adding `version` columns | Zero schema change. Conditional on a `BEFORE UPDATE` trigger on every table and on the client echoing the timestamp at full microsecond precision — without both, the check silently passes when it should fail. — `DERIVED` |
+| **R4** — composite foreign keys, not a denormalized column plus a trigger | A denormalized `community_id` kept in sync by a trigger is a rule someone can forget; `foreign key (parent_id, community_id) references parent (id, community_id)` makes a divergent row impossible to insert. Applied to the 6 child tables read as their own list; the rest keep parent-join policies. — `AUDIT` |
+| **R5** — `complaint_categories` table | One change resolves three audit items at once: free-text categories, the unenforceable department-deletion rule, and the departments SLA gap. — `AUDIT` |
+| **R7** — the audit was corrected | I had written that the QR pass "has nowhere to live". The real finding is narrower and better evidenced: `createVisitorsSlice.js` mints a `qrToken` **independent of** the `securityCode` and the gate matches on both, so two digests are needed. A QR that merely encoded the access code would have needed no column at all. — `AUDIT` |
+| **R14** — maintenance blocks live in `amenity_booking_occurrences`, not a new table | **Forced, not preferred.** A PostgreSQL exclusion constraint cannot span two tables, so a block in a separate table could not participate in the existing no-overlap constraint and a booking could be created inside a maintenance window. Costs one nullability change on `amenity_booking_series.unit_id`, guarded by a CHECK. — `DERIVED` |
+| **R17(c)** — residency, not role, grants resident capabilities | An active `unit_residencies` row grants the resident portal; `community_memberships.role` grants staff and admin powers. Resolves the "security supervisor who lives here" problem at zero cost, keeps the one-membership-per-person-per-community index intact, and collapses five class-diagram subclasses (R29). It was already how the admin-who-is-also-a-resident case worked — it had just never been written down. — `AUDIT` |
+| **R21** — find-or-create units on first reference | Chosen over a frontend units-per-block step because the frontend is not ours to change. Two accepted costs: the unit list is only as complete as what has been referenced, and it makes R1 load-bearing — **R1 must land first** or the second block's "101" collides with the first block's. — `DERIVED` |
+| **R24** — keep `timeAgo` alongside an ISO instant | The one resolution recorded as unsatisfactory. Server-side relative-time formatting is wrong on principle, but removing it is a frontend change and the zero-conflict constraint forbids that. **Consequence that must not be lost: any response carrying `timeAgo` is un-cacheable** — `Cache-Control: no-store`, never behind a CDN. Delete it the day the frontend adopts `submittedAt`. — `DERIVED` |
+| **R16** — 13 tables tagged rather than deleted or built | The 12 orphans plus `community_registration_requests`, which the OAuth ruling orphaned — it models operator review and OTP, and founding is now self-serve. Tagging converts an unexamined surface into a dated decision. — `AUDIT` |
+
+### §8 added — conflicts the resolutions themselves create
+
+The PO asked whether implementing the resolutions would create conflicts. Auditing the "zero frontend
+conflicts" claim against `frontend/src` instead of trusting it found **that claim was false in two
+places**, both mine. — `AUDIT`
+
+| # | Conflict | Consequence |
+|---|---|---|
+| **C1** | `complaints.assigned_to_membership_id` (R9) cannot be satisfied. The FK chain requires every assignable person to hold an auth account; department staff have none, and `Complaints.jsx:175` is a **free-text** assignee field with no referent at all. | R9 revised: nullable FK plus `assignee_label text`. A deliberate, temporary retreat from referential integrity — recorded as one rather than discovered later. Shadow `auth.users` rows are the real fix, deferred to when staff dashboards exist. |
+| **C2** | Complaint categories are **many-to-many** in the UI — `Departments.jsx:211` lets two departments both select "Plumbing" — but R5 made `department_id` single-valued with a unique name. | +1 join table `department_categories`. Six new tables, not five. R5's other two wins survive. |
+| **C3** | R5, R17a, R21, R23 and R24 all assume a server layer shapes the response. Direct `supabase-js` access to PostgREST has none — which conflicts with the standing "use Supabase as much as possible" direction. | Resolvable Supabase-natively as **reads through `security_invoker` views, writes through `SECURITY DEFINER` RPC**. Needs an explicit architecture decision. R3 turns out *not* to need it: `PATCH ?id=eq.X&updated_at=eq.Y` returns zero rows on a stale token natively. |
+| **C4** | Applying these to v1 would leave **three** schema descriptions — v1, v1-plus-resolutions, and our unagreed 63-table draft, which resolves many of the same issues differently. | Pick one destination before applying anything. Fold into the v2 draft, or apply to v1 and delete the draft. Not both. |
+| **C5** | The zero-conflict claim is measured against the frontend **as read on 2026-07-29**, and the frontend is moving. | Re-run the C1 and C2 checks immediately before applying. |
+
+Four smaller ones (C6–C9): R28's nullable `unit_id` drops staff invites into the same
+NULL-distinctness hole R1 exists to avoid; R14 silently does nothing unless the exclusion
+constraint's predicate is edited in the same migration; R28 gives staff a weaker invite than the
+PO-mandated resident 2FA token, currently as a side effect rather than a decision; and R21's label
+parsing can land an apartment admin in the standalone branch.
+
+Also second-order: `DepartmentDetail.jsx:217` recovers the staff name with
+`assignee.split(' - ')[0]`, so the `" - "` format is load-bearing — R8 splitting `role` into `rank`
+and `job_title` breaks that reverse lookup unless the API re-joins them exactly.
+
+### Deliberate zeros
+
+- **No artifact was edited.** Not the ERD, not the class diagrams, not the component design, not
+  `frontend/`. The resolutions are proposals addressed to their owners.
+- **No table was proposed for deletion**, including the ones no requirement asks for.
+- **Six items were left explicitly unresolved** (§8) because they are product decisions, not design
+  ones — the community address, one-residency-or-many, the Settings toggles, and the fate of work
+  orders, workforce and policies. Left open rather than decided by default.
+
+---
+
+## 2026-07-29 — Session 7: verifying the restore against the submitted originals
+
+The product owner supplied the two milestone-1 source files (`design-of-component.txt`,
+`er-dbml.txt`) so the session-6 revert could be checked against them rather than trusted. — `PO`
+
+### Verification result
+
+| Supplied file | Repo file | Result |
+|---|---|---|
+| `er-dbml.txt` | `erd/homebandhu-v1-milestone1.dbml` | **byte-identical** — `diff` clean. The repo already carried the original faithfully; no action needed. |
+| `design-of-component.txt` | `design-of-components.md` | **one line differed** — see below. |
+
+### `docs/design-of-components.md` — one restore error corrected
+
+| Change | Why |
+|---|---|
+| *"Provide separate entry points for residents and association administrators."* → *"Provide separate entry **and login flows** for residents and association administrators."* | The session-6 revert was done **by hand**, because this file is untracked and git had no baseline to restore from. Four of the five reverted edits were exact; this one was not — I reconstructed the sentence from memory and got it wrong, weakening "separate entry and login flows" into "separate entry points". Now restored verbatim and verified with `diff`. **Lesson: a hand-reconstructed revert is a guess until it is diffed against the original.** — `AUDIT` |
+
+The corrected line matters beyond accuracy: *"separate entry and login flows"* is a stronger claim
+than *"separate entry points"*, and it is precisely the claim the single-entry OAuth decision
+supersedes. Weakening it would have quietly hidden a real conflict.
+
+### `docs/erd/README.md` — **new file**
+
+States which of the two `.dbml` files is authoritative (`homebandhu-v1-milestone1.dbml`, the
+teammates') and which is our unagreed working draft (`homebandhu.dbml`, 63 tables). Added rather
+than renaming the draft, because the name is referenced from `BACKEND_PLAN.md` and several historical
+entries in this log — a rename would have silently invalidated those references. A README fixes the
+ambiguity without breaking anything. — `DERIVED`
+
+### `docs/MILESTONE1_ARTIFACT_ISSUES.md` — **new file**
+
+Issue audit of the four milestone-1 artifacts against each other and against the frontend. Recorded,
+**not fixed** — the ERD, class diagrams and component design are maintained by other teammates.
+
+Principal findings:
+
+| Finding | Note |
+|---|---|
+| **The ERD and class diagram agree with each other and both disagree with the component design and the frontend.** They were written together; the gap is with the product, not between themselves | Reframes the whole reconciliation: this is not a diagram-vs-ERD problem. — `AUDIT` |
+| **`units_community_label_uq` is `(community_id, unit_label)`** — "Flat 101" can exist once per community, so a second block can never have one | Ranked the #1 fix. It is a correctness bug that blocks the most common deployment shape. — `AUDIT` |
+| **`resident_invites` forbids storing plaintext tokens and provides no digest column** | The table forbids the only mechanism it offers; the invite flow is unimplementable as specified. — `AUDIT` |
+| **Departments: 6 of 6 component-design requirements have no column. Complaints: 9 requirements, 0 columns** | Two of the ten admin surfaces cannot be built against v1. — `AUDIT` |
+| **12 of 48 tables have no requirement and no UI** — work orders (5), workforce (5), policies (2) | A quarter of the ERD. Not necessarily wrong, but currently an unexamined surface rather than a decision. — `AUDIT` |
+| **No `version` column anywhere; no `community_id` on child/event tables** | Both are cheap now and invasive later — the second changes every RLS policy already written. — `AUDIT` |
+| **Class diagram models role as inheritance** — five `CommunityMembership` subclasses | Role is state, not type: promotion would require changing an object's class. Also makes the resident-who-is-also-security-supervisor unrepresentable. — `AUDIT` |
+| **Class diagram has behaviour without state** — `Complaint.reopen()` and `escalate()` exist with no `reopenCount`, escalation flag or assignee to record their effect | — `AUDIT` |
+| **Component design §10 claims a `notifications` collection that does not exist** in `frontend/src/store/slices/` | Verified by directory listing. — `AUDIT` |
+| **Component design §2 collects an admin "unit number" while creating only blocks and villas** | The document does not notice it never creates the flat that number refers to — the origin of the missing-inventory problem. — `AUDIT` |
+
+### Deliberate zeros
+
+- `erd/homebandhu-v1-milestone1.dbml` — verified identical to source, **no change needed**.
+- `class-diagram/*` — audited, **not edited**; issues recorded in the new document instead.
+- `frontend/` — **untouched**, as in every prior session.
+
+---
+
+## 2026-07-29 — Session 6: reverting shared artifacts, and the admin dashboard plan
+
+### Reverted — our edits backed out of the artifacts other teammates now own
+
+**Ruling.** The ERD, class diagrams and component design are being maintained by other teammates.
+Our edits come out so the two efforts do not collide. — `PO`
+
+| Artifact | Reverted to | How |
+|---|---|---|
+| `class-diagram/homebandhu-domain.puml` | the staged (teammates') version | `git restore` from the index |
+| `class-diagram/homebandhu-architecture.puml` | same | same |
+| `class-diagram/README.md` | same | same |
+| `class-diagram/*.svg`, `*.png` (4 files) | same | same — the regenerated renders are gone with the source edits, which is correct: a render must match its source |
+| `design-of-components.md` | as supplied | the five sentence-level additions removed by hand (git has no baseline — the file is untracked) |
+| `erd/homebandhu.dbml` | pre-session-4 state | the two "ten modules" notes reverted to "nine" by hand |
+
+Everything was copied to a scratchpad backup before any revert, so nothing is unrecoverable.
+
+**Two things deliberately NOT reverted**, because they are our own working documents rather than
+shared artifacts: `BACKEND_PLAN.md` and `CHANGE_LOG.md`. Reverting `BACKEND_PLAN.md` to its staged
+state would discard every planning session. — `DERIVED`
+
+**Known cost of the revert, accepted:** the "nine feature modules" count in `homebandhu.dbml` is
+**wrong** — `onboardingModules.js` defines ten. The correction was backed out along with everything
+else. It is restated in `ADMIN_DASHBOARD_PLAN.md` and `ADMIN_REGISTRATION_FLOW.md` so it is not lost,
+but whoever owns the ERD needs to apply it. Reverting a correct fix is the price of not colliding;
+recording that it was a correct fix is how it gets re-applied rather than re-discovered. — `AUDIT`
+
+`docs/erd/homebandhu.dbml` and `docs/design-of-components.md` are **untracked**, so they were never
+shared through git in the first place — the collision risk was always confined to the class-diagram
+files. Noted so nobody assumes the revert was broader than it was.
+
+### `docs/ADMIN_DASHBOARD_PLAN.md` — **new file**
+
+The admin dashboard backend plan: the ten nav surfaces and what each reads and writes, eight
+cross-cutting decisions, a seven-phase build order, per-surface endpoint contracts, and the
+reverse-mismatch section (UI implying a data model that does not exist). — `DERIVED`
+
+Findings worth flagging outside the document:
+
+| Finding | Why it matters |
+|---|---|
+| **The Admins page conflicts with the schema.** The ERD carries a partial UQ of one active admin per community and the class diagram states it as an invariant, but the frontend has an Admins *list* page that adds unlimited admins | Resolved by separating *owner* (one, `communities.active_admin_membership_id`) from *administrator* (many, `role = 'admin'`). Both artifacts were answering different questions rather than one being wrong. Raised as request 1 in §7, not applied. — `AUDIT` |
+| **`departments[].staff[].role` mixes two axes** — `"Supervisor"` is a rank, `"Technician"` is a job title | Exactly the collapse §3.1 and §3.10 were written to prevent, now found in live seed data rather than in a document. — `AUDIT` |
+| **Invoice liability differs between layers.** The frontend attaches payments to `userId`; the ERD attaches invoices to `unit_id` so debt does not follow a departing resident | A semantic disagreement, not a mapping detail — raised as request 4. — `AUDIT` |
+| **Settings is a stub** with no persistence, whose four toggles imply automated billing and late-payment fines that exist in no table | Those are a phase, not settings. Recommend shipping Settings against `community_settings` only. — `AUDIT` |
+| **Onboarding promises module editing that does not exist** — step 3 says features can be changed later in Settings; no such control exists | A small, visible broken promise on day one. — `AUDIT` |
+
+### Deliberate zeros
+
+- `docs/frontend-documentation.md` — read for the endpoint summary, **not edited**. It is the
+  frontend team's document.
+- `frontend/` — **untouched**, as in every prior session.
+
+---
+
+## 2026-07-29 — Session 5: OAuth replaces phone/OTP as the authentication method
+
+**Ruling.** The backend team trialled several OTP implementations and concluded OAuth is the better
+fit. Authentication is now OAuth; the phone-and-code entry path is retired. — `PO`
+
+**New entry flow, as agreed in the 2026-07-29 morning meeting:** authenticate → check whether the
+account holds an active membership → if yes, go to the dashboard for its `displayRole`; if no, show
+a new two-button chooser (*Join a community* / *Create a community*). *Create a community* enters the
+existing five-step admin registration; *Join a community* enters the resident path. — `PO`
+
+### `docs/ADMIN_REGISTRATION_FLOW.md` — redrafted
+
+| Change | Why |
+|---|---|
+| **Step 0 rewritten** from a phone-and-code entry to OAuth sign-in plus a `POST /auth/session` hand-off that returns the registration branch | Direct consequence of the ruling. The hand-off is kept rather than letting the client hold the session outright, so the refresh credential still lands in a `Secure; HttpOnly` cookie per §3.7 — that decision was independent of how the user authenticates and survives the change. — `DERIVED` |
+| **New §3, the `/get-started` chooser**, specified as pure navigation that sends nothing to the server | The button a user presses is not a claim of authority. Each flow authorises itself when it submits, so the chooser can stay a client-side branch with no endpoint of its own and no trust attached. — `DERIVED` |
+| **The short-lived onboarding session is gone.** Steps 1–5 now run under an ordinary authenticated session that holds no community scope | Under OAuth the founder is authenticated from step 0 by construction, so a bespoke onboarding credential has nothing left to do. A membership-less session is already safe: RLS grants it nothing until a membership exists. One fewer concept. — `DERIVED` |
+| **Step 5 reframed as review-and-create**; the existing screen and its route are marked for replacement | It was only ever the submit trigger; the credential it collected is redundant once the user is authenticated at step 0. Listed as frontend work in §10 rather than silently dropped, so nobody wonders why a field stopped arriving. — `DERIVED` |
+| **Email split into two meanings** — the provider's verified email is the identity and comes from the token; the step-4 field becomes a contact address, renamed `contactEmail` in the payload | Conflating them would let a client change its own identity by typing in a form field. The previously-recorded `auth.users.email` uniqueness trap **inverts**: under OAuth that uniqueness is the identity guarantee rather than a hazard, and the entry is rewritten accordingly. — `AUDIT` |
+| **Idempotency rebound** from the onboarding session id to the authenticated account id | The former no longer exists, and the latter is a better key anyway: it coincides with the one-account-one-association rule, so a retry is a natural conflict rather than a silent duplicate. — `DERIVED` |
+| **New open item: `profiles.phone_e164` must become nullable** (and `community_registration_requests.applicant_phone_e164` with it) | An OAuth account may have no phone at all. Flagged as a **required schema change before phase 1** — this is the one place the ruling breaks an existing `not null`, and it would otherwise surface as a failed insert on the very first registration. — `AUDIT` |
+| **New open items**: which provider(s), and identity-linking policy when the same person arrives via a second provider with the same verified email | Retrofitting a link across existing memberships is painful; the policy is cheap to set now and expensive to set later. — `AUDIT` |
+| **New open item**: the non-admin login story under OAuth | Out of scope for an admin-only document, but the same entry path will serve every role, and not every role is equally likely to have a provider account on a personal device. Recorded so it is not discovered late. — `AUDIT` |
+| Every reference to the retired mechanism removed from the design sections; it survives only in §10 as work to be undone | Per the ruling, it is not part of the design. It is named once where a screen must physically change, because a removal that is not written down does not happen. — `PO` |
+
+### Not yet propagated
+
+`BACKEND_PLAN.md` §6 and the ERD still describe phone-based authentication end to end — §6.1–6.5,
+`otp_challenges`, the SMS-cost reasoning, the rate-limit design keyed on phone, and the
+`not null` on `profiles.phone_e164`. **None of it has been rewritten yet**; only the admin
+registration document reflects the ruling. Propagating it is a separate pass, deliberately not begun
+here, so the change is reviewed before it spreads across four artifacts. — `PO`
+
+The `AuthenticationProvider` port (§6.8) needs **no change** and is worth noting as a deliberate
+zero: its `VerifiedIdentity` was defined to carry credential-holder and nothing else — no role, no
+membership, no community — which describes an OAuth identity exactly as well as it described a
+verified phone. The port stays; only the adapter behind it changes. This is the seam paying for
+itself.
+
+---
+
+## 2026-07-29 — Session 4: auditing the founding-admin registration flow
+
+Scope of this pass: read the association-registration / founding-admin onboarding flow in
+`frontend/src/` end to end (steps 1–5, success screen, hand-off to `/admin`), compare it against
+`frontend-documentation.md`, the ERD, both `.puml` files and `design-of-components.md`, and record
+the conflicts. **No conflict was resolved in this pass** — the resolutions are product-owner
+decisions and are listed as open in the findings below. Only one factual correction was applied.
+
+### `docs/BACKEND_PLAN.md` and `docs/erd/homebandhu.dbml` — one correction
+
+| Change | Why |
+|---|---|
+| **"nine feature modules" → "ten"** in `BACKEND_PLAN.md` §4.1(7) and §4.3, and in the `community_settings` comment + Note in `homebandhu.dbml`; both now list the ten ids verbatim | `frontend/src/data/onboardingModules.js` defines **ten** modules, not nine — I miscounted in session 2 and the error propagated to three places. Left uncorrected it becomes a wrong server-side CHECK that silently rejects a module the UI can select. The Note now enumerates the ids rather than pointing at a file, so the count cannot drift again. Also recorded that the frontend doc's example vocabulary (`visitors`, `complaints`, `amenities`, `payments`) exists nowhere in the code and that the code's kebab-case ids win, per the §4.5 principle that vocabulary is the frontend's to own. — `AUDIT` |
+
+### `docs/ADMIN_REGISTRATION_FLOW.md` — **new file**
+
+| Change | Why |
+|---|---|
+| **New document**: the founding-admin / community registration flow as *implemented*, step by step — every field with its type, whether it is required and what actually validates it; the single API seam; the `POST /communities/register` request and response contract; field-to-table mapping; and the source-file index | The backend team is about to build against this flow and the only existing description of it is `frontend-documentation.md`, which was written ahead of the code and disagrees with it in several places (module vocabulary, coordinate units, the upload seam, E.164 phones). A document that describes **the code** rather than the intent is what makes the endpoint implementable without reading five React pages first. Marked as derived-from-code, with the disagreements called out where they matter. — `DERIVED` |
+| The document restates the eight open items from the registration audit in its §9 rather than resolving them | They remain the product owner's decisions and are explicitly tabled while the frontend and backend teammates work. Listing them in the shared document stops someone implementing around them by accident, without pre-empting the ruling. — `PO` (tabled 2026-07-29) |
+
+### Findings recorded but **not** acted on
+
+The registration audit surfaced conflicts that each need a ruling before they can be written into any
+artifact. They are held in the session transcript rather than committed to `BACKEND_PLAN.md`, because
+writing a resolution into the plan before it is decided is how the plan stops being trustworthy. The
+headline items: no postal address is collected anywhere although the ERD and class diagram both mark
+it required; map markers are image percentages rather than latitude/longitude; and no flat inventory
+exists for apartment communities, so the founding admin's own residency has no `unit` to point at.
+
+### Deliberate zeros
+
+- `docs/class-diagram/*.puml` — read for this audit, **no change needed**. `Community`, `Building`,
+  `Unit`, `UnitResidency` and `CommitteePosition` already carry everything the flow produces; the
+  conflicts found are about what the *frontend never collects*, not about missing model elements.
+- `docs/design-of-components.md` — read, **no change needed**. Its §2 already describes the flow
+  accurately, including the note added in session 3 that the founder is verified before onboarding
+  begins.
+- `frontend/` — **untouched**, as in every prior session.
+
+---
+
+## 2026-07-28 — Session 3: resolving the audited conflicts
+
+Constraints given for this pass: **zero conflicts with the frontend**, and **minimal edits** to the
+ERD, class diagram and component design.
+
+### Governing principle adopted
+
+> Resolve a conflict in the layer that owns the truth, and adapt at the boundary.
+
+Identity, cardinality and authorization are the backend's to own, so the *diagrams* changed to match
+the backend. Vocabulary, screen count and route paths are the frontend's to own, so the *API* changed
+to match the frontend. Nothing was resolved by asking the other side to move. This is what let the
+frontend absorb the entire conflict set without a single edit. — `DERIVED`, recorded in
+`BACKEND_PLAN.md` §4.5.
+
+### `frontend/` — **no changes, by agreement**
+
+Nothing under `frontend/` has been created, edited or deleted in any session of this work. The
+product owner talks to the frontend team before any frontend code moves. Observations about the UI
+live in `BACKEND_PLAN.md` §6.9 as questions, never as instructions. — `PO`
+
+### `docs/BACKEND_PLAN.md`
+
+| Change | Why |
+|---|---|
+| **New §6.1 "The portal is a hint, never a claim"** — the role-prefixed URLs `/auth/{admin,community}/otp/*` survive as thin aliases onto one handler; the prefix is logged as `entry_point` and never read by an authorization decision | "One door" had been conflated with "one screen". Only the *trust* model has to collapse, and the client never held that. Keeping the aliases means the two-portal UI needs no change at all, which is what makes zero-frontend-conflict reachable. — `DERIVED` from the one-door ruling |
+| **New §6.6 "The display-role projection"** — the API emits `displayRole` in the frontend's existing 4-string vocabulary alongside the internal `role`/`rank`/`departmentKinds` triple | Exposing the three-axis model as the thing the router switches on would force a rewrite of `getDashboardRouteForRole`, every `requiredRole` array and every `role === 'Admin'` comparison. The projection is computed server-side, so 5 of 6 routing cases work through the existing helper unedited. `displayRole` is **computed, not stored** — adding a shell later stays an API change, not a migration. — `DERIVED` |
+| **§6.9 rewritten** from "six things to discuss" into a **compatibility contract (C1–C4)** plus three items that cannot be absorbed | Three of the six were closed outright by C1–C3. The remaining three are additive (a missing staff shell, per-tab sessions, the redundant step-5 OTP), not disagreements. C4 (`redirectTo` optional everywhere) exists so every implied frontend edit is backward-compatible with the current mocks and can be taken independently — a contract rather than a cutover. — `DERIVED` |
+| **New §6.10** heading introduced | Content about session claims, permissions and the three membership-creating flows had been sitting *inside* §6.9, under a heading that said "not changes, questions". It was neither. Structural fix. — `AUDIT` |
+| **New §4.5 Resolution register** | A per-conflict record of how each §4.2.1 / §4.4 finding was closed and which artifact absorbed it, so the audit and its resolution are readable side by side. — `DERIVED` |
+| §10.9, §10.12, §10.13 struck through as resolved | Superseded by product-owner rulings. §10.13 in particular recommended *one* staff assignment per person; that is now overruled by the rank-dependent cardinality rule, and the entry records that the old recommendation rested on a scalar `department_id` assumption which no longer holds. — `PO` |
+| §10.11 `department_kind` list aligned to the ERD's five values | `.puml` and `.dbml` had drifted apart during editing. Trades (plumbing, electrical) are `job_title` and `skills`; a *kind* exists only where a dashboard differs. — `AUDIT` |
+
+### `docs/class-diagram/homebandhu-domain.puml` — 13 edits, no package moved, no association deleted
+
+| Change | Why |
+|---|---|
+| `AuthUser` gains `phone {unique}` + `phoneConfirmedAt`; `email` demoted to `[0..1]`; note names phone as *the* login identifier | The identity class had no phone attribute at all, while phone is the only login identifier. The diagram asserted an email-first model that no screen implements. — `AUDIT` |
+| `ResidentInvite` gains `recipientPhoneE164 {required}`, `tokenDigest {unique}`, `codeDigest`, `attemptCount`; `recipientEmail` → `[0..1]`; `accept(p)` → `redeem(secret, v)`; note states the two factors | Same email assumption. The class also had *no digest fields* despite its own note promising that only digests are stored. `redeem` now takes both factors in its signature so the mandatory-token rule is visible in the model, not just in prose. — `AUDIT` + `PO` |
+| `CommunityMembership` scope note rewritten: one active membership per profile, no per-role exceptions; multi-department moved to `StaffAssignment`; `{role vs capability}` clause added | The old note said residents and admins get one membership but staff get many — contradicting the one-association rule — and put multi-*department*-ness on the membership. Its "staff & non-staff not mixed" clause also forbade the security supervisor who lives in Flat 302, a real case. — `PO` |
+| `Profile.activeMemberships() : List<>` + `membershipIn(c)` → `activeMembership() : Optional<>` | Both signatures presumed multi-community. The invariant is now enforced by the return type rather than by a note someone has to read. — `DERIVED` |
+| `Profile.verifyPhone(otp)` → `markPhoneVerified(v)`; `CommunityRegistrationRequest.verifyOtp(code)` → `attachVerifiedIdentity(v)` | Two aggregates were independently verifying OTPs. The `AuthenticationProvider` seam requires exactly one verifier; neither aggregate should know what an OTP is. — `PO` |
+| `AdminMembership.inviteResident(u, email)` → `(u, phone)`; `grantRole(p, r)` → `assignStaff(p, d, rank) : StaffAssignment` | Invites are phone-based. Granting staff-ness creates a row with a department and a rank; it is not a value set on an enum. — `AUDIT` |
+| `applicantEmail {required}` → `[0..1]` on `CommunityRegistrationRequest` and `AccessRequest`, phone promoted | Both intake paths collect a phone in the UI. — `AUDIT` |
+| `MembershipRole` 5 values → `RESIDENT, STAFF, ADMIN`; `WorkerMembership`/`SecurityMembership`/`ManagerMembership` merged into `StaffMembership` with a guard note | The flat 5-value enum cannot express a security *supervisor* or a committee member. Required for consistency with the ERD, which already made this change. The guard note records that visitor operations need `department.kind = SECURITY` and work-order operations need rank ≥ SUPERVISOR — neither is implied by `role = STAFF`. — `PO` |
+| New enums `StaffRank`, `DepartmentKind`, `CommitteePositionStatus` | The other two axes had no representation in the diagram. — `PO` |
+| `StaffAssignment` gains `rank`, `shift`; its invariant note replaced with the rank-dependent cardinality and the array-claim consequence | The old note said "one active staff assignment per membership", which the product owner's rule invalidates: one manager per department, managers/supervisors single-department, workers multi-department. This is also *why* the JWT carries `department_ids` as an array. — `PO` |
+| `CommunityMembership "1" -- "0..1" StaffAssignment` → `"0..*"` | Direct consequence of the line above; the old multiplicity had become wrong. — `DERIVED` |
+| `Department` gains `kind`, contacts, hours, `slaHours`, `head()`; note added | `kind` selects the staff shell and is the only axis load-bearing in RLS. The other fields are required by `design-of-components.md` §3 and already exist in the prototype's seed data. — `AUDIT` |
+| New `CommitteePosition` class + two associations | Committee members are residents with extra views, and the admin is a committee member and therefore also a resident. Unrepresentable before. — `PO` |
+| New `VerifiedIdentity` value object with its rule in a note | It existed only in prose. The note carries the load-bearing constraint: it holds phone + auth-user-id and **no role, membership or community**, which is what keeps the OTP mechanism swappable. — `PO` |
+
+### `docs/class-diagram/homebandhu-architecture.puml`
+
+| Change | Why |
+|---|---|
+| New `AuthenticationProvider` `<<port>>` interface with the CI import-linter rule in its note | The seam was a plan decision with no representation in any diagram. Placed on the architecture diagram rather than the domain one because it is infrastructure, not domain. — `PO` |
+| New `MembershipResolver` service with `displayRole`/`dashboard` | Makes the authentication/authorization split visible: `AuthService` composes two collaborators that know nothing of each other. — `DERIVED` |
+| `AuthService ..> SupabaseAuth` re-pointed to `AuthenticationProvider ..> SupabaseAuth` | The old edge drew the exact dependency the seam forbids. — `DERIVED` |
+| `AuthService.requestLoginOtp` gains `entryPoint`; `verifyLoginOtp` takes `challengeId` not `phone` | Reflects the portal-as-hint rule and the challenge-based verify contract. — `DERIVED` |
+
+### `docs/class-diagram/README.md`
+
+Model notes rewritten: 5-subclass → 3-subclass, the three-axis role model, role-selects-shell-only,
+one-membership-per-profile, and phone-as-identifier. — Reason: the README stated the old flat enum as
+fact and would have been the first thing a reader trusted. `AUDIT`
+
+### `docs/design-of-components.md` — 3 sentence-level edits, no restructuring
+
+The document describes the prototype accurately, so it was **corrected, not rewritten**. Rewriting it
+to describe a future state would have made it wrong about the thing it exists to describe.
+
+| Change | Why |
+|---|---|
+| "separate entry and login *flows*" → separate *entry points* served by a single flow, with the explicit clause that the entry point is never a claim about role | This bullet was the document-level source of the two-portal split and of the four role-prefixed endpoints. — `PO` |
+| Invitation bullet now states the secret is *required* for activation, not a shortcut | The mandatory-token rule. The document's own §3 language about time-limited single-use invitations already supported this. — `PO` |
+| Per-tab session bullet marked as prototype behaviour, with the server-session consequence named | True today via `sessionStorage`; impossible once sessions are cookies, which are per-origin. Left as a described limitation rather than deleted, because it is still what the prototype does. — `DERIVED` |
+| Onboarding OTP bullet notes the reordering | The founder is verified before onboarding begins, so the confirmation gates entry rather than closing the flow. — `DERIVED` |
+
+### Rendered diagrams
+
+`HomeBandhu-Domain-Model.{svg,png}` and `HomeBandhu-Architecture-Layers.{svg,png}` regenerated from
+source with PlantUML 1.2024.7 (`-charset UTF-8`).
+
+The PNGs were re-rendered a second time with `-DPLANTUML_LIMIT_SIZE=20000`. First attempt silently
+clipped both at PlantUML's 4096 px default — the domain diagram is 16703 px wide, so roughly
+three-quarters of it was missing with no error raised. Worth remembering: **PlantUML crops instead of
+failing.** Check that the PNG's dimensions match the SVG's `viewBox` before trusting it.
+
+Reproduce with:
+
+```bash
+java -Djava.awt.headless=true -DPLANTUML_LIMIT_SIZE=20000 -jar plantuml.jar -charset UTF-8 -tsvg -tpng docs/class-diagram/*.puml
+```
+
+### `docs/erd/homebandhu.dbml` — **no changes needed this session**
+
+v2 already carried every column and constraint the resolutions depend on: `staff_rank`,
+`department_kind`, the three partial uniques on `staff_assignments`,
+`one_active_membership_per_profile_uq`, and the invite digests. Recorded here as a deliberate
+zero — the ERD was checked, not skipped.
+
+---
+
+## 2026-07-28 — Session 2: the auth model
+
+Full reasoning in `BACKEND_PLAN.md` §6; product-owner rulings summarised here.
+
+| Decision | Why | Source |
+|---|---|---|
+| **Phone (E.164) is the only login identifier**; email is optional profile data | Every implemented screen collects a phone. The class diagram and ERD had assumed email magic links. | `PO` |
+| **No login button, no signup button** — one phone field, one endpoint pair; the backend decides login vs. activation vs. found-a-community | The client must never assert a privileged role before authenticating, which `frontend-documentation.md` line 21 requires and its own line 279 endpoint list contradicts. Resolved toward line 21. | `PO` |
+| **The request step discloses nothing** — identical `202` for every valid phone, SMS sent to unknown numbers too | Closes the account-enumeration oracle, at the cost of SMS to non-users. The alternative (reveal before OTP) was recommended for cost and **overruled**. Knock-on: the founder is verified at step 0, making the step-5 onboarding OTP redundant. | `PO`, overruling a recommendation |
+| **Rate limiting keys only on server-side facts** — phone, IP, /24, global circuit-breaker, as queries over `otp_challenges`; no Redis in v1 | A client-supplied token is an evasion tool, not a control: the attacker clears it or mints a fresh one. The frontend holds nothing usable anyway — `lib/ids.js#genId` is `Date.now()` + `Math.random()`. Distinct from the trusted-device cookie, which is legitimate but serves SMS cost, not rate limiting. | `DERIVED`, answering a direct question |
+| **One phone = one association**, enforced by a partial unique on `(profile_id) WHERE status='active'` | People live in one home. Deletes `409 MEMBERSHIP_SELECTION_REQUIRED`, the `membershipId` verify field and the selection token from v1. | `PO` |
+| **Roles with no dashboard still log in**, landing on a WIP placeholder | An admin must not be able to provision a staff member who then cannot sign in at all. `409 UNSUPPORTED_ROLE` retired. Blocking them was recommended and **overruled**. | `PO`, overruling a recommendation |
+| **The invite token is mandatory — it is deliberately a second factor** | OTP proves the phone; the token proves the invitation. An earlier draft proposed auto-redeeming a pending invite on OTP alone, treating the token as a deep-link convenience; **overruled**. Verifying a phone with a pending invite yields an *activation ticket, not a session*. Contains admin typos: the stranger who receives a misdirected SMS still cannot activate. | `PO`, overruling a draft decision |
+| **Rank fixes assignment cardinality** — one manager per department; managers/supervisors single-department; workers multi-department | Supplied as a domain fact. It invalidated a flat "one active staff assignment per membership" constraint already written into the ERD, and forced `department_ids` in the JWT to be an **array** rather than a scalar. | `PO` |
+| **All authentication behind one `AuthenticationProvider`**; nothing else may import `supabase.auth` or reach an SMS vendor | Cheap SMS is unresolved, so the mechanism must not be load-bearing. `VerifiedIdentity` carries phone + auth-user-id only — no role, membership or community — because authentication must stay separable from authorization. Three implementations selected by `AUTH_PROVIDER`; a CI import-linter rule fails the build if the boundary is crossed. | `PO` |
+
+### Artifacts touched in session 2
+
+- `docs/erd/homebandhu.dbml` — `community_memberships` unique moved to `(profile_id) WHERE
+  status='active'`; `staff_assignments` gained the three rank-dependent partial uniques;
+  `otp_challenges` gained `channel`, `resend_count`, `user_agent` and two rate-limit indexes; new
+  `trusted_devices` table. *Why:* each is the physical enforcement of a ruling above — the rules live
+  in Postgres, not in application convention.
+- `docs/BACKEND_PLAN.md` — §6 rewritten end to end (6.1–6.9); §3.1 gained three `DECIDED` blocks;
+  new §3.10, §4.2.1, §4.4.
+
+---
+
+## 2026-07-28 — Session 1: the role model and the ERD
+
+| Decision | Why | Source |
+|---|---|---|
+| **Roles are three orthogonal axes**, not one enum: `role` × `department.kind` × `rank` | The flat 5-value `MembershipRole` cannot represent a security supervisor or a committee member. | `PO` |
+| **Committee members are residents with extra views**; the admin is a committee member and therefore also a resident | `register_community` must create the ADMIN membership *plus* a `unit_residency` *plus* a `committee_position`, in one transaction — so the statement is true in the data rather than in application logic. | `PO` |
+| **Community type is exclusive and immutable** — apartment **xor** standalone homes | Nothing in the schema prevented a mixed community. | `PO` |
+| **New associations are approved immediately**; the operator-approval gate is deferred | Out of scope for every phase. The review columns stay so the gate can be switched on later without a migration. | `PO` |
+
+### `docs/erd/homebandhu.dbml` — v1 → v2
+
+48 tables → **63**. v1 preserved verbatim as `homebandhu-v1-milestone1.dbml` so the two are diffable;
+every change in v2 is tagged `CHANGED:` or `NEW:` in a comment or Note.
+
+15 tables added: `activity_events`, `amenity_blocked_slots`, `amenity_images`, `auth_sessions`,
+`committee_positions`, `community_settings`, `complaint_attachments`, `complaint_categories`,
+`complaint_comments`, `complaint_read_state`, `emergency_contacts`, `idempotency_records`,
+`otp_challenges`, `security_incidents`, `trusted_devices`. *Why:* every one is required by a screen
+that already exists in the prototype or by a rule in `design-of-components.md`; the full
+justification is `BACKEND_PLAN.md` §4.3 C.
+
+Corrections in v2 worth calling out, because each fixes something that would have broken a real
+workflow rather than merely being untidy (`BACKEND_PLAN.md` §4.3 A):
+
+- `units` unique key `(community_id, unit_label)` → `(community_id, building_id, unit_label)`. Flat
+  101 exists in Block A *and* Block B; the second block's units would have failed to insert.
+- `resident_invites` and `access_requests` moved from email-required to phone-required.
+- `communities.active_admin_membership_id` made deferrable — it is a genuine FK cycle, and without
+  deferral `register_community` cannot be written as one transaction.
+- `community_id` denormalised onto ten event/child tables, with composite FKs so it cannot drift.
+  Without it every RLS policy on those tables joins to the parent on every row of every query — the
+  single biggest performance risk in the design.
+- `version` column + `bump_version()` trigger on every editable table, because
+  `frontend-documentation.md` mandates `If-Match` and a `STALE_VERSION` error with nothing to compare
+  against.
+
+*Note:* the ERD image in `docs/erd/` is still rendered from v1 and needs regenerating on
+dbdiagram.io. The `.dbml` is the source of truth.

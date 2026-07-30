@@ -17,6 +17,9 @@ dependencies = [
 dev = [
     "pytest>=8.2",
     "ruff>=0.6",
+    # scripts/export_openapi.py, which regenerates docs/openapi.yaml. A dev
+    # dependency on purpose: the running service never reads or writes YAML.
+    "pyyaml>=6.0",
 ]
 
 [tool.ruff]
