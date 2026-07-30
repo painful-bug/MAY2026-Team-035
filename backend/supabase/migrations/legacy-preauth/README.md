@@ -46,26 +46,57 @@ surviving endpoints need: `community_settings`, `community_billing_settings`,
 `notices.category`/`.urgency`, RLS for the two new tables, and an extension of the
 shared SSE outbox over them.
 
-**Still to be rebuilt**, in the order the endpoints matter:
+**All of them have now been rebuilt.** Migrations `0019`–`0023` sit beside `0018`
+in the parent directory and target the baseline:
 
-| File | Serves | Note |
+| Rebuilt as | Replaces | Serves |
 |---|---|---|
-| `0014_departments.sql` | 8 department/staff endpoints | Highest value — the snapshot stubs `staff: []`, so these are the only source. Baseline already has `departments`, `staff_assignments`, `skills`. |
-| `0013_complaint_events.sql` | `PATCH /complaints/{id}`, `POST .../comments` | Baseline has `complaints`, `complaint_events`, `complaint_comments`. Mostly a rename. |
-| `0015_money.sql` | `POST /invoices`, `POST .../payments`, billing settings RPCs | Invoice liability moves from unit to `membership_id`. |
-| `0016_amenities.sql` | 16 booking/ledger/report endpoints | Largest (2 757 lines) and the real design conflict: our series+occurrences model versus their single `amenity_bookings`. See below. |
-| `0010`–`0012` | tenancy, dashboard views, people | Largely superseded — the reads they backed were removed by the wiring audit. Salvage the RLS reasoning, not the views. |
+| `0019_departments_on_baseline.sql` | `0014` | 9 department/staff endpoints, plus the two shared RLS predicates |
+| `0020_complaint_events_on_baseline.sql` | `0013` | `PATCH /complaints/{id}`, `POST .../comments` |
+| `0021_money_on_baseline.sql` | `0015` | `POST /invoices`, `POST .../payments`, `GET`/`PUT /billing-settings` |
+| `0022_settings_views_on_baseline.sql` | `0017` (views only) | `GET`/`PUT /settings` |
+| `0023_amenities_on_baseline.sql` | `0016` | the 16 booking, ledger and report endpoints |
 
-## The amenities decision that is still open
+`0010`–`0012` were **not** rebuilt and will not be: the reads they backed were
+removed by the wiring audit, and their RLS reasoning has been absorbed into the
+five files above.
 
-Their `dashboard_service.py` reads `row.get("booking_series_id")` in its legacy
-branch, which suggests a series id was anticipated. The cheapest additive path is
-therefore to add an `amenity_booking_series` table plus a nullable
-`amenity_bookings.booking_series_id`, treating their rows as our occurrences —
-their single-table reads keep working, and recurring bookings become
-representable. That keeps both models instead of choosing.
+Between them these create 10 views and 24 write RPCs. A static check
+(`pglast`, the real PostgreSQL parser) confirms every migration parses, that
+every RPC our repositories call is created by one of them, and that every column
+our repositories select exists on the table or view they select it from.
 
-Worth noting when this is decided: their own submitted ERD
-(`docs/homebandhu_submission_erd.dbml`) models `amenity_booking_series`,
-`amenity_booking_occurrences` and a typed `amenity_rules`. On amenities the ERD
-agrees with the design in this directory, not with their baseline.
+**None of this has been applied to a database.** That is still F1, and it is now
+the only thing standing between these endpoints and working.
+
+## The amenities decision, settled
+
+The section that used to sit here argued for keeping our series + occurrences
+model, on the grounds that their own submitted ERD modelled it too.
+
+**That argument no longer holds.** `origin/main` @ `db85c04` rewrote the ERD to
+match the baseline: `amenity_booking_series`, `amenity_booking_occurrences` and
+the typed `amenity_rules` are gone, and `amenity_bookings`,
+`amenity_operating_hours`, `amenity_maintenance_blocks`, `booking_charges` and
+`booking_refunds` are in. On amenities the ERD now agrees with their baseline,
+not with the design in this directory.
+
+Conforming exactly would have cost a product behaviour, though. A resident books
+up to thirty dates in one request and an admin approves the whole request with
+one click, so one row per date with nothing joining them would mean approving a
+twelve-date request twelve times.
+
+`0023` therefore keeps the baseline's single `amenity_bookings` as the only
+booking table and adds **one nullable `booking_group_id` column** to it. No
+series entity, no second table, the ERD's table set unchanged, the GIST
+exclusion constraint still preventing double-booking per row — and a multi-date
+request is still one thing to approve. The column name converges with
+`bookingGroupId`, which their own `dashboard_service.py:149` already emits.
+
+## What is still referenced but will never exist
+
+Their `dashboard_repository.py` reads `amenity_booking_series`,
+`amenity_booking_occurrences` and `visitor_access_requests` in its `legacy=True`
+branch. Those three tables are deliberately not created: the branch exists to
+support a database that predates the baseline, and the non-legacy branch beside
+it reads the baseline shape. Nothing of ours references them.

@@ -17,6 +17,99 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-07-30 — Session 20: rebuilt every quarantined migration onto the baseline
+
+Pulled `origin/main` @ `9f8adc4` (4 new commits) and rebuilt the SQL that had been quarantined since the
+baseline replaced the schema it targeted. The trigger was a simple question — is this ready to push? — and the
+honest answer was no: 32 of our 35 endpoints had no database objects behind them.
+
+### Merged `origin/main` @ `9f8adc4` — `MERGE`
+
+One conflict, `backend/.venv/pyvenv.cfg`: we untracked it as a build artefact in session 18, they modified it.
+Resolved by keeping our deletion — and the merge immediately demonstrated why it mattered, by overwriting the
+local venv config with a Linux path and breaking the interpreter. That file has now been clobbered across three
+machines (a Mac using uv, a Linux box, this Windows one). It stays untracked.
+
+### Five migrations, `0019`–`0023` — **10 views, 24 RPCs, columns on 11 tables** — `SCHEMA`
+
+| Migration | Replaces | Serves |
+|---|---|---|
+| `0019_departments_on_baseline.sql` | `0014` | 9 department/staff endpoints |
+| `0020_complaint_events_on_baseline.sql` | `0013` | 2 complaint endpoints |
+| `0021_money_on_baseline.sql` | `0015` | 4 money endpoints |
+| `0022_settings_views_on_baseline.sql` | `0017` views | `GET`/`PUT /settings` |
+| `0023_amenities_on_baseline.sql` | `0016` | 16 amenity endpoints |
+
+`0010`–`0012` were deliberately not rebuilt: the reads they backed were removed by the wiring audit.
+
+Three baseline constraints are relaxed rather than removed, each recorded where it happens.
+`staff_assignments.membership_id`, `complaint_comments.author_membership_id` and
+`amenity_bookings.booked_by_membership_id` all become nullable, because rosters are typed names rather than
+accounts and a maintenance block has no resident behind it. `departments.is_active` and `amenities.is_active`
+stay truthful, kept equal to our new `status` columns by triggers, because their `dashboard_repository.py:166`
+reads them.
+
+### Conflict C-11 — **closed** — `CONFLICT`
+
+The wiring audit deleted our three module endpoints, but `GET /settings` still read modules from tables of ours,
+so the duplication survived one level down. `community_module_overview` is now a view over their
+`feature_catalog` and `community_features`. `0017`'s module tables are permanently superseded. Three columns
+were added to `feature_catalog` instead of a parallel table — `sort_order`, `backend_status`, `backend_note` —
+because they describe whether a module a community switched on actually has a backend, which is a fact about our
+code rather than about the community. Nothing is seeded as `live`, because nothing is.
+
+### The amenities design question — **settled against our model** — `CONFLICT`
+
+`origin/main` @ `db85c04` rewrote the submission ERD to match the baseline, removing
+`amenity_booking_series`, `amenity_booking_occurrences` and the typed `amenity_rules`. The argument in
+`legacy-preauth/README.md` — that their own ERD backed our series model — was true when written and is now false.
+It has been corrected in place.
+
+Conforming exactly would have cost a product behaviour: a resident books up to 30 dates in one request and an
+admin approves the whole request with one click, so one row per date with nothing joining them means approving a
+12-date request 12 times. `0023` keeps their single `amenity_bookings` and adds one nullable `booking_group_id`
+column. No series entity, no second table, the ERD's table set unchanged, and the name converges with the
+`bookingGroupId` their `dashboard_service.py:149` already emits.
+
+### A bug the rebuild exposed — `CORRECTION`
+
+`status_to_storage` mapped `Pending -> 'pending'` and `Reopened -> 'reopened'`. The baseline's
+`complaint_status` is an ENUM containing neither, so every `PATCH /complaints/{id}` carrying those would have
+failed with `22P02`. The endpoint's tests passed because they never reach a database. Both now store `open`, the
+reopen is preserved as a timeline event carrying the previous status, and a new test asserts every mapped value
+is a member of the enum. 260 → 268 tests.
+
+### Static validation — `TOOLING`
+
+There is no database, Docker or `psql` on the machine this was written on, so "runnable" could not mean
+"applied". Instead `pglast` — the real PostgreSQL parser — checks that every migration parses, that every RPC our
+repositories call is created by some migration, and that every column they select exists on the table or view
+they select it from.
+
+The column checker was **written, found nothing, and was then proven broken** by injecting a bad column it failed
+to detect. Rewritten to walk the AST properly, it found 12 real mismatches: 10 missing columns on
+`amenity_overview`, `day_count` on `amenity_booking_overview`, and `invoice_line_items.total_amount`, which
+existed but was hidden inside a `DO` block where no static reader could see it. All 12 fixed.
+
+### Submission artifacts — `DOCS`
+
+- **ERD** (`docs/diagrams/homebandhu_submission_erd.dbml`): our 7 new tables added with their relationships, plus
+  a comment block listing every column added to a baseline table and every view created. Listed rather than
+  edited into upstream's table blocks, so the file stays mergeable.
+- **Class diagram** (`docs/diagrams/HomeBandhu-Architecture-Classes.puml`): it modelled only their 6 routers, 6
+  services and 6 repositories. Our 7 routers, 7 services and 7 repositories added, with the views/RPC layer and
+  the SSE outbox edge.
+- **`docs/API.md`**: the 34 sections documenting removed endpoints are gone (2 824 → ~1 770 lines). §5 and §6 are
+  now deliberately empty with a note explaining why and where the functionality went; the numbering is kept so
+  links into §7–§14 do not break. A mechanical check now reports zero stale headings and zero undocumented
+  operations on our side.
+
+### What is still true, and unchanged — `STATUS`
+
+**No migration has been applied to any database, including `0001`.** Nothing here has executed. The claim is that
+the SQL is complete, parses, and matches what the code expects — not that it works. That is F1, and it is now the
+only thing between these endpoints and working.
+
 ## 2026-07-30 — Session 19: cleared the stale residue of the API cut
 
 PO instruction: *"check if there are any stale stuff left from any of our previous and irrelevant stuff from

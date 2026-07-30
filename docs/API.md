@@ -2,29 +2,15 @@
 
 **Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-07-30
 
-> ## ⚠ Sections 5–11 are being revised down to the post-merge surface
+> ## The prose below now matches the generated spec
 >
-> `origin/main` @ `94556e5` merged into this branch, and the frontend wiring audit removed **32 of our
-> operations** — every read the shared `GET /dashboard/snapshot` already serves, plus the amenity CRUD their
-> `/dashboard/amenities` already serves. **The generated [`openapi.yaml`](openapi.yaml) and `/docs` are correct
-> right now; the prose in §5–§11 still describes removed endpoints.**
+> §5–§11 have been pruned: the **34 sections documenting removed endpoints are gone**, and every remaining
+> `###` heading corresponds to an operation that exists in [`openapi.yaml`](openapi.yaml). That is checked
+> mechanically rather than by eye — normalising path parameters and diffing headings against the spec now
+> reports zero stale and zero undocumented on our side.
 >
-> Until that prose is pruned, read this file with **[FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md)** beside
-> it — it lists every removal and its evidence. The live surface is 59 operations: 24 from the auth/dashboard
-> workstream and the 35 below.
->
-> **Our 35 operations, post-audit**
->
-> | Section | Live | Removed by the audit |
-> |---|---|---|
-> | §5 Admin dashboard | *(none — router deleted)* | `GET /dashboard/admin`, `GET /communities/current`, `GET /notices`, `GET /residents` |
-> | §6 People | `POST /admins` **(new)** | `GET /admins`, `GET`/`PATCH`/`DELETE /residents…`, `GET /registrations`, `POST /registrations/{id}/approve\|reject` |
-> | §7 Complaints | `PATCH /complaints/{id}`, `POST /complaints/{id}/comments` | `GET /complaints`, `GET /complaints/{id}`, `POST …/read`, `POST …/attachments` |
-> | §8 Departments | all 8 (reads included — the snapshot stubs `staff: []`) | `GET /complaint-categories` |
-> | §9 Money | `POST /invoices`, `POST /invoices/{id}/payments`, `GET`/`PUT /billing-settings` | `GET /invoices`, `GET /invoices/{id}`, `GET /invoices/summary`, `GET /payments`, `POST …/void`, `POST /maintenance-runs` |
-> | §10 Amenities | 16 — bookings, approvals, blocks, ledger, reports | the 6 catalogue endpoints |
-> | §11 Settings | `GET`/`PUT /settings` | `GET`/`PUT /settings/modules`, `PATCH /settings/modules/{key}` |
-> | *new* Notices | `POST /notices` **(new)** | — |
+> The live surface is **59 operations**: 24 from the auth/dashboard workstream, documented in
+> [`../backend/API_REFERENCE.md`](../backend/API_REFERENCE.md), and our **35** below.
 >
 > **Two contract-wide changes that apply to every endpoint below.**
 >
@@ -36,9 +22,14 @@
 >    A missing or mismatched token is **403** with code `csrf_invalid`, and a wrong `Origin` is **403**
 >    `csrf_origin_invalid`.
 >
-> **Nothing below runs against a database yet.** Migrations `0010`–`0017` were quarantined to
-> `backend/supabase/migrations/legacy-preauth/`; only `0018` was rebuilt on the baseline, covering `§11 Settings`,
-> `GET`/`PUT /billing-settings` and `POST /notices`.
+> **The database objects these endpoints need now exist.** Migrations `0019`–`0023` rebuilt the quarantined
+> `0013`–`0017` onto the clean baseline: 10 views, 24 write RPCs, and columns on 11 baseline tables. A static
+> check confirms every RPC and every column our repositories reference is created by some migration.
+>
+> **They have not been applied to any database.** No environment has run `0001` yet, so "exists in the migration"
+> is as far as the guarantee goes. Applying them is the next step and it has to happen before anyone can say
+> these endpoints work.
+
 
 This document is the contract between the backend and the React frontend. It is
 **normative**: if the code and this document disagree, that is a bug in one of them.
@@ -257,56 +248,6 @@ Liveness probe. No authentication.
 > that OAuth replaces phone/OTP, and that migration has not been made yet. This section will change.
 > The resident invite token remains a mandatory second factor regardless.
 
-### `POST /api/v1/auth/otp/request`
-
-Send a login code to a registered phone. No authentication.
-
-**Request**
-```json
-{ "phone": "+919876543210" }
-```
-
-**200**
-```json
-{ "message": "If the number is registered, a code has been sent." }
-```
-
-The response is **identical for unknown numbers** — deliberately, to prevent user enumeration.
-Unregistered numbers simply never receive a code (`should_create_user=false`).
-
-| Status | Code | Cause |
-|---|---|---|
-| `200` | — | Always, when the request is well-formed |
-| `400` | `app_error` | The SMS provider rejected the send |
-| `422` | `request_validation_error` | Missing or malformed `phone` |
-
-### `POST /api/v1/auth/otp/verify`
-
-Exchange the SMS code for a session. No authentication.
-
-**Request**
-```json
-{ "phone": "+919876543210", "token": "123456" }
-```
-
-**200**
-```json
-{
-  "access_token": "eyJhbGciOi...",
-  "refresh_token": "v1.Mr7...",
-  "token_type": "bearer",
-  "expires_at": 1785312000,
-  "user_id": "8f14e45f-ceea-467a-9f1e-1f1a1f0e9c11",
-  "role": "RESIDENT"
-}
-```
-
-| Status | Code | Cause |
-|---|---|---|
-| `200` | — | Verified |
-| `401` | `authentication_error` | Wrong or expired code |
-| `422` | `request_validation_error` | Malformed body |
-
 ### `POST /api/v1/auth/refresh`
 
 Exchange a refresh token for a new session ("remember me"). No authentication.
@@ -316,30 +257,6 @@ Exchange a refresh token for a new session ("remember me"). No authentication.
 | Status | Code | Cause |
 |---|---|---|
 | `401` | `authentication_error` | Refresh token invalid, expired or revoked |
-
-### `GET /api/v1/auth/me`
-
-The caller's own profile. **Any authenticated role.**
-
-**200**
-```json
-{
-  "id": "8f14e45f-ceea-467a-9f1e-1f1a1f0e9c11",
-  "role": "RESIDENT",
-  "full_name": "Aakash S.",
-  "phone": "+919876543210",
-  "apartment_id": "B-1204",
-  "association_id": "3c6e0b8a-9c15-4f2b-9d1a-2b7c8e4d5a60",
-  "status": "Active"
-}
-```
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` | `authentication_error` | Missing or invalid token |
-| `404` | `not_found` | Token is valid but no profile row is visible |
-
----
 
 ## 4. Invitations
 
@@ -374,417 +291,31 @@ Mint a resident invite. **Requires `ADMIN`.**
 | `403` | `insufficient_role` | Caller is not an admin |
 | `422` | `request_validation_error` | Malformed body |
 
-### `POST /api/v1/auth/redeem`
-
-Redeem an invite via magic-link token or typed code. **No authentication** — this is how a new
-resident gets their first session.
-
-**Request** — `phone` plus **exactly one** of `token` or `code`:
-```json
-{ "phone": "+919812345678", "code": "4KJ7-2M" }
-```
-
-**200** — a `Session`.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` | `authentication_error` | Token/code does not match |
-| `409` | `conflict` | Already redeemed |
-| `422` | `validation_error` | Neither or both of `token`/`code`; or the invite has expired |
-
----
-
 ## 5. Admin dashboard
 
-### `GET /api/v1/dashboard/admin`
+**This section is intentionally empty.** Every endpoint it documented was removed by the frontend wiring audit,
+because their `GET /dashboard/snapshot` already serves the same reads and the frontend already calls it. The
+removals were `GET /dashboard/admin`, `GET /communities/current`, `GET /notices` and `GET /residents`. See
+[FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md) §3 for the evidence behind each one, and
+[`../backend/API_REFERENCE.md`](../backend/API_REFERENCE.md) for the snapshot's contract.
 
-The admin home aggregate. **Requires `ADMIN`.** `Cache-Control: no-store`.
-
-One request instead of five. The frontend currently derives these counts by filtering whole
-collections in the browser, which stops working the moment those collections are paginated.
-
-**200**
-```json
-{
-  "totalResidents": 42,
-  "pendingRequests": 0,
-  "activeComplaints": 7,
-  "collection": { "current": 12750, "target": 17500, "percent": 73 },
-  "generatedAt": "2026-07-29T13:35:21.838130+00:00"
-}
-```
-
-| Field | Status |
-|---|---|
-| `totalResidents` | **Real.** Active `RESIDENT` memberships. |
-| `activeComplaints` | **Real.** Status in `pending`, `in_progress`, `reopened`. |
-| `pendingRequests` | **Real** as of step 4. Requests with status `pending`. |
-| `collection` | **Real** as of step 7. Read from the same aggregate that serves `GET /invoices/summary`, so the home page and the collections screen cannot disagree. Whole rupees, matching the frontend's own rounding. |
-
-Every field is now real; nothing on this response is a placeholder. `target` is everything billed,
-including what is not yet due; `current` is what has actually been received. **`percent` is `0` when
-`target` is `0`**, not `NaN` — a founding community has no invoices at all.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | The caller belongs to no community yet |
-
-### `GET /api/v1/communities/current`
-
-The caller's community. **Any authenticated role** — the resident shell needs the name in its header
-too.
-
-**200**
-```json
-{
-  "id": "3c6e0b8a-9c15-4f2b-9d1a-2b7c8e4d5a60",
-  "name": "HomeBandhu Residency",
-  "communityType": "apartment",
-  "status": "Active",
-  "createdAt": "2026-07-01T09:00:00+00:00"
-}
-```
-
-| Status | Code | Cause |
-|---|---|---|
-| `404` | `not_found` | No profile, or the caller belongs to no community |
-
-### `GET /api/v1/residents`
-
-Page through the community's residents. **Requires `ADMIN`.**
-
-| Query | Type | Default | Notes |
-|---|---|---|---|
-| `search` | string ≤ 100 | — | Case-insensitive across name, flat code and phone |
-| `page` | integer | `1` | ≥ 1 |
-| `pageSize` | integer | `20` | 1–100 |
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "7d3c1b90-...",
-      "profileId": "8f14e45f-...",
-      "name": "Aakash S.",
-      "email": null,
-      "phone": "+919876543210",
-      "role": "RESIDENT",
-      "displayRole": "Resident",
-      "flat": "B-1204",
-      "unitId": "a1b2c3d4-...",
-      "status": "active",
-      "joinedAt": "2026-07-01T09:00:00+00:00"
-    }
-  ],
-  "total": 1, "page": 1, "pageSize": 20, "hasMore": false
-}
-```
-
-**Every reference carries both a label and an id** — `flat` + `unitId`, `role` + `displayRole`. The
-frontend ignores keys it does not know, so the ids are free to send now and adopt one screen at a
-time. `id` is the **membership** id, not the profile id; `profileId` is given separately.
-
-`email` is real as of step 4 (migration `0012` adds `profiles.email`, backfilled from `auth.users`).
-It can still be `null` for a member who has no address on file.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `422` | `request_validation_error` | `page` < 1, `pageSize` out of 1–100 |
-
-### `PATCH /api/v1/residents/{membershipId}`
-
-Update a resident. **Requires `ADMIN`.** The path parameter is the **membership** id, as returned in
-`items[].id` — not `profileId`.
-
-**Request** — a partial update; omitted fields are left unchanged, an explicit `null` clears one.
-```json
-{ "name": "Rohan Sharma", "email": "rohan@example.com", "phone": "+919812345678", "designation": "Treasurer" }
-```
-
-**200** — `{ "message": "Resident updated." }`
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such member in the caller's community |
-| `409` | `unique_violation` | Another member already has that value |
-| `422` | `request_validation_error` | A field exceeds its maximum length |
-
-> This endpoint writes to two tables and is **not atomic**, unlike approve/remove. A partial failure
-> leaves some fields updated and others not — visible to the admin, and fixed by retrying. There is no
-> invariant between the two writes, so the extra machinery would buy nothing.
-
-### `DELETE /api/v1/residents/{membershipId}`
-
-Remove a resident. **Requires `ADMIN`.**
-
-**200** — `{ "message": "Resident removed." }`
-
-> ⚠️ **This deactivates; it does not delete.** The membership is marked `inactive` and the open
-> residency is ended, so the member leaves active lists and the flat reads as vacant. Complaints,
-> invoices and payments reference the membership, so removing the row would either cascade them away
-> or fail outright. There is no hard-delete endpoint by design.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin, or the member belongs to another community |
-| `404` | `not_found` | No such member |
-| `409` | `conflict` | **An admin tried to remove their own membership.** Refused — there is no recovery path from locking a community out of its own dashboard |
-
----
-
-### `GET /api/v1/notices`
-
-Published notices, newest first. **Any authenticated role.** `Cache-Control: no-store`.
-
-Query parameters: `page`, `pageSize` (§1.6).
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "n1a2b3c4-...",
-      "title": "Water tank cleaning scheduled",
-      "description": "Annual cleaning of the overhead water tanks...",
-      "category": "Maintenance",
-      "urgency": "high",
-      "date": "July 8, 2026",
-      "timeAgo": "Today",
-      "publishedAt": "2026-07-08T04:30:00+00:00"
-    }
-  ],
-  "total": 1, "page": 1, "pageSize": 20, "hasMore": false
-}
-```
-
-Draft and archived notices are never returned here. `urgency` is one of `info | low | medium | high`.
-
-Note that `timeAgo` uses a **day-granularity** vocabulary (`Today`, `Yesterday`, `3d ago`) while
-complaints use an hour-granularity one (`2h ago`). That is not an inconsistency on our side — the two
-frontend lists genuinely render different vocabularies, and we match each.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` | `authentication_error` | Not authenticated |
-| `422` | `request_validation_error` | Bad pagination values |
----
+The heading is kept so the section numbering below does not shift; renumbering would break every link and
+reference into §7–§14 for no gain.
 
 ## 6. People
 
-### `GET /api/v1/admins`
+**Also intentionally empty**, for the same reason: `GET /admins` is served by the snapshot's `users[]`, which
+carries `role` and lets the page filter client-side, and the registration trio duplicated their
+`/admin/access-requests` endpoints that the frontend already calls.
 
-Every admin of the caller's community. **Requires `ADMIN`.**
-
-Returned in the standard page envelope for consistency, but **not paginated** — an association has a
-committee, not a directory. `total` equals `items.length` and `hasMore` is always `false`.
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "9c1e...", "profileId": "8f14...",
-      "name": "Meera Sharma", "email": "meera.admin@homebandhu.com", "phone": "+919876501234",
-      "role": "ADMIN", "displayRole": "Admin",
-      "designation": "Secretary",
-      "flat": "Admin Office", "unitId": null,
-      "status": "active", "joinedAt": "2026-07-01T09:00:00+00:00"
-    }
-  ],
-  "total": 1, "page": 1, "pageSize": 1, "hasMore": false
-}
-```
-
-`designation` is the office held in the residents' association — President, Secretary, Treasurer,
-Committee Member, Association Manager, Other. It is a **third axis**, distinct from `role` (what the
-system permits) and from staff `jobTitle` (what a worker does).
-
-`flat: "Admin Office"` with `unitId: null` is expected, not an error — it is the literal value the
-frontend uses for admins who have no flat, and it correctly resolves to no unit.
-
-### `GET /api/v1/registrations`
-
-Self-signup requests awaiting review. **Requires `ADMIN`.** `Cache-Control: no-store`.
-
-| Query | Type | Default | Notes |
-|---|---|---|---|
-| `status` | enum | `pending` | `pending` \| `approved` \| `rejected` |
-| `page` / `pageSize` | integer | `1` / `20` | §1.6 |
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "4a7b...", "name": "Siddharth Roy",
-      "email": "siddharth@gmail.com", "phone": "+919888877777",
-      "flat": "C-505", "tower": "C",
-      "status": "pending",
-      "date": "July 8, 2026", "submittedAt": "2026-07-08T04:30:00+00:00"
-    }
-  ],
-  "total": 1, "page": 1, "pageSize": 20, "hasMore": false
-}
-```
-
-`flat` is always the **canonical full code**; `tower` is derived from it. Only the code is stored —
-storing both invites them to disagree, which is exactly the frontend bug in agenda item 8.
-
-> **Submitting a request is not part of this API.** That is registration, which is out of scope for
-> this workstream. These endpoints are the admin-facing review half only.
-
-### `POST /api/v1/registrations/{requestId}/approve`
-
-Approve a request. **Requires `ADMIN`.**
-
-**201 Created** — 201 rather than 200 because this creates an invitation.
-```json
-{
-  "requestId": "4a7b...",
-  "invitationId": "b2f1...",
-  "link": "http://localhost:5173/join/9f2a...",
-  "code": "K7M2QPR9",
-  "phone": "+919888877777",
-  "flat": "C-505",
-  "name": "Siddharth Roy",
-  "expiresAt": "2026-08-01T09:00:00+00:00"
-}
-```
-
-> ⚠️ **Approval does not create an active account.** It marks the request approved and mints an
-> **invitation** the applicant redeems, because the invite token is a mandatory second factor. This
-> differs from the demo frontend, where `acceptRequest` immediately creates an `Active` resident.
->
-> ⚠️ **`link` and `code` are returned exactly once** and are never recoverable — only digests are
-> stored. If the admin loses them, reissue via `POST /admin/invitations`.
-
-Both writes happen inside **one Postgres transaction** (an RPC), so a request can never end up
-approved with no invitation. The flat is created on first reference if it does not exist.
-
-| Status | Code | Cause |
-|---|---|---|
-| `201` | | Approved |
-| `401` / `403` | `forbidden` | Not authenticated; not an admin; or the request belongs to another community |
-| `404` | `not_found` | No such request |
-| `409` | `conflict` | Already approved or rejected. Two admins clicking at once serialise, and the second gets this |
-
-### `POST /api/v1/registrations/{requestId}/reject`
-
-Reject a request. **Requires `ADMIN`.** Body is optional.
-
-**Request** — `{ "reason": "Flat already occupied." }` · **200** — `{ "message": "Registration request rejected." }`
-
-The applicant may apply again: the uniqueness rule covers only *pending* requests, so both attempts
-survive in the history.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` / `404` / `409` | | As for approve |
+The one addition that came out of this area, `POST /admins`, is documented in **[§12](#12-notices-and-administrator-promotion)**
+alongside `POST /notices` — both were added together because both served a frontend handler with no endpoint
+anywhere.
 
 ## 7. Complaints
 
 Reads and comments are open to **any member** of the community — a resident must be able to follow and
 discuss their own complaint. Editing is **admin-only**.
-
-### `GET /api/v1/complaints`
-
-List complaints, newest first. `Cache-Control: no-store`.
-
-| Query | Type | Default | Notes |
-|---|---|---|---|
-| `status` | string | — | `Pending` \| `In Progress` \| `Resolved` |
-| `categoryId` | uuid | — | |
-| `departmentId` | uuid | — | |
-| `search` | string ≤ 100 | — | Title, description, assignee |
-| `page` / `pageSize` | integer | `1` / `20` | §1.6 |
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "c1a2...", "title": "Leaking tap in kitchen",
-      "description": "The kitchen sink mixer tap is dripping...",
-      "raisedBy": "Aakash S.", "raisedByMembershipId": "7d3c...",
-      "flat": "B-1204", "unitId": "a1b2...", "location": "Kitchen",
-      "category": "Plumbing", "categoryId": "e5f6...",
-      "department": "Plumbing & Water", "departmentId": "d7e8...",
-      "status": "In Progress", "urgency": "Medium", "progress": 65,
-      "assignee": "Ramesh - Plumber", "assignedToMembershipId": null,
-      "date": "July 8, 2026", "timeAgo": "2h ago",
-      "submittedAt": "2026-07-08T04:30:00+00:00",
-      "updatedAt": "2026-07-08T09:15:00+00:00",
-      "expectedResolutionAt": "2026-07-10T04:30:00+00:00",
-      "isBreaching": false, "hasUnreadUpdate": true,
-      "reopenedCount": 0, "rating": null,
-      "residentFeedback": null, "resolutionConfirmed": false
-    }
-  ],
-  "total": 1, "page": 1, "pageSize": 20, "hasMore": false
-}
-```
-
-**`isBreaching`** is computed server-side so every screen agrees on the definition: the deadline has
-passed **and** the complaint is still open. A resolved complaint that took too long is *late*, not
-breaching — the tile counts work outstanding now.
-
-**`hasUnreadUpdate` is per caller**, derived from a read receipt rather than a flag on the complaint.
-The frontend's single boolean cannot represent an admin and a resident having seen different versions;
-this can. No receipt at all means never opened, so unread.
-
-Unknown `status` values are rejected with `422 unknown_status` rather than silently ignored.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` | `authentication_error` | Not authenticated |
-| `422` | `unknown_status` / `request_validation_error` | Unrecognised status; bad pagination |
-
-### `GET /api/v1/complaints/{complaintId}`
-
-One complaint plus its timeline, comments and attachments. **Any member.** `Cache-Control: no-store`.
-
-**200** — every field from the list, plus:
-```json
-{
-  "timeline": [
-    { "id": "ev1...", "type": "raised", "label": "Complaint raised",
-      "message": "The complaint was submitted to the management team.",
-      "actor": "Aakash S.", "createdAt": "2026-07-08T04:30:00+00:00" },
-    { "id": "ev2...", "type": "assigned", "label": "Technician assigned",
-      "message": "Ramesh - Plumber was assigned to this complaint.",
-      "actor": "Management", "createdAt": "2026-07-08T06:00:00+00:00" }
-  ],
-  "comments": [
-    { "id": "cm1...", "message": "Plumber will visit at 4pm.",
-      "authorName": "Meera Sharma", "authorRole": null,
-      "visibility": "resident", "createdAt": "2026-07-08T09:15:00+00:00" }
-  ],
-  "attachments": [
-    { "id": "at1...", "storagePath": "c1a2/leak.jpg",
-      "url": "https://...signed...", "attachmentType": "photo",
-      "contentType": "image/jpeg", "sizeBytes": 184320,
-      "createdAt": "2026-07-08T04:31:00+00:00" }
-  ]
-}
-```
-
-**`timeline` and `comments` are different things** and both are returned. The timeline is an
-append-only audit stream — there is no UPDATE or DELETE policy on it in Postgres, so it is
-structurally immutable, not immutable by convention. Comments are a conversation: authored, editable
-in principle, and subject to visibility.
-
-**Internal comments never reach a non-admin caller.** That is enforced by RLS, not by this layer.
-
-**`attachments[].url`** is a signed link valid for 10 minutes. It is `null` when signing fails or the
-storage bucket is missing — one broken attachment must not take down the complaint it belongs to.
-
-| Status | Code | Cause |
-|---|---|---|
-| `404` | `not_found` | No such complaint in the caller's community |
 
 ### `PATCH /api/v1/complaints/{complaintId}`
 
@@ -832,32 +363,6 @@ Add a comment. **Any member.** `201 Created`.
 | `403` | `forbidden` | Not a member, or a non-admin asked for `internal` |
 | `404` | `not_found` | No such complaint |
 | `409` | `conflict` | Empty message, or unknown visibility |
-
-### `POST /api/v1/complaints/{complaintId}/read`
-
-Clear the caller's unread badge. **Any member.** `200` — `{ "message": "Marked as read." }`
-
-Read state is per person, so this affects only the caller.
-
-### `POST /api/v1/complaints/{complaintId}/attachments`
-
-Register a file already uploaded to Supabase Storage. **Any member.** `201 Created`.
-
-**Request**
-```json
-{ "storagePath": "c1a2/leak.jpg", "attachmentType": "photo",
-  "contentType": "image/jpeg", "sizeBytes": 184320 }
-```
-
-**The bytes never pass through this API.** The client uploads straight to Storage and registers the
-path here, which keeps large uploads off the application server.
-
-> ⚠️ **Setup required:** the bucket `complaint-attachments` must exist and must be **private**. A
-> public bucket would make every complaint photo world-readable by URL, bypassing RLS entirely.
-
-`attachmentType` is `photo` | `document` | `resolution_proof`.
-
----
 
 ## 8. Departments and staff
 
@@ -1119,38 +624,6 @@ Take a member off the active roster. **Requires `ADMIN`.**
 | `404` | `not_found` | No such staff member |
 | `422` | `request_validation_error` | The member belongs to a different department |
 
-### `GET /api/v1/complaint-categories`
-
-The category vocabulary behind the department form's checkbox list. **Requires `ADMIN`.** Not
-paginated — this is an option list, and a community that needs paging through its own complaint
-categories has a different problem. Returned in the standard page envelope for consistency.
-
-**200**
-```json
-{
-  "items": [
-    { "id": "9c1d...", "name": "Plumbing", "slaHours": null, "status": "active",
-      "departmentIds": ["2f8a..."] }
-  ],
-  "total": 5, "page": 1, "pageSize": 5, "hasMore": false
-}
-```
-
-`departmentIds` carries **every** department claiming the category. More than one entry is precisely
-the case where the SLA tie-break decides which deadline applies (`DECISIONS_NEEDED.md` A1) — exposed
-rather than flattened to a single owner, because flattening would hide the conflict.
-
-Five categories are seeded per community: Plumbing, Electrical, Infrastructure, Cleaning, Security.
-The dashboard's checkbox list has a sixth, **`Others`**, which is not seeded and is created the first
-time a department claims it.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | The caller belongs to no community |
-
----
-
 ## 9. Money — invoices and payments
 
 Backed by migration `0015`. Three read views do the aggregating; every write is an RPC, because
@@ -1169,126 +642,6 @@ is computed by Postgres in `numeric` and read back — nothing is summed in Pyth
 **Nothing is ever deleted.** There is no `DELETE` in this section. `POST /invoices/{id}/void` marks
 an invoice cancelled and leaves it, its lines and its number in place; an invoice number that
 disappears is a gap somebody has to account for later.
-
-### `GET /api/v1/invoices`
-
-Page through the community's invoices — the maintenance collections table. **Requires `ADMIN`.**
-
-| Query | Type | Default | Notes |
-|---|---|---|---|
-| `q` | string ≤ 100 | — | Matches invoice title, invoice number, flat code **and the current resident's name** |
-| `status` | string | — | `Paid` \| `Unpaid` \| `Void` \| `All` |
-| `unitId` | uuid | — | One flat's invoices |
-| `invoiceType` | string | — | `maintenance` \| `amenity` \| `penalty` \| `misc` |
-| `overdueOnly` | boolean | `false` | Past due with a balance |
-| `issuedFrom` / `issuedTo` | date | — | Inclusive bounds on `issuedOn` |
-| `page` | integer | `1` | ≥ 1 |
-| `pageSize` | integer | `20` | 1–100 |
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "8b31...",
-      "invoiceNumber": "INV-2026-00001",
-      "title": "Maintenance Fee - July 2026",
-      "invoiceType": "maintenance",
-      "amount": 4250.0,
-      "subtotal": 4250.0,
-      "tax": 0.0,
-      "outstanding": 4250.0,
-      "amountPaid": 0.0,
-      "currency": "INR",
-      "status": "Unpaid",
-      "statusDetail": "issued",
-      "isOverdue": false,
-      "dueDate": "2026-07-15",
-      "issuedOn": "2026-07-01",
-      "billPeriod": "July 1, 2026 - July 31, 2026",
-      "billingPeriodStart": "2026-07-01",
-      "billingPeriodEnd": "2026-07-31",
-      "flat": "B-1204",
-      "tower": "B",
-      "unitId": "6d2c...",
-      "userId": "a91f...",
-      "residentProfileId": "0c47...",
-      "residentName": "Priya Sharma",
-      "paidOn": null,
-      "paymentMethod": null,
-      "notes": null,
-      "createdAt": "2026-07-01T09:00:00+00:00",
-      "updatedAt": "2026-07-01T09:00:00+00:00"
-    }
-  ],
-  "total": 5, "page": 1, "pageSize": 20, "hasMore": false
-}
-```
-
-**`amount` is what the flat was billed, not what it still owes** — the column is headed "Amount".
-`outstanding` carries the balance. This matters: a partially paid invoice still reports its full
-`amount`, so **a client that sums `amount` over `Unpaid` rows overstates receivables.**
-`GET /invoices/summary` is the authority on the totals.
-
-**`status` has three wire values over five stored ones.** `partially_paid` reads `Unpaid`, because
-money is still owed and the screen's question is whether the flat owes anything. `statusDetail`
-carries the real lifecycle value for a client that wants the distinction back. `void` is given its
-own value rather than folded into `Unpaid`, so a cancelled bill is not counted as a receivable.
-
-**`isOverdue` is derived on every read**, from the due date and the balance — never stored. A stored
-overdue flag is correct only in the instant a cron job sets it. This is a deliberate deviation from
-the ERD's `InvoiceStatus`, which lists `OVERDUE` as a status.
-
-`userId` is the **membership id**, matching what `GET /residents` returns as `id`, so the dashboard's
-`users.find(u => u.id === pay.userId)` resolves. It is `null` for a vacant flat, which the frontend
-already renders as `"Resident"`.
-
-Line items are **not** embedded. Unlike a department's roster, no list screen renders them.
-
-| Status | Code | Cause |
-|---|---|---|
-| `400` | `invalid_status` | `status` is not `Paid`/`Unpaid`/`Void`/`All` |
-| `400` | `invalid_invoice_type` | `invoiceType` outside the four values |
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | The caller belongs to no community |
-| `422` | `request_validation_error` | `page` < 1, `pageSize` out of 1–100, unparseable date |
-
-### `GET /api/v1/invoices/summary`
-
-The three tiles at the top of the Maintenance screen. **Requires `ADMIN`.**
-
-**200**
-```json
-{
-  "totalCollected": 12750.0,
-  "totalOutstanding": 4750.0,
-  "totalBilled": 17500.0,
-  "paidCount": 3,
-  "unpaidCount": 2,
-  "invoiceCount": 5,
-  "collectionPercent": 73,
-  "overdueCount": 1,
-  "overdueAmount": 500.0,
-  "currency": "INR",
-  "generatedAt": "2026-07-29T18:10:00+00:00"
-}
-```
-
-**Aggregated over every invoice in the community, not over a page.** The dashboard derives these by
-summing the invoice array it happens to hold (`Maintenance.jsx:11-17`), which is correct only while
-every invoice fits in one response. That is agenda item 11.
-
-`totalOutstanding` sums the outstanding **balances**, so a partially paid invoice contributes only
-what is still owed. Voided invoices are excluded from every figure — a cancelled bill is neither
-collected nor collectable.
-
-A community with no invoices reports zeros with `200`, never a `404`. `collectionPercent` is `0` when
-`totalBilled` is `0`, not `NaN`.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | The caller belongs to no community |
 
 ### `POST /api/v1/invoices`
 
@@ -1331,32 +684,6 @@ issuing its first invoice.
 | `409` | `conflict` | Lines total zero, or `dueDate` precedes `issuedOn` |
 | `422` | `request_validation_error` | Empty `lineItems`, `unitAmount` ≤ 0, `title` missing |
 
-### `GET /api/v1/invoices/{invoiceId}`
-
-One invoice with its line items and every payment recorded against it. **Requires `ADMIN`.**
-
-**200** — the list shape plus:
-```json
-{
-  "lineItems": [
-    { "id": "aa10...", "description": "Monthly maintenance", "quantity": 1.0,
-      "unitAmount": 4250.0, "total": 4250.0 }
-  ],
-  "payments": [
-    { "id": "cc20...", "invoiceId": "8b31...", "invoiceNumber": "INV-2026-00001",
-      "invoiceTitle": "Maintenance Fee - July 2026", "amount": 4250.0, "currency": "INR",
-      "method": "Net Banking", "status": "succeeded", "reference": "TXN-88213",
-      "paidAt": "2026-07-10T06:12:00+00:00", "payerProfileId": "0c47...",
-      "payerName": "Priya Sharma", "unitId": "6d2c...", "flat": "B-1204", "notes": null }
-  ]
-}
-```
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such invoice in the caller's community |
-
 ### `POST /api/v1/invoices/{invoiceId}/payments`
 
 Record money received against an invoice. **Requires `ADMIN`.**
@@ -1397,88 +724,6 @@ The payment, its audit event and the recomputed invoice balance are one transact
 
 **Overpayment is refused, not absorbed.** Clamping it would accept the money and then lose it, which
 is the worst available outcome; a `409` at least tells the admin the two numbers disagree.
-
-### `POST /api/v1/invoices/{invoiceId}/void`
-
-Cancel an invoice. **Requires `ADMIN`.**
-
-```json
-{ "reason": "Raised against the wrong flat" }
-```
-
-**200** — the invoice in its voided state.
-
-Refused once **any** payment has succeeded against it: cancelling a bill somebody has already paid
-would strand their money against nothing. Refund first.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such invoice |
-| `409` | `conflict` | Already void, or has succeeded payments against it |
-
-### `POST /api/v1/maintenance-runs`
-
-Issue one maintenance invoice per **occupied** flat for a billing period. **Requires `ADMIN`.**
-
-```json
-{
-  "amount": 4250,
-  "periodStart": "2026-08-01",
-  "periodEnd": "2026-08-31",
-  "dueDate": "2026-08-15",
-  "title": "Maintenance Fee - August 2026"
-}
-```
-
-Every field is optional. `amount` falls back to `billingSettings.defaultMaintenanceAmount`; the
-period defaults to the current month; the due date to `maintenanceDueDay` of that month.
-
-**201**
-```json
-{ "invoiced": 42, "skipped": 0, "totalAmount": 178500.0,
-  "periodStart": "2026-08-01", "periodEnd": "2026-08-31" }
-```
-
-**Safe to repeat.** A second run for the same period reports every flat as `skipped` and bills
-nobody. The guard is a partial unique index on `(community, unit, period)`, so it holds even if two
-admins click at the same moment — not a check the API performs and could lose a race on.
-
-**With no amount configured and none supplied, this returns `409` rather than falling back.** The
-frontend's hardcoded `4250` is a demo value; adopting it silently would bill a real community a
-number nobody chose.
-
-**Vacant flats are not billed.** A real association bills the owner and an empty flat still owes
-maintenance — but nothing in the product records ownership, so occupancy is the only signal that
-exists. `DECISIONS_NEEDED.md` A14.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `409` | `conflict` | No maintenance amount configured or supplied |
-| `422` | `request_validation_error` | `amount` ≤ 0 |
-
-### `GET /api/v1/payments`
-
-The collection log the Maintenance screen's subtitle promises. **Requires `ADMIN`.**
-
-| Query | Type | Default | Notes |
-|---|---|---|---|
-| `q` | string ≤ 100 | — | Matches invoice number, title, flat, payer name, provider reference |
-| `method` | string | — | `UPI` \| `Credit Card` \| `Net Banking` \| `Cash` \| `Cheque` \| `Bank Transfer` |
-| `invoiceId` | uuid | — | One invoice's payments |
-| `page` / `pageSize` | integer | `1` / `20` | 1–100 |
-
-**200** — a `Page` of the payment objects shown under `GET /invoices/{id}`, newest first.
-
-"What has been received" is a different question from "what does this flat owe" and needs its own
-list; it is not derivable from the invoice list, because one invoice can carry several payments.
-
-| Status | Code | Cause |
-|---|---|---|
-| `400` | `invalid_payment_method` | `method` outside the six values |
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | The caller belongs to no community |
 
 ### `GET /api/v1/billing-settings`
 
@@ -1612,197 +857,6 @@ Every figure is computed by Postgres in `numeric`, including the reports page's 
 **Nothing is ever deleted except an amenity nobody has booked.** `DELETE /amenities/{id}` returns
 `409` the moment anything has been booked on it, because the cascade would take the bookings, their
 charges and their financial events with it — including deposits residents are still owed.
-
-### `GET /api/v1/amenities`
-
-The catalogue grid. **Requires `ADMIN`.**
-
-| Query | Type | Default | Notes |
-|---|---|---|---|
-| `q` | string ≤ 100 | — | Matches name, description, category and location |
-| `category` | string | — | `Sports` \| `Fitness` \| `Recreation` \| `Events` \| `Utility` |
-| `status` | string | — | `Active` \| `Inactive` \| `All` |
-| `page` | int ≥ 1 | `1` | |
-| `pageSize` | int 1–100 | `24` | |
-
-**200**
-```json
-{
-  "items": [
-    {
-      "id": "5c0b…",
-      "name": "Clubhouse Gym",
-      "description": "A fully equipped fitness centre with cardio, strength, and stretching zones.",
-      "category": "Fitness",
-      "location": "Clubhouse, Ground Floor",
-      "image": "https://images.unsplash.com/photo-1534438327276…",
-      "status": "Active",
-      "isActive": true,
-      "bookingMode": "Shared",
-      "capacity": 24,
-      "allowPrivateBooking": false,
-      "requireApproval": false,
-      "cleaningBuffer": 15,
-      "maxBookingsPerResident": 5,
-      "openingTime": "06:00",
-      "closingTime": "22:00",
-      "openingHours": "6:00 AM - 10:00 PM",
-      "pendingRequests": 1,
-      "outstandingDues": 1600.0
-    }
-  ],
-  "total": 6, "page": 1, "pageSize": 24, "hasMore": false
-}
-```
-
-`pendingRequests` counts requests awaiting a decision and `outstandingDues` sums the unpaid charges
-against this amenity's bookings — both from the view. The mock stores `pendingRequests: 5` for an
-amenity with one pending request and `outstandingDues: 4800` against 1600 in charges; a badge that
-disagrees with the tab it links to is worse than no badge.
-
-`capacity: null` means **no limit** (the Reading Lounge has none). `image: ""` is supported — the card
-branches on it and renders a placeholder icon.
-
-Inactive amenities are included. The resident screen renders them greyed out with "disabled by the
-administrator" rather than hiding them, so filtering them away here would change what residents see.
-
-| Status | Code | Cause |
-|---|---|---|
-| `400` | `validation_error` | `status` is not one of the three values |
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | The caller belongs to no community |
-
-### `POST /api/v1/amenities`
-
-Create an amenity. **Requires `ADMIN`.**
-
-```json
-{
-  "name": "Squash Court",
-  "description": "Single glass-backed court.",
-  "category": "Sports",
-  "location": "Sports Zone, West Wing",
-  "image": "",
-  "capacity": 2,
-  "bookingMode": "Exclusive",
-  "requireApproval": true,
-  "isActive": true,
-  "settings": { "openingTime": "07:00", "closingTime": "21:00", "securityDeposit": 250 }
-}
-```
-
-Only `name` is required. A settings row is created from the defaults, so an amenity is never missing
-one; `settings` may be omitted entirely or sent in part.
-
-**201** — the full `AmenityDetail` (see `GET /amenities/{id}`).
-
-| Status | Code | Cause |
-|---|---|---|
-| `400` | `validation_error` | Missing name, unknown category or booking mode, closing time not after opening, maximum duration shorter than minimum |
-| `401` / `403` | | Not authenticated / not an admin |
-| `409` | `conflict` | The community already has an amenity of that name |
-
-### `GET /api/v1/amenities/{amenityId}`
-
-One amenity with all five settings groups. **Requires `ADMIN`.**
-
-**200** — every field of the summary above, plus:
-```json
-{
-  "bookingSlotDuration": 60,
-  "operatingHours": {
-    "openingTime": "06:00", "closingTime": "22:00",
-    "slotDurationMinutes": 60, "cleaningBufferMinutes": 15
-  },
-  "bookingSettings": {
-    "mode": "Shared", "maxActiveBookingsPerResident": 5,
-    "requireAdminApproval": false, "allowPrivateBooking": false,
-    "allowRecurringBooking": false, "allowGuestBooking": true,
-    "allowSameDayBooking": true, "enableWaitlist": false, "enableAutoApproval": false
-  },
-  "paymentSettings": {
-    "bookingFee": 800.0, "securityDeposit": 300.0,
-    "lateCancellationCharge": 0.0, "damageDeposit": 0.0,
-    "refundPolicy": "", "currency": "INR"
-  },
-  "availabilitySettings": {
-    "closedDays": ["Monday"], "maintenanceDays": [], "holidayOverrides": ["2026-08-15"],
-    "temporaryClosure": false,
-    "minimumBookingDurationMinutes": 60, "maximumBookingDurationMinutes": 180,
-    "advanceBookingWindowDays": 30
-  },
-  "maintenanceSettings": {
-    "interval": "Monthly", "defaultDurationMinutes": 60,
-    "autoBlockSlots": false, "notes": ""
-  },
-  "version": 3,
-  "createdAt": "2026-07-01T06:00:00+00:00",
-  "updatedAt": "2026-07-29T11:20:00+00:00"
-}
-```
-
-`bookingMode`, `requireApproval`, `cleaningBuffer` and `maxBookingsPerResident` appear **both** at the
-top level and inside a settings group, because `normalizeAmenityRecord` writes both and different
-components read different ones. The database stores each once; the duplication stops at the DTO.
-
-`closedDays` and `maintenanceDays` are English day names on the wire and ISO day numbers in the
-column. An unrecognised name in a write is dropped rather than stored — a `CHECK` rejects the whole
-array for one bad element, which would turn a typo in one checkbox into a failed save of all thirty
-settings.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such amenity in the caller's community |
-
-### `PATCH /api/v1/amenities/{amenityId}`
-
-Update the catalogue fields, the settings, or both. **Requires `ADMIN`.**
-
-Same body as `POST`, every field optional. **A field left out is left alone**, which is not the same
-as a field sent as `null` — `maxActiveBookingsPerResident: null` clears the limit.
-
-The settings tab saves thirty fields on one click and they go in **one transaction**; splitting that
-across two calls would let the second fail after the first had already been written.
-
-**200** — the full `AmenityDetail`.
-
-| Status | Code | Cause |
-|---|---|---|
-| `400` | `validation_error` | As `POST` |
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such amenity |
-| `409` | `conflict` | Renaming onto an existing name |
-
-### `PATCH /api/v1/amenities/{amenityId}/status`
-
-The availability toggle on the card. **Requires `ADMIN`.**
-
-```json
-{ "isActive": false }
-```
-
-Its own route rather than a partial update, because the toggle sends one boolean and routing it
-through a twelve-field patch is how a toggle ends up blanking a description.
-
-**200** — the full `AmenityDetail`.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such amenity |
-
-### `DELETE /api/v1/amenities/{amenityId}`
-
-Delete an amenity nobody has booked. **Requires `ADMIN`.**
-
-**204** — no body.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such amenity |
-| `409` | `conflict` | The amenity has bookings on record. The message names the count and points at deactivating instead |
 
 ### `GET /api/v1/amenities/{amenityId}/bookings`
 
@@ -2606,84 +1660,6 @@ factor any more, it is a credential sitting in an inbox.
 | `404` | `not_found` | The caller belongs to no community |
 | `409` | `conflict` | `timezone` is not a name Postgres knows |
 | `422` | `request_validation_error` | `timezone` with whitespace or outside 3–64 chars, `unitLabelSingular` over 24 chars, `inviteTtlHours` outside 1–720, `visitorCodeTtlMinutes` outside 5–1440 |
-
-### `GET /api/v1/settings/modules`
-
-The ten feature modules and this community's setting for each.
-
-**Any authenticated role**, unlike the rest of this section. If module state ever gates navigation
-then every shell needs it, and a resident learning that the marketplace is switched off discloses
-nothing.
-
-**200** — the `modules` object from `GET /settings`, on its own:
-
-```json
-{
-  "items": [ { "key": "resident-management", "...": "..." } ],
-  "total": 10,
-  "enabledCount": 5,
-  "enabledWithoutBackend": 1
-}
-```
-
-**Not paginated, and that is deliberate.** There are exactly ten, fixed by `onboardingModules.js`.
-A client that has to ask for page 2 of a ten-row fixed list is a client we made work for nothing.
-Ordered by the catalogue's `sortOrder`, which is the order the onboarding wizard shows the same ten
-cards in.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` | `authentication_error` | Not authenticated |
-| `404` | `not_found` | The caller belongs to no community |
-
-### `PATCH /api/v1/settings/modules/{moduleKey}`
-
-Turn one module on or off. **Requires `ADMIN`.**
-
-```json
-{ "enabled": true }
-```
-
-**One key at a time is the point.** Two admins toggling two different modules in the same minute must
-not undo each other, which is exactly what a whole-set write does.
-
-**200** — the one `ModuleSummary`, as it now stands.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | `moduleKey` is not in the catalogue, or the caller belongs to no community |
-| `422` | `request_validation_error` | `enabled` missing, or `moduleKey` over 64 chars |
-
-### `PUT /api/v1/settings/modules`
-
-Replace the whole module set from the list of keys that should be on. **Requires `ADMIN`.**
-
-```json
-{ "moduleKeys": ["resident-management", "complaint-management", "amenities-booking"] }
-```
-
-**The shape the onboarding wizard already produces**: `enabledModules` is an array of enabled keys and
-every other key is off by omission. That omission is honoured — a key dropped from the array is
-written to `false`, not left at whatever it was, because "these are the modules that are on" is what
-the array means.
-
-**Every key is validated before anything is written**, so one typo does not leave a community
-half-configured. Duplicates and casing are normalised.
-
-**An empty array is legitimate and turns everything off.** A *missing* `moduleKeys` is a `422` rather
-than the same thing — a caller who forgot the field would otherwise disable the whole product by
-accident.
-
-**200** — the full `ModuleCollection`.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | A key is not in the catalogue, or the caller belongs to no community |
-| `422` | `request_validation_error` | `moduleKeys` missing or `null`, or more than 50 entries |
-
----
 
 ## 12. Notices and administrator promotion
 

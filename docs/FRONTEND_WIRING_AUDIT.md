@@ -123,26 +123,42 @@ handler wants it, but that handler currently calls a Zustand action instead. Wir
 we are not permitted to do. Until then these endpoints are correct, tested, and uncalled — which is the honest
 status, and the first item for the joint meeting.
 
-**And almost none of them are runnable yet.** Migrations `0010`–`0017` targeted the schema the baseline replaced,
-so they were quarantined to `backend/supabase/migrations/legacy-preauth/`. `0018_settings_on_baseline.sql` rebuilt
-`community_settings`, `community_billing_settings` and the two `notices` columns — **tables only, no views and no
-RPCs**. Counting honestly against a real baseline database, **3 of our 35 endpoints would run**:
+**The schema they need now exists.** An earlier draft of this section reported that 3 of our 35 endpoints could
+run, because `0018_settings_on_baseline.sql` had rebuilt the settings *tables* but neither the views nor the RPCs.
+Migrations `0019`–`0023` have since rebuilt the rest of the quarantined `0013`–`0017` onto the baseline:
 
-| Runs today | Needs a rebuild first |
-|---|---|
-| `POST /notices` (0018 added the columns) | `GET`/`PUT /settings` — the two `community_*_overview` views live in `0017` |
-| `POST /admins` (`community_memberships` is a baseline table) | `PUT /billing-settings` — needs the `update_billing_settings` RPC from `0015` |
-| `GET /billing-settings` (reads the 0018 table directly) | the 9 department, 2 complaint, 2 remaining money and 16 amenity endpoints |
+| Migration | Replaces | Serves |
+|---|---|---|
+| `0019_departments_on_baseline.sql` | `0014` | the 9 department/staff endpoints |
+| `0020_complaint_events_on_baseline.sql` | `0013` | `PATCH /complaints/{id}`, `POST …/comments` |
+| `0021_money_on_baseline.sql` | `0015` | `POST /invoices`, `POST …/payments`, `PUT /billing-settings` |
+| `0022_settings_views_on_baseline.sql` | `0017` views | `GET`/`PUT /settings` |
+| `0023_amenities_on_baseline.sql` | `0016` | the 16 amenity endpoints |
 
-An earlier draft of this section claimed 0018 covered `GET`/`PUT /settings`; it does not, and 30 was an undercount.
-The rebuild order and the one open design question (our booking series/occurrences versus their single
-`amenity_bookings`) are in `legacy-preauth/README.md`.
+Between them: 10 views, 24 write RPCs, and columns on 11 baseline tables. Every one of the 28 RPCs our
+repositories call now exists in some migration, and every column they select exists on the table or view they
+select it from — both verified statically with `pglast`, the real PostgreSQL parser, rather than by eye.
 
-**One piece of C-11 is still open.** `GET /settings` reports the module collection from *our*
-`community_module_overview`, not from their `community_features`, so the duplication the module endpoints were
-deleted to remove survives on the read side. Repointing that read finishes the job and removes `0017`'s module
-tables from the rebuild entirely — left undone here because it changes which table is authoritative and the
-onboarding workstream owns the writer.
+**That is not the same as "runnable", and the difference matters.** No migration has been applied to any database,
+including `0001` itself. Nothing here has ever executed. The honest claim is that the SQL is complete, parses, and
+matches the code's expectations — applying it is F1, and it is now the only thing between these endpoints and
+working.
+
+The rebuild also surfaced a bug that had nothing to do with migrations: `status_to_storage` mapped `Pending` and
+`Reopened` onto values absent from the baseline's `complaint_status` enum, so every `PATCH /complaints/{id}`
+carrying either would have failed with `22P02`. Its tests passed because they never reach a database. Fixed, with
+a test that asserts every mapped value is a member of the enum.
+
+**C-11 is closed.** `community_module_overview` is now a view over their `feature_catalog` and
+`community_features` rather than module tables of ours, so there is exactly one place a module's enabled state
+lives and the onboarding workstream owns the writer. `0017`'s module tables are permanently superseded rather than
+pending a rebuild.
+
+**The amenities design question is also settled**, and not the way this document previously implied. The updated
+submission ERD (`db85c04`) removed `amenity_booking_series` and `amenity_booking_occurrences`, siding with the
+baseline. `0023` keeps their single `amenity_bookings` as the only booking table and adds one nullable
+`booking_group_id` column — which preserves atomic approval of a multi-date request without reintroducing the
+tables upstream deleted. Reasoning in `legacy-preauth/README.md`.
 
 ## 6. Two things the dashboard workstream should change
 
