@@ -72,6 +72,75 @@ sequenceDiagram
     A-->>B: Refreshed authoritative snapshot
 ```
 
+## Live updates
+
+**What we use: server-sent events over a Postgres outbox, fanned out by a
+single in-process poller.** Concretely, three parts:
+
+| Part | Where | Job |
+| --- | --- | --- |
+| Outbox | `sse_events` + `AFTER` triggers | Every domain write records that it happened. |
+| Poller | `app/core/realtime.py` | One task reads the outbox on a global cursor and routes rows to subscribers by `community_id`. |
+| Transport | `GET /dashboard/events` | Same-origin `text/event-stream`; the browser uses the native `EventSource`. |
+
+The cost model is the point. The poller is **per process, not per client**, so
+one indexed primary-key range scan every 500ms serves every connected admin in
+every community; adding viewers adds an in-memory queue and nothing else. When
+nobody is connected it does not query at all. Each connection costs one asyncio
+task, not one OS thread.
+
+That last distinction is not academic. The earlier implementation was a
+*synchronous* generator that called `time.sleep(5)`. Starlette iterates sync
+generators in the anyio worker threadpool, so every open dashboard held one of
+that pool's 40 threads for the entire life of the stream — and because the pool
+is shared with all other synchronous work, the 41st dashboard would not merely
+lag, it would starve unrelated requests across the whole process.
+
+### Why not the alternatives
+
+- **Supabase Realtime** is the native answer and is where this should end up.
+  It is a browser-side WebSocket subscription, so adopting it means handing the
+  frontend a Supabase key and moving tenant filtering into RLS. That reverses
+  the deliberate decision this endpoint exists to enforce — *no provider token
+  is exposed to the browser* — so it is a security trade to make on purpose,
+  not a performance tweak to slip in. Revisit when RLS covers every table the
+  dashboard reads.
+- **`LISTEN`/`NOTIFY`** would be true push with no polling at all. It needs a
+  direct Postgres connection, and the service holds only Supabase's PostgREST
+  client — no `DATABASE_URL`, no driver. It would mean a new dependency, a new
+  secret, and a long-lived connection outside the pooler, to remove a latency
+  we do not currently notice.
+- **Client polling** was what the dead frontend handlers effectively did. It
+  scales with viewers rather than with events, which is the wrong way round.
+
+### Guarantees and limits
+
+- **Ordering** is by `sse_events.id` within a community.
+- **Reconnects** are covered: the browser resends `Last-Event-ID`, and the
+  stream backfills from the database before attaching to the live feed.
+- **Slow consumers** degrade rather than block. A connection more than 64
+  events behind stops receiving detail and is sent a `dashboard.refresh` with
+  `{"resync": true}`, which its existing listener already handles by
+  re-fetching the snapshot.
+- **The hub is process-local.** Every worker polls independently and each
+  serves its own connections correctly, but this scales by adding queries per
+  worker. At more than a handful of workers, move to Supabase Realtime rather
+  than raising the poll interval.
+- **Delivery is at-most-once** and the payload is a hint, never the source of
+  truth. The snapshot is authoritative; an event only says "re-read".
+
+### Topics
+
+| Topic | Emitted by | Payload |
+| --- | --- | --- |
+| `dashboard.refresh` | `emit_dashboard_sse_event` on 12 tables (migration `0007`) | `{"table": "..."}` |
+| `access_request.created` | `emit_access_request_sse_event` (migration `0024`) | request id, applicant name, relationship, `pending_count` |
+| `access_request.decided` | same | request id, `from`, `to`, `pending_count` |
+
+`pending_count` is included so a badge can update from the event itself. The
+frontend currently re-snapshots instead, which is also correct — the field is
+there so a toast does not need a round trip.
+
 ## Responsibilities
 
 | Layer | Responsibility | Does not do |
@@ -95,7 +164,10 @@ sequenceDiagram
 - `access_requests` is the resident join-request workflow. Approval creates
   the resident membership and optional `unit_residencies` record atomically.
 - `sse_events` is an internal, tenant-scoped refresh outbox. It does not expose
-  direct Postgres subscriptions to the browser.
+  direct Postgres subscriptions to the browser. RLS is enabled with no policy,
+  so only `service_role` can read it: the rows are cross-tenant by construction
+  and the backend fans them out only after checking membership. Retention is
+  bounded by `prune_sse_events()` (migration `0024`).
 
 ## Design status
 

@@ -117,7 +117,8 @@ grant execute on function public.prune_sse_events(interval) to service_role;
 
 -- Schedule it when pg_cron is available. Supabase projects can enable the
 -- extension from the dashboard; where it is absent this block is a no-op and
--- retention falls to whoever calls `prune_sse_events` (see docs/API.md §15).
+-- retention falls to whoever calls `prune_sse_events` -- see the "Live updates"
+-- section of docs/ARCHITECTURE.md.
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then

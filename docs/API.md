@@ -293,7 +293,7 @@ Mint a resident invite. **Requires `ADMIN`.**
 
 ## 5. Admin dashboard
 
-**This section is intentionally empty.** Every endpoint it documented was removed by the frontend wiring audit,
+**No endpoints of ours live here.** Every one this section documented was removed by the frontend wiring audit,
 because their `GET /dashboard/snapshot` already serves the same reads and the frontend already calls it. The
 removals were `GET /dashboard/admin`, `GET /communities/current`, `GET /notices` and `GET /residents`. See
 [FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md) §3 for the evidence behind each one, and
@@ -301,6 +301,49 @@ removals were `GET /dashboard/admin`, `GET /communities/current`, `GET /notices`
 
 The heading is kept so the section numbering below does not shift; renumbering would break every link and
 reference into §7–§14 for no gain.
+
+### 5.1 Live updates — `GET /dashboard/events`
+
+Owned by the dashboard workstream, documented here because our migrations feed it and because it is how every
+write in §7–§12 reaches an open screen without a matching read endpoint.
+
+**Transport: server-sent events** (`text/event-stream`), same-origin, over the browser's native `EventSource`.
+No Supabase key or provider token reaches the browser. Auth is the session cookie; the stream is bound to the
+community on the caller's verified membership, so a client cannot widen its own scope by replaying someone
+else's `Last-Event-ID`.
+
+Rationale and the rejected alternatives — Supabase Realtime, `LISTEN`/`NOTIFY`, client polling — are in
+[ARCHITECTURE.md § Live updates](ARCHITECTURE.md#live-updates).
+
+**Request**
+
+| Header | Required | Meaning |
+|---|---|---|
+| `Last-Event-ID` | no | Resume point. The stream backfills everything after this id for the caller's community before attaching to the live feed, so a reconnect across a network blip loses nothing. Non-numeric values are treated as `0`. |
+
+**Frames**
+
+```
+id: 4127
+event: access_request.created
+data: {"request_id":"…","applicant_name":"Asha R","requested_relationship":"tenant","status":"pending","created_at":"2026-07-30T09:14:02Z","pending_count":3}
+```
+
+`data` is always JSON. A comment frame (`: keepalive`) is sent every 20s so proxies do not reap an idle stream.
+
+| Event | When | Payload |
+|---|---|---|
+| `access_request.created` | someone asks to join the community | `request_id`, `applicant_name`, `requested_relationship`, `status`, `created_at`, `pending_count` |
+| `access_request.decided` | a request is approved, rejected or blacklisted | `request_id`, `applicant_name`, `from`, `to`, `pending_count` |
+| `dashboard.refresh` | any write to one of 12 domain tables | `{"table": "…"}`, or `{"resync": true}` if this connection fell behind and events were dropped |
+
+**Contract notes**
+
+- Delivery is **at-most-once**, and the payload is a hint. `GET /dashboard/snapshot` is authoritative; treat
+  every event as "re-read", which is what `dashboard.refresh` means literally.
+- `pending_count` is the community's live count of pending join requests, included so a badge or toast can
+  update without a round trip.
+- Status codes: `200` (stream opens), `401` (no session), `403` (no active membership).
 
 ## 6. People
 

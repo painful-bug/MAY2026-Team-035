@@ -583,7 +583,7 @@ Table sse_events [headercolor: #718096] {
   payload jsonb [not null]
   created_at timestamptz [not null]
   indexes { (community_id, id) }
-  Note: 'Tenant-scoped dashboard refresh outbox. Browser clients consume the backend SSE projection, not database subscriptions.'
+  Note: 'Tenant-scoped dashboard refresh outbox. Browser clients consume the backend SSE projection, not database subscriptions. RLS enabled with no policy (0024), so only service_role reads it: rows are cross-tenant by construction and the backend fans them out after checking membership. Retention bounded by prune_sse_events().'
 }
 
 // Deliberately separate to make the community/member circular relationship
@@ -804,6 +804,19 @@ TableGroup admin_dashboard {
 //   community_settings_overview, community_module_overview (0022)
 //   amenity_overview, amenity_booking_overview,
 //   amenity_ledger_overview, amenity_ledger_summary       (0023)
+//   pending_access_request_overview                       (0024)
+//
+// pending_access_request_overview backs DashboardSnapshot.pendingRequests --
+// the field the admin sidebar badge counts. No new table: it is a projection of
+// access_requests where status = 'pending', joined to communities and units.
+//
+// REALTIME (0024)
+//
+//   emit_access_request_sse_event() adds access_request.created and
+//   access_request.decided topics to the existing sse_events outbox, alongside
+//   the generic dashboard.refresh that 0007 already emits from 12 tables.
+//   Both carry the live pending count so a badge can update from the event.
+//   See the "Live updates" section of docs/ARCHITECTURE.md.
 //
 // community_module_overview reads feature_catalog + community_features, NOT
 // module tables of ours. That is conflict C-11 closed: there is exactly one

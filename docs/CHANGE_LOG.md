@@ -17,6 +17,75 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-07-30 — Session 21: live updates for join requests
+
+Pulled `origin/main` @ `ecc8a10` (3 new commits, the unified-auth PR #13). PO asked for a notification on the
+admin dashboard when someone requests to join, updating in real time, "lightning fast but minimal in resource
+intensiveness", with the mechanism written down.
+
+Investigating it turned up two independent faults rather than one missing feature, which is why this session
+touched dashboard files the upstream team owns — **with explicit PO approval, given after the boundary was put
+to them.**
+
+### `ARCHITECTURE.md` — new "Live updates" section — `PO`
+
+PO asked directly that the live-update mechanism be documented. Records what we use (SSE over a Postgres
+outbox, fanned out by one in-process poller), the cost model, the guarantees, the topic table, and — the part
+worth keeping — **why not the alternatives**. Supabase Realtime is the native answer and is deliberately *not*
+adopted yet: it is a browser-side WebSocket subscription, so it would mean handing the frontend a Supabase key
+and moving tenant filtering into RLS, reversing the "no provider token in the browser" decision the SSE
+endpoint exists to enforce. `LISTEN`/`NOTIFY` was rejected for needing a direct Postgres connection the service
+does not have. Both are recorded so the next person does not re-litigate them from scratch.
+
+### `API.md` §5.1 — `GET /dashboard/events` documented — `DERIVED`
+
+The endpoint is the dashboard workstream's, but our migrations feed it and it is how every write in §7–§12
+reaches an open screen without a matching read endpoint. Documents the `Last-Event-ID` resume contract, the
+frame format, all three topics, and the at-most-once guarantee. §5 no longer claims to be "intentionally
+empty" — it has content now.
+
+### `FRONTEND_WIRING_AUDIT.md` §7 — the two faults — `AUDIT`
+
+Overturns nothing, but corrects an implicit assumption running through §1: that the SSE outbox meant a write
+reached the UI. It did not, for two reasons.
+
+*The notification was never sent.* `AdminLayout.jsx` counts `pendingRequests` and `appStore.js` reads
+`snapshot.pendingRequests`. `DashboardSnapshot` had no such field. The frontend was complete and correct; the
+key simply never appeared in the payload, so the badge could not render under any conditions.
+
+*The transport could not have scaled.* `event_stream` was a synchronous generator calling `time.sleep(5)`, and
+Starlette iterates sync generators in the anyio worker threadpool — so each connected admin pinned one of that
+pool's 40 threads for the life of the stream, and the 41st dashboard would starve unrelated requests
+process-wide rather than merely lag.
+
+### ERD + class diagram — `DERIVED`
+
+`pending_access_request_overview` added to the view list (no new table — it projects `access_requests`).
+`sse_events` note updated for the RLS and retention change. Class diagram gains `RealtimeHub`, `Event` and the
+`0024` trigger functions.
+
+**Unrendered.** The `.puml` edit is structurally checked (balanced braces, every referenced identifier
+defined) but not rendered — no PlantUML on this machine, and downloading a JAR to execute was not something to
+do unasked. Worth a render before submission.
+
+### Security finding: `sse_events` had no RLS — `AUDIT`
+
+Not asked for, found while reading the outbox. The table is reachable through PostgREST and had no policies,
+so any authenticated user could read every community's event stream — table names and community ids for
+tenants they have no membership in. `0024` enables RLS with no policy, denying everything except
+`service_role`, which is the only role the backend uses to read it. Retention is also now bounded; twelve
+tables feed that outbox on every row change and nothing had ever deleted from it.
+
+### One frontend file changed — `PO`
+
+Standing rule is that we do not touch `frontend/src`. PO granted an explicit exception for this one case:
+`PendingRegistrations.jsx` reads React Query, not the snapshot, so the SSE refresh never reached it and the
+badge would have ticked up while the page behind it went stale. Four lines, hung off the
+`homebandhu:dashboard-refresh` window event the bootstrap already dispatched. It remains the only frontend
+file this branch has touched.
+
+---
+
 ## 2026-07-30 — Session 20: rebuilt every quarantined migration onto the baseline
 
 Pulled `origin/main` @ `9f8adc4` (4 new commits) and rebuilt the SQL that had been quarantined since the

@@ -164,9 +164,44 @@ tables upstream deleted. Reasoning in `legacy-preauth/README.md`.
 
 Neither was edited here, because both are in files that workstream owns.
 
-1. **`dashboard_service.py:203` stubs department staff** as `{"staff": [], "categories": []}`. Either fill it, or
+1. **`dashboard_service.py` stubs department staff** as `{"staff": [], "categories": []}`. Either fill it, or
    treat `GET /departments` as the supported source and drop the empty keys so the frontend cannot mistake them for
    "this department has no staff".
-2. **`dashboard_service.py:202` drops `category` and `urgency` from notices.** `POST /notices` now stores both
+2. **`dashboard_service.py` drops `category` and `urgency` from notices.** `POST /notices` now stores both
    (migration 0018), so adding them to that projection is a one-line change that makes the Notices screen's two
    selects mean something.
+
+## 7. Join-request notifications: two bugs, not one missing feature
+
+The dashboard was supposed to show a badge when someone asks to join, and did not. The cause turned out to be
+two independent faults, on opposite sides of the "SSE outbox" assumption §1 is built on.
+
+**The notification was never sent.** `AdminLayout.jsx` renders the sidebar badge from `pendingRequests.length`,
+and `appStore.js` reads `snapshot.pendingRequests ?? []`. `DashboardSnapshot` had no such field. The frontend was
+correct and complete; the key simply never appeared in the payload, so the badge could never render under any
+conditions. Fixed by adding the field, the `pending_access_request_overview` view behind it, and the repository
+read — **admin-only**, because those rows carry a third party's name, email and phone.
+
+**The transport could not have scaled.** `event_stream` was a *synchronous* generator calling `time.sleep(5)`.
+Starlette iterates sync generators in the anyio worker threadpool, so each connected admin pinned one of that
+pool's 40 threads for the whole life of the stream — and since the pool is shared with all other synchronous
+work, the 41st open dashboard would starve unrelated requests process-wide rather than merely lag. It also
+polled once per client rather than once per process, and wrote the payload dict into the `data:` field as a
+Python repr, which is not JSON and would have thrown in any client that tried to parse it.
+
+`app/core/realtime.py` replaces the reader with one shared poller on a global cursor. Cost is one indexed query
+per tick for the entire process regardless of viewer count, no connection holds a thread, and latency is 500ms
+rather than 5s. Migration `0024` adds specific `access_request.created` / `.decided` topics carrying the live
+pending count, so a client can *notify* instead of only re-fetching.
+
+**One frontend change was needed and was made by explicit exception to the freeze.** `PendingRegistrations.jsx`
+reads React Query (`['admin-access-requests']`), not the snapshot, so the SSE-driven re-snapshot never reached
+it — the badge would have ticked up while the page behind it went stale. It now invalidates that key on the
+`homebandhu:dashboard-refresh` window event `DashboardDataBootstrap` already dispatched. Four lines, no second
+`EventSource`. This is the only frontend file this branch has touched.
+
+**Also closed while in there:** `sse_events` had no RLS despite being reachable through PostgREST, so any
+authenticated user could read every community's event stream — table names and community ids for tenants they
+have no membership in. `0024` enables RLS with no policy, which denies everything except `service_role`, the
+only role the backend ever uses to read it. It also bounds retention: twelve tables feed that outbox on every
+row change and nothing had ever deleted from it.

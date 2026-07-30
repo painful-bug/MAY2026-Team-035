@@ -187,6 +187,22 @@ package "Infrastructure" #F3F4F6 {
     + get_user_client(access_token)
     + get_service_client()
   }
+  class RealtimeHub <<SSE fan-out>> {
+    - _subscribers : dict[community_id, set]
+    - _cursor : int
+    + start()
+    + stop()
+    + subscribe(community_id, last_event_id)
+    - _run()
+    - _dispatch(rows)
+    - _backfill(community_id, last_event_id)
+  }
+  class Event <<SSE frame>> {
+    + id : int
+    + topic : str
+    + payload : dict
+    + frame()
+  }
   class AppError <<exception>>
   class AuthenticationError
   class AuthorizationError
@@ -378,11 +394,17 @@ package "Admin dashboard schema (0018-0023)" #FAFAFA {
     amenity_booking_overview
     amenity_ledger_overview
     amenity_ledger_summary
+    pending_access_request_overview
   }
   class "RPCs
 (security definer)" as AdminRpcs {
     24 write functions
     guarded by is_community_admin()
+  }
+  class "realtime triggers
+(0024)" as RealtimeTriggers {
+    emit_access_request_sse_event()
+    prune_sse_events()
   }
 }
 
@@ -434,6 +456,13 @@ NoticesRouter ..> Dependencies
 AdminsRouter ..> Dependencies
 
 AdminRpcs ..> SseEvents : every write fires the outbox trigger
+
+' Live updates: one process-wide poller, not one per connected client.
+RealtimeTriggers ..> SseEvents : access_request.created / .decided
+RealtimeHub ..> SseEvents : single shared poll on a global cursor
+RealtimeHub ..> Event : builds
+DashboardService ..> RealtimeHub : event_stream() delegates
+AdminViews ..> RegistrationTables : pending_access_request_overview projects
 
 
 legend left
