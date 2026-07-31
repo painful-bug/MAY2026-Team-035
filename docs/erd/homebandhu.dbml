@@ -1,0 +1,1380 @@
+// HomeBandhu DBML
+//
+// v2 — 2026-07-28. Conflict-resolution pass against docs/BACKEND_PLAN.md §3 and §4.3.
+// Every change is marked with one of:
+//   CHANGED: an existing definition that was wrong or conflicted with another source
+//   NEW:     a table/column the frontend or design-of-components.md requires
+// v1 (the milestone-1 submission version) is kept verbatim at homebandhu-v1-milestone1.dbml.
+//
+// Source of truth is backend/supabase/migrations/. This file is a projection of it and is
+// regenerated at the end of each build phase. dbdiagram cannot express partial indexes,
+// exclusion constraints, CHECK constraints or deferrable FKs — those live in Notes here and
+// are authoritative only in the migrations.
+
+Project homebandhu_erd {
+  database_type: 'PostgreSQL'
+  Note: '''
+Legend: PK = primary key; FK = foreign key; UQ = unique; NN = not null.
+Community-scoped tables are isolated by the community_id RLS tenant boundary.
+auth.users and supabase_storage are external Supabase services.
+
+Role model (v2): three orthogonal axes, not one enum.
+  community_memberships.role  -> resident | staff | admin      (principal identity)
+  departments.kind            -> security | maintenance | ...  (which staff dashboard)
+  staff_assignments.rank      -> manager | supervisor | worker (views within it)
+Capabilities are possessions, not role values: resident-ness is a unit_residencies row,
+staff-ness a staff_assignments row, committee-ness a committee_positions row. The community
+admin holds all three.
+'''
+}
+
+// -----------------------------------------------------------------------------
+// ENUMS — only where behaviour branches on the value. Everything else stays text.
+// -----------------------------------------------------------------------------
+
+// CHANGED: was { resident worker security manager admin }. A flat enum cannot express a
+// security supervisor (security is a department kind, supervisor is a rank) nor a committee
+// member (a resident with extra views). See BACKEND_PLAN.md §3.1.
+Enum membership_role {
+  resident
+  staff
+  admin
+}
+
+// NEW: decides which staff dashboard a member lands on. Only `security` is load-bearing in
+// RLS — it gates visitor data. Adding kinds later is cheap.
+Enum department_kind {
+  security
+  maintenance
+  housekeeping
+  facilities
+  other
+}
+
+// NEW: authority tier inside a department. Distinct from staff_assignments.job_title, which
+// is the trade ("Technician", "Gate Officer", "Security Guard").
+Enum staff_rank {
+  manager
+  supervisor
+  worker
+}
+
+// NEW: apartment XOR standalone homes — exclusive, and immutable after onboarding.
+Enum community_type {
+  apartment
+  layout_villa
+}
+
+// NEW: constrained so the §3.3 building/unit exclusivity rule is checkable.
+Enum unit_type {
+  flat
+  villa
+  shop
+  parking
+}
+
+// NEW: booking granularity (from the class diagram) — orthogonal to booking_exclusivity.
+Enum booking_mode {
+  slot
+  full_day
+  multi_day
+}
+
+// NEW: sharing policy (from frontend amenitiesManagement.js). Collapsing this into
+// booking_mode is what created the "two amenity models" problem.
+Enum booking_exclusivity {
+  shared
+  hybrid
+  exclusive
+}
+
+// -----------------------------------------------------------------------------
+// NAVY — Supabase identity and community foundation
+// -----------------------------------------------------------------------------
+
+Table auth.users [headercolor: #102A43] {
+  id uuid [pk]
+  phone text [unique]
+  email text [unique]
+  phone_confirmed_at timestamptz
+  email_confirmed_at timestamptz
+  raw_app_meta_data jsonb
+  created_at timestamptz
+
+  Note: 'EXTERNAL: Supabase Auth entity. HomeBandhu never creates a separate public users table. CHANGED: phone added — phone is the primary identity (BACKEND_PLAN.md §3.4). raw_app_meta_data carries active_membership_id and claims_version, read by the custom access token hook.'
+}
+
+Table profiles [headercolor: #102A43] {
+  id uuid [pk, ref: - auth.users.id]
+  display_name text [not null]
+  phone_e164 text [unique, not null]
+  phone_verified_at timestamptz
+  email text
+  avatar_object_path text
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Extends auth.users. Identity only: roles belong to community_memberships, never profiles. CHANGED: phone_e164 is now NN (primary identity); email demoted to an optional attribute.'
+}
+
+Table community_registration_requests [headercolor: #102A43] {
+  id uuid [pk]
+  applicant_profile_id uuid [ref: > profiles.id]
+  association_name text [not null]
+  community_type community_type [not null]
+  address_line_1 text [not null]
+  address_line_2 text
+  city text [not null]
+  state text [not null]
+  postal_code text [not null]
+  country_code char(2) [not null]
+  applicant_phone_e164 text [not null]
+  applicant_email text
+  otp_verified_at timestamptz
+  status text [not null]
+  review_notes text
+  reviewed_by_operator_ref text
+  reviewed_at timestamptz
+  created_community_id uuid [ref: > communities.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: phone NN, email optional (§3.4). DECIDED 2026-07-28: communities are approved IMMEDIATELY in v1 — register_community sets status = approved in the same transaction that creates the community. The review columns are retained so a manual operator gate can be switched on later without a migration; no v1 endpoint writes them.'
+}
+
+Table communities [headercolor: #102A43] {
+  id uuid [pk]
+  name text [not null]
+  community_type community_type [not null]
+  status text [not null]
+  address_line_1 text [not null]
+  address_line_2 text
+  city text [not null]
+  state text [not null]
+  postal_code text [not null]
+  country_code char(2) [not null]
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  active_admin_membership_id uuid
+  activated_at timestamptz
+  archived_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Exactly one active admin: active_admin_membership_id must reference an active admin community_memberships row for this same community (partial UQ in the migration). CHANGED: community_type is now an enum and is IMMUTABLE once any unit exists — a BEFORE UPDATE trigger raises otherwise. The FK to community_memberships is a deliberate cycle and must be DEFERRABLE INITIALLY DEFERRED so register_community can run as a single transaction.'
+}
+
+// NEW: onboarding step 3 selects nine feature modules (frontend onboardingModules.js) and v1
+// had nowhere to persist the answer. Also holds community-wide defaults that were previously
+// repeated per row (currency) or absent entirely (timezone).
+Table community_settings [headercolor: #102A43] {
+  community_id uuid [pk, ref: - communities.id]
+  enabled_modules jsonb [not null]
+  timezone text [not null]
+  default_currency_code char(3) [not null]
+  unit_label_singular text [not null]
+  invoice_number_prefix text
+  invite_ttl_hours integer [not null]
+  visitor_code_ttl_minutes integer [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'enabled_modules is validated server-side against the fixed nine-key list in frontend onboardingModules.js. unit_label_singular is derived from community_type ("Flat" | "Villa") so the frontend stops hardcoding it.'
+}
+
+// -----------------------------------------------------------------------------
+// TEAL — Buildings, units, resident occupancy
+// -----------------------------------------------------------------------------
+
+Table buildings [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  label text [not null]
+  building_type text
+  sort_order integer [not null]
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, label) [unique, name: 'buildings_community_label_uq']
+  }
+
+  Note: 'Exists only when community.community_type = apartment; max 10 (frontend MAX_BLOCKS). A CHECK trigger rejects inserts for layout_villa communities.'
+}
+
+Table units [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  building_id uuid [ref: > buildings.id]
+  unit_label text [not null]
+  unit_type unit_type [not null]
+  floor_number integer
+  area_sqft numeric(10,2)
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  status text [not null]
+  archived_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, building_id, unit_label) [unique, name: 'units_community_building_label_uq']
+  }
+
+  Note: 'CHANGED: the UQ was (community_id, unit_label), which made Flat 101 in Block A collide with Flat 101 in Block B — the second block could never be created. Now scoped by building, plus a partial UQ (community_id, unit_label) WHERE building_id IS NULL for villas. EXCLUSIVITY (§3.3): apartment => building_id NN and unit_type IN (flat, shop, parking); layout_villa => building_id NULL and unit_type = villa, max 50 (MAX_VILLAS). Enforced by a CHECK against the parent community, so a mixed community is unrepresentable rather than merely rejected.'
+}
+
+Table unit_residencies [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  occupancy_type text [not null]
+  status text [not null]
+  is_primary_contact boolean [not null]
+  move_in_date date
+  move_out_date date
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Partial UQ: exactly one active primary resident contact per unit. Primary-contact transfer is controlled: the current primary nominates an active unit resident; the community admin is a fallback only when no primary is active. A row here — NOT a role value — is what makes someone a resident, which is why the community admin has one too.'
+}
+
+// -----------------------------------------------------------------------------
+// GOLD — Roles, staff, departments, vendors, skills
+// -----------------------------------------------------------------------------
+
+Table community_memberships [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  role membership_role [not null]
+  status text [not null]
+  permissions jsonb
+  invited_by_membership_id uuid [ref: > community_memberships.id]
+  activated_at timestamptz
+  ended_at timestamptz
+  end_reason text
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (profile_id) [unique, name: 'one_active_membership_per_profile_uq']
+  }
+
+  Note: 'RLS tenant boundary. CHANGED: role enum is now resident | staff | admin (§3.1). CHANGED 2026-07-28: the UQ is no longer scoped by community_id — one phone belongs to exactly ONE association (§6.7), so the partial UQ is (profile_id) WHERE status = active. Being partial also lets a resident who leaves be re-added later. Partial UQ also: one active admin per community. register_community and invite creation both reject a phone holding an active membership anywhere, with 409 ALREADY_IN_ANOTHER_COMMUNITY. permissions is a per-membership override, present from day one but unused in v1 (v1 derives permissions from role + department kind + rank). role decides the LANDING SHELL only, never capabilities — those are possessions (unit_residencies / staff_assignments / committee_positions). Technician and serviceman are worker skills, not roles.'
+}
+
+// NEW: committee members are residents with specialised views; the admin is a committee
+// member and therefore also a resident. Designations from frontend adminDesignations.js.
+Table committee_positions [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  designation text [not null]
+  term_start date
+  term_end date
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'designation: President | Secretary | Treasurer | Committee Member | Association Manager | Other. Partial UQ: one active position per membership. register_community creates one of these for the founding admin alongside their unit_residency. Grants NO extra permissions in v1 — the capability ships as data so it can be enabled later as a permission-map change rather than a migration.'
+}
+
+Table departments [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  kind department_kind [not null]
+  description text
+  head_membership_id uuid [ref: > community_memberships.id]
+  contact_email text
+  contact_phone_e164 text
+  opens_at time
+  closes_at time
+  sla_hours integer
+  status text [not null]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, name) [unique, name: 'departments_community_name_uq']
+  }
+
+  Note: 'CHANGED: v1 had only name/description/status, but design-of-components.md §3 requires contact details, heads, operating hours, complaint categories and SLA targets — all present in frontend data/departments.js. Categories are a separate table (complaint_categories) because they are admin-editable and therefore cannot be a Postgres enum. kind = security is the RLS predicate that gates visitor data; it is NOT a rank. A department cannot be archived while it owns unresolved complaints (design-of-components.md §3) — enforced by trigger.'
+}
+
+Table vendors [headercolor: #B7791F] {
+  id uuid [pk]
+  legal_name text [not null]
+  contact_name text
+  contact_email text
+  contact_phone_e164 text
+  address text
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Platform-wide, not community-scoped: a vendor may serve several associations.'
+}
+
+Table staff_assignments [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  department_id uuid [ref: > departments.id]
+  vendor_id uuid [ref: > vendors.id]
+  rank staff_rank [not null]
+  job_title text
+  employment_type text [not null]
+  employee_code text
+  shift text
+  status text [not null]
+  assigned_at timestamptz [not null]
+  ended_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (department_id) [unique, name: 'one_active_manager_per_department_uq']
+    (membership_id) [unique, name: 'ranked_staff_single_department_uq']
+    (membership_id, department_id) [unique, name: 'worker_department_once_uq']
+  }
+
+  Note: 'CHANGED: rank added (manager | supervisor | worker) — the tier every department dashboard branches on. job_title (already present in v1) is the trade: Technician, Gate Officer, Security Guard. shift added (Day | Evening | Night) for the manager staffing widget. CHANGED 2026-07-28: the flat "one active assignment per membership" UQ is WRONG — workers may serve several departments if they have the skill, managers and supervisors may not (§3.10). The three indexes above are all PARTIAL and dbdiagram cannot express that: one_active_manager_per_department_uq is WHERE status=active AND rank=manager; ranked_staff_single_department_uq is WHERE status=active AND rank IN (manager,supervisor); worker_department_once_uq is WHERE status=active. A trigger additionally forbids mixing — a membership holds EITHER exactly one active manager/supervisor row OR N active worker rows across distinct departments, never both. Because a worker can hold several rows, the JWT carries department_ids uuid[] and department_kinds text[], NOT scalars, and RLS reads department_id = ANY(claim). Changing department_id or rank MUST bump auth.users.raw_app_meta_data.claims_version, or a demoted supervisor keeps supervisor access until their token expires.'
+}
+
+Table skills [headercolor: #B7791F] {
+  id uuid [pk]
+  name text [not null, unique]
+  category text
+  description text
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table staff_skills [headercolor: #B7791F] {
+  staff_assignment_id uuid [pk, not null, ref: > staff_assignments.id]
+  skill_id uuid [pk, not null, ref: > skills.id]
+  proficiency_level text
+  verified_at timestamptz
+  verified_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (staff_assignment_id, skill_id). This is where "technician" lives.'
+}
+
+Table worker_availability_rules [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  weekday smallint [not null]
+  start_time time [not null]
+  end_time time [not null]
+  effective_from date [not null]
+  effective_to date
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised — see the tenant-denormalisation note at the foot of this file.'
+}
+
+Table worker_unavailability [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  reason text
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+// -----------------------------------------------------------------------------
+// NAVY — Resident onboarding
+// -----------------------------------------------------------------------------
+
+Table resident_invites [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  residency_id uuid [ref: > unit_residencies.id]
+  recipient_phone_e164 text [not null]
+  recipient_email text
+  token_digest text [not null, unique]
+  code_digest text [not null]
+  attempt_count integer [not null]
+  invited_auth_user_id uuid [ref: > auth.users.id]
+  issued_by_membership_id uuid [not null, ref: > community_memberships.id]
+  status text [not null]
+  auth_invite_sent_at timestamptz
+  expires_at timestamptz [not null]
+  accepted_by_profile_id uuid [ref: > profiles.id]
+  accepted_at timestamptz
+  revoked_at timestamptz
+  revoked_by_membership_id uuid [ref: > community_memberships.id]
+  revocation_reason text
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Partial UQ: one active invitation per recipient/unit. CHANGED: v1 modelled Supabase email magic-link invites (recipient_email NN) while every implemented screen is phone OTP plus a typable code — and the v1 note said "do not store plaintext tokens" with no digest column to store them in. Now: phone NN, email optional, both credentials held as digests. Redemption is a compare-and-set (UPDATE ... WHERE accepted_at IS NULL RETURNING) inside redeem_invite(), so a concurrent double-redeem cannot both win. attempt_count backs a hard cap on code guesses. DECIDED: one membership per redemption — the prototype behaviour of activating every phone on the flat is not carried forward.'
+}
+
+Table access_requests [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  requested_unit_id uuid [ref: > units.id]
+  applicant_profile_id uuid [ref: > profiles.id]
+  applicant_name text [not null]
+  applicant_phone_e164 text [not null]
+  applicant_email text
+  requested_occupancy_type text [not null]
+  status text [not null]
+  reviewed_by_membership_id uuid [ref: > community_memberships.id]
+  reviewed_at timestamptz
+  decision_reason text
+  resulting_invite_id uuid [ref: > resident_invites.id]
+  resulting_invoice_id uuid [ref: > invoices.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: phone NN / email optional (§3.4). CHANGED: resulting_invoice_id added — design-of-components.md §3 requires that approving a request create the resident account AND an initial maintenance invoice in the same transaction.'
+}
+
+// -----------------------------------------------------------------------------
+// RED — Complaints, work orders, scheduling
+// -----------------------------------------------------------------------------
+
+// NEW: categories are department-owned and admin-editable (frontend departments[].categories),
+// so complaint.category cannot be a Postgres enum.
+Table complaint_categories [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [ref: > departments.id]
+  name text [not null]
+  sla_hours integer
+  sort_order integer [not null]
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, name) [unique, name: 'complaint_categories_community_name_uq']
+  }
+
+  Note: 'Routing: category -> department -> SLA. design-of-components.md §6 requires complaint categories to be connected to the responsible department and its service-level target.'
+}
+
+Table complaints [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [ref: > units.id]
+  raised_by_membership_id uuid [not null, ref: > community_memberships.id]
+  category_id uuid [ref: > complaint_categories.id]
+  department_id uuid [ref: > departments.id]
+  assigned_to_membership_id uuid [ref: > community_memberships.id]
+  title text [not null]
+  description text [not null]
+  location_text text
+  urgency text [not null]
+  status text [not null]
+  progress smallint [not null]
+  sla_due_at timestamptz
+  management_notes text
+  reopen_count integer [not null]
+  resident_rating smallint
+  resident_feedback text
+  submitted_at timestamptz [not null]
+  resolved_at timestamptz
+  confirmed_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: v1 had no assignee, department, progress, SLA, rating, feedback or reopen count, yet design-of-components.md §6 requires all of them and the frontend renders all of them. Routing through work_orders.department_id alone does not work — the frontend assigns complaints directly and has no work-order UI (§3.9). CHANGED: category is now an FK to complaint_categories, not free text. sla_due_at is computed server-side at submission from urgency + category SLA and is never client-supplied. management_notes is staff-only and must not be selectable by a resident policy.'
+}
+
+// NEW: design-of-components.md §6 — comments between residents and the management team.
+Table complaint_comments [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  complaint_id uuid [not null, ref: > complaints.id]
+  author_membership_id uuid [not null, ref: > community_memberships.id]
+  body text [not null]
+  visibility text [not null]
+  edited_at timestamptz
+  deleted_at timestamptz
+  created_at timestamptz [not null]
+
+  Note: 'visibility: resident_visible | internal. Internal comments must be excluded by the RLS policy, not by the serialiser.'
+}
+
+// NEW: design-of-components.md §6 — "unread updates", per viewer.
+Table complaint_read_state [headercolor: #C53030] {
+  complaint_id uuid [pk, not null, ref: > complaints.id]
+  membership_id uuid [pk, not null, ref: > community_memberships.id]
+  community_id uuid [not null, ref: > communities.id]
+  last_read_at timestamptz [not null]
+
+  Note: 'Composite PK: (complaint_id, membership_id).'
+}
+
+// NEW: design-of-components.md §6 — supporting attachments on submission.
+Table complaint_attachments [headercolor: #C53030] {
+  complaint_id uuid [pk, not null, ref: > complaints.id]
+  media_asset_id uuid [pk, not null, ref: > media_assets.id]
+  attachment_type text [not null]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (complaint_id, media_asset_id).'
+}
+
+Table complaint_events [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  complaint_id uuid [not null, ref: > complaints.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  previous_status text
+  new_status text
+  note text
+  metadata jsonb
+  created_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised. Append-only, so no version column. This is the complaint timeline design-of-components.md §6 requires.'
+}
+
+Table work_orders [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  complaint_id uuid [not null, ref: > complaints.id]
+  department_id uuid [ref: > departments.id]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  description text [not null]
+  service_category text [not null]
+  priority text [not null]
+  status text [not null]
+  preferred_start_at timestamptz
+  preferred_end_at timestamptz
+  scheduled_start_at timestamptz
+  scheduled_end_at timestamptz
+  escalation_required boolean [not null]
+  resolved_at timestamptz
+  closed_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Tables are created in phase 5 because the class diagram is a graded artifact; endpoints are phase 8, gated on a frontend existing (§3.9).'
+}
+
+Table work_order_assignments [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  assigned_by_membership_id uuid [not null, ref: > community_memberships.id]
+  status text [not null]
+  assigned_at timestamptz [not null]
+  accepted_at timestamptz
+  declined_at timestamptz
+  decline_reason text
+  scheduled_start_at timestamptz
+  scheduled_end_at timestamptz
+  completed_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Confirmed assignments for the same worker must not overlap: EXCLUDE USING gist (staff_assignment_id WITH =, tstzrange(scheduled_start_at, scheduled_end_at) WITH &&) WHERE status = accepted. Requires btree_gist. CHANGED: community_id denormalised.'
+}
+
+Table work_order_proposals [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  assignment_id uuid [not null, ref: > work_order_assignments.id]
+  proposed_by_membership_id uuid [not null, ref: > community_memberships.id]
+  parent_proposal_id uuid [ref: > work_order_proposals.id]
+  proposal_version integer [not null]
+  proposed_start_at timestamptz [not null]
+  proposed_end_at timestamptz [not null]
+  quoted_amount numeric(12,2)
+  currency_code char(3) [not null]
+  status text [not null]
+  note text
+  expires_at timestamptz
+  accepted_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised. proposal_version is the negotiation round — unrelated to the optimistic-concurrency version column.'
+}
+
+Table work_order_views [headercolor: #C53030] {
+  work_order_id uuid [pk, not null, ref: > work_orders.id]
+  staff_assignment_id uuid [pk, not null, ref: > staff_assignments.id]
+  first_viewed_at timestamptz [not null]
+  last_viewed_at timestamptz [not null]
+  view_count integer [not null]
+
+  Note: 'Composite PK: (work_order_id, staff_assignment_id).'
+}
+
+Table work_order_completion_verifications [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  assignment_id uuid [not null, ref: > work_order_assignments.id]
+  verification_method text [not null]
+  otp_digest text
+  resident_confirmed_by_membership_id uuid [ref: > community_memberships.id]
+  verified_at timestamptz
+  notes text
+  created_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+// -----------------------------------------------------------------------------
+// BLUE — Media assets and external Supabase Storage
+// -----------------------------------------------------------------------------
+
+Table media_assets [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  uploaded_by_profile_id uuid [ref: > profiles.id]
+  bucket_id text [not null]
+  object_path text [not null, unique]
+  original_filename text [not null]
+  mime_type text [not null]
+  byte_size bigint [not null]
+  sha256 text
+  status text [not null]
+  created_at timestamptz [not null]
+  deleted_at timestamptz
+
+  Note: 'RLS tenant boundary. Metadata for private Supabase Storage objects. No virus scanning in v1 — MIME/size/extension validation only; the gap is recorded in BACKEND_PLAN.md §10.8.'
+}
+
+Table work_order_attachments [headercolor: #2B6CB0] {
+  work_order_id uuid [pk, not null, ref: > work_orders.id]
+  media_asset_id uuid [pk, not null, ref: > media_assets.id]
+  attachment_type text [not null]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (work_order_id, media_asset_id).'
+}
+
+Table supabase_storage [headercolor: #2B6CB0] {
+  bucket_id text [pk, not null]
+  object_path text [pk, not null]
+
+  Note: 'EXTERNAL: Supabase Storage. Private buckets: profile-avatars, work-evidence, visitor-media, complaint-evidence, amenity-images. Render its relationship to media_assets as a dotted external-system connector if the diagram editor permits.'
+}
+
+// -----------------------------------------------------------------------------
+// PURPLE — Visitor management and gate security
+// -----------------------------------------------------------------------------
+
+Table saved_visitors [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  visitor_name text [not null]
+  phone_e164 text
+  visitor_type text [not null]
+  notes text
+  is_active boolean [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table visitor_access_requests [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  resident_membership_id uuid [not null, ref: > community_memberships.id]
+  security_membership_id uuid [ref: > community_memberships.id]
+  saved_visitor_id uuid [ref: > saved_visitors.id]
+  visitor_name text [not null]
+  visitor_phone_e164 text
+  visitor_type text [not null]
+  guest_count integer [not null]
+  purpose text
+  status text [not null]
+  requested_arrival_at timestamptz
+  valid_from timestamptz
+  valid_until timestamptz
+  access_code_digest text
+  qr_token_digest text
+  display_code text
+  attempt_count integer [not null]
+  locked_until timestamptz
+  approved_by_membership_id uuid [ref: > community_memberships.id]
+  approved_at timestamptz
+  rejected_at timestamptz
+  rejection_reason text
+  checked_in_by_membership_id uuid [ref: > community_memberships.id]
+  checked_in_at timestamptz
+  checked_out_by_membership_id uuid [ref: > community_memberships.id]
+  checked_out_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Security personnel are related only through visitor operations; security must NOT gain a broad resident-directory relationship — contact lookup is a narrow audited RPC. CHANGED: qr_token_digest added (design-of-components.md §5 requires BOTH a QR pass and a short code). CHANGED: attempt_count + locked_until added — the frontend code space is 6 numeric digits (900k), small enough that rate limiting is load-bearing rather than defensive. display_code is the non-secret PG-xxxx label shown in the UI; it is not a credential. Partial UQ on the active code per community.'
+}
+
+Table visitor_events [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  visitor_access_request_id uuid [not null, ref: > visitor_access_requests.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  metadata jsonb
+  created_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+Table visitor_attachments [headercolor: #6B46C1] {
+  visitor_access_request_id uuid [pk, not null, ref: > visitor_access_requests.id]
+  media_asset_id uuid [pk, not null, ref: > media_assets.id]
+  attachment_type text [not null]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (visitor_access_request_id, media_asset_id).'
+}
+
+// NEW: the security dashboard logs incidents; no table existed for them.
+Table security_incidents [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  reported_by_membership_id uuid [not null, ref: > community_memberships.id]
+  incident_type text [not null]
+  severity text [not null]
+  title text [not null]
+  description text [not null]
+  location_text text
+  occurred_at timestamptz [not null]
+  status text [not null]
+  resolved_at timestamptz
+  resolution_notes text
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Readable only by staff of a department whose kind = security, plus admin.'
+}
+
+// NEW: the resident portal shows management and emergency contacts; they were hardcoded.
+Table emergency_contacts [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  label text [not null]
+  contact_name text
+  phone_e164 text [not null]
+  category text
+  sort_order integer [not null]
+  is_active boolean [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+// -----------------------------------------------------------------------------
+// GREEN — Amenities, bookings, invoices, payments
+// -----------------------------------------------------------------------------
+
+Table amenities [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  description text
+  category text
+  location_text text
+  capacity integer
+  booking_mode booking_mode [not null]
+  exclusivity booking_exclusivity [not null]
+  allow_private_booking boolean [not null]
+  approval_required boolean [not null]
+  cleaning_buffer_minutes integer [not null]
+  max_bookings_per_resident integer
+  maintenance_mode boolean [not null]
+  status text [not null]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, name) [unique, name: 'amenities_community_name_uq']
+  }
+
+  Note: 'CHANGED: v1 had one booking_mode text column conflating two independent axes. booking_mode = slot | full_day | multi_day (granularity, from the class diagram); exclusivity = shared | hybrid | exclusive (sharing policy, from frontend amenitiesManagement.js). CHANGED: cleaning_buffer_minutes, max_bookings_per_resident, allow_private_booking, maintenance_mode and location added — all drive live UI. Images live in media_assets via amenity_images.'
+}
+
+// NEW: amenity photo gallery.
+Table amenity_images [headercolor: #2F855A] {
+  amenity_id uuid [pk, not null, ref: > amenities.id]
+  media_asset_id uuid [pk, not null, ref: > media_assets.id]
+  sort_order integer [not null]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (amenity_id, media_asset_id).'
+}
+
+Table amenity_rules [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  amenity_id uuid [not null, ref: > amenities.id]
+  weekday smallint
+  opens_at time
+  closes_at time
+  max_duration_minutes integer
+  max_guests integer
+  advance_booking_days integer
+  cancellation_deadline_minutes integer
+  booking_charge numeric(12,2)
+  deposit_amount numeric(12,2)
+  currency_code char(3) [not null]
+  effective_from date [not null]
+  effective_to date
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised. Money is stored as numeric(12,2) and serialised to integer minor units at the DTO boundary (§3.5) — no float ever touches either side.'
+}
+
+// NEW: admins block maintenance periods (design-of-components.md §8). These must participate
+// in the same overlap check as bookings, or a booking can be created inside a blocked window.
+Table amenity_blocked_slots [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  amenity_id uuid [not null, ref: > amenities.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  reason text
+  blocked_by_membership_id uuid [not null, ref: > community_memberships.id]
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table amenity_booking_series [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  amenity_id uuid [not null, ref: > amenities.id]
+  unit_id uuid [not null, ref: > units.id]
+  requested_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  booking_type text [not null]
+  is_private boolean [not null]
+  guest_count integer [not null]
+  notes text
+  internal_notes text
+  status text [not null]
+  requested_at timestamptz [not null]
+  approved_by_membership_id uuid [ref: > community_memberships.id]
+  approved_at timestamptz
+  rejected_at timestamptz
+  rejection_reason text
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: internal_notes added (management-only, from data/amenityLedger.js; must not be selectable by a resident policy).'
+}
+
+Table amenity_booking_occurrences [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_series_id uuid [not null, ref: > amenity_booking_series.id]
+  amenity_id uuid [not null, ref: > amenities.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  status text [not null]
+  cancelled_at timestamptz
+  cancelled_by_membership_id uuid [ref: > community_memberships.id]
+  cancellation_reason text
+  force_cancelled_by_membership_id uuid [ref: > community_memberships.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Active occurrences for the same amenity must not overlap: EXCLUDE USING gist (amenity_id WITH =, tstzrange(starts_at, ends_at) WITH &&) WHERE status IN (pending, approved, confirmed). The check must also cover amenity_blocked_slots. Cancelling one occurrence never cancels the series (design-of-components.md §8). CHANGED: community_id denormalised; force_cancelled_by added.'
+}
+
+Table booking_guests [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_series_id uuid [not null, ref: > amenity_booking_series.id]
+  guest_name text [not null]
+  phone_e164 text
+  created_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+Table amenity_booking_charges [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_occurrence_id uuid [not null, ref: > amenity_booking_occurrences.id]
+  charge_type text [not null]
+  amount numeric(12,2) [not null]
+  charge_override_amount numeric(12,2)
+  currency_code char(3) [not null]
+  status text [not null]
+  description text
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'charge_type: booking | deposit | additional | damage. CHANGED: community_id denormalised; charge_override_amount added (admin override, data/amenityLedger.js). The remaining refundable deposit is DERIVED from amenity_financial_events and never stored, so it cannot drift.'
+}
+
+Table amenity_financial_events [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_charge_id uuid [not null, ref: > amenity_booking_charges.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  payment_reference text
+  reason text
+  metadata jsonb
+  created_at timestamptz [not null]
+
+  Note: 'Append-only ledger. event_type: charged | paid | deposit_held | deposit_refunded | damage_deducted | cancelled | force_cancelled. A refund can never exceed the remaining deposit — enforced in the RPC, verified in phase 7. CHANGED: community_id denormalised.'
+}
+
+Table invoices [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  invoice_number text [not null, unique]
+  invoice_type text [not null]
+  status text [not null]
+  billing_period_start date
+  billing_period_end date
+  issued_on date [not null]
+  due_on date [not null]
+  subtotal_amount numeric(12,2) [not null]
+  tax_amount numeric(12,2) [not null]
+  total_amount numeric(12,2) [not null]
+  outstanding_amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Invoice liability belongs to unit_id, not to a person — so a resident who moves out does not take the debt with them.'
+}
+
+Table invoice_line_items [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  invoice_id uuid [not null, ref: > invoices.id]
+  amenity_booking_charge_id uuid [ref: > amenity_booking_charges.id]
+  description text [not null]
+  quantity numeric(10,2) [not null]
+  unit_amount numeric(12,2) [not null]
+  total_amount numeric(12,2) [not null]
+  created_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+Table payments [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  invoice_id uuid [not null, ref: > invoices.id]
+  payer_profile_id uuid [not null, ref: > profiles.id]
+  received_by_membership_id uuid [ref: > community_memberships.id]
+  amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  payment_method text [not null]
+  provider_reference text [unique]
+  status text [not null]
+  paid_at timestamptz
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Payment records identify the resident profile that paid. provider_reference is UQ so a replayed provider webhook is a no-op rather than a double credit. CHANGED: community_id denormalised.'
+}
+
+Table payment_events [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  payment_id uuid [not null, ref: > payments.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  previous_status text
+  new_status text
+  metadata jsonb
+  created_at timestamptz [not null]
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+// -----------------------------------------------------------------------------
+// BLUE — Notices, policies, notifications, activity, audit
+// -----------------------------------------------------------------------------
+
+Table notices [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  body text [not null]
+  category text
+  urgency text [not null]
+  audience_type text [not null]
+  audience_building_id uuid [ref: > buildings.id]
+  audience_role membership_role
+  published_at timestamptz
+  expires_at timestamptz
+  status text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'CHANGED: audience added. audience_type: all | building | role. A notice targeted at one building must be invisible to the others at the RLS layer, not filtered in the client.'
+}
+
+Table policies [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  policy_code text [not null]
+  title text [not null]
+  status text [not null]
+  current_revision_number integer [not null]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, policy_code) [unique, name: 'policies_community_code_uq']
+  }
+}
+
+Table policy_revisions [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  policy_id uuid [not null, ref: > policies.id]
+  revision_number integer [not null]
+  section_reference text
+  body text [not null]
+  effective_at timestamptz [not null]
+  publish_immediately boolean [not null]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  published_at timestamptz
+  created_at timestamptz [not null]
+
+  indexes {
+    (policy_id, revision_number) [unique, name: 'policy_revisions_policy_number_uq']
+  }
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+Table notifications [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  source_type text [not null]
+  source_id uuid
+  notification_type text [not null]
+  title text [not null]
+  body text [not null]
+  payload jsonb
+  scheduled_for timestamptz
+  sent_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table notification_deliveries [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  notification_id uuid [not null, ref: > notifications.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  channel text [not null]
+  status text [not null]
+  delivered_at timestamptz
+  read_at timestamptz
+  failed_at timestamptz
+  failure_reason text
+  created_at timestamptz [not null]
+
+  indexes {
+    (notification_id, profile_id, channel) [unique, name: 'notification_delivery_target_uq']
+  }
+
+  Note: 'CHANGED: community_id denormalised.'
+}
+
+// NEW: the user-visible "recent activity" feed. Deliberately NOT audit_events — one is a
+// product surface that can be redacted, filtered and paginated for UX; the other is a
+// compliance log that must never be mutated. Collapsing them gives you either a leaky feed
+// or a useless audit trail.
+Table activity_events [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  activity_type text [not null]
+  message text [not null]
+  audience_scope text [not null]
+  audience_unit_id uuid [ref: > units.id]
+  audience_membership_id uuid [ref: > community_memberships.id]
+  target_type text
+  target_id uuid
+  metadata jsonb
+  created_at timestamptz [not null]
+
+  Note: 'audience_scope: community | unit | membership | staff. Replaces the frontend addActivity() calls that currently write to localStorage.'
+}
+
+Table audit_events [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  actor_profile_id uuid [ref: > profiles.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  target_type text [not null]
+  target_id uuid
+  metadata jsonb
+  occurred_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Append-only: no UPDATE or DELETE policy exists for any role. All role, financial and security transitions must be auditable here, including every call to the narrow security resident-contact lookup RPC.'
+}
+
+// -----------------------------------------------------------------------------
+// GREY — Platform tables. Not domain entities: these belong on the architecture
+// diagram, not the domain class diagram.
+// -----------------------------------------------------------------------------
+
+// NEW: GoTrue owns the OTP code itself — we never store or verify it. This table exists only
+// for the challengeId the frontend contract requires, plus purpose binding, rate limiting and
+// the attempt cap, none of which GoTrue exposes.
+Table otp_challenges [headercolor: #4A5568] {
+  id uuid [pk]
+  community_id uuid [ref: > communities.id]
+  phone_e164 text [not null]
+  purpose text [not null]
+  channel text [not null]
+  status text [not null]
+  attempt_count integer [not null]
+  max_attempts integer [not null]
+  resend_count integer [not null]
+  requested_ip inet
+  user_agent text
+  expires_at timestamptz [not null]
+  consumed_at timestamptz
+  created_at timestamptz [not null]
+
+  indexes {
+    (phone_e164, created_at) [name: 'otp_rate_by_phone_idx']
+    (requested_ip, created_at) [name: 'otp_rate_by_ip_idx']
+  }
+
+  Note: 'CHANGED 2026-07-28: purpose collapses to login | invite_redemption | work_order_completion — admin_login and community_login are gone, because there is ONE door and the client may not assert which kind of user it is (§6.1). community_id is NULL at request time for every login: the branch is not resolved until after verification (§6.2), so the request step discloses nothing and should_create_user = true for ALL logins. An auth.users row for a phone that never verifies is inert (it holds no membership, so RLS grants it nothing); pg_cron reaps membership-less unconfirmed users after 24h. Verifying a challenge against a different purpose must fail. channel (sms | whatsapp | stub) records which provider delivered it — the Supabase Send SMS Hook makes this swappable without a code branch (§6.4). This table IS the rate limiter: the two indexes above serve the per-phone (3/15min, 10/day), per-IP (20/h) and /24 (60/h) counters plus a global send circuit-breaker. NO Redis in v1. Never key a rate limit on anything the client supplies — a client token is an evasion tool, not a control.'
+}
+
+// NEW: the one legitimate client-held auth token. Issued server-side AFTER a successful verify;
+// lets a returning user skip OTP for 30-90 days. This is the single largest lever on SMS spend —
+// larger than provider price. It is NOT a rate-limit control and must never be used as one.
+// Phase 2, optional.
+Table trusted_devices [headercolor: #4A5568] {
+  id uuid [pk]
+  profile_id uuid [not null, ref: > profiles.id]
+  token_digest text [not null, unique]
+  label text
+  user_agent text
+  last_ip inet
+  last_used_at timestamptz
+  expires_at timestamptz [not null]
+  revoked_at timestamptz
+  revoked_reason text
+  created_at timestamptz [not null]
+
+  Note: 'Secure/HttpOnly/SameSite cookie; only the digest is stored. Rotates on use; reuse of a rotated token revokes every device for the profile. Revoked on logout-all, on phone change, and whenever a membership ends.'
+}
+
+// NEW: the refresh token lives in a Secure/HttpOnly/SameSite cookie and never reaches the
+// browser's JS, so the server needs its own record of live sessions in order to revoke them.
+Table auth_sessions [headercolor: #4A5568] {
+  id uuid [pk]
+  profile_id uuid [not null, ref: > profiles.id]
+  membership_id uuid [ref: > community_memberships.id]
+  refresh_token_digest text [not null, unique]
+  user_agent text
+  ip inet
+  issued_at timestamptz [not null]
+  last_seen_at timestamptz [not null]
+  expires_at timestamptz [not null]
+  revoked_at timestamptz
+  revoked_reason text
+
+  Note: 'Access-token TTL is 900s (project setting), not the Supabase default of 1h. Refresh rotates; reuse of an already-rotated token revokes the whole chain.'
+}
+
+// NEW: the frontend contract requires Idempotency-Key on every unsafe request.
+Table idempotency_records [headercolor: #4A5568] {
+  id uuid [pk]
+  community_id uuid [ref: > communities.id]
+  idempotency_key text [not null]
+  endpoint text [not null]
+  request_digest text [not null]
+  response_status integer
+  response_body jsonb
+  status text [not null]
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (idempotency_key, endpoint) [unique, name: 'idempotency_key_endpoint_uq']
+  }
+
+  Note: 'Same key + same request digest returns the stored response. Same key + DIFFERENT digest returns IDEMPOTENCY_KEY_REUSED. Purged by pg_cron.'
+}
+
+// -----------------------------------------------------------------------------
+// Explicit and deliberately-circular relationships
+// -----------------------------------------------------------------------------
+
+Ref: media_assets.(bucket_id, object_path) > supabase_storage.(bucket_id, object_path)
+
+// Declared separately because communities and community_memberships form a deliberate
+// circular relationship: a community identifies its active admin, while each membership
+// belongs to one community. This FK MUST be DEFERRABLE INITIALLY DEFERRED, otherwise
+// register_community cannot be written as a single transaction.
+Ref: communities.active_admin_membership_id > community_memberships.id
+
+// -----------------------------------------------------------------------------
+// Tenant denormalisation note — applies to every child/event table above
+// -----------------------------------------------------------------------------
+// v1 carried community_id only on aggregate roots, so every RLS policy on a child or event
+// table needed a join to its parent, on every row, for every query. In the migrations each
+// denormalised community_id is backed by a composite FK — (community_id, parent_id)
+// referencing the parent's (community_id, id) unique — so the copy cannot drift from its
+// parent. This is the single largest correctness and performance change between v1 and v2.
+
+// Visual grouping for dbdiagram.io
+TableGroup navy_foundation {
+  auth.users
+  profiles
+  community_registration_requests
+  communities
+  community_settings
+  resident_invites
+  access_requests
+}
+
+TableGroup teal_residency {
+  buildings
+  units
+  unit_residencies
+}
+
+TableGroup gold_people_operations {
+  community_memberships
+  committee_positions
+  departments
+  vendors
+  staff_assignments
+  skills
+  staff_skills
+  worker_availability_rules
+  worker_unavailability
+}
+
+TableGroup red_service_workflows {
+  complaint_categories
+  complaints
+  complaint_comments
+  complaint_read_state
+  complaint_attachments
+  complaint_events
+  work_orders
+  work_order_assignments
+  work_order_proposals
+  work_order_views
+  work_order_completion_verifications
+}
+
+TableGroup purple_visitors {
+  saved_visitors
+  visitor_access_requests
+  visitor_events
+  visitor_attachments
+  security_incidents
+  emergency_contacts
+}
+
+TableGroup green_amenities_finance {
+  amenities
+  amenity_images
+  amenity_rules
+  amenity_blocked_slots
+  amenity_booking_series
+  amenity_booking_occurrences
+  booking_guests
+  amenity_booking_charges
+  amenity_financial_events
+  invoices
+  invoice_line_items
+  payments
+  payment_events
+}
+
+TableGroup blue_communications_media {
+  media_assets
+  work_order_attachments
+  supabase_storage
+  notices
+  policies
+  policy_revisions
+  notifications
+  notification_deliveries
+  activity_events
+  audit_events
+}
+
+TableGroup grey_platform {
+  otp_challenges
+  trusted_devices
+  auth_sessions
+  idempotency_records
+}

@@ -583,7 +583,7 @@ Table sse_events [headercolor: #718096] {
   payload jsonb [not null]
   created_at timestamptz [not null]
   indexes { (community_id, id) }
-  Note: 'Tenant-scoped dashboard refresh outbox. Browser clients consume the backend SSE projection, not database subscriptions.'
+  Note: 'Tenant-scoped dashboard refresh outbox. Browser clients consume the backend SSE projection, not database subscriptions. RLS enabled with no policy (0024), so only service_role reads it: rows are cross-tenant by construction and the backend fans them out after checking membership. Retention bounded by prune_sse_events().'
 }
 
 // Deliberately separate to make the community/member circular relationship
@@ -649,3 +649,176 @@ TableGroup communication_and_platform {
   rate_limit_buckets
   sse_events
 }
+
+// ===========================================================================
+// ADMIN DASHBOARD — added by migrations 0018-0023
+//
+// Everything above is the clean baseline (0001). Everything below is what the
+// admin dashboard backend adds on top of it, additively: seven new tables, and
+// columns on nine existing ones. No baseline table is renamed or dropped.
+//
+// Three constraints the baseline declares are RELAXED rather than removed, each
+// for a reason recorded in the migration that does it:
+//   - staff_assignments.membership_id  -> nullable (rosters are typed names)
+//   - complaint_comments.author_membership_id -> nullable (same reason)
+//   - amenity_bookings.booked_by_membership_id -> nullable (maintenance blocks)
+// ===========================================================================
+
+Table community_settings [headercolor: #2C7A7B] {
+  community_id uuid [pk, not null, ref: > communities.id]
+  timezone text [not null, note: 'IANA name, validated against pg_timezone_names in the RPC']
+  unit_label_singular text [note: 'Null means derive from communities.community_type']
+  invite_ttl_hours integer [not null]
+  visitor_code_ttl_minutes integer [not null]
+  require_visitor_preapproval boolean [not null]
+  notice_sms_broadcast_enabled boolean [not null]
+  updated_by_membership_id uuid [ref: > community_memberships.id]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  Note: 'Settings screen toggles 3 and 4. Read through community_settings_overview.'
+}
+
+Table community_billing_settings [headercolor: #2C7A7B] {
+  community_id uuid [pk, not null, ref: > communities.id]
+  currency_code char(3) [not null]
+  invoice_number_prefix text [not null]
+  default_maintenance_amount numeric(12,2) [note: 'Nullable: an unset rate must not be invented']
+  maintenance_due_day smallint [not null, note: 'Capped at 28 so a due day never leaves February']
+  default_tax_percent numeric(5,2) [not null]
+  next_invoice_seq bigint [not null, note: 'Consumed under a row lock by issue_invoice; per community, not global']
+  auto_billing_enabled boolean [not null]
+  auto_billing_day smallint [not null]
+  late_fee_enabled boolean [not null]
+  late_fee_amount numeric(12,2)
+  late_fee_grace_days smallint [not null]
+  late_fee_period text [not null]
+  version integer [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  Note: 'Settings screen toggles 1 and 2 plus invoice numbering. Written by update_billing_settings.'
+}
+
+Table complaint_categories [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  created_at timestamptz [not null]
+  Note: 'UQ (community_id, lower(btrim(name))) — categories are typed as free text, so Plumbing and plumbing are one category.'
+}
+
+Table department_categories [headercolor: #B7791F] {
+  department_id uuid [pk, not null, ref: > departments.id]
+  category_id uuid [pk, not null, ref: > complaint_categories.id]
+  created_at timestamptz [not null]
+  Note: 'Which complaint categories a department claims. The baseline has no equivalent.'
+}
+
+Table amenity_booking_guests [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_series_id uuid [not null, note: 'The booking group id; no FK, because there is no group entity']
+  guest_name text [not null]
+  phone_e164 varchar(20)
+  created_at timestamptz [not null]
+  Note: 'Guests named on a booking. No membership reference: a guest is by definition not a member.'
+}
+
+Table amenity_booking_charges [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_occurrence_id uuid [not null, ref: > amenity_bookings.id]
+  charge_type text [not null, note: 'booking_fee | deposit | damage_deposit | late_cancellation | additional']
+  label text
+  amount numeric(12,2) [not null]
+  created_at timestamptz [not null]
+  Note: 'Per-booking charge breakdown. The baseline booking_charges is written alongside it and kept populated.'
+}
+
+Table amenity_financial_events [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  booking_charge_id uuid [not null, ref: > amenity_booking_charges.id]
+  event_type text [not null, note: 'payment | refund | damage_deduction | charge']
+  amount numeric(12,2) [not null]
+  payment_reference text [note: 'UQ (community_id, event_type, payment_reference) — makes record_amenity_payment idempotent']
+  reason text
+  notes text
+  actor_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  Note: 'Append-only. Money moves against a CHARGE, not a booking, so a refund can say which deposit it returned.'
+}
+
+TableGroup admin_dashboard {
+  community_settings
+  community_billing_settings
+  complaint_categories
+  department_categories
+  amenity_booking_guests
+  amenity_booking_charges
+  amenity_financial_events
+}
+
+// ---------------------------------------------------------------------------
+// COLUMNS ADDED TO BASELINE TABLES
+//
+// Listed here rather than edited into the table blocks above, so this file
+// stays mergeable with whatever the baseline does next. Full definitions and
+// the reasoning are in the migration named against each group.
+//
+//   departments          (0019) contact_email, contact_phone_e164, opens_at,
+//                               closes_at, sla_hours, kind, status
+//                               status <-> is_active kept equal by a trigger,
+//                               because their dashboard reads is_active.
+//   staff_assignments    (0019) community_id, display_name, phone_e164,
+//                               job_title, rank, shift, status
+//   complaints           (0019) department_id, assigned_to_membership_id,
+//                               assignee_label, due_at
+//                        (0020) progress_percent
+//   complaint_events     (0020) actor_label
+//   complaint_comments   (0020) author_label, visibility
+//   invoices             (0021) unit_id, invoice_number, invoice_type, title,
+//                               billing_period_start, billing_period_end,
+//                               issued_on, due_on, subtotal_amount, tax_amount,
+//                               currency_code, notes
+//   invoice_line_items   (0021) community_id, quantity, unit_amount, sort_order,
+//                               total_amount (GENERATED from quantity x unit_amount)
+//   payments             (0021) currency_code, payment_method, paid_at, notes,
+//                               payer_profile_id, received_by_membership_id
+//   feature_catalog      (0022) sort_order, backend_status, backend_note
+//   amenities            (0023) 30 configuration columns; booking_rules jsonb
+//                               is left untouched for their readers
+//   amenity_bookings     (0023) booking_group_id, unit_id, title, booking_type,
+//                               source, is_private, is_exclusive, guest_count,
+//                               occupant_count, notes, department,
+//                               charge_override, buffer_minutes, requested_at,
+//                               approved_at, rejected_at, rejection_reason,
+//                               rejection_reason_code, cancelled_at,
+//                               cancellation_reason, cancellation_reason_code,
+//                               cancelled_by_resident, force_cancelled
+//
+// VIEWS (all security_invoker, so RLS still applies to the caller)
+//
+//   department_overview, department_staff_overview        (0019)
+//   invoice_overview, payment_overview                    (0021)
+//   community_settings_overview, community_module_overview (0022)
+//   amenity_overview, amenity_booking_overview,
+//   amenity_ledger_overview, amenity_ledger_summary       (0023)
+//   pending_access_request_overview                       (0024)
+//
+// pending_access_request_overview backs DashboardSnapshot.pendingRequests --
+// the field the admin sidebar badge counts. No new table: it is a projection of
+// access_requests where status = 'pending', joined to communities and units.
+//
+// REALTIME (0024)
+//
+//   emit_access_request_sse_event() adds access_request.created and
+//   access_request.decided topics to the existing sse_events outbox, alongside
+//   the generic dashboard.refresh that 0007 already emits from 12 tables.
+//   Both carry the live pending count so a badge can update from the event.
+//   See the "Live updates" section of docs/ARCHITECTURE.md.
+//
+// community_module_overview reads feature_catalog + community_features, NOT
+// module tables of ours. That is conflict C-11 closed: there is exactly one
+// place a module's enabled state lives, and onboarding owns the writer.
+// ---------------------------------------------------------------------------

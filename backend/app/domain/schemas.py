@@ -68,6 +68,11 @@ class DashboardSnapshot(BaseModel):
     notices: list[dict] = Field(default_factory=list)
     departments: list[dict] = Field(default_factory=list)
     activities: list[dict] = Field(default_factory=list)
+    # Admin-only. `AdminLayout.jsx` renders the sidebar badge from the length of
+    # this list and `appStore.js` has always read `snapshot.pendingRequests`;
+    # until it was added here the badge could never appear, because the key was
+    # never sent. Residents get an empty list -- see `dashboard_service.snapshot`.
+    pendingRequests: list[dict] = Field(default_factory=list)  # noqa: N815
 
 
 class AmenityWrite(StrictModel):

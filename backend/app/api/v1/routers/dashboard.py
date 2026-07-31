@@ -21,7 +21,21 @@ async def get_dashboard_snapshot(
     return await run_in_threadpool(dashboard_service.snapshot, membership)
 
 
-@router.get("/events")
+# The generated spec would otherwise advertise `application/json` here, because
+# that is FastAPI's default for any route it cannot infer a media type from --
+# and a client generated from that would try to JSON-decode a live stream.
+@router.get(
+    "/events",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {"text/event-stream": {}},
+            "description": "Event stream. Frame format and topics: docs/API.md 5.1.",
+        },
+        401: {"description": "No session."},
+        403: {"description": "No active membership."},
+    },
+)
 async def dashboard_events(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     membership: MembershipContext = Depends(get_active_membership),

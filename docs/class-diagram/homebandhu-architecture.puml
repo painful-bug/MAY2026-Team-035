@@ -1,0 +1,499 @@
+@startuml HomeBandhu-Architecture-Layers
+' ============================================================================
+'  HomeBandhu — UML Class Diagram : APPLICATION ARCHITECTURE
+'  Presentation (FastAPI) → Application (services) → Persistence (repositories)
+'  → Infrastructure / external Supabase systems.
+'  Companion file: homebandhu-domain.puml (domain model)
+' ============================================================================
+skinparam dpi 130
+skinparam linetype ortho
+skinparam nodesep 35
+skinparam ranksep 60
+skinparam shadowing false
+skinparam classFontSize 12
+skinparam classAttributeFontSize 11
+skinparam packageStyle rectangle
+left to right direction
+hide empty members
+
+title HomeBandhu — UML Class Diagram (Application Architecture)\nDependency direction: API → Service → Repository → Infrastructure. RLS is the real authorization boundary.
+
+' ============================================================================
+'  BAND A — PRESENTATION / API  (grey)
+' ============================================================================
+package "Presentation / API — FastAPI  /api/v1" #ECEFF1 {
+
+  class SecurityContext <<DTO>> {
+    - userId : UUID
+    - role : MembershipRole
+    - communityId : UUID
+    - membershipId : UUID
+    + isAdmin() : Boolean
+    + can(action : String) : Boolean
+  }
+  class RoleGuard <<policy>> {
+    + requireRole(roles : Set<MembershipRole>) : Dependency
+    + requireMembership(communityId : UUID) : Dependency
+  }
+  class RolePolicy <<policy>> {
+    + effectiveRoles(r : MembershipRole) : Set<MembershipRole>
+    + satisfies(user : MembershipRole, required : MembershipRole) : Boolean
+    + satisfiesAny(user : MembershipRole, required : Set<MembershipRole>) : Boolean
+  }
+  class RlsPolicySet <<policy>> {
+    + tenantPredicate(table : String) : String
+    + appliesTo(table : String) : Boolean
+  }
+  note bottom of RlsPolicySet : RLS is the real authorization boundary; guards are defence-in-depth.
+
+  class AuthController <<controller>> {
+    + requestOtp(body : OtpRequest) : MessageResponse
+    + verifyOtp(body : OtpVerifyRequest) : SessionDTO
+    + refresh(body : RefreshRequest) : SessionDTO
+    + me() : ProfileDTO
+  }
+  class RegistrationController <<controller>> {
+    + submit(...) : RegistrationDTO
+    + verifyOtp(...) : MessageResponse
+    + reviewDecision(...) : RegistrationDTO
+  }
+  class MembershipController <<controller>> {
+    + listMembers(...) : PaginatedResponse
+    + grantRole(...) : MembershipDTO
+    + endMembership(...) : MessageResponse
+    + transferAdmin(...) : MembershipDTO
+  }
+  class UnitController <<controller>> {
+    + listUnits(...) : PaginatedResponse
+    + createUnit(...) : UnitDTO
+    + transferPrimaryContact(...) : MessageResponse
+  }
+  class InvitationController <<controller>> {
+    + createInvitation(body : CreateInvitationRequest) : InvitationCreated
+    + revoke(...) : MessageResponse
+    + reissue(...) : InvitationCreated
+    + redeem(body : RedeemRequest) : SessionDTO
+  }
+  class AccessRequestController <<controller>> {
+    + submit(...) + approve(...) + reject(...)
+  }
+  class ComplaintController <<controller>> {
+    + list(...) + raise(...) + changeStatus(...) + attach(...)
+  }
+  class WorkOrderController <<controller>> {
+    + list(...) + create(...) + assign(...) + verify(...) + close(...)
+  }
+  class SchedulingController <<controller>> {
+    + availableWorkers(...) + schedule(...) + reschedule(...)
+  }
+  class VisitorController <<controller>> {
+    + preApprove(...) + approve(...) + validateCode(...) + checkIn(...) + checkOut(...)
+  }
+  class AmenityController <<controller>> {
+    + list(...) + create(...) + setRules(...) + availability(...)
+  }
+  class BookingController <<controller>> {
+    + request(...) + approve(...) + cancelOccurrence(...)
+  }
+  class InvoiceController <<controller>> {
+    + list(...) + generate(...) + issue(...)
+  }
+  class PaymentController <<controller>> {
+    + initiate(...) + confirm(...) + refund(...)
+  }
+  class NoticeController <<controller>> {
+    + list(...) + publish(...) + expire(...)
+  }
+  class PolicyController <<controller>> {
+    + list(...) + addRevision(...) + publish(...)
+  }
+  class NotificationController <<controller>> {
+    + list(...) + markRead(...)
+  }
+  class MediaController <<controller>> {
+    + createUploadUrl(...) + register(...) + signedUrl(...)
+  }
+  class AuditController <<controller>> {
+    + list(...) + trailFor(...)
+  }
+
+  package "DTOs" #F5F5F5 {
+    class OtpRequest <<DTO>>
+    class OtpVerifyRequest <<DTO>>
+    class RefreshRequest <<DTO>>
+    class SessionDTO <<DTO>>
+    class ProfileDTO <<DTO>>
+    class MessageResponse <<DTO>>
+    class CreateInvitationRequest <<DTO>>
+    class InvitationCreated <<DTO>>
+    class RedeemRequest <<DTO>>
+    class "PaginatedResponse<T>" as PaginatedResponse <<DTO>>
+    class ErrorResponse <<DTO>>
+  }
+}
+
+' ============================================================================
+'  BAND B — APPLICATION / SERVICE  (orange)
+' ============================================================================
+package "Application / Service layer" #FFF3E0 {
+  class AuthService <<service>> {
+    + requestLoginOtp(phone : String) : void
+    + verifyLoginOtp(phone : String, token : String) : SessionDTO
+    + refreshSession(token : String) : SessionDTO
+    + currentProfile(ctx : SecurityContext) : Profile
+  }
+  class RegistrationService <<service>> {
+    + submitRequest(dto) : CommunityRegistrationRequest
+    + verifyOtp(id : UUID, code : String) : void
+    + approve(id : UUID, operatorRef : String) : Community
+    + reject(id : UUID, reason : String) : void
+  }
+  class MembershipService <<service>> {
+    + grantRole(profile : Profile, community : Community, role : MembershipRole) : CommunityMembership
+    + endMembership(id : UUID, reason : String) : void
+    + transferAdmin(community : Community, successor : CommunityMembership) : AdminMembership
+    - assertSingleActiveAdmin(community : Community) : void
+  }
+  class ResidencyService <<service>> {
+    + addResidency(...) : UnitResidency
+    + transferPrimaryContact(unit : Unit, to : UnitResidency, by : CommunityMembership) : void
+    + endOccupancy(id : UUID, date : Date) : void
+  }
+  class StaffService <<service>> {
+    + createAssignment(...) : StaffAssignment
+    + assignSkill(...) : StaffSkill
+    + setAvailability(...) : WorkerAvailabilityRule
+    + markUnavailable(...) : WorkerUnavailability
+  }
+  class InvitationService <<service>> {
+    + createInvitation(ctx, dto) : InvitationCreated
+    + evaluate(invite) : Optional<String>
+    + redeem(dto : RedeemRequest) : SessionDTO
+    + revoke(id : UUID, reason : String) : void
+    - provisionAndLogin(...) : SessionDTO
+  }
+  class AccessRequestService <<service>> {
+    + submit(dto) : AccessRequest
+    + approve(id : UUID, by : CommunityMembership) : ResidentInvite
+    + reject(id : UUID, reason : String) : void
+  }
+  class ComplaintService <<service>> {
+    + raise(...) : Complaint
+    + changeStatus(...) : ComplaintEvent
+    + escalate(...) : void
+    + attachMedia(...) : void
+  }
+  class WorkOrderService <<service>> {
+    + createFromComplaint(...) : WorkOrder
+    + assign(...) : WorkOrderAssignment
+    + recordView(...) : WorkOrderView
+    + verifyCompletion(...) : WorkOrderCompletionVerification
+    + close(...) : void
+  }
+  class SchedulingService <<service>> {
+    + findAvailableWorkers(range : TimeRange, skill : Skill) : List<StaffAssignment>
+    + assertNoWorkerOverlap(a : WorkOrderAssignment) : void
+    + assertNoAmenityOverlap(o : AmenityBookingOccurrence) : void
+    + reschedule(...) : void
+  }
+  class ProposalService <<service>> {
+    + propose(...) : WorkOrderProposal
+    + counter(...) : WorkOrderProposal
+    + accept(...) : WorkOrderAssignment
+    + expireStale() : Integer
+  }
+  class VisitorService <<service>> {
+    + preApprove(...) : VisitorAccessRequest
+    + approve(...) : void
+    + issueCode(...) : String
+    + validateCode(code : String) : VisitorAccessRequest
+    + checkIn(...) : VisitorEvent
+    + checkOut(...) : VisitorEvent
+  }
+  class AmenityService <<service>> {
+    + create(...) : Amenity
+    + setRules(...) : AmenityRule
+    + availability(amenity : Amenity, day : Date) : List<TimeRange>
+  }
+  class BookingService <<service>> {
+    + request(...) : AmenityBookingSeries
+    + approve(...) : void
+    + cancelOccurrence(...) : void
+    + priceSeries(series : AmenityBookingSeries) : Money
+  }
+  class BillingService <<service>> {
+    + generateInvoice(unit : Unit, period : DateRange) : Invoice
+    + addAmenityCharges(invoice : Invoice) : void
+    + markOverdue() : Integer
+  }
+  class PaymentService <<service>> {
+    + initiate(invoice : Invoice, method : PaymentMethod, payer : Profile) : Payment
+    + confirm(reference : String) : Payment
+    + refund(payment : Payment, amount : Money, reason : String) : Payment
+  }
+  class NoticeService <<service>>
+  class PolicyService <<service>>
+  class NotificationService <<service>> {
+    + publish(source, recipients : List<Profile>, channels : Set<NotificationChannel>) : Notification
+    + markRead(deliveryId : UUID) : void
+  }
+  class MediaService <<service>> {
+    + createUploadUrl(bucket : StorageBucket, path : String) : String
+    + register(asset) : MediaAsset
+    + signedUrl(asset : MediaAsset, ttl : Integer) : String
+  }
+  class AuditService <<service>> {
+    + record(ctx, eventType : String, target, metadata : JSON) : AuditEvent
+    + trailFor(targetType : String, targetId : UUID) : List<AuditEvent>
+  }
+}
+
+' ============================================================================
+'  BAND C — PERSISTENCE  (slate)
+' ============================================================================
+package "Persistence layer" #ECEFF1 {
+  interface "Repository<T>" as Repository <<interface>> {
+    + getById(id : UUID) : Optional<T>
+    + list(filter : Query) : List<T>
+    + insert(entity : T) : T
+    + update(entity : T) : T
+    + softDelete(id : UUID) : void
+  }
+  class ProfileRepository <<repository>> {
+    + getProfile(userId : UUID) : Profile
+    + upsertProfileRole(...) : Profile
+  }
+  class CommunityRepository <<repository>>
+  class MembershipRepository <<repository>> {
+    + activeAdminFor(communityId : UUID) : Optional<AdminMembership>
+    + activeFor(profileId : UUID) : List<CommunityMembership>
+  }
+  class UnitRepository <<repository>>
+  class ResidencyRepository <<repository>> {
+    + primaryContactFor(unitId : UUID) : Optional<UnitResidency>
+  }
+  class DepartmentRepository <<repository>>
+  class VendorRepository <<repository>>
+  class StaffAssignmentRepository <<repository>> {
+    + availableWorkers(range : TimeRange, skill : Skill) : List<StaffAssignment>
+  }
+  class SkillRepository <<repository>>
+  class InvitationRepository <<repository>> {
+    + findByTokenHash(hash : String) : Optional
+    + findByCodeHash(hash : String) : Optional
+    + markRedeemed(id : UUID) : Optional
+  }
+  note bottom of InvitationRepository : markRedeemed is compare-and-set → single use
+  class AccessRequestRepository <<repository>>
+  class ComplaintRepository <<repository>>
+  class WorkOrderRepository <<repository>>
+  class AssignmentRepository <<repository>>
+  class ProposalRepository <<repository>>
+  class VisitorRepository <<repository>>
+  class AmenityRepository <<repository>>
+  class BookingRepository <<repository>>
+  class InvoiceRepository <<repository>>
+  class PaymentRepository <<repository>>
+  class NoticeRepository <<repository>>
+  class PolicyRepository <<repository>>
+  class NotificationRepository <<repository>>
+  class MediaRepository <<repository>>
+  class AuditRepository <<repository>>
+  note top of Repository
+    Services depend on the Repository<T> abstraction, never on the
+    Supabase SDK (Dependency Inversion). Only repositories & gateways
+    touch Postgres.
+  end note
+}
+
+' ============================================================================
+'  BAND D — INFRASTRUCTURE & EXTERNAL SYSTEMS  (dashed = external)
+' ============================================================================
+package "Infrastructure" #EFEBE9 {
+  class Settings <<singleton>> {
+    - supabaseUrl : String
+    - supabaseAnonKey : String
+    - supabaseServiceRoleKey : String
+    - supabaseJwtSecret : String
+    - frontendBaseUrl : String
+    - inviteTtlHours : Integer
+    - corsOrigins : String
+    - env : String
+    + isProduction() : Boolean
+    + corsOriginList() : List<String>
+  }
+  class SupabaseClientFactory <<gateway>> <<singleton>> {
+    + anonClient() : Client
+    + userClient(jwt : String) : Client
+    + serviceClient() : Client
+  }
+  note bottom of SupabaseClientFactory : userClient ⇒ RLS enforced; serviceClient ⇒ RLS bypassed (trusted server code only)
+  class TokenService <<gateway>> {
+    + generateToken() : String
+    + generateCode() : String
+    + hashSecret(v : String) : String
+    + normalizeCode(v : String) : String
+  }
+  note bottom of TokenService : only digests persist; plaintext returned to caller once
+  class JwtVerifier <<gateway>> {
+    + decode(token : String) : SecurityContext
+    + claims(token : String) : JSON
+  }
+  class AppLogger <<gateway>> {
+    + info(...) + warning(...) + error(...)
+  }
+  abstract class AppError {
+    - message : String
+    - code : String
+    - httpStatus : Integer
+  }
+  class AuthenticationError
+  class AuthorizationError
+  class ValidationError
+  class NotFoundError
+  class ConflictError
+}
+
+package "External systems (Supabase)" #FAFAFA {
+  class SupabaseAuth <<external system>> {
+    + signInWithOtp(...) : Session
+    + verifyOtp(...) : Session
+    + refreshSession(...) : Session
+    + admin_createUser(...) : User
+    + admin_inviteUserByEmail(...) : User
+  }
+  class SupabasePostgres <<external system>> {
+    + rpc(name : String, args : JSON)
+    + from(table : String)
+    .. hosts RLS policies + EXCLUDE USING gist constraints ..
+  }
+  class SupabaseStorage <<external system>> {
+    - buckets : {profile-avatars, work-evidence, visitor-media}
+    + createSignedUploadUrl(...) : String
+    + createSignedUrl(...) : String
+    + remove(...) : void
+  }
+  class SupabaseRealtime <<external system>> {
+    + subscribe(table : String, filter : String)
+  }
+  class SmsOtpProvider <<external system>>
+  class EmailProvider <<external system>>
+}
+
+package "Frontend (React + Zustand)" #F5F5F5 {
+  class ApiClient {
+    + get(...) + post(...) + patch(...)
+    + withAuth(token : String) : ApiClient
+  }
+  class AuthStore
+  class AppStore
+  interface "ServiceAdapter<T>" as ServiceAdapter <<interface>>
+  class RealtimeSubscription
+  class ToastStore
+}
+
+' ============================================================================
+'  RELATIONSHIPS
+' ============================================================================
+' -- Controllers use guards & services
+AuthController ..> RoleGuard
+RoleGuard ..> JwtVerifier
+RoleGuard ..> RolePolicy
+AuthController ..> AuthService
+RegistrationController ..> RegistrationService
+MembershipController ..> MembershipService
+UnitController ..> ResidencyService
+InvitationController ..> InvitationService
+AccessRequestController ..> AccessRequestService
+ComplaintController ..> ComplaintService
+WorkOrderController ..> WorkOrderService
+SchedulingController ..> SchedulingService
+VisitorController ..> VisitorService
+AmenityController ..> AmenityService
+BookingController ..> BookingService
+InvoiceController ..> BillingService
+PaymentController ..> PaymentService
+NoticeController ..> NoticeService
+PolicyController ..> PolicyService
+NotificationController ..> NotificationService
+MediaController ..> MediaService
+AuditController ..> AuditService
+note "DTOs «map to» domain entities in the service layer\n(request DTOs → domain, domain → response DTOs)." as N_dto
+SessionDTO .. N_dto
+
+' -- Services use repositories (representative arrows)
+AuthService ..> ProfileRepository
+RegistrationService ..> CommunityRepository
+MembershipService ..> MembershipRepository
+ResidencyService ..> ResidencyRepository
+StaffService ..> StaffAssignmentRepository
+InvitationService ..> InvitationRepository
+InvitationService ..> TokenService
+AccessRequestService ..> AccessRequestRepository
+ComplaintService ..> ComplaintRepository
+WorkOrderService ..> WorkOrderRepository
+SchedulingService ..> AssignmentRepository
+ProposalService ..> ProposalRepository
+VisitorService ..> VisitorRepository
+AmenityService ..> AmenityRepository
+BookingService ..> BookingRepository
+BillingService ..> InvoiceRepository
+PaymentService ..> PaymentRepository
+NoticeService ..> NoticeRepository
+PolicyService ..> PolicyRepository
+NotificationService ..> NotificationRepository
+MediaService ..> MediaRepository
+
+' -- Every service audits
+MembershipService ..> AuditService
+PaymentService ..> AuditService
+VisitorService ..> AuditService
+PolicyService ..> AuditService
+InvitationService ..> AuditService
+AuditService ..> AuditRepository
+
+' -- Repositories realize Repository<T> and use the client factory
+Repository <|.. ProfileRepository
+Repository <|.. MembershipRepository
+Repository <|.. InvitationRepository
+Repository <|.. WorkOrderRepository
+Repository <|.. InvoiceRepository
+ProfileRepository ..> SupabaseClientFactory
+MembershipRepository ..> SupabaseClientFactory
+InvitationRepository ..> SupabaseClientFactory
+WorkOrderRepository ..> SupabaseClientFactory
+
+' -- Infrastructure & external
+AppError <|-- AuthenticationError
+AppError <|-- AuthorizationError
+AppError <|-- ValidationError
+AppError <|-- NotFoundError
+AppError <|-- ConflictError
+SupabaseClientFactory ..> Settings
+SupabaseClientFactory ..> SupabasePostgres
+AuthService ..> SupabaseAuth
+InvitationService ..> SupabaseAuth
+MediaService ..> SupabaseStorage
+SupabaseAuth ..> SmsOtpProvider
+SupabaseAuth ..> EmailProvider
+
+' -- Frontend
+ApiClient ..> AuthController : <<HTTPS/JSON>>
+AuthStore ..> ApiClient
+AppStore ..> ServiceAdapter
+RealtimeSubscription ..> SupabaseRealtime
+SupabaseRealtime ..> SupabasePostgres
+
+legend left
+  <b>Layered architecture — dependency flows downward only</b>
+  Presentation → Application → Persistence → Infrastructure/External
+  «controller» FastAPI router   «service» use-case orchestrator
+  «repository» data access       «gateway»/«singleton» infra adapter
+  «policy» authorization rule    «DTO» wire contract
+  «external system» Supabase managed service
+  ┈┈> dependency (uses / calls)   ──▷ generalization   ┈▷ realization
+  Authorization: Postgres RLS (userClient) is the real boundary;
+  RoleGuard + RolePolicy are defence-in-depth in the API layer.
+endlegend
+
+@enduml

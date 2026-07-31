@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Ban, Check, Mail, Phone, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { registrationApi } from '../../features/registration/registrationApi';
@@ -9,6 +10,19 @@ export default function PendingRegistrations() {
     queryFn: () => registrationApi.adminAccessRequests('pending'),
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['admin-access-requests'] });
+
+  // This list comes from React Query, not from the dashboard snapshot, so the
+  // SSE-driven re-snapshot in DashboardDataBootstrap does not reach it on its
+  // own -- the sidebar badge would tick up while the page behind it went stale.
+  // DashboardDataBootstrap already dispatches this window event after every
+  // refresh, so hanging the invalidation off it keeps the two in step without a
+  // second EventSource.
+  useEffect(() => {
+    const onRefresh = () => invalidate();
+    window.addEventListener('homebandhu:dashboard-refresh', onRefresh);
+    return () => window.removeEventListener('homebandhu:dashboard-refresh', onRefresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const approve = useMutation({ mutationFn: (id) => registrationApi.approveAccessRequest(id), onSuccess: invalidate });
   const reject = useMutation({ mutationFn: ({ id, reason }) => registrationApi.rejectAccessRequest(id, { reason }), onSuccess: invalidate });
   const blacklist = useMutation({ mutationFn: ({ id, reason }) => registrationApi.blacklistAccessRequest(id, { reason }), onSuccess: invalidate });

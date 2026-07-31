@@ -8,6 +8,9 @@ versioned API router. Run locally with::
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,6 +18,18 @@ from app.api.v1 import api_router
 from app.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.realtime import hub
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Stop the SSE outbox poller cleanly on shutdown.
+
+    It is started lazily by the first subscriber rather than here, so a process
+    that never serves a dashboard never polls at all.
+    """
+    yield
+    await hub.stop()
 
 
 def create_app() -> FastAPI:
@@ -27,6 +42,7 @@ def create_app() -> FastAPI:
         title="HomeBandhu API",
         version="0.1.0",
         summary="Backend for the HomeBandhu residential community platform.",
+        lifespan=_lifespan,
     )
 
     app.add_middleware(
