@@ -1,0 +1,866 @@
+// HomeBandhu DBML Code
+
+Project homebandhu_submission_erd {
+  database_type: 'PostgreSQL'
+  Note: 'Legend: PK = primary key; FK = foreign key; UQ = unique; NN = not null. Community-scoped tables are isolated by the community_id RLS tenant boundary. auth.users and supabase_storage are external Supabase services.'
+}
+
+Enum membership_role {
+  resident
+  worker
+  security
+  manager
+  admin
+}
+
+// -----------------------------------------------------------------------------
+// NAVY — Supabase identity and community foundation
+// -----------------------------------------------------------------------------
+
+Table auth.users [headercolor: #102A43] {
+  id uuid [pk]
+  email text [unique]
+  email_confirmed_at timestamptz
+  created_at timestamptz
+
+  Note: 'EXTERNAL: Supabase Auth entity. HomeBandhu never creates a separate public users table.'
+}
+
+Table profiles [headercolor: #102A43] {
+  id uuid [pk, ref: - auth.users.id]
+  display_name text [not null]
+  phone_e164 text [unique]
+  phone_verified_at timestamptz
+  avatar_object_path text
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Extends auth.users. Identity only: roles belong to community_memberships, never profiles.'
+}
+
+Table community_registration_requests [headercolor: #102A43] {
+  id uuid [pk]
+  applicant_profile_id uuid [ref: > profiles.id]
+  association_name text [not null]
+  community_type text [not null]
+  address_line_1 text [not null]
+  address_line_2 text
+  city text [not null]
+  state text [not null]
+  postal_code text [not null]
+  country_code char(2) [not null]
+  applicant_email text [not null]
+  applicant_phone_e164 text [not null]
+  otp_verified_at timestamptz
+  status text [not null]
+  review_notes text
+  reviewed_by_operator_ref text
+  reviewed_at timestamptz
+  created_community_id uuid [ref: > communities.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table communities [headercolor: #102A43] {
+  id uuid [pk]
+  name text [not null]
+  community_type text [not null]
+  status text [not null]
+  address_line_1 text [not null]
+  address_line_2 text
+  city text [not null]
+  state text [not null]
+  postal_code text [not null]
+  country_code char(2) [not null]
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  active_admin_membership_id uuid
+  activated_at timestamptz
+  archived_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Exactly one active admin: active_admin_membership_id must reference an active admin community_memberships row for this same community.'
+}
+
+// -----------------------------------------------------------------------------
+// TEAL — Buildings, units, resident occupancy
+// -----------------------------------------------------------------------------
+
+Table buildings [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  label text [not null]
+  building_type text
+  sort_order integer [not null]
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table units [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  building_id uuid [ref: > buildings.id]
+  unit_label text [not null]
+  unit_type text [not null]
+  floor_number integer
+  area_sqft numeric(10,2)
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  status text [not null]
+  archived_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, unit_label) [unique, name: 'units_community_label_uq']
+  }
+}
+
+// -----------------------------------------------------------------------------
+// GOLD — Roles, staff, departments, vendors, skills
+// -----------------------------------------------------------------------------
+
+Table community_memberships [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  role membership_role [not null]
+  status text [not null]
+  invited_by_membership_id uuid [ref: > community_memberships.id]
+  activated_at timestamptz
+  ended_at timestamptz
+  end_reason text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, profile_id) [unique, name: 'active_membership_per_profile_community_uq']
+  }
+
+  Note: 'RLS tenant boundary. Role ENUM: resident, worker, security, manager, admin. Partial UQ constraints: one active role membership per profile per community; one active admin per community. Residents and admins have one active community; staff may serve multiple communities. Technician and serviceman are worker skills, not roles.'
+}
+
+Table unit_residencies [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  occupancy_type text [not null]
+  status text [not null]
+  is_primary_contact boolean [not null]
+  move_in_date date
+  move_out_date date
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Partial UQ: exactly one active primary resident contact per unit. Primary-contact transfer is controlled: current primary nominates an active unit resident; community admin is fallback only when no primary is active.'
+}
+
+Table departments [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  description text
+  status text [not null]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, name) [unique, name: 'departments_community_name_uq']
+  }
+}
+
+Table vendors [headercolor: #B7791F] {
+  id uuid [pk]
+  legal_name text [not null]
+  contact_name text
+  contact_email text
+  contact_phone_e164 text
+  address text
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table staff_assignments [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  department_id uuid [ref: > departments.id]
+  vendor_id uuid [ref: > vendors.id]
+  employment_type text [not null]
+  employee_code text
+  job_title text
+  status text [not null]
+  assigned_at timestamptz [not null]
+  ended_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Partial UQ: one active staff assignment per membership.'
+}
+
+Table skills [headercolor: #B7791F] {
+  id uuid [pk]
+  name text [not null, unique]
+  category text
+  description text
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table staff_skills [headercolor: #B7791F] {
+  staff_assignment_id uuid [pk, not null, ref: > staff_assignments.id]
+  skill_id uuid [pk, not null, ref: > skills.id]
+  proficiency_level text
+  verified_at timestamptz
+  verified_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (staff_assignment_id, skill_id).'
+}
+
+Table worker_availability_rules [headercolor: #B7791F] {
+  id uuid [pk]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  weekday smallint [not null]
+  start_time time [not null]
+  end_time time [not null]
+  effective_from date [not null]
+  effective_to date
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table worker_unavailability [headercolor: #B7791F] {
+  id uuid [pk]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  reason text
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+// -----------------------------------------------------------------------------
+// NAVY — Resident onboarding
+// -----------------------------------------------------------------------------
+
+Table resident_invites [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  residency_id uuid [ref: > unit_residencies.id]
+  recipient_email text [not null]
+  invited_auth_user_id uuid [ref: > auth.users.id]
+  issued_by_membership_id uuid [not null, ref: > community_memberships.id]
+  status text [not null]
+  auth_invite_sent_at timestamptz
+  expires_at timestamptz [not null]
+  accepted_by_profile_id uuid [ref: > profiles.id]
+  accepted_at timestamptz
+  revoked_at timestamptz
+  revoked_by_membership_id uuid [ref: > community_memberships.id]
+  revocation_reason text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Partial UQ: active invitation per recipient/unit. Single-use acceptance; do not store plaintext invitation tokens.'
+}
+
+Table access_requests [headercolor: #102A43] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  requested_unit_id uuid [ref: > units.id]
+  applicant_profile_id uuid [ref: > profiles.id]
+  applicant_name text [not null]
+  applicant_email text [not null]
+  applicant_phone_e164 text [not null]
+  requested_occupancy_type text [not null]
+  status text [not null]
+  reviewed_by_membership_id uuid [ref: > community_memberships.id]
+  reviewed_at timestamptz
+  decision_reason text
+  resulting_invite_id uuid [ref: > resident_invites.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+// -----------------------------------------------------------------------------
+// RED — Complaints, work orders, scheduling
+// -----------------------------------------------------------------------------
+
+Table complaints [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [ref: > units.id]
+  raised_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  description text [not null]
+  category text [not null]
+  urgency text [not null]
+  status text [not null]
+  submitted_at timestamptz [not null]
+  resolved_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table complaint_events [headercolor: #C53030] {
+  id uuid [pk]
+  complaint_id uuid [not null, ref: > complaints.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  previous_status text
+  new_status text
+  note text
+  metadata jsonb
+  created_at timestamptz [not null]
+}
+
+Table work_orders [headercolor: #C53030] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  complaint_id uuid [not null, ref: > complaints.id]
+  department_id uuid [ref: > departments.id]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  description text [not null]
+  service_category text [not null]
+  priority text [not null]
+  status text [not null]
+  preferred_start_at timestamptz
+  preferred_end_at timestamptz
+  scheduled_start_at timestamptz
+  scheduled_end_at timestamptz
+  escalation_required boolean [not null]
+  resolved_at timestamptz
+  closed_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table work_order_assignments [headercolor: #C53030] {
+  id uuid [pk]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  assigned_by_membership_id uuid [not null, ref: > community_memberships.id]
+  status text [not null]
+  assigned_at timestamptz [not null]
+  accepted_at timestamptz
+  declined_at timestamptz
+  decline_reason text
+  scheduled_start_at timestamptz
+  scheduled_end_at timestamptz
+  completed_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Confirmed assignments for the same worker must not overlap; enforce with a PostgreSQL time-range exclusion constraint.'
+}
+
+Table work_order_proposals [headercolor: #C53030] {
+  id uuid [pk]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  assignment_id uuid [not null, ref: > work_order_assignments.id]
+  proposed_by_membership_id uuid [not null, ref: > community_memberships.id]
+  parent_proposal_id uuid [ref: > work_order_proposals.id]
+  proposal_version integer [not null]
+  proposed_start_at timestamptz [not null]
+  proposed_end_at timestamptz [not null]
+  quoted_amount numeric(12,2)
+  currency_code char(3) [not null]
+  status text [not null]
+  note text
+  expires_at timestamptz
+  accepted_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table work_order_views [headercolor: #C53030] {
+  work_order_id uuid [pk, not null, ref: > work_orders.id]
+  staff_assignment_id uuid [pk, not null, ref: > staff_assignments.id]
+  first_viewed_at timestamptz [not null]
+  last_viewed_at timestamptz [not null]
+  view_count integer [not null]
+
+  Note: 'Composite PK: (work_order_id, staff_assignment_id).'
+}
+
+Table work_order_completion_verifications [headercolor: #C53030] {
+  id uuid [pk]
+  work_order_id uuid [not null, ref: > work_orders.id]
+  assignment_id uuid [not null, ref: > work_order_assignments.id]
+  verification_method text [not null]
+  otp_digest text
+  resident_confirmed_by_membership_id uuid [ref: > community_memberships.id]
+  verified_at timestamptz
+  notes text
+  created_at timestamptz [not null]
+}
+
+// -----------------------------------------------------------------------------
+// BLUE — Media assets and external Supabase Storage
+// -----------------------------------------------------------------------------
+
+Table media_assets [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  uploaded_by_profile_id uuid [ref: > profiles.id]
+  bucket_id text [not null]
+  object_path text [not null, unique]
+  original_filename text [not null]
+  mime_type text [not null]
+  byte_size bigint [not null]
+  sha256 text
+  status text [not null]
+  created_at timestamptz [not null]
+  deleted_at timestamptz
+
+  Note: 'RLS tenant boundary. Metadata for private Supabase Storage objects.'
+}
+
+Table work_order_attachments [headercolor: #2B6CB0] {
+  work_order_id uuid [pk, not null, ref: > work_orders.id]
+  media_asset_id uuid [pk, not null, ref: > media_assets.id]
+  attachment_type text [not null]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (work_order_id, media_asset_id).'
+}
+
+Table supabase_storage [headercolor: #2B6CB0] {
+  bucket_id text [pk, not null]
+  object_path text [pk, not null]
+
+  Note: 'EXTERNAL: Supabase Storage, private buckets profile-avatars, work-evidence, visitor-media. Render its relationship to media_assets as a dotted external-system connector if the diagram editor permits.'
+}
+
+// -----------------------------------------------------------------------------
+// PURPLE — Visitor management
+// -----------------------------------------------------------------------------
+
+Table saved_visitors [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  visitor_name text [not null]
+  phone_e164 text
+  visitor_type text [not null]
+  notes text
+  is_active boolean [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table visitor_access_requests [headercolor: #6B46C1] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  resident_membership_id uuid [not null, ref: > community_memberships.id]
+  security_membership_id uuid [ref: > community_memberships.id]
+  saved_visitor_id uuid [ref: > saved_visitors.id]
+  visitor_name text [not null]
+  visitor_phone_e164 text
+  visitor_type text [not null]
+  purpose text
+  status text [not null]
+  requested_arrival_at timestamptz
+  valid_from timestamptz
+  valid_until timestamptz
+  access_code_digest text
+  approved_by_membership_id uuid [ref: > community_memberships.id]
+  approved_at timestamptz
+  rejected_at timestamptz
+  rejection_reason text
+  checked_in_by_membership_id uuid [ref: > community_memberships.id]
+  checked_in_at timestamptz
+  checked_out_by_membership_id uuid [ref: > community_memberships.id]
+  checked_out_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Security personnel are related only through visitor operations; security must not gain a broad resident-directory relationship.'
+}
+
+Table visitor_events [headercolor: #6B46C1] {
+  id uuid [pk]
+  visitor_access_request_id uuid [not null, ref: > visitor_access_requests.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  metadata jsonb
+  created_at timestamptz [not null]
+}
+
+Table visitor_attachments [headercolor: #6B46C1] {
+  visitor_access_request_id uuid [pk, not null, ref: > visitor_access_requests.id]
+  media_asset_id uuid [pk, not null, ref: > media_assets.id]
+  attachment_type text [not null]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (visitor_access_request_id, media_asset_id).'
+}
+
+// -----------------------------------------------------------------------------
+// GREEN — Amenities, bookings, invoices, payments
+// -----------------------------------------------------------------------------
+
+Table amenities [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  name text [not null]
+  description text
+  category text
+  capacity integer
+  booking_mode text [not null]
+  approval_required boolean [not null]
+  status text [not null]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, name) [unique, name: 'amenities_community_name_uq']
+  }
+}
+
+Table amenity_rules [headercolor: #2F855A] {
+  id uuid [pk]
+  amenity_id uuid [not null, ref: > amenities.id]
+  weekday smallint
+  opens_at time
+  closes_at time
+  max_duration_minutes integer
+  max_guests integer
+  advance_booking_days integer
+  cancellation_deadline_minutes integer
+  booking_charge numeric(12,2)
+  deposit_amount numeric(12,2)
+  currency_code char(3) [not null]
+  effective_from date [not null]
+  effective_to date
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table amenity_booking_series [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  amenity_id uuid [not null, ref: > amenities.id]
+  unit_id uuid [not null, ref: > units.id]
+  requested_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  booking_type text [not null]
+  is_private boolean [not null]
+  guest_count integer [not null]
+  notes text
+  status text [not null]
+  requested_at timestamptz [not null]
+  approved_by_membership_id uuid [ref: > community_memberships.id]
+  approved_at timestamptz
+  rejected_at timestamptz
+  rejection_reason text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table amenity_booking_occurrences [headercolor: #2F855A] {
+  id uuid [pk]
+  booking_series_id uuid [not null, ref: > amenity_booking_series.id]
+  amenity_id uuid [not null, ref: > amenities.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  status text [not null]
+  cancelled_at timestamptz
+  cancelled_by_membership_id uuid [ref: > community_memberships.id]
+  cancellation_reason text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Active occurrences for the same amenity must not overlap; enforce with a PostgreSQL time-range exclusion constraint.'
+}
+
+Table booking_guests [headercolor: #2F855A] {
+  id uuid [pk]
+  booking_series_id uuid [not null, ref: > amenity_booking_series.id]
+  guest_name text [not null]
+  phone_e164 text
+  created_at timestamptz [not null]
+}
+
+Table amenity_booking_charges [headercolor: #2F855A] {
+  id uuid [pk]
+  booking_occurrence_id uuid [not null, ref: > amenity_booking_occurrences.id]
+  charge_type text [not null]
+  amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  status text [not null]
+  description text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table amenity_financial_events [headercolor: #2F855A] {
+  id uuid [pk]
+  booking_charge_id uuid [not null, ref: > amenity_booking_charges.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  payment_reference text
+  reason text
+  metadata jsonb
+  created_at timestamptz [not null]
+}
+
+Table invoices [headercolor: #2F855A] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  invoice_number text [not null, unique]
+  invoice_type text [not null]
+  status text [not null]
+  billing_period_start date
+  billing_period_end date
+  issued_on date [not null]
+  due_on date [not null]
+  subtotal_amount numeric(12,2) [not null]
+  tax_amount numeric(12,2) [not null]
+  total_amount numeric(12,2) [not null]
+  outstanding_amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Invoice liability belongs to unit_id.'
+}
+
+Table invoice_line_items [headercolor: #2F855A] {
+  id uuid [pk]
+  invoice_id uuid [not null, ref: > invoices.id]
+  amenity_booking_charge_id uuid [ref: > amenity_booking_charges.id]
+  description text [not null]
+  quantity numeric(10,2) [not null]
+  unit_amount numeric(12,2) [not null]
+  total_amount numeric(12,2) [not null]
+  created_at timestamptz [not null]
+}
+
+Table payments [headercolor: #2F855A] {
+  id uuid [pk]
+  invoice_id uuid [not null, ref: > invoices.id]
+  payer_profile_id uuid [not null, ref: > profiles.id]
+  received_by_membership_id uuid [ref: > community_memberships.id]
+  amount numeric(12,2) [not null]
+  currency_code char(3) [not null]
+  payment_method text [not null]
+  provider_reference text [unique]
+  status text [not null]
+  paid_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Payment records identify the resident profile that paid.'
+}
+
+Table payment_events [headercolor: #2F855A] {
+  id uuid [pk]
+  payment_id uuid [not null, ref: > payments.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  previous_status text
+  new_status text
+  metadata jsonb
+  created_at timestamptz [not null]
+}
+
+// -----------------------------------------------------------------------------
+// BLUE — Notices, policies, notifications, audit
+// -----------------------------------------------------------------------------
+
+Table notices [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  title text [not null]
+  body text [not null]
+  category text
+  urgency text [not null]
+  published_at timestamptz
+  expires_at timestamptz
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table policies [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  policy_code text [not null]
+  title text [not null]
+  status text [not null]
+  current_revision_number integer [not null]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, policy_code) [unique, name: 'policies_community_code_uq']
+  }
+}
+
+Table policy_revisions [headercolor: #2B6CB0] {
+  id uuid [pk]
+  policy_id uuid [not null, ref: > policies.id]
+  revision_number integer [not null]
+  section_reference text
+  body text [not null]
+  effective_at timestamptz [not null]
+  publish_immediately boolean [not null]
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  published_at timestamptz
+  created_at timestamptz [not null]
+
+  indexes {
+    (policy_id, revision_number) [unique, name: 'policy_revisions_policy_number_uq']
+  }
+}
+
+Table notifications [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  source_type text [not null]
+  source_id uuid
+  notification_type text [not null]
+  title text [not null]
+  body text [not null]
+  payload jsonb
+  scheduled_for timestamptz
+  sent_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table notification_deliveries [headercolor: #2B6CB0] {
+  id uuid [pk]
+  notification_id uuid [not null, ref: > notifications.id]
+  profile_id uuid [not null, ref: > profiles.id]
+  channel text [not null]
+  status text [not null]
+  delivered_at timestamptz
+  read_at timestamptz
+  failed_at timestamptz
+  failure_reason text
+  created_at timestamptz [not null]
+
+  indexes {
+    (notification_id, profile_id, channel) [unique, name: 'notification_delivery_target_uq']
+  }
+}
+
+Table audit_events [headercolor: #2B6CB0] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  actor_profile_id uuid [ref: > profiles.id]
+  actor_membership_id uuid [ref: > community_memberships.id]
+  event_type text [not null]
+  target_type text [not null]
+  target_id uuid
+  metadata jsonb
+  occurred_at timestamptz [not null]
+
+  Note: 'RLS tenant boundary. Policies and all role, financial, and security transitions must be auditable here.'
+}
+
+// -----------------------------------------------------------------------------
+// Explicit composite external-storage relationship
+// -----------------------------------------------------------------------------
+
+Ref: media_assets.(bucket_id, object_path) > supabase_storage.(bucket_id, object_path)
+
+// Declared separately because communities and community_memberships form a
+// deliberate circular relationship: a community identifies its active admin,
+// while each membership belongs to one community.
+Ref: communities.active_admin_membership_id > community_memberships.id
+
+// Visual grouping for dbdiagram.io
+TableGroup navy_foundation {
+  auth.users
+  profiles
+  community_registration_requests
+  communities
+  resident_invites
+  access_requests
+}
+
+TableGroup teal_residency {
+  buildings
+  units
+  unit_residencies
+}
+
+TableGroup gold_people_operations {
+  community_memberships
+  departments
+  vendors
+  staff_assignments
+  skills
+  staff_skills
+  worker_availability_rules
+  worker_unavailability
+}
+
+TableGroup red_service_workflows {
+  complaints
+  complaint_events
+  work_orders
+  work_order_assignments
+  work_order_proposals
+  work_order_views
+  work_order_completion_verifications
+}
+
+TableGroup purple_visitors {
+  saved_visitors
+  visitor_access_requests
+  visitor_events
+  visitor_attachments
+}
+
+TableGroup green_amenities_finance {
+  amenities
+  amenity_rules
+  amenity_booking_series
+  amenity_booking_occurrences
+  booking_guests
+  amenity_booking_charges
+  amenity_financial_events
+  invoices
+  invoice_line_items
+  payments
+  payment_events
+}
+
+TableGroup blue_communications_media {
+  media_assets
+  work_order_attachments
+  supabase_storage
+  notices
+  policies
+  policy_revisions
+  notifications
+  notification_deliveries
+  audit_events
+}

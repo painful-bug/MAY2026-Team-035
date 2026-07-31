@@ -18,7 +18,7 @@ router = APIRouter(tags=["invitations"])
 
 
 @router.post("/admin/invitations", response_model=InvitationCreated, dependencies=[Depends(require_csrf)])
-async def create_invitation(
+def create_invitation(
     body: CreateInvitationRequest,
     principal: Principal = Depends(get_current_user),
     admin_client: Client = Depends(get_request_client),
@@ -27,14 +27,14 @@ async def create_invitation(
 
 
 @router.post("/invitations/prepare", response_model=MessageResponse, dependencies=[Depends(require_csrf)])
-async def prepare_invitation(body: PrepareInvitationRequest, response: Response) -> MessageResponse:
+def prepare_invitation(body: PrepareInvitationRequest, response: Response) -> MessageResponse:
     invite = invitation_service.resolve_invitation(token=body.token, code=body.code)
     set_transaction_cookie(response, INVITATION_COOKIE, sign_payload({"invite_id": invite["id"]}, ttl_seconds=300))
     return MessageResponse(message="Invitation ready.")
 
 
 @router.post("/invitations/redeem", response_model=MessageResponse, dependencies=[Depends(require_csrf)])
-async def redeem_invitation(
+def redeem_invitation(
     _: RedeemInvitationRequest,
     request: Request,
     response: Response,

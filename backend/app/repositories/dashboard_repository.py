@@ -265,3 +265,42 @@ def read_events(client: Client, *, community_id: str, after_id: int) -> list[dic
         .execute().data
         or []
     )
+
+
+def read_events_since(client: Client, *, after_id: int, limit: int = 500) -> list[dict[str, Any]]:
+    """Every community's events past `after_id`, for the shared SSE poller.
+
+    Deliberately not community-scoped: one process-wide poller reads the outbox
+    once per tick and `app.core.realtime` routes rows to subscribers by
+    `community_id`, so the query cost stays flat as viewers are added.
+    """
+    return (
+        client.table("sse_events").select("id,community_id,topic,payload")
+        .gt("id", after_id).order("id").limit(limit)
+        .execute().data
+        or []
+    )
+
+
+def latest_event_id(client: Client) -> int:
+    """High-water mark, used to start a stream at 'now' rather than replay."""
+    rows = (
+        client.table("sse_events").select("id").order("id", desc=True).limit(1)
+        .execute().data
+        or []
+    )
+    return int(rows[0]["id"]) if rows else 0
+
+
+def list_pending_access_requests(client: Client, community_id: str) -> list[dict[str, Any]]:
+    """Pending join requests, newest first -- the admin sidebar badge's source."""
+    return (
+        client.table("pending_access_request_overview")
+        .select(
+            "id,applicant_name,applicant_email,applicant_phone_e164,"
+            "requested_relationship,status,created_at,requested_unit_code,community_name"
+        )
+        .eq("community_id", community_id).order("created_at", desc=True).limit(200)
+        .execute().data
+        or []
+    )

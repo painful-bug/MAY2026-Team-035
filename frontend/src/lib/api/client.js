@@ -1,9 +1,10 @@
 const API_BASE = '/api/v1';
+const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 
 function csrfToken() {
   return document.cookie
     .split('; ')
-    .find((cookie) => cookie.startsWith('__Host-hb_csrf=') || cookie.startsWith('hb_csrf='))
+    .find((cookie) => cookie.startsWith('hb_recovery_csrf=') || cookie.startsWith('__Host-hb_csrf=') || cookie.startsWith('hb_csrf='))
     ?.split('=')[1] ?? '';
 }
 
@@ -28,16 +29,43 @@ async function refresh() {
   return refreshPromise;
 }
 
-export async function api(path, options = {}, { retry = true } = {}) {
+async function fetchWithTimeout(url, options, timeoutMs) {
+  if (!timeoutMs) return fetch(url, options);
+
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  options.signal?.addEventListener('abort', onAbort, { once: true });
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted && !options.signal?.aborted) {
+      throw new ApiError({
+        status: 504,
+        code: 'request_timeout',
+        message: 'The server did not respond in time. Please try again.',
+      });
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+export async function api(path, options = {}, { retry = true, timeoutMs } = {}) {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (!['GET', 'HEAD', 'OPTIONS'].includes((options.method || 'GET').toUpperCase())) {
     headers.set('X-CSRF-Token', csrfToken());
   }
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
+  const response = await fetchWithTimeout(`${API_BASE}${path}`, {
+    ...options, headers, credentials: 'include',
+  }, timeoutMs);
   if (response.status === 401 && retry && path !== '/auth/refresh') {
     const refreshed = await refresh();
-    if (refreshed.ok) return api(path, options, { retry: false });
+    if (refreshed.ok) return api(path, options, { retry: false, timeoutMs });
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -51,3 +79,13 @@ export async function api(path, options = {}, { retry = true } = {}) {
   }
   return payload;
 }
+
+export async function prepareAnonymousCsrf() {
+  if (csrfToken()) return;
+  await api('/auth/csrf', {}, { retry: false, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
+}
+
+export const API_TIMEOUTS = Object.freeze({
+  authMethods: AUTH_REQUEST_TIMEOUT_MS,
+  logout: AUTH_REQUEST_TIMEOUT_MS,
+});

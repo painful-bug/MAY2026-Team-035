@@ -1,0 +1,6351 @@
+# HomeBandhu API — OpenAPI 3.1 description
+#
+# GENERATED FILE. Do not edit by hand; your changes will be overwritten.
+# Regenerate from backend/ with:
+#
+#     python scripts/export_openapi.py
+#
+# Verify it is current with `--check`. The prose companion, with the reasoning
+# behind each endpoint and its status codes, is docs/API.md.
+components:
+  schemas:
+    AccessRequestCommunity:
+      properties:
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      title: AccessRequestCommunity
+      type: object
+    AccessRequestListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AccessRequestResponse'
+          title: Items
+          type: array
+      title: AccessRequestListResponse
+      type: object
+    AccessRequestResponse:
+      properties:
+        applicant_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Applicant Email
+        applicant_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Applicant Name
+        applicant_phone_e164:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Applicant Phone E164
+        community:
+          $ref: '#/components/schemas/AccessRequestCommunity'
+        created_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Created At
+        id:
+          title: Id
+          type: string
+        rejection_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rejection Reason
+        requested_relationship:
+          title: Requested Relationship
+          type: string
+        requested_unit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requested Unit Id
+        reviewed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Reviewed At
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - community
+      - status
+      - requested_relationship
+      title: AccessRequestResponse
+      type: object
+    AddChargeRequest:
+      description: 'An extra charge after the fact -- housekeeping billed after an event, or a
+
+        late-cancellation fee. A second charge of the same kind ADDS to the first.'
+      properties:
+        amount:
+          exclusiveMinimum: 0.0
+          title: Amount
+          type: number
+        chargeType:
+          default: additional
+          title: Chargetype
+          type: string
+        description:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Description
+      required:
+      - amount
+      title: AddChargeRequest
+      type: object
+    AddCommentRequest:
+      description: A new comment on a complaint.
+      properties:
+        message:
+          maxLength: 2000
+          minLength: 1
+          title: Message
+          type: string
+        visibility:
+          default: resident
+          description: '''resident'' (visible to them) or ''internal'' (admins only)'
+          title: Visibility
+          type: string
+      required:
+      - message
+      title: AddCommentRequest
+      type: object
+    AdminBookingRequest:
+      description: 'The admin''s Create Booking modal. ``membershipId`` names the resident; the
+
+        flat is resolved from their residency rather than sent, so the ledger charges
+
+        a unit that actually exists.'
+      properties:
+        bookingTitle:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Bookingtitle
+        bookingType:
+          default: resident
+          title: Bookingtype
+          type: string
+        chargeOverride:
+          anyOf:
+          - minimum: 0.0
+            type: number
+          - type: 'null'
+          title: Chargeoverride
+        date:
+          format: date
+          title: Date
+          type: string
+        endTime:
+          title: Endtime
+          type: string
+        guestCount:
+          default: 0
+          maximum: 1000.0
+          minimum: 0.0
+          title: Guestcount
+          type: integer
+        guests:
+          items:
+            $ref: '#/components/schemas/GuestInput'
+          title: Guests
+          type: array
+        isPrivateBooking:
+          default: false
+          title: Isprivatebooking
+          type: boolean
+        membershipId:
+          title: Membershipid
+          type: string
+        notes:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Notes
+        startTime:
+          title: Starttime
+          type: string
+      required:
+      - membershipId
+      - date
+      - startTime
+      - endTime
+      title: AdminBookingRequest
+      type: object
+    AdminSummary:
+      description: One admin of the community.
+      properties:
+        designation:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Designation
+        displayRole:
+          title: Displayrole
+          type: string
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        flat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Flat
+        id:
+          title: Id
+          type: string
+        joinedAt:
+          format: date-time
+          title: Joinedat
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+        profileId:
+          title: Profileid
+          type: string
+        role:
+          title: Role
+          type: string
+        status:
+          title: Status
+          type: string
+        unitId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitid
+      required:
+      - id
+      - profileId
+      - role
+      - displayRole
+      - status
+      - joinedAt
+      title: AdminSummary
+      type: object
+    AmenityGuest:
+      properties:
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+      required:
+      - id
+      - name
+      title: AmenityGuest
+      type: object
+    AmenityReport:
+      description: '``calculateAmenityReports`` returns exactly this, computed in the browser
+
+        over the whole dataset. Computed here instead, for the reason agenda item 11
+
+        gives about the money tiles: a client-side aggregate reports on the page it
+
+        is holding, not on the community.'
+      properties:
+        kpis:
+          $ref: '#/components/schemas/ReportKpis'
+        options:
+          $ref: '#/components/schemas/ReportOptions'
+        rows:
+          items:
+            $ref: '#/components/schemas/ReportRow'
+          title: Rows
+          type: array
+      required:
+      - rows
+      - kpis
+      - options
+      title: AmenityReport
+      type: object
+    AmenityWrite:
+      additionalProperties: false
+      properties:
+        approval_required:
+          default: false
+          title: Approval Required
+          type: boolean
+        booking_mode:
+          default: Exclusive
+          maxLength: 40
+          title: Booking Mode
+          type: string
+        capacity:
+          anyOf:
+          - maximum: 10000.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Capacity
+        category:
+          default: Utility
+          maxLength: 120
+          title: Category
+          type: string
+        description:
+          default: ''
+          maxLength: 2000
+          title: Description
+          type: string
+        hourly_rate:
+          default: 0
+          minimum: 0.0
+          title: Hourly Rate
+          type: number
+        is_active:
+          default: true
+          title: Is Active
+          type: boolean
+        location:
+          default: ''
+          maxLength: 200
+          title: Location
+          type: string
+        name:
+          maxLength: 160
+          minLength: 2
+          title: Name
+          type: string
+      required:
+      - name
+      title: AmenityWrite
+      type: object
+    ApprovalRequest:
+      description: 'One row in the approvals table -- one per REQUEST, not per day.
+
+
+        ``dayCount`` and ``dates`` exist because one click now decides the whole
+
+        request. A three-day booking rendered as its first day alone would tell an
+
+        admin they are approving one day; the frontend does not read either field
+
+        yet, which is frontend agenda item 16.
+
+
+        ``outstandingDues`` is the FLAT''s balance, not the person''s. The frontend
+
+        computes it per ``userId`` from the maintenance invoices; ours attach to the
+
+        unit and have no person on them. Same label, different number --
+
+        DECISIONS_NEEDED E18.'
+      properties:
+        amenityId:
+          title: Amenityid
+          type: string
+        amenityName:
+          title: Amenityname
+          type: string
+        approvedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Approvedat
+        bookingGroupId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bookinggroupid
+        bookingSeriesId:
+          title: Bookingseriesid
+          type: string
+        bookingTitle:
+          title: Bookingtitle
+          type: string
+        bookingType:
+          title: Bookingtype
+          type: string
+        cancellationDetails:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cancellationdetails
+        cancellationReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cancellationreason
+        cancelledAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Cancelledat
+        cancelledByResident:
+          default: false
+          title: Cancelledbyresident
+          type: boolean
+        chargeOverride:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Chargeoverride
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        date:
+          format: date
+          title: Date
+          type: string
+        dates:
+          items:
+            format: date
+            type: string
+          title: Dates
+          type: array
+        dayCount:
+          title: Daycount
+          type: integer
+        department:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department
+        endTime:
+          title: Endtime
+          type: string
+        forceCancelled:
+          default: false
+          title: Forcecancelled
+          type: boolean
+        guestCount:
+          title: Guestcount
+          type: integer
+        guests:
+          items:
+            $ref: '#/components/schemas/AmenityGuest'
+          title: Guests
+          type: array
+        id:
+          title: Id
+          type: string
+        isPrivateBooking:
+          title: Isprivatebooking
+          type: boolean
+        notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notes
+        outstandingDues:
+          default: 0.0
+          title: Outstandingdues
+          type: number
+        rejectedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Rejectedat
+        rejectionReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rejectionreason
+        rejectionReasonCode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rejectionreasoncode
+        requestedAt:
+          format: date-time
+          title: Requestedat
+          type: string
+        requiresApproval:
+          title: Requiresapproval
+          type: boolean
+        residentFlat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentflat
+        residentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentid
+        residentName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentname
+        source:
+          title: Source
+          type: string
+        startTime:
+          title: Starttime
+          type: string
+        state:
+          title: State
+          type: string
+        status:
+          title: Status
+          type: string
+        tower:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tower
+        unitId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitid
+        updatedAt:
+          format: date-time
+          title: Updatedat
+          type: string
+        version:
+          title: Version
+          type: integer
+      required:
+      - id
+      - amenityId
+      - amenityName
+      - bookingSeriesId
+      - bookingTitle
+      - date
+      - startTime
+      - endTime
+      - state
+      - bookingType
+      - status
+      - source
+      - requiresApproval
+      - isPrivateBooking
+      - guestCount
+      - dayCount
+      - version
+      - createdAt
+      - updatedAt
+      - requestedAt
+      title: ApprovalRequest
+      type: object
+    ApproveAccessRequest:
+      additionalProperties: false
+      properties:
+        relationship:
+          anyOf:
+          - enum:
+            - owner
+            - tenant
+            - family_member
+            - caregiver
+            - other
+            type: string
+          - type: 'null'
+          title: Relationship
+        unit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit Id
+      title: ApproveAccessRequest
+      type: object
+    AuditEntry:
+      description: 'One line of the ledger''s audit timeline.
+
+
+        Assembled from the booking''s own lifecycle timestamps and its financial
+
+        events, rather than from a separate audit table: two sources that must agree
+
+        about when a refund happened are one source with a reconciliation problem.'
+      properties:
+        actor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor
+        amount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Amount
+        details:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Details
+        id:
+          title: Id
+          type: string
+        label:
+          title: Label
+          type: string
+        timestamp:
+          format: date-time
+          title: Timestamp
+          type: string
+        type:
+          title: Type
+          type: string
+      required:
+      - id
+      - type
+      - label
+      - timestamp
+      title: AuditEntry
+      type: object
+    BillingSettings:
+      description: 'The community''s billing configuration.
+
+
+        ``defaultMaintenanceAmount`` is null until an admin sets it. It has no home
+
+        in the frontend or the ERD -- the amount exists today only as a literal
+
+        ``4250`` inside an approval handler -- so there is nothing to migrate from
+
+        and nothing to default to.'
+      properties:
+        autoBillingDay:
+          default: 1
+          title: Autobillingday
+          type: integer
+        autoBillingEnabled:
+          default: false
+          title: Autobillingenabled
+          type: boolean
+        communityId:
+          title: Communityid
+          type: string
+        currency:
+          title: Currency
+          type: string
+        defaultMaintenanceAmount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Defaultmaintenanceamount
+        defaultTaxPercent:
+          title: Defaulttaxpercent
+          type: number
+        invoiceNumberPrefix:
+          title: Invoicenumberprefix
+          type: string
+        lateFeeAmount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Latefeeamount
+        lateFeeEnabled:
+          default: false
+          title: Latefeeenabled
+          type: boolean
+        lateFeeGraceDays:
+          default: 10
+          title: Latefeegracedays
+          type: integer
+        lateFeePeriod:
+          default: weekly
+          title: Latefeeperiod
+          type: string
+        maintenanceDueDay:
+          title: Maintenancedueday
+          type: integer
+        updatedAt:
+          format: date-time
+          title: Updatedat
+          type: string
+      required:
+      - communityId
+      - currency
+      - invoiceNumberPrefix
+      - maintenanceDueDay
+      - defaultTaxPercent
+      - updatedAt
+      title: BillingSettings
+      type: object
+    BillingToggles:
+      description: 'The two billing switches the settings screen shows. **Read-only here.**
+
+
+        ``autoBillingEnabled`` cannot be true while ``defaultMaintenanceAmount`` is
+
+        null -- the database refuses it. ``lateFeeEnabled`` cannot be true without a
+
+        ``lateFeeAmount`` above zero, for the same reason.
+
+
+        **Nothing charges a late fee and nothing runs billing on a schedule.**
+
+        ``POST /maintenance-runs`` is manual and deliberately ignores
+
+        ``autoBillingEnabled``: an admin pressing the button has said what they want
+
+        more recently than a toggle did.'
+      properties:
+        autoBillingDay:
+          title: Autobillingday
+          type: integer
+        autoBillingEnabled:
+          title: Autobillingenabled
+          type: boolean
+        defaultMaintenanceAmount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Defaultmaintenanceamount
+        lateFeeAmount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Latefeeamount
+        lateFeeEnabled:
+          title: Latefeeenabled
+          type: boolean
+        lateFeeGraceDays:
+          title: Latefeegracedays
+          type: integer
+        lateFeePeriod:
+          title: Latefeeperiod
+          type: string
+        lateFeePeriodLabel:
+          title: Latefeeperiodlabel
+          type: string
+      required:
+      - autoBillingEnabled
+      - autoBillingDay
+      - lateFeeEnabled
+      - lateFeeGraceDays
+      - lateFeePeriod
+      - lateFeePeriodLabel
+      title: BillingToggles
+      type: object
+    BlacklistAccessRequest:
+      additionalProperties: false
+      properties:
+        reason:
+          maxLength: 500
+          minLength: 3
+          title: Reason
+          type: string
+      required:
+      - reason
+      title: BlacklistAccessRequest
+      type: object
+    BlockSlotRequest:
+      description: 'An administrative reservation. Always exclusive: a hall closed for repairs
+
+        is closed to everybody, whatever its booking mode says.'
+      properties:
+        date:
+          format: date
+          title: Date
+          type: string
+        department:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Department
+        endTime:
+          title: Endtime
+          type: string
+        notes:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Notes
+        reason:
+          maxLength: 200
+          minLength: 1
+          title: Reason
+          type: string
+        startTime:
+          title: Starttime
+          type: string
+      required:
+      - reason
+      - date
+      - startTime
+      - endTime
+      title: BlockSlotRequest
+      type: object
+    BookingSummary:
+      description: 'One occupied day, in the shape ``amenityBookings.js`` seeds.
+
+
+        ``state`` is the timeline''s vocabulary (''booked'' | ''blocked'') and ``status``
+
+        is the lifecycle''s -- the frontend carries both and colours the timeline from
+
+        the first. ``residentId`` is the requester''s MEMBERSHIP id, which is what
+
+        ``GET /residents`` returns as ``id``, so the dashboard''s
+
+        ``users.find(u => u.id === booking.residentId)`` resolves.
+
+
+        ``status`` may read ``completed`` for a row whose stored status is
+
+        ``approved``: a booking that has finished is completed, and storing that
+
+        would need a scheduled job to keep it true.'
+      properties:
+        amenityId:
+          title: Amenityid
+          type: string
+        amenityName:
+          title: Amenityname
+          type: string
+        bookingGroupId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bookinggroupid
+        bookingSeriesId:
+          title: Bookingseriesid
+          type: string
+        bookingTitle:
+          title: Bookingtitle
+          type: string
+        bookingType:
+          title: Bookingtype
+          type: string
+        cancellationDetails:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cancellationdetails
+        cancellationReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cancellationreason
+        cancelledAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Cancelledat
+        cancelledByResident:
+          default: false
+          title: Cancelledbyresident
+          type: boolean
+        chargeOverride:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Chargeoverride
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        date:
+          format: date
+          title: Date
+          type: string
+        dayCount:
+          title: Daycount
+          type: integer
+        department:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department
+        endTime:
+          title: Endtime
+          type: string
+        forceCancelled:
+          default: false
+          title: Forcecancelled
+          type: boolean
+        guestCount:
+          title: Guestcount
+          type: integer
+        guests:
+          items:
+            $ref: '#/components/schemas/AmenityGuest'
+          title: Guests
+          type: array
+        id:
+          title: Id
+          type: string
+        isPrivateBooking:
+          title: Isprivatebooking
+          type: boolean
+        notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notes
+        requiresApproval:
+          title: Requiresapproval
+          type: boolean
+        residentFlat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentflat
+        residentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentid
+        residentName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentname
+        source:
+          title: Source
+          type: string
+        startTime:
+          title: Starttime
+          type: string
+        state:
+          title: State
+          type: string
+        status:
+          title: Status
+          type: string
+        tower:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tower
+        unitId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitid
+        updatedAt:
+          format: date-time
+          title: Updatedat
+          type: string
+        version:
+          title: Version
+          type: integer
+      required:
+      - id
+      - amenityId
+      - amenityName
+      - bookingSeriesId
+      - bookingTitle
+      - date
+      - startTime
+      - endTime
+      - state
+      - bookingType
+      - status
+      - source
+      - requiresApproval
+      - isPrivateBooking
+      - guestCount
+      - dayCount
+      - version
+      - createdAt
+      - updatedAt
+      title: BookingSummary
+      type: object
+    CancelBookingRequest:
+      description: 'Cancel selected days of a request. A resident may withdraw their own
+
+        future days; an admin may cancel any. Which of the two you are is read from
+
+        the token, not from this body.'
+      properties:
+        occurrenceIds:
+          items:
+            type: string
+          maxItems: 60
+          minItems: 1
+          title: Occurrenceids
+          type: array
+        reason:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Reason
+        reasonCode:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Reasoncode
+      required:
+      - occurrenceIds
+      title: CancelBookingRequest
+      type: object
+    CommunityOnboardingRequest:
+      additionalProperties: false
+      properties:
+        address_line1:
+          maxLength: 200
+          minLength: 3
+          title: Address Line1
+          type: string
+        address_line2:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Address Line2
+        admin_profile:
+          $ref: '#/components/schemas/FounderProfileInput'
+        block_locations:
+          additionalProperties:
+            $ref: '#/components/schemas/MapPoint'
+          title: Block Locations
+          type: object
+        blocks:
+          items:
+            $ref: '#/components/schemas/CommunityStructure'
+          maxItems: 10
+          title: Blocks
+          type: array
+        city:
+          maxLength: 100
+          minLength: 2
+          title: City
+          type: string
+        community_type:
+          enum:
+          - apartment
+          - layout_villa
+          title: Community Type
+          type: string
+        country_code:
+          default: IN
+          maxLength: 2
+          minLength: 2
+          title: Country Code
+          type: string
+        enabled_features:
+          items:
+            type: string
+          maxItems: 10
+          title: Enabled Features
+          type: array
+        name:
+          maxLength: 100
+          minLength: 3
+          title: Name
+          type: string
+        postal_code:
+          maxLength: 20
+          minLength: 3
+          title: Postal Code
+          type: string
+        state:
+          maxLength: 100
+          minLength: 2
+          title: State
+          type: string
+        villa_locations:
+          additionalProperties:
+            $ref: '#/components/schemas/MapPoint'
+          title: Villa Locations
+          type: object
+        villas:
+          items:
+            $ref: '#/components/schemas/CommunityStructure'
+          maxItems: 50
+          title: Villas
+          type: array
+      required:
+      - name
+      - community_type
+      - address_line1
+      - city
+      - state
+      - postal_code
+      - admin_profile
+      title: CommunityOnboardingRequest
+      type: object
+    CommunityOnboardingResponse:
+      properties:
+        admin:
+          additionalProperties: true
+          title: Admin
+          type: object
+        community:
+          additionalProperties: true
+          title: Community
+          type: object
+      required:
+      - community
+      - admin
+      title: CommunityOnboardingResponse
+      type: object
+    CommunityProfile:
+      description: 'Who the community is. Read-only on this surface.
+
+
+        There is no write for ``name`` or ``communityType``: ``communities`` (the
+
+        baseline''s rename of ``associations``) is the one table this build plan
+
+        touches whose admin write policy has no community clause (build plan 1.2), so
+
+        a rename endpoint would be the first of sixty-eight to depend on it.'
+      properties:
+        communityType:
+          title: Communitytype
+          type: string
+        communityTypeLabel:
+          title: Communitytypelabel
+          type: string
+        createdAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Createdat
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - name
+      - communityType
+      - communityTypeLabel
+      - status
+      title: CommunityProfile
+      type: object
+    CommunitySearchItem:
+      properties:
+        city:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: City
+        community_type:
+          title: Community Type
+          type: string
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        state:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: State
+      required:
+      - id
+      - name
+      - community_type
+      title: CommunitySearchItem
+      type: object
+    CommunitySearchResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/CommunitySearchItem'
+          title: Items
+          type: array
+      title: CommunitySearchResponse
+      type: object
+    CommunityStructure:
+      additionalProperties: false
+      properties:
+        id:
+          maxLength: 80
+          minLength: 1
+          title: Id
+          type: string
+        name:
+          maxLength: 100
+          minLength: 1
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      title: CommunityStructure
+      type: object
+    CommunityUnitListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/CommunityUnitOption'
+          title: Items
+          type: array
+      title: CommunityUnitListResponse
+      type: object
+    CommunityUnitOption:
+      properties:
+        building_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Building Name
+        id:
+          title: Id
+          type: string
+        unit_code:
+          title: Unit Code
+          type: string
+      required:
+      - id
+      - unit_code
+      title: CommunityUnitOption
+      type: object
+    CreateAccessRequest:
+      additionalProperties: false
+      properties:
+        community_id:
+          title: Community Id
+          type: string
+        phone:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Phone
+        requested_relationship:
+          default: tenant
+          enum:
+          - owner
+          - tenant
+          - family_member
+          - caregiver
+          - other
+          title: Requested Relationship
+          type: string
+        requested_unit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requested Unit Id
+      required:
+      - community_id
+      title: CreateAccessRequest
+      type: object
+    CreateDepartmentRequest:
+      description: Create a department, its category claims and its roster in one call.
+      properties:
+        categories:
+          items:
+            type: string
+          title: Categories
+          type: array
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        email:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Email
+        head:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Head
+        kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: service | security
+          title: Kind
+        name:
+          maxLength: 120
+          minLength: 1
+          title: Name
+          type: string
+        operatingHours:
+          anyOf:
+          - $ref: '#/components/schemas/OperatingHours'
+          - type: 'null'
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        slaHours:
+          anyOf:
+          - exclusiveMinimum: 0.0
+            maximum: 8760.0
+            type: integer
+          - type: 'null'
+          title: Slahours
+        staff:
+          items:
+            $ref: '#/components/schemas/StaffMemberInput'
+          title: Staff
+          type: array
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Active | Inactive
+          title: Status
+      required:
+      - name
+      title: CreateDepartmentRequest
+      type: object
+    CreateInvitationRequest:
+      additionalProperties: false
+      description: An active administrator invites a resident into their own community.
+      properties:
+        full_name:
+          anyOf:
+          - maxLength: 160
+            type: string
+          - type: 'null'
+          title: Full Name
+        intended_unit_id:
+          title: Intended Unit Id
+          type: string
+        invitee_email:
+          maxLength: 320
+          minLength: 3
+          title: Invitee Email
+          type: string
+        phone:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Phone
+      required:
+      - intended_unit_id
+      - invitee_email
+      title: CreateInvitationRequest
+      type: object
+    CreateInvoiceRequest:
+      description: 'Issue one invoice against one flat.
+
+
+        Either ``unitId`` or ``flat`` identifies the unit; ``flat`` is the code the
+
+        rest of the app uses (``B-1204``) and is created on first reference, because
+
+        the product has never had a flat-creation step.'
+      properties:
+        billingPeriodEnd:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Billingperiodend
+        billingPeriodStart:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Billingperiodstart
+        dueDate:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Duedate
+        flat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Flat
+        invoiceType:
+          default: maintenance
+          title: Invoicetype
+          type: string
+        issuedOn:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Issuedon
+        lineItems:
+          items:
+            $ref: '#/components/schemas/LineItemInput'
+          minItems: 1
+          title: Lineitems
+          type: array
+        notes:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Notes
+        taxPercent:
+          anyOf:
+          - exclusiveMaximum: 100.0
+            minimum: 0.0
+            type: number
+          - type: 'null'
+          title: Taxpercent
+        title:
+          maxLength: 160
+          minLength: 1
+          title: Title
+          type: string
+        unitId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitid
+      required:
+      - title
+      - lineItems
+      title: CreateInvoiceRequest
+      type: object
+    CreateNoticeRequest:
+      description: 'Body for ``POST /notices``.
+
+
+        Field names follow the frontend''s ``addNotice({title, description, category,
+
+        urgency})`` exactly, so the screen needs no payload mapping. ``description``
+
+        is stored in ``notices.body``.'
+      properties:
+        category:
+          default: General
+          maxLength: 80
+          minLength: 1
+          title: Category
+          type: string
+        description:
+          maxLength: 5000
+          minLength: 1
+          title: Description
+          type: string
+        title:
+          maxLength: 200
+          minLength: 1
+          title: Title
+          type: string
+        urgency:
+          default: Info
+          maxLength: 20
+          minLength: 1
+          title: Urgency
+          type: string
+      required:
+      - title
+      - description
+      title: CreateNoticeRequest
+      type: object
+    DamageDeductionRequest:
+      properties:
+        amount:
+          exclusiveMinimum: 0.0
+          title: Amount
+          type: number
+        notes:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Notes
+        reason:
+          maxLength: 1000
+          minLength: 1
+          title: Reason
+          type: string
+      required:
+      - amount
+      - reason
+      title: DamageDeductionRequest
+      type: object
+    DashboardSnapshot:
+      description: One tenant-scoped projection used by all authenticated portals.
+      properties:
+        activities:
+          items:
+            additionalProperties: true
+            type: object
+          title: Activities
+          type: array
+        amenities:
+          items:
+            additionalProperties: true
+            type: object
+          title: Amenities
+          type: array
+        bookings:
+          items:
+            additionalProperties: true
+            type: object
+          title: Bookings
+          type: array
+        complaints:
+          items:
+            additionalProperties: true
+            type: object
+          title: Complaints
+          type: array
+        departments:
+          items:
+            additionalProperties: true
+            type: object
+          title: Departments
+          type: array
+        notices:
+          items:
+            additionalProperties: true
+            type: object
+          title: Notices
+          type: array
+        payments:
+          items:
+            additionalProperties: true
+            type: object
+          title: Payments
+          type: array
+        pendingRequests:
+          items:
+            additionalProperties: true
+            type: object
+          title: Pendingrequests
+          type: array
+        users:
+          items:
+            additionalProperties: true
+            type: object
+          title: Users
+          type: array
+        visitors:
+          items:
+            additionalProperties: true
+            type: object
+          title: Visitors
+          type: array
+      title: DashboardSnapshot
+      type: object
+    DepartmentDetail:
+      description: A department plus its roster.
+      properties:
+        activeComplaintCount:
+          default: 0
+          title: Activecomplaintcount
+          type: integer
+        categories:
+          items:
+            type: string
+          title: Categories
+          type: array
+        categoryIds:
+          items:
+            type: string
+          title: Categoryids
+          type: array
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        head:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Head
+        headStaffId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Headstaffid
+        id:
+          title: Id
+          type: string
+        kind:
+          default: service
+          title: Kind
+          type: string
+        name:
+          title: Name
+          type: string
+        operatingHours:
+          $ref: '#/components/schemas/OperatingHours'
+        overdueComplaintCount:
+          default: 0
+          title: Overduecomplaintcount
+          type: integer
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+        resolvedComplaintCount:
+          default: 0
+          title: Resolvedcomplaintcount
+          type: integer
+        slaHours:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Slahours
+        staff:
+          items:
+            $ref: '#/components/schemas/StaffMember'
+          title: Staff
+          type: array
+        staffCount:
+          default: 0
+          title: Staffcount
+          type: integer
+        status:
+          default: Active
+          title: Status
+          type: string
+        updatedAt:
+          format: date-time
+          title: Updatedat
+          type: string
+      required:
+      - id
+      - name
+      - createdAt
+      - updatedAt
+      title: DepartmentDetail
+      type: object
+    EmailTokenRequest:
+      additionalProperties: false
+      properties:
+        token_hash:
+          maxLength: 4096
+          minLength: 8
+          title: Token Hash
+          type: string
+        verification_type:
+          default: email
+          enum:
+          - email
+          - signup
+          - recovery
+          title: Verification Type
+          type: string
+      required:
+      - token_hash
+      title: EmailTokenRequest
+      type: object
+    ForceCancelRequest:
+      properties:
+        reason:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Reason
+        reasonCode:
+          maxLength: 60
+          minLength: 1
+          title: Reasoncode
+          type: string
+      required:
+      - reasonCode
+      title: ForceCancelRequest
+      type: object
+    FounderProfileInput:
+      additionalProperties: false
+      properties:
+        designation:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Designation
+        email:
+          anyOf:
+          - maxLength: 320
+            type: string
+          - type: 'null'
+          title: Email
+        founderStructureId:
+          anyOf:
+          - maxLength: 80
+            type: string
+          - type: 'null'
+          title: Founderstructureid
+        fullName:
+          maxLength: 160
+          minLength: 2
+          title: Fullname
+          type: string
+        phone:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Phone
+        profileImage:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profileimage
+        unitNumber:
+          maxLength: 80
+          minLength: 1
+          title: Unitnumber
+          type: string
+      required:
+      - fullName
+      - unitNumber
+      title: FounderProfileInput
+      type: object
+    GuestInput:
+      properties:
+        name:
+          maxLength: 120
+          minLength: 1
+          title: Name
+          type: string
+        phone:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Phone
+      required:
+      - name
+      title: GuestInput
+      type: object
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          title: Detail
+          type: array
+      title: HTTPValidationError
+      type: object
+    InvitationCreated:
+      properties:
+        code:
+          title: Code
+          type: string
+        community_id:
+          title: Community Id
+          type: string
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        intended_unit_id:
+          title: Intended Unit Id
+          type: string
+        invitation_id:
+          title: Invitation Id
+          type: string
+        invitee_email:
+          title: Invitee Email
+          type: string
+        link:
+          title: Link
+          type: string
+      required:
+      - invitation_id
+      - link
+      - code
+      - invitee_email
+      - community_id
+      - intended_unit_id
+      - expires_at
+      title: InvitationCreated
+      type: object
+    InvoiceDetail:
+      description: One invoice with everything hanging off it.
+      properties:
+        amount:
+          title: Amount
+          type: number
+        amountPaid:
+          title: Amountpaid
+          type: number
+        billPeriod:
+          title: Billperiod
+          type: string
+        billingPeriodEnd:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Billingperiodend
+        billingPeriodStart:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Billingperiodstart
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        currency:
+          title: Currency
+          type: string
+        dueDate:
+          format: date
+          title: Duedate
+          type: string
+        flat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Flat
+        id:
+          title: Id
+          type: string
+        invoiceNumber:
+          title: Invoicenumber
+          type: string
+        invoiceType:
+          title: Invoicetype
+          type: string
+        isOverdue:
+          title: Isoverdue
+          type: boolean
+        issuedOn:
+          format: date
+          title: Issuedon
+          type: string
+        lineItems:
+          items:
+            $ref: '#/components/schemas/InvoiceLineItem'
+          title: Lineitems
+          type: array
+        notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notes
+        outstanding:
+          title: Outstanding
+          type: number
+        paidOn:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Paidon
+        paymentMethod:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Paymentmethod
+        payments:
+          items:
+            $ref: '#/components/schemas/PaymentSummary'
+          title: Payments
+          type: array
+        residentName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentname
+        residentProfileId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentprofileid
+        status:
+          title: Status
+          type: string
+        statusDetail:
+          title: Statusdetail
+          type: string
+        subtotal:
+          title: Subtotal
+          type: number
+        tax:
+          title: Tax
+          type: number
+        title:
+          title: Title
+          type: string
+        tower:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tower
+        unitId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitid
+        updatedAt:
+          format: date-time
+          title: Updatedat
+          type: string
+        userId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Userid
+      required:
+      - id
+      - invoiceNumber
+      - title
+      - invoiceType
+      - amount
+      - subtotal
+      - tax
+      - outstanding
+      - amountPaid
+      - currency
+      - status
+      - statusDetail
+      - isOverdue
+      - dueDate
+      - issuedOn
+      - billPeriod
+      - createdAt
+      - updatedAt
+      title: InvoiceDetail
+      type: object
+    InvoiceLineItem:
+      description: 'One charge on an invoice. ``total`` is ``quantity x unitAmount``, rounded
+
+        in Postgres and constrained there, so it can never disagree with its own
+
+        inputs.'
+      properties:
+        description:
+          title: Description
+          type: string
+        id:
+          title: Id
+          type: string
+        quantity:
+          title: Quantity
+          type: number
+        total:
+          title: Total
+          type: number
+        unitAmount:
+          title: Unitamount
+          type: number
+      required:
+      - id
+      - description
+      - quantity
+      - unitAmount
+      - total
+      title: InvoiceLineItem
+      type: object
+    LedgerEntry:
+      description: One refund or one damage deduction, from the append-only event stream.
+      properties:
+        amount:
+          title: Amount
+          type: number
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        id:
+          title: Id
+          type: string
+        notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notes
+        processedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Processedby
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+      required:
+      - id
+      - amount
+      - createdAt
+      title: LedgerEntry
+      type: object
+    LedgerSummary:
+      description: The eight cards above the ledger table, aggregated by Postgres.
+      properties:
+        completedTransactions:
+          title: Completedtransactions
+          type: integer
+        damageDeductions:
+          title: Damagedeductions
+          type: number
+        outstandingRefunds:
+          title: Outstandingrefunds
+          type: number
+        pendingDeposits:
+          title: Pendingdeposits
+          type: number
+        refundCompleted:
+          title: Refundcompleted
+          type: number
+        refundPending:
+          title: Refundpending
+          type: integer
+        totalBookings:
+          title: Totalbookings
+          type: integer
+        totalRevenue:
+          title: Totalrevenue
+          type: number
+      required:
+      - totalBookings
+      - totalRevenue
+      - pendingDeposits
+      - refundPending
+      - refundCompleted
+      - damageDeductions
+      - outstandingRefunds
+      - completedTransactions
+      title: LedgerSummary
+      type: object
+    LedgerTransaction:
+      description: 'One row of the ledger table, reconstructed from charges and events.
+
+
+        Every figure is derived. ``remainingRefund`` is deposit paid minus damage
+
+        taken minus refunds already made; ``paymentStatus`` is a CASE over those,
+
+        with the order of its arms being its meaning -- a cancelled booking still
+
+        holding a refundable deposit is ``refund_pending``, not ``cancelled``,
+
+        because somebody is owed money.'
+      properties:
+        additionalCharges:
+          title: Additionalcharges
+          type: number
+        amenityId:
+          title: Amenityid
+          type: string
+        amenityName:
+          title: Amenityname
+          type: string
+        amountPaid:
+          title: Amountpaid
+          type: number
+        auditTrail:
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+          title: Audittrail
+          type: array
+        availableActions:
+          items:
+            type: string
+          title: Availableactions
+          type: array
+        bookingCharges:
+          title: Bookingcharges
+          type: number
+        bookingDate:
+          format: date
+          title: Bookingdate
+          type: string
+        bookingId:
+          title: Bookingid
+          type: string
+        bookingStatus:
+          title: Bookingstatus
+          type: string
+        bookingType:
+          title: Bookingtype
+          type: string
+        cancellationHistory:
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+          title: Cancellationhistory
+          type: array
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        damageAmount:
+          title: Damageamount
+          type: number
+        damageHistory:
+          items:
+            $ref: '#/components/schemas/LedgerEntry'
+          title: Damagehistory
+          type: array
+        damageReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Damagereason
+        depositAmount:
+          title: Depositamount
+          type: number
+        depositPaid:
+          title: Depositpaid
+          type: number
+        forceCancelReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Forcecancelreason
+        forceCancelled:
+          default: false
+          title: Forcecancelled
+          type: boolean
+        forceCancelledAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Forcecancelledat
+        forceCancelledBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Forcecancelledby
+        id:
+          title: Id
+          type: string
+        internalNotes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Internalnotes
+        outstandingDeposit:
+          title: Outstandingdeposit
+          type: number
+        paymentReference:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Paymentreference
+        paymentStatus:
+          title: Paymentstatus
+          type: string
+        refundAmount:
+          title: Refundamount
+          type: number
+        refundDate:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Refunddate
+        refundHistory:
+          items:
+            $ref: '#/components/schemas/LedgerEntry'
+          title: Refundhistory
+          type: array
+        refundProcessedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Refundprocessedby
+        refundReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Refundreason
+        remainingRefund:
+          title: Remainingrefund
+          type: number
+        residentFlat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentflat
+        residentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentid
+        residentName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentname
+        totalAmount:
+          title: Totalamount
+          type: number
+        updatedAt:
+          format: date-time
+          title: Updatedat
+          type: string
+      required:
+      - id
+      - bookingId
+      - amenityId
+      - amenityName
+      - bookingDate
+      - bookingType
+      - depositAmount
+      - depositPaid
+      - bookingCharges
+      - additionalCharges
+      - amountPaid
+      - refundAmount
+      - damageAmount
+      - totalAmount
+      - outstandingDeposit
+      - remainingRefund
+      - paymentStatus
+      - bookingStatus
+      - createdAt
+      - updatedAt
+      title: LedgerTransaction
+      type: object
+    LineItemInput:
+      description: One line on a new invoice.
+      properties:
+        description:
+          maxLength: 200
+          minLength: 1
+          title: Description
+          type: string
+        quantity:
+          default: 1
+          exclusiveMinimum: 0.0
+          maximum: 100000.0
+          title: Quantity
+          type: number
+        unitAmount:
+          exclusiveMinimum: 0.0
+          maximum: 10000000.0
+          title: Unitamount
+          type: number
+      required:
+      - description
+      - unitAmount
+      title: LineItemInput
+      type: object
+    MapPoint:
+      additionalProperties: false
+      properties:
+        x:
+          maximum: 100.0
+          minimum: 0.0
+          title: X
+          type: number
+        y:
+          maximum: 100.0
+          minimum: 0.0
+          title: Y
+          type: number
+      required:
+      - x
+      - y
+      title: MapPoint
+      type: object
+    MembershipContext:
+      properties:
+        community_id:
+          title: Community Id
+          type: string
+        department_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department Id
+        id:
+          title: Id
+          type: string
+        role:
+          title: Role
+          type: string
+        unit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit Id
+      required:
+      - id
+      - community_id
+      - role
+      title: MembershipContext
+      type: object
+    MessageResponse:
+      properties:
+        message:
+          title: Message
+          type: string
+      required:
+      - message
+      title: MessageResponse
+      type: object
+    MessageResult:
+      description: Acknowledgement for an action with nothing meaningful to return.
+      properties:
+        message:
+          title: Message
+          type: string
+      required:
+      - message
+      title: MessageResult
+      type: object
+    ModuleCollection:
+      description: 'The ten modules and the two counts worth showing above them.
+
+
+        ``enabledWithoutBackend`` is the honest number: modules switched on that
+
+        nothing in the product implements.'
+      properties:
+        enabledCount:
+          title: Enabledcount
+          type: integer
+        enabledWithoutBackend:
+          title: Enabledwithoutbackend
+          type: integer
+        items:
+          items:
+            $ref: '#/components/schemas/ModuleSummary'
+          title: Items
+          type: array
+        total:
+          title: Total
+          type: integer
+      required:
+      - items
+      - total
+      - enabledCount
+      - enabledWithoutBackend
+      title: ModuleCollection
+      type: object
+    ModuleSummary:
+      description: 'One feature module, as the community has it set.
+
+
+        ``backendStatus`` is the field that makes this list worth reading: six of the
+
+        ten modules have no backend at all, so an admin can otherwise switch on
+
+        Parking Management and be given no hint that nothing will happen.
+
+
+        ``isDefault`` is true when nobody has ever set this key for this community,
+
+        which is how an eleventh module added to the catalogue reads before anyone
+
+        touches it.'
+      properties:
+        backendNote:
+          title: Backendnote
+          type: string
+        backendStatus:
+          title: Backendstatus
+          type: string
+        backendStatusLabel:
+          title: Backendstatuslabel
+          type: string
+        defaultEnabled:
+          title: Defaultenabled
+          type: boolean
+        description:
+          title: Description
+          type: string
+        enabled:
+          title: Enabled
+          type: boolean
+        isDefault:
+          title: Isdefault
+          type: boolean
+        key:
+          title: Key
+          type: string
+        name:
+          title: Name
+          type: string
+        sortOrder:
+          title: Sortorder
+          type: integer
+        updatedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updatedat
+        updatedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Updatedby
+      required:
+      - key
+      - name
+      - description
+      - enabled
+      - isDefault
+      - defaultEnabled
+      - backendStatus
+      - backendStatusLabel
+      - backendNote
+      - sortOrder
+      title: ModuleSummary
+      type: object
+    NoticeCreated:
+      description: 'The stored notice, echoed back.
+
+
+        Mirrors the field names in the shared dashboard snapshot''s ``notices[]`` so a
+
+        caller can drop this straight into the same render path -- with two additions,
+
+        ``category`` and ``urgency``, which the snapshot does not yet carry.'
+      properties:
+        category:
+          title: Category
+          type: string
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        description:
+          title: Description
+          type: string
+        id:
+          title: Id
+          type: string
+        publishedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Publishedat
+        title:
+          title: Title
+          type: string
+        urgency:
+          title: Urgency
+          type: string
+      required:
+      - id
+      - title
+      - description
+      - category
+      - urgency
+      - createdAt
+      title: NoticeCreated
+      type: object
+    OperatingHours:
+      description: 'One daily window.
+
+
+        R8: the product collects ONE window, not a weekly schedule, so this is two
+
+        columns on ``departments`` and not a ``department_hours`` table. Both ends
+
+        are nullable because a department may simply not have declared them.'
+      properties:
+        end:
+          anyOf:
+          - pattern: ^([01]\d|2[0-3]):[0-5]\d$
+            type: string
+          - type: 'null'
+          examples:
+          - '20:00'
+          title: End
+        start:
+          anyOf:
+          - pattern: ^([01]\d|2[0-3]):[0-5]\d$
+            type: string
+          - type: 'null'
+          examples:
+          - 08:00
+          title: Start
+      title: OperatingHours
+      type: object
+    Page_ApprovalRequest_:
+      properties:
+        hasMore:
+          title: Hasmore
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ApprovalRequest'
+          title: Items
+          type: array
+        page:
+          title: Page
+          type: integer
+        pageSize:
+          title: Pagesize
+          type: integer
+        total:
+          title: Total
+          type: integer
+      required:
+      - items
+      - total
+      - page
+      - pageSize
+      - hasMore
+      title: Page[ApprovalRequest]
+      type: object
+    Page_BookingSummary_:
+      properties:
+        hasMore:
+          title: Hasmore
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/BookingSummary'
+          title: Items
+          type: array
+        page:
+          title: Page
+          type: integer
+        pageSize:
+          title: Pagesize
+          type: integer
+        total:
+          title: Total
+          type: integer
+      required:
+      - items
+      - total
+      - page
+      - pageSize
+      - hasMore
+      title: Page[BookingSummary]
+      type: object
+    Page_DepartmentDetail_:
+      properties:
+        hasMore:
+          title: Hasmore
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/DepartmentDetail'
+          title: Items
+          type: array
+        page:
+          title: Page
+          type: integer
+        pageSize:
+          title: Pagesize
+          type: integer
+        total:
+          title: Total
+          type: integer
+      required:
+      - items
+      - total
+      - page
+      - pageSize
+      - hasMore
+      title: Page[DepartmentDetail]
+      type: object
+    Page_LedgerTransaction_:
+      properties:
+        hasMore:
+          title: Hasmore
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/LedgerTransaction'
+          title: Items
+          type: array
+        page:
+          title: Page
+          type: integer
+        pageSize:
+          title: Pagesize
+          type: integer
+        total:
+          title: Total
+          type: integer
+      required:
+      - items
+      - total
+      - page
+      - pageSize
+      - hasMore
+      title: Page[LedgerTransaction]
+      type: object
+    PasswordResetCompleteRequest:
+      additionalProperties: false
+      properties:
+        password:
+          maxLength: 256
+          minLength: 15
+          title: Password
+          type: string
+      required:
+      - password
+      title: PasswordResetCompleteRequest
+      type: object
+    PasswordResetRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+      required:
+      - email
+      title: PasswordResetRequest
+      type: object
+    PasswordSignInRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+        password:
+          maxLength: 256
+          minLength: 1
+          title: Password
+          type: string
+      required:
+      - email
+      - password
+      title: PasswordSignInRequest
+      type: object
+    PasswordSignUpRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+        full_name:
+          maxLength: 160
+          minLength: 2
+          title: Full Name
+          type: string
+        password:
+          maxLength: 256
+          minLength: 15
+          title: Password
+          type: string
+      required:
+      - full_name
+      - email
+      - password
+      title: PasswordSignUpRequest
+      type: object
+    PaymentSummary:
+      description: 'One payment against one invoice.
+
+
+        ``method`` is the display string the payment history renders (``Net
+
+        Banking``), not the stored vocabulary (``netbanking``).'
+      properties:
+        amount:
+          title: Amount
+          type: number
+        currency:
+          title: Currency
+          type: string
+        flat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Flat
+        id:
+          title: Id
+          type: string
+        invoiceId:
+          title: Invoiceid
+          type: string
+        invoiceNumber:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invoicenumber
+        invoiceTitle:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invoicetitle
+        method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Method
+        notes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notes
+        paidAt:
+          format: date-time
+          title: Paidat
+          type: string
+        payerName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payername
+        payerProfileId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payerprofileid
+        reference:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference
+        status:
+          title: Status
+          type: string
+        unitId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitid
+      required:
+      - id
+      - invoiceId
+      - amount
+      - currency
+      - status
+      - paidAt
+      title: PaymentSummary
+      type: object
+    PreferenceSettings:
+      description: 'Community-wide preferences.
+
+
+        ``unitLabelIsDerived`` says whether ``unitLabelSingular`` was chosen or
+
+        inferred from the community type. A screen that cannot tell the difference
+
+        shows an admin a value they never picked as though they had.
+
+
+        ``requireVisitorPreapproval`` and ``noticeSmsBroadcastEnabled`` are stored and
+
+        read by nothing -- there is no visitor backend and no SMS provider in this
+
+        repository. They exist so the screen stops losing them, and API.md says so
+
+        rather than leaving it to be discovered.'
+      properties:
+        inviteTtlHours:
+          title: Invitettlhours
+          type: integer
+        noticeSmsBroadcastEnabled:
+          title: Noticesmsbroadcastenabled
+          type: boolean
+        requireVisitorPreapproval:
+          title: Requirevisitorpreapproval
+          type: boolean
+        timezone:
+          title: Timezone
+          type: string
+        unitLabelIsDerived:
+          title: Unitlabelisderived
+          type: boolean
+        unitLabelSingular:
+          title: Unitlabelsingular
+          type: string
+        visitorCodeTtlMinutes:
+          title: Visitorcodettlminutes
+          type: integer
+      required:
+      - timezone
+      - unitLabelSingular
+      - unitLabelIsDerived
+      - inviteTtlHours
+      - visitorCodeTtlMinutes
+      - requireVisitorPreapproval
+      - noticeSmsBroadcastEnabled
+      title: PreferenceSettings
+      type: object
+    PrepareInvitationRequest:
+      additionalProperties: false
+      properties:
+        code:
+          anyOf:
+          - maxLength: 64
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Code
+        token:
+          anyOf:
+          - maxLength: 512
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Token
+      title: PrepareInvitationRequest
+      type: object
+    Profile:
+      description: Identity/contact data; community authorisation never lives here.
+      properties:
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        full_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Full Name
+        id:
+          title: Id
+          type: string
+        is_active:
+          default: true
+          title: Is Active
+          type: boolean
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+      required:
+      - id
+      title: Profile
+      type: object
+    PromoteAdminRequest:
+      description: 'Body for ``POST /admins``.
+
+
+        ``email`` identifies an existing member. The other four fields are accepted
+
+        and ignored: the Admins screen sends them, but a promotion must not rewrite
+
+        the member''s profile or move them to a different flat. See the endpoint
+
+        docstring.'
+      properties:
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+        flat:
+          anyOf:
+          - maxLength: 50
+            type: string
+          - type: 'null'
+          title: Flat
+        name:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Name
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        tower:
+          anyOf:
+          - maxLength: 50
+            type: string
+          - type: 'null'
+          title: Tower
+      required:
+      - email
+      title: PromoteAdminRequest
+      type: object
+    RecordAmenityPaymentRequest:
+      description: '``paymentReference`` makes this idempotent: a replayed gateway callback
+
+        returns the event already recorded rather than double-crediting.'
+      properties:
+        amount:
+          exclusiveMinimum: 0.0
+          title: Amount
+          type: number
+        chargeType:
+          default: booking
+          title: Chargetype
+          type: string
+        method:
+          anyOf:
+          - maxLength: 40
+            type: string
+          - type: 'null'
+          title: Method
+        notes:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Notes
+        paymentReference:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Paymentreference
+      required:
+      - amount
+      title: RecordAmenityPaymentRequest
+      type: object
+    RecordPaymentRequest:
+      description: 'Record money received against an invoice.
+
+
+        ``reference`` makes the call **idempotent**: sending the same reference twice
+
+        returns the payment already recorded rather than crediting the invoice twice.
+
+        A gateway that retries its webhook, or a resident who double-taps Pay, must
+
+        not settle a bill two times.'
+      properties:
+        amount:
+          exclusiveMinimum: 0.0
+          maximum: 10000000.0
+          title: Amount
+          type: number
+        method:
+          default: Cash
+          title: Method
+          type: string
+        notes:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Notes
+        paidAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Paidat
+        payerProfileId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payerprofileid
+        reference:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Reference
+      required:
+      - amount
+      title: RecordPaymentRequest
+      type: object
+    RedeemInvitationRequest:
+      additionalProperties: false
+      properties: {}
+      title: RedeemInvitationRequest
+      type: object
+    RefundDepositRequest:
+      description: 'No amount. It is what is left of the deposit after damage, computed
+
+        server-side -- a refund whose amount is a request parameter is a refund
+
+        somebody can ask to be larger.'
+      properties:
+        notes:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Notes
+        reason:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Reason
+      title: RefundDepositRequest
+      type: object
+    RejectAccessRequest:
+      additionalProperties: false
+      properties:
+        reason:
+          maxLength: 500
+          minLength: 3
+          title: Reason
+          type: string
+      required:
+      - reason
+      title: RejectAccessRequest
+      type: object
+    RejectBookingRequest:
+      description: '``reasonCode`` is one of ``BOOKING_REJECTION_REASONS``; ``reason`` carries
+
+        the free text that ``other`` requires. A rejection with neither is an
+
+        unanswerable support ticket, so the database refuses it too.'
+      properties:
+        notifyResident:
+          default: true
+          title: Notifyresident
+          type: boolean
+        reason:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Reason
+        reasonCode:
+          maxLength: 60
+          minLength: 1
+          title: Reasoncode
+          type: string
+      required:
+      - reasonCode
+      title: RejectBookingRequest
+      type: object
+    ReplaceStaffRequest:
+      description: 'The whole roster, as the department form submits it.
+
+
+        Members not listed are deactivated rather than deleted (A7) -- a complaint''s
+
+        ``assignee`` records staff by name, so a deleted row turns a past assignment
+
+        into an unexplained string.'
+      properties:
+        staff:
+          items:
+            $ref: '#/components/schemas/StaffMemberInput'
+          title: Staff
+          type: array
+      title: ReplaceStaffRequest
+      type: object
+    ReportKpis:
+      properties:
+        activeAmenities:
+          title: Activeamenities
+          type: integer
+        bookingsThisMonth:
+          title: Bookingsthismonth
+          type: integer
+        pendingApprovals:
+          title: Pendingapprovals
+          type: integer
+        totalActiveBookings:
+          title: Totalactivebookings
+          type: integer
+        totalAmenities:
+          title: Totalamenities
+          type: integer
+        totalRevenue:
+          title: Totalrevenue
+          type: number
+      required:
+      - totalAmenities
+      - totalActiveBookings
+      - pendingApprovals
+      - totalRevenue
+      - activeAmenities
+      - bookingsThisMonth
+      title: ReportKpis
+      type: object
+    ReportOption:
+      properties:
+        label:
+          title: Label
+          type: string
+        value:
+          title: Value
+          type: string
+      required:
+      - value
+      - label
+      title: ReportOption
+      type: object
+    ReportOptions:
+      properties:
+        amenities:
+          items:
+            $ref: '#/components/schemas/ReportOption'
+          title: Amenities
+          type: array
+        bookingStatuses:
+          items:
+            type: string
+          title: Bookingstatuses
+          type: array
+      required:
+      - amenities
+      - bookingStatuses
+      title: ReportOptions
+      type: object
+    ReportRow:
+      properties:
+        amenityId:
+          title: Amenityid
+          type: string
+        amenityName:
+          title: Amenityname
+          type: string
+        amountPaid:
+          title: Amountpaid
+          type: number
+        bookingDate:
+          format: date
+          title: Bookingdate
+          type: string
+        bookingId:
+          title: Bookingid
+          type: string
+        bookingStatus:
+          title: Bookingstatus
+          type: string
+        id:
+          title: Id
+          type: string
+        paymentStatus:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Paymentstatus
+        residentFlat:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Residentflat
+        residentName:
+          title: Residentname
+          type: string
+      required:
+      - id
+      - bookingId
+      - amenityId
+      - amenityName
+      - residentName
+      - bookingDate
+      - bookingStatus
+      - amountPaid
+      title: ReportRow
+      type: object
+    ResidentBookingRequest:
+      description: 'A resident asking for one or more days of the same slot.
+
+
+        Exists in an admin-scoped build because the approvals tab is otherwise a
+
+        screen that can never have anything on it -- the same argument step 7 made
+
+        for the invoice write endpoints.
+
+
+        The flat is NOT a parameter: it is read from the caller''s own residency, so a
+
+        resident cannot book against somebody else''s unit by editing a request.'
+      properties:
+        bookingTitle:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Bookingtitle
+        dates:
+          items:
+            format: date
+            type: string
+          maxItems: 30
+          minItems: 1
+          title: Dates
+          type: array
+        endTime:
+          title: Endtime
+          type: string
+        guestCount:
+          default: 0
+          maximum: 1000.0
+          minimum: 0.0
+          title: Guestcount
+          type: integer
+        guests:
+          items:
+            $ref: '#/components/schemas/GuestInput'
+          title: Guests
+          type: array
+        isPrivateBooking:
+          default: false
+          title: Isprivatebooking
+          type: boolean
+        notes:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Notes
+        startTime:
+          title: Starttime
+          type: string
+      required:
+      - dates
+      - startTime
+      - endTime
+      title: ResidentBookingRequest
+      type: object
+    SessionContext:
+      description: Browser-safe session context; provider credentials remain HTTP-only.
+      properties:
+        capabilities:
+          items:
+            type: string
+          title: Capabilities
+          type: array
+        identity:
+          $ref: '#/components/schemas/Profile'
+        membership:
+          anyOf:
+          - $ref: '#/components/schemas/MembershipContext'
+          - type: 'null'
+        onboarding_eligible:
+          default: false
+          title: Onboarding Eligible
+          type: boolean
+        portal:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Portal
+      required:
+      - identity
+      title: SessionContext
+      type: object
+    SettingsSnapshot:
+      description: 'Everything the settings screen needs, in one response.
+
+
+        ``hasSavedSettings`` is false for a community that has never saved: the
+
+        values are then defaults rather than choices, and a screen that cannot tell
+
+        the two apart will show "Asia/Kolkata" as though somebody picked it.'
+      properties:
+        billing:
+          $ref: '#/components/schemas/BillingToggles'
+        community:
+          $ref: '#/components/schemas/CommunityProfile'
+        hasSavedSettings:
+          title: Hassavedsettings
+          type: boolean
+        modules:
+          $ref: '#/components/schemas/ModuleCollection'
+        preferences:
+          $ref: '#/components/schemas/PreferenceSettings'
+        updatedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updatedat
+        updatedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Updatedby
+        version:
+          title: Version
+          type: integer
+      required:
+      - community
+      - preferences
+      - billing
+      - modules
+      - hasSavedSettings
+      - version
+      title: SettingsSnapshot
+      type: object
+    StaffMember:
+      description: 'One person on a department''s roster.
+
+
+        ``membershipId`` is nullable and usually null: C1 established that the
+
+        frontend records only a name and a phone number, so most staff have no
+
+        account. ``name`` is therefore authoritative and the link is the enrichment,
+
+        not the other way round.'
+      properties:
+        activeAssignmentCount:
+          default: 0
+          title: Activeassignmentcount
+          type: integer
+        id:
+          title: Id
+          type: string
+        membershipId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Membershipid
+        name:
+          title: Name
+          type: string
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+        rank:
+          default: member
+          title: Rank
+          type: string
+        role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role
+        shift:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Shift
+        status:
+          default: active
+          title: Status
+          type: string
+      required:
+      - id
+      - name
+      title: StaffMember
+      type: object
+    StaffMemberInput:
+      description: 'A staff member as submitted by the department form.
+
+
+        ``id`` is optional: the frontend generates a local id for new rows and keeps
+
+        the server id for existing ones, so presence is what distinguishes an update
+
+        from an insert.'
+      properties:
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+        name:
+          maxLength: 120
+          minLength: 1
+          title: Name
+          type: string
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        role:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Role
+        shift:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Day | Evening | Night
+          title: Shift
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: active | inactive
+          title: Status
+      required:
+      - name
+      title: StaffMemberInput
+      type: object
+    UpdateBillingSettingsRequest:
+      description: 'Patch the billing configuration. Omitted fields are left unchanged.
+
+
+        ``defaultMaintenanceAmount`` distinguishes omitted from null: sending null
+
+        clears the rate, which stops billing runs until one is set again.'
+      properties:
+        autoBillingDay:
+          anyOf:
+          - maximum: 28.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Autobillingday
+        autoBillingEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Autobillingenabled
+        currency:
+          anyOf:
+          - maxLength: 3
+            minLength: 3
+            type: string
+          - type: 'null'
+          title: Currency
+        defaultMaintenanceAmount:
+          anyOf:
+          - maximum: 10000000.0
+            minimum: 0.0
+            type: number
+          - type: 'null'
+          title: Defaultmaintenanceamount
+        defaultTaxPercent:
+          anyOf:
+          - exclusiveMaximum: 100.0
+            minimum: 0.0
+            type: number
+          - type: 'null'
+          title: Defaulttaxpercent
+        invoiceNumberPrefix:
+          anyOf:
+          - maxLength: 12
+            minLength: 1
+            pattern: ^[A-Za-z0-9-]+$
+            type: string
+          - type: 'null'
+          title: Invoicenumberprefix
+        lateFeeAmount:
+          anyOf:
+          - maximum: 1000000.0
+            minimum: 0.0
+            type: number
+          - type: 'null'
+          title: Latefeeamount
+        lateFeeEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Latefeeenabled
+        lateFeeGraceDays:
+          anyOf:
+          - maximum: 90.0
+            minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Latefeegracedays
+        lateFeePeriod:
+          anyOf:
+          - maxLength: 16
+            type: string
+          - type: 'null'
+          title: Latefeeperiod
+        maintenanceDueDay:
+          anyOf:
+          - maximum: 28.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Maintenancedueday
+      title: UpdateBillingSettingsRequest
+      type: object
+    UpdateComplaintRequest:
+      description: Admin edit. Every field optional; omitted fields are left unchanged.
+      properties:
+        assignedToMembershipId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assignedtomembershipid
+        assignee:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Assignee
+        expectedResolutionAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Expectedresolutionat
+        progress:
+          anyOf:
+          - maximum: 100.0
+            minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Progress
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Pending | In Progress | Resolved
+          title: Status
+        updateNote:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Updatenote
+      title: UpdateComplaintRequest
+      type: object
+    UpdateDepartmentRequest:
+      description: 'Partial update. An omitted field is left alone; an explicit ``null``
+
+        clears it.
+
+
+        The distinction is real and is preserved all the way to Postgres: the service
+
+        sends only the keys that were set, and the RPC tests ``patch ? ''key''``.
+
+        Sending ``staff`` replaces the whole roster; omitting it leaves it untouched.'
+      properties:
+        categories:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Categories
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        email:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Email
+        head:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Head
+        kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: service | security
+          title: Kind
+        name:
+          anyOf:
+          - maxLength: 120
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+        operatingHours:
+          anyOf:
+          - $ref: '#/components/schemas/OperatingHours'
+          - type: 'null'
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        slaHours:
+          anyOf:
+          - exclusiveMinimum: 0.0
+            maximum: 8760.0
+            type: integer
+          - type: 'null'
+          title: Slahours
+        staff:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/StaffMemberInput'
+            type: array
+          - type: 'null'
+          title: Staff
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Active | Inactive
+          title: Status
+      title: UpdateDepartmentRequest
+      type: object
+    UpdateSettingsRequest:
+      description: 'Patch the community preferences. Omitted fields are left unchanged.
+
+
+        ``unitLabelSingular`` distinguishes omitted from null: sending null clears
+
+        the override and goes back to deriving the label from the community type,
+
+        which is not the same as leaving it alone. Key presence is what separates
+
+        them, matching ``defaultMaintenanceAmount`` on the billing patch.'
+      properties:
+        inviteTtlHours:
+          anyOf:
+          - maximum: 720.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Invitettlhours
+        noticeSmsBroadcastEnabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Noticesmsbroadcastenabled
+        requireVisitorPreapproval:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Requirevisitorpreapproval
+        timezone:
+          anyOf:
+          - maxLength: 64
+            minLength: 3
+            type: string
+          - type: 'null'
+          title: Timezone
+        unitLabelSingular:
+          anyOf:
+          - maxLength: 24
+            type: string
+          - type: 'null'
+          title: Unitlabelsingular
+        visitorCodeTtlMinutes:
+          anyOf:
+          - maximum: 1440.0
+            minimum: 5.0
+            type: integer
+          - type: 'null'
+          title: Visitorcodettlminutes
+      title: UpdateSettingsRequest
+      type: object
+    UpdateStaffMemberRequest:
+      description: Patch one roster entry.
+      properties:
+        name:
+          anyOf:
+          - maxLength: 120
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        role:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Role
+        shift:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Day | Evening | Night
+          title: Shift
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: active | inactive
+          title: Status
+      title: UpdateStaffMemberRequest
+      type: object
+    ValidationError:
+      properties:
+        ctx:
+          title: Context
+          type: object
+        input:
+          title: Input
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          title: Location
+          type: array
+        msg:
+          title: Message
+          type: string
+        type:
+          title: Error Type
+          type: string
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+      type: object
+  securitySchemes:
+    HTTPBearer:
+      scheme: bearer
+      type: http
+info:
+  summary: Backend for the HomeBandhu residential community platform.
+  title: HomeBandhu API
+  version: 0.1.0
+openapi: 3.1.0
+paths:
+  /api/v1/access-requests:
+    post:
+      operationId: create_access_request_api_v1_access_requests_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccessRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Create Access Request
+      tags:
+      - access requests
+  /api/v1/access-requests/mine:
+    get:
+      operationId: my_access_requests_api_v1_access_requests_mine_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestListResponse'
+          description: Successful Response
+      security:
+      - HTTPBearer: []
+      summary: My Access Requests
+      tags:
+      - access requests
+  /api/v1/access-requests/{request_id}/withdraw:
+    post:
+      operationId: withdraw_access_request_api_v1_access_requests__request_id__withdraw_post
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          title: Request Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Withdraw Access Request
+      tags:
+      - access requests
+  /api/v1/admin/access-requests:
+    get:
+      operationId: admin_access_requests_api_v1_admin_access_requests_get
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: pending
+          pattern: ^(pending|approved|rejected|withdrawn)$
+          title: Status
+          type: string
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 25
+          maximum: 100
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestListResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Admin Access Requests
+      tags:
+      - access requests
+  /api/v1/admin/access-requests/{request_id}/approve:
+    post:
+      operationId: approve_access_request_api_v1_admin_access_requests__request_id__approve_post
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          title: Request Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveAccessRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Approve Access Request Api V1 Admin Access Requests  Request Id  Approve
+                  Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Approve Access Request
+      tags:
+      - access requests
+  /api/v1/admin/access-requests/{request_id}/blacklist:
+    post:
+      operationId: blacklist_access_request_api_v1_admin_access_requests__request_id__blacklist_post
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          title: Request Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlacklistAccessRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Blacklist Access Request Api V1 Admin Access Requests  Request Id  Blacklist
+                  Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Blacklist Access Request
+      tags:
+      - access requests
+  /api/v1/admin/access-requests/{request_id}/reject:
+    post:
+      operationId: reject_access_request_api_v1_admin_access_requests__request_id__reject_post
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          title: Request Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectAccessRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Reject Access Request Api V1 Admin Access Requests  Request Id  Reject
+                  Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Reject Access Request
+      tags:
+      - access requests
+  /api/v1/admin/invitations:
+    post:
+      operationId: create_invitation_api_v1_admin_invitations_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvitationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationCreated'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Create Invitation
+      tags:
+      - invitations
+  /api/v1/admins:
+    post:
+      description: 'Give an existing community member the ``admin`` role.
+
+
+        **This promotes, it does not invite.** The person must already be an active
+
+        member of the caller''s community, matched by email. That is the flow
+
+        ``roles.md`` describes -- *"Resident -> Committee members -> Admin"* -- and it
+
+        is the only one available: the shared invitation contract hardcodes
+
+        ``intended_role = ''resident''`` and exposes no role field, so an admin-bound
+
+        invite cannot be minted without duplicating the token machinery this
+
+        workstream does not own.
+
+
+        Returns **404** when the email belongs to nobody in the community. The caller
+
+        should invite them first (``POST /admin/invitations``), let them redeem, then
+
+        promote. Returns **409** if they are already an admin.
+
+
+        Only ``email`` is used. ``name``, ``phone``, ``tower`` and ``flat`` are
+
+        accepted because the Admins screen sends them, but the member already has all
+
+        four on their profile and residency, and letting a promotion silently rewrite
+
+        someone''s flat would be a worse bug than ignoring the fields.'
+      operationId: promote_admin_api_v1_admins_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteAdminRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSummary'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Promote a member to administrator
+      tags:
+      - people
+  /api/v1/amenities/{amenity_id}/approvals:
+    get:
+      description: 'The approvals tab -- **one row per request, not per day**.
+
+
+        The frontend produces one row per day and approves them one at a time, so a
+
+        three-day request appears three times and can be approved on Monday and
+
+        rejected on Tuesday. Here one decision covers the request, and ``dayCount``
+
+        and ``dates`` say how much it covers.
+
+
+        ``outstandingDues`` is the **flat''s** balance across its unpaid invoices. The
+
+        frontend computes it per person; our invoices attach to the unit and carry no
+
+        person, so it is the same label over a different number
+
+        (DECISIONS_NEEDED E18).'
+      operationId: list_approvals_api_v1_amenities__amenity_id__approvals_get
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      - description: pending | approved | rejected | cancelled | all
+        in: query
+        name: status
+        required: false
+        schema:
+          default: pending
+          description: pending | approved | rejected | cancelled | all
+          title: Status
+          type: string
+      - in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          title: Page
+          type: integer
+      - in: query
+        name: pageSize
+        required: false
+        schema:
+          default: 20
+          maximum: 100
+          minimum: 1
+          title: Pagesize
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_ApprovalRequest_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: List booking requests awaiting a decision
+      tags:
+      - amenities
+  /api/v1/amenities/{amenity_id}/blocks:
+    post:
+      description: 'Reserve a slot for maintenance or an association event.
+
+
+        Always exclusive, whatever the amenity''s booking mode says: a hall closed for
+
+        repairs is closed to everybody. Carries no flat and no charges.'
+      operationId: block_slot_api_v1_amenities__amenity_id__blocks_post
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockSlotRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingSummary'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Block a slot administratively
+      tags:
+      - amenities
+  /api/v1/amenities/{amenity_id}/bookings:
+    get:
+      description: 'The day timeline.
+
+
+        ``state`` is the timeline''s vocabulary (''booked'' | ''blocked''); ``status`` is
+
+        the lifecycle''s. The cleaning buffer is deliberately not sent as a block: the
+
+        frontend synthesises buffers at render time from the booking''s end and the
+
+        amenity''s buffer, and sending them too would give one block two sources.
+
+
+        A booking whose end time has passed reads ``completed`` even though it is
+
+        stored as ``approved`` -- that is a fact about the clock, not about the row.'
+      operationId: list_amenity_bookings_api_v1_amenities__amenity_id__bookings_get
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      - in: query
+        name: date
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Date
+      - in: query
+        name: from
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: From
+      - in: query
+        name: to
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: To
+      - description: Drop pending, rejected and cancelled days, matching what the timeline paints. Set
+          false for the full history.
+        in: query
+        name: timelineOnly
+        required: false
+        schema:
+          default: true
+          description: Drop pending, rejected and cancelled days, matching what the timeline paints. Set
+            false for the full history.
+          title: Timelineonly
+          type: boolean
+      - in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          title: Page
+          type: integer
+      - in: query
+        name: pageSize
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Pagesize
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_BookingSummary_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: List an amenity's bookings
+      tags:
+      - amenities
+    post:
+      description: 'The admin''s Create Booking modal. Confirmed on creation, never pending.
+
+
+        The opening-hours, closed-day and advance-window rules are **not** applied:
+
+        an admin booking the hall outside opening hours is doing their job. The
+
+        conflict rules still apply -- two things cannot occupy one room whoever
+
+        booked them -- so this returns 409 when the slot is taken or full.
+
+
+        ``chargeOverride`` replaces the booking fee and nothing else. A waived fee
+
+        does not waive the deposit, which is coming back.'
+      operationId: create_admin_booking_api_v1_amenities__amenity_id__bookings_post
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminBookingRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingSummary'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Create a booking on a resident's behalf
+      tags:
+      - amenities
+  /api/v1/amenities/{amenity_id}/bookings/request:
+    post:
+      description: 'A resident asking for one or more days of the same slot.
+
+
+        The flat is read from the caller''s own residency, never from the body, so a
+
+        resident cannot book against somebody else''s unit by editing the request.
+
+        Whether it needs approval is read from the amenity''s settings for the same
+
+        reason: a client that could choose would be a client that could opt out.
+
+
+        Every day is validated before any is written, so a three-day request either
+
+        lands whole or not at all. Returns 409 for a closed day, a slot outside the
+
+        booking window, a duration outside the amenity''s limits, a full slot, or a
+
+        conflict -- each with the message the booking form already shows.
+
+
+        Returns every day created, because telling the caller about one day of three
+
+        is how a resident is surprised by the other two.'
+      operationId: request_booking_api_v1_amenities__amenity_id__bookings_request_post
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResidentBookingRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_BookingSummary_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Request a booking (resident)
+      tags:
+      - amenities
+  /api/v1/amenities/{amenity_id}/ledger:
+    get:
+      description: 'The ledger tab.
+
+
+        Every figure is derived from the charges and the append-only event stream --
+
+        nothing stores a balance, so no balance can drift out of agreement with the
+
+        rows that produce it. ``paymentStatus`` is a CASE over those figures, and the
+
+        order of its arms is its meaning: a cancelled booking still holding a
+
+        refundable deposit is ``refund_pending``, because somebody is owed money.
+
+
+        ``availableActions`` is computed from the same rules the write endpoints
+
+        enforce, so a button the client renders is a button the API will honour.'
+      operationId: list_ledger_api_v1_amenities__amenity_id__ledger_get
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      - description: paid | pending | partially_paid | refund_pending | refunded | cancelled | all
+        in: query
+        name: paymentStatus
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: paid | pending | partially_paid | refund_pending | refunded | cancelled | all
+          title: Paymentstatus
+      - in: query
+        name: q
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          title: Q
+      - in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          title: Page
+          type: integer
+      - in: query
+        name: pageSize
+        required: false
+        schema:
+          default: 20
+          maximum: 100
+          minimum: 1
+          title: Pagesize
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_LedgerTransaction_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: List an amenity's financial transactions
+      tags:
+      - amenities
+  /api/v1/amenities/{amenity_id}/ledger/summary:
+    get:
+      description: 'The eight cards above the ledger table.
+
+
+        Aggregated by Postgres over every transaction for the amenity, so the figures
+
+        do not change when the table is paged. An amenity nobody has booked reports
+
+        zeros with HTTP 200, never a 404.'
+      operationId: get_ledger_summary_api_v1_amenities__amenity_id__ledger_summary_get
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerSummary'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Amenity ledger totals
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/cancel:
+    post:
+      description: 'Cancel one or more days of a request.
+
+
+        Serves residents and admins from one route. A resident may withdraw their own
+
+        **future** days; an admin may cancel any. Which of the two you are is read
+
+        from your token, so there is nothing in the body to lie about.
+
+
+        All-or-nothing: if any selected day cannot be cancelled the whole call
+
+        returns 409, rather than cancelling four of five and reporting success.'
+      operationId: cancel_bookings_api_v1_amenity_bookings_cancel_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelBookingRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Cancel selected booking days
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{occurrence_id}/charges:
+    post:
+      description: 'Bill something after the fact -- housekeeping, or a late-cancellation fee.
+
+
+        A second charge of the same kind **adds** to the first: the ledger has one
+
+        ``additionalCharges`` figure, and housekeeping on Monday plus a broken chair
+
+        on Tuesday is two things, not the later one.'
+      operationId: add_charge_api_v1_amenity_bookings__occurrence_id__charges_post
+      parameters:
+      - in: path
+        name: occurrence_id
+        required: true
+        schema:
+          title: Occurrence Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddChargeRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerTransaction'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Add a charge to a booking
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{occurrence_id}/damage:
+    post:
+      description: 'Take damage out of the held deposit.
+
+
+        Capped at what is left, and capped in Postgres rather than here: a deduction
+
+        larger than the deposit is not a deduction, it is an invoice, and it would
+
+        drive ``remainingRefund`` negative -- which the ledger clamps to zero, quietly
+
+        hiding the error. Returns 409 instead. A reason is required.'
+      operationId: deduct_damage_api_v1_amenity_bookings__occurrence_id__damage_post
+      parameters:
+      - in: path
+        name: occurrence_id
+        required: true
+        schema:
+          title: Occurrence Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DamageDeductionRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerTransaction'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Deduct damage from a booking deposit
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{occurrence_id}/force-cancel:
+    post:
+      description: 'Override a booking the resident still wants.
+
+
+        Distinct from an ordinary cancellation because the ledger records who did it
+
+        and why, and because the deposit becomes refundable as a result -- which the
+
+        ledger derives rather than being told. Returns 409 unless the booking is
+
+        approved or confirmed.'
+      operationId: force_cancel_booking_api_v1_amenity_bookings__occurrence_id__force_cancel_post
+      parameters:
+      - in: path
+        name: occurrence_id
+        required: true
+        schema:
+          title: Occurrence Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForceCancelRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingSummary'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Force-cancel a booking
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{occurrence_id}/payments:
+    post:
+      description: 'Record money received against one charge -- the booking fee or the deposit.
+
+
+        Idempotent on ``paymentReference``: a replayed gateway callback returns the
+
+        event already recorded rather than double-crediting. Overpayment returns 409
+
+        rather than being clamped, because clamping accepts money and then loses it.'
+      operationId: record_payment_api_v1_amenity_bookings__occurrence_id__payments_post
+      parameters:
+      - in: path
+        name: occurrence_id
+        required: true
+        schema:
+          title: Occurrence Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordAmenityPaymentRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerTransaction'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Record a payment against a booking
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{occurrence_id}/refund:
+    post:
+      description: 'Return what is left of the deposit.
+
+
+        **The amount is not a parameter.** It is the deposit paid, less damage taken,
+
+        less anything already refunded, computed in Postgres -- a refund whose amount
+
+        the caller chooses is a refund somebody can ask to be larger. Returns 409
+
+        while the booking is still ahead of it, or once nothing is left.'
+      operationId: refund_deposit_api_v1_amenity_bookings__occurrence_id__refund_post
+      parameters:
+      - in: path
+        name: occurrence_id
+        required: true
+        schema:
+          title: Occurrence Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundDepositRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerTransaction'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Refund a booking deposit
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{series_id}/approve:
+    post:
+      description: 'Approve a whole request -- every day of it.
+
+
+        Days the resident already withdrew keep their cancellation: approving should
+
+        not resurrect a day somebody said they no longer wanted. Returns 409 if the
+
+        request has already been decided.'
+      operationId: approve_booking_api_v1_amenity_bookings__series_id__approve_post
+      parameters:
+      - in: path
+        name: series_id
+        required: true
+        schema:
+          title: Series Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_BookingSummary_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Approve a booking request
+      tags:
+      - amenities
+  /api/v1/amenity-bookings/{series_id}/reject:
+    post:
+      description: 'Reject a whole request and release its slots.
+
+
+        ``reasonCode`` is required and ``other`` must carry free text: a rejection
+
+        with neither is an unanswerable support ticket, which is why the database
+
+        refuses it as well. Returns 409 if the request has already been decided.'
+      operationId: reject_booking_api_v1_amenity_bookings__series_id__reject_post
+      parameters:
+      - in: path
+        name: series_id
+        required: true
+        schema:
+          title: Series Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectBookingRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_BookingSummary_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Reject a booking request
+      tags:
+      - amenities
+  /api/v1/amenity-reports:
+    get:
+      description: 'The reports page.
+
+
+        ``rows`` is a page, because a table renders a page. ``kpis`` is a database
+
+        aggregate over **every** matching row, because a KPI that describes one page
+
+        is not a KPI -- and this one is labelled "Total Revenue".
+
+
+        ``options.bookingStatuses`` is the lifecycle''s fixed vocabulary rather than
+
+        the statuses that happen to be present, so the filter does not lose an option
+
+        the moment nothing currently has that status.'
+      operationId: get_report_api_v1_amenity_reports_get
+      parameters:
+      - in: query
+        name: startDate
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Startdate
+      - in: query
+        name: endDate
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Enddate
+      - in: query
+        name: amenityId
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Amenityid
+      - in: query
+        name: bookingStatus
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bookingstatus
+      - in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          title: Page
+          type: integer
+      - in: query
+        name: pageSize
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Pagesize
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AmenityReport'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Amenity activity report
+      tags:
+      - amenities
+  /api/v1/auth/csrf:
+    get:
+      operationId: csrf_api_v1_auth_csrf_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+      summary: Csrf
+      tags:
+      - auth
+  /api/v1/auth/email/resend:
+    post:
+      operationId: resend_email_api_v1_auth_email_resend_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Resend Email
+      tags:
+      - auth
+  /api/v1/auth/email/verify:
+    post:
+      operationId: verify_email_api_v1_auth_email_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTokenRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Verify Email
+      tags:
+      - auth
+  /api/v1/auth/google/callback:
+    get:
+      operationId: google_callback_api_v1_auth_google_callback_get
+      parameters:
+      - in: query
+        name: code
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Code
+      responses:
+        '307':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Google Callback
+      tags:
+      - auth
+  /api/v1/auth/google/start:
+    get:
+      operationId: google_start_api_v1_auth_google_start_get
+      parameters:
+      - in: query
+        name: next
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next
+      responses:
+        '307':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Google Start
+      tags:
+      - auth
+  /api/v1/auth/logout:
+    post:
+      operationId: logout_api_v1_auth_logout_post
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+      summary: Logout
+      tags:
+      - auth
+  /api/v1/auth/methods:
+    get:
+      operationId: auth_methods_api_v1_auth_methods_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Auth Methods
+      tags:
+      - auth
+  /api/v1/auth/oauth/{provider}/callback:
+    get:
+      operationId: oauth_callback_api_v1_auth_oauth__provider__callback_get
+      parameters:
+      - in: path
+        name: provider
+        required: true
+        schema:
+          title: Provider
+          type: string
+      - in: query
+        name: code
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Code
+      responses:
+        '307':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Oauth Callback
+      tags:
+      - auth
+  /api/v1/auth/oauth/{provider}/start:
+    get:
+      operationId: oauth_start_api_v1_auth_oauth__provider__start_get
+      parameters:
+      - in: path
+        name: provider
+        required: true
+        schema:
+          title: Provider
+          type: string
+      - in: query
+        name: next
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next
+      responses:
+        '307':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Oauth Start
+      tags:
+      - auth
+  /api/v1/auth/password/reset/complete:
+    post:
+      operationId: password_reset_complete_api_v1_auth_password_reset_complete_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetCompleteRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Reset Complete
+      tags:
+      - auth
+  /api/v1/auth/password/reset/request:
+    post:
+      operationId: password_reset_request_api_v1_auth_password_reset_request_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Reset Request
+      tags:
+      - auth
+  /api/v1/auth/password/reset/verify:
+    post:
+      operationId: password_reset_verify_api_v1_auth_password_reset_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTokenRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Reset Verify
+      tags:
+      - auth
+  /api/v1/auth/password/sign-in:
+    post:
+      operationId: password_sign_in_api_v1_auth_password_sign_in_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordSignInRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Sign In
+      tags:
+      - auth
+  /api/v1/auth/password/sign-up:
+    post:
+      operationId: password_sign_up_api_v1_auth_password_sign_up_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordSignUpRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Password Sign Up
+      tags:
+      - auth
+  /api/v1/auth/refresh:
+    post:
+      operationId: refresh_api_v1_auth_refresh_post
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+      summary: Refresh
+      tags:
+      - auth
+  /api/v1/auth/session:
+    get:
+      operationId: session_api_v1_auth_session_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionContext'
+          description: Successful Response
+      security:
+      - HTTPBearer: []
+      summary: Session
+      tags:
+      - auth
+  /api/v1/billing-settings:
+    get:
+      description: 'The community''s billing configuration.
+
+
+        ``defaultMaintenanceAmount`` is null until an admin sets one. There is no
+
+        screen for this today and no value to migrate: the maintenance amount exists
+
+        in the product only as a literal ``4250`` inside an approval handler
+
+        (agenda item 12).'
+      operationId: get_billing_settings_api_v1_billing_settings_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSettings'
+          description: Successful Response
+      security:
+      - HTTPBearer: []
+      summary: Get billing settings
+      tags:
+      - money
+    put:
+      description: 'Patch the billing configuration. Omitted fields are left unchanged.
+
+
+        Sending ``defaultMaintenanceAmount: null`` clears the rate and stops billing
+
+        runs until one is set again -- distinct from omitting the field, which leaves
+
+        it as it was.
+
+
+        ``invoiceNumberPrefix`` only affects numbers issued from now on. Invoices
+
+        already issued keep the number they were given, because a number that changes
+
+        is not an identifier.'
+      operationId: update_billing_settings_api_v1_billing_settings_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBillingSettingsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSettings'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Update billing settings
+      tags:
+      - money
+  /api/v1/communities/admin/units:
+    get:
+      operationId: list_admin_units_api_v1_communities_admin_units_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityUnitListResponse'
+          description: Successful Response
+      security:
+      - HTTPBearer: []
+      summary: List Admin Units
+      tags:
+      - communities
+  /api/v1/communities/search:
+    get:
+      operationId: search_communities_api_v1_communities_search_get
+      parameters:
+      - in: query
+        name: q
+        required: true
+        schema:
+          maxLength: 100
+          minLength: 2
+          title: Q
+          type: string
+      - in: query
+        name: limit
+        required: false
+        schema:
+          anyOf:
+          - maximum: 20
+            minimum: 1
+            type: integer
+          - type: 'null'
+          title: Limit
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunitySearchResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Search Communities
+      tags:
+      - communities
+  /api/v1/complaints/{complaint_id}:
+    patch:
+      description: 'Change status, assignee, progress or the expected resolution date.
+
+
+        The edit and its timeline entries are written in **one transaction**, so a
+
+        status can never change without leaving a trace. `updateNote` writes a
+
+        resident-visible timeline entry even when nothing else changes.'
+      operationId: update_complaint_api_v1_complaints__complaint_id__patch
+      parameters:
+      - in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateComplaintRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Update a complaint
+      tags:
+      - complaints
+  /api/v1/complaints/{complaint_id}/comments:
+    post:
+      description: Add a comment. Any member may comment; only admins may write `internal`.
+      operationId: add_comment_api_v1_complaints__complaint_id__comments_post
+      parameters:
+      - in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCommentRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Comment on a complaint
+      tags:
+      - complaints
+  /api/v1/dashboard/amenities:
+    post:
+      operationId: create_amenity_api_v1_dashboard_amenities_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmenityWrite'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Create Amenity Api V1 Dashboard Amenities Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Create Amenity
+      tags:
+      - dashboard
+  /api/v1/dashboard/amenities/{amenity_id}:
+    delete:
+      operationId: delete_amenity_api_v1_dashboard_amenities__amenity_id__delete
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Delete Amenity Api V1 Dashboard Amenities  Amenity Id  Delete
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Delete Amenity
+      tags:
+      - dashboard
+    put:
+      operationId: update_amenity_api_v1_dashboard_amenities__amenity_id__put
+      parameters:
+      - in: path
+        name: amenity_id
+        required: true
+        schema:
+          title: Amenity Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmenityWrite'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Update Amenity Api V1 Dashboard Amenities  Amenity Id  Put
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Update Amenity
+      tags:
+      - dashboard
+  /api/v1/dashboard/events:
+    get:
+      description: Same-origin SSE stream. No provider token is exposed to the browser.
+      operationId: dashboard_events_api_v1_dashboard_events_get
+      parameters:
+      - in: header
+        name: Last-Event-ID
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last-Event-Id
+      responses:
+        '200':
+          content:
+            text/event-stream: {}
+          description: 'Event stream. Frame format and topics: docs/API.md 5.1.'
+        '401':
+          description: No session.
+        '403':
+          description: No active membership.
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Dashboard Events
+      tags:
+      - dashboard
+  /api/v1/dashboard/snapshot:
+    get:
+      description: Return the caller's current, tenant-authorized dashboard records.
+      operationId: get_dashboard_snapshot_api_v1_dashboard_snapshot_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSnapshot'
+          description: Successful Response
+      security:
+      - HTTPBearer: []
+      summary: Get Dashboard Snapshot
+      tags:
+      - dashboard
+  /api/v1/departments:
+    get:
+      description: 'Departments with their staff, category claims and complaint counts.
+
+
+        ``activeComplaintCount`` and ``overdueComplaintCount`` are computed from the
+
+        complaints actually routed to the department, so they agree with the
+
+        complaints list rather than being re-derived per screen.'
+      operationId: list_departments_api_v1_departments_get
+      parameters:
+      - description: Matches name, description, head, contact email, category names and staff names --
+          the same fields the dashboard's search box covers.
+        in: query
+        name: q
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          description: Matches name, description, head, contact email, category names and staff names
+            -- the same fields the dashboard's search box covers.
+          title: Q
+      - description: Active | Inactive. Omit for both.
+        in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Active | Inactive. Omit for both.
+          title: Status
+      - in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          title: Page
+          type: integer
+      - in: query
+        name: pageSize
+        required: false
+        schema:
+          default: 20
+          maximum: 100
+          minimum: 1
+          title: Pagesize
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_DepartmentDetail_'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: List departments
+      tags:
+      - departments
+    post:
+      description: 'Create a department together with its categories, roster and head.
+
+
+        All four in one transaction. ``categories`` are names: any that do not exist
+
+        yet are created, because one of the two create screens is a free-text box.
+
+
+        Returns 409 when the community already has a department with that name.'
+      operationId: create_department_api_v1_departments_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDepartmentRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepartmentDetail'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Create a department
+      tags:
+      - departments
+  /api/v1/departments/{department_id}:
+    delete:
+      description: 'Permanently remove a department, its category claims and its roster.
+
+
+        **This one really is a delete**, unlike removing a resident. Complaint
+
+        records survive with their department reference cleared, which is what the
+
+        confirmation dialog promises.
+
+
+        Returns 409 while the department owns any open complaint; the count is taken
+
+        inside the deleting transaction, so a complaint raised mid-check cannot slip
+
+        through. Deactivate instead.'
+      operationId: delete_department_api_v1_departments__department_id__delete
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Delete a department
+      tags:
+      - departments
+    get:
+      description: One department with its active roster and each member's open workload.
+      operationId: get_department_api_v1_departments__department_id__get
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepartmentDetail'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Get a department
+      tags:
+      - departments
+    patch:
+      description: 'Patch a department. Omitted fields are left unchanged.
+
+
+        Two fields have collection semantics: sending ``categories`` replaces the
+
+        claim set, and sending ``staff`` replaces the roster. Omitting either leaves
+
+        it alone.
+
+
+        Setting ``status`` to ``Inactive`` is the deactivation the dashboard offers
+
+        instead of deletion, and is **not** blocked by open complaints -- that guard
+
+        belongs to `DELETE` alone, or an admin with an unresolvable department would
+
+        have no action left.'
+      operationId: update_department_api_v1_departments__department_id__patch
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDepartmentRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepartmentDetail'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Update a department
+      tags:
+      - departments
+  /api/v1/departments/{department_id}/staff:
+    post:
+      description: 'Add one person to a roster.
+
+
+        A staff member needs no account: name is the only required field, matching
+
+        what the department form actually collects.'
+      operationId: add_staff_member_api_v1_departments__department_id__staff_post
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffMemberInput'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffMember'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Add a staff member
+      tags:
+      - departments
+    put:
+      description: 'Reconcile the whole roster in one transaction.
+
+
+        Entries carrying an ``id`` are updated in place, entries without one are
+
+        added, and active members the payload omits are **deactivated, not deleted**
+
+        -- a complaint''s ``assignee`` records staff by name, so removing the row
+
+        would turn a past assignment into an unattributable string.
+
+
+        PUT rather than POST because this replaces a collection: sending the same
+
+        roster twice leaves the same result.'
+      operationId: replace_staff_api_v1_departments__department_id__staff_put
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceStaffRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/StaffMember'
+                title: Response Replace Staff Api V1 Departments  Department Id  Staff Put
+                type: array
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Replace a department's roster
+      tags:
+      - departments
+  /api/v1/departments/{department_id}/staff/{staff_id}:
+    delete:
+      description: 'Take a member off the active roster.
+
+
+        **Not a delete.** The row is marked inactive so past assignments recorded
+
+        against their name stay explainable. Removing the head also frees the head
+
+        slot in the same statement.'
+      operationId: remove_staff_member_api_v1_departments__department_id__staff__staff_id__delete
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: path
+        name: staff_id
+        required: true
+        schema:
+          title: Staff Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Remove a staff member
+      tags:
+      - departments
+    patch:
+      description: 'Patch one roster entry.
+
+
+        Promotion to head is not done here: ``PATCH /departments/{id}`` with a
+
+        ``head`` name is the only path, because promoting one person has to demote
+
+        the incumbent in the same transaction.'
+      operationId: update_staff_member_api_v1_departments__department_id__staff__staff_id__patch
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: path
+        name: staff_id
+        required: true
+        schema:
+          title: Staff Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStaffMemberRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffMember'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Update a staff member
+      tags:
+      - departments
+  /api/v1/invitations/prepare:
+    post:
+      operationId: prepare_invitation_api_v1_invitations_prepare_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareInvitationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Prepare Invitation
+      tags:
+      - invitations
+  /api/v1/invitations/redeem:
+    post:
+      operationId: redeem_invitation_api_v1_invitations_redeem_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeemInvitationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Redeem Invitation
+      tags:
+      - invitations
+  /api/v1/invoices:
+    post:
+      description: 'Issue one invoice against one flat.
+
+
+        The invoice, its line items and its number are written in one transaction,
+
+        and the totals are computed from the lines -- so a header that disagrees with
+
+        its own contents cannot be submitted.
+
+
+        The flat is identified by ``unitId`` or by ``flat`` (``B-1204``), and is
+
+        created on first reference. Returns 409 when the lines total zero or the due
+
+        date precedes the issue date.'
+      operationId: create_invoice_api_v1_invoices_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoiceRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Issue an invoice
+      tags:
+      - money
+  /api/v1/invoices/{invoice_id}/payments:
+    post:
+      description: 'Record money received against an invoice and return the settled invoice.
+
+
+        **Idempotent on ``reference``.** Sending the same reference twice returns the
+
+        payment already recorded rather than crediting the invoice again, so a
+
+        retried gateway webhook or a double-tapped Pay button cannot settle a bill
+
+        twice.
+
+
+        Returns 409 for an amount above the outstanding balance -- an overpayment is
+
+        refused rather than clamped, because clamping accepts money and then loses
+
+        it. Also 409 once the invoice has been voided.'
+      operationId: record_payment_api_v1_invoices__invoice_id__payments_post
+      parameters:
+      - in: path
+        name: invoice_id
+        required: true
+        schema:
+          title: Invoice Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordPaymentRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Record a payment
+      tags:
+      - money
+  /api/v1/notices:
+    post:
+      description: 'Publish a notice to the caller''s community.
+
+
+        Published immediately: ``published_at`` is set to now. The screen has no draft
+
+        state and no schedule control, so a nullable ``published_at`` left unset would
+
+        create notices that no reader could ever see.
+
+
+        The insert fires the shared SSE trigger on ``notices``, so every connected
+
+        client re-snapshots and the notice appears without this endpoint needing a
+
+        matching read.
+
+
+        **``category`` and ``urgency`` are stored but not yet rendered.** The shared
+
+        snapshot projects notices as ``{id, title, description, date, createdAt}``
+
+        (``dashboard_service.py:202``) and drops both fields. Adding them there is a
+
+        one-line change owned by the dashboard workstream; until it lands the two
+
+        values round-trip through this endpoint''s response but not through the
+
+        snapshot.'
+      operationId: create_notice_api_v1_notices_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNoticeRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoticeCreated'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Post a notice
+      tags:
+      - notices
+  /api/v1/onboarding/community:
+    post:
+      operationId: create_community_api_v1_onboarding_community_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommunityOnboardingRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityOnboardingResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Create Community
+      tags:
+      - onboarding
+  /api/v1/settings:
+    get:
+      description: 'Everything the settings screen needs, in one request.
+
+
+        ``hasSavedSettings`` is ``false`` for a community that has never saved. The
+
+        values are then defaults rather than choices, and rendering the two the same
+
+        way tells an admin they picked a timezone they have never seen.'
+      operationId: get_settings_api_v1_settings_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsSnapshot'
+          description: Successful Response
+      security:
+      - HTTPBearer: []
+      summary: The community settings snapshot
+      tags:
+      - settings
+    put:
+      description: 'Patch the community preferences. Omitted fields are left unchanged.
+
+
+        ``unitLabelSingular: null`` clears the override and goes back to deriving the
+
+        word from the community type, which is not what omitting the field does.'
+      operationId: update_settings_api_v1_settings_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSettingsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsSnapshot'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      security:
+      - HTTPBearer: []
+      summary: Patch the community preferences
+      tags:
+      - settings
+  /health:
+    get:
+      description: Liveness probe.
+      operationId: health_health_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                title: Response Health Health Get
+                type: object
+          description: Successful Response
+      summary: Health
+      tags:
+      - system
+servers:
+- description: Local development
+  url: http://localhost:8000
+- description: Deployed
+  url: https://{host}
+  variables:
+    host:
+      default: api.homebandhu.example
+      description: API host
+tags:
+- description: Sign-in, token refresh and the caller's own profile.
+  name: auth
+- description: Admin-issued invites and their redemption.
+  name: invitations
+- description: Admin dashboard tiles, community profile and residents.
+  name: dashboard
+- description: Admins and the registration review queue.
+  name: people
+- description: Complaints, their timeline, comments and attachments.
+  name: complaints
+- description: Departments, staff rosters and complaint categories.
+  name: departments

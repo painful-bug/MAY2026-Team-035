@@ -5,7 +5,7 @@
 create extension if not exists pgcrypto;
 create extension if not exists citext;
 create extension if not exists btree_gist;
-create extension if not exists pg_trgm;
+create extension if not exists pg_trgm with schema extensions;
 
 create type public.membership_role as enum ('resident','worker','security','manager','admin');
 create type public.membership_status as enum ('pending','active','suspended','ended');
@@ -26,7 +26,7 @@ create unique index profiles_email_unique on public.profiles (display_email) whe
 
 create table public.communities (
   id uuid primary key default gen_random_uuid(), name text not null, community_type text not null check (community_type in ('apartment','layout_villa')),
-  status text not null default 'active', address_line1 text not null, address_line2 text, city text not null, state text not null, postal_code text not null, country_code char(2) not null default 'IN' check (country_code ~ '^[A-Z]{2}$'), timezone text not null default 'Asia/Kolkata',
+  status text not null default 'active' check (status = lower(btrim(status)) and length(btrim(status)) > 0), address_line1 text not null, address_line2 text, city text not null, state text not null, postal_code text not null, country_code char(2) not null default 'IN' check (country_code ~ '^[A-Z]{2}$'), timezone text not null default 'Asia/Kolkata',
   active_admin_membership_id uuid, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
 create table public.buildings (
@@ -56,7 +56,9 @@ create table public.resident_invites (id uuid primary key default gen_random_uui
 create unique index invites_one_open_email on public.resident_invites(community_id,invitee_email) where status='issued';
 create table public.access_requests (id uuid primary key default gen_random_uuid(), community_id uuid not null references public.communities(id) on delete cascade, requested_unit_id uuid references public.units(id) on delete set null, applicant_profile_id uuid not null references public.profiles(id) on delete cascade, applicant_name text not null, applicant_email citext not null, applicant_phone_e164 varchar(20), requested_relationship public.residency_relationship not null default 'tenant', status text not null default 'pending' check (status in ('pending','approved','rejected','withdrawn')), reviewed_by_membership_id uuid references public.community_memberships(id) on delete set null, reviewed_at timestamptz, rejection_reason text check (rejection_reason is null or length(rejection_reason) <= 500), created_at timestamptz not null default now(), updated_at timestamptz not null default now(), check ((status = 'pending' and reviewed_by_membership_id is null and reviewed_at is null) or (status in ('approved','rejected') and reviewed_by_membership_id is not null and reviewed_at is not null) or status = 'withdrawn'));
 create unique index access_requests_one_pending_per_profile_community on public.access_requests(community_id,applicant_profile_id) where status='pending';
-create index communities_active_name_trgm on public.communities using gin (lower(name) gin_trgm_ops) where status='active';
+create table public.blacklisted_residents (id uuid primary key default gen_random_uuid(), community_id uuid not null references public.communities(id) on delete cascade, profile_id uuid not null references public.profiles(id) on delete cascade, blacklisted_by_membership_id uuid not null references public.community_memberships(id) on delete restrict, reason text not null check (length(btrim(reason)) between 3 and 500), created_at timestamptz not null default now(), revoked_at timestamptz, revoked_by_membership_id uuid references public.community_memberships(id) on delete set null);
+create unique index blacklisted_residents_one_active_per_community_profile on public.blacklisted_residents(community_id,profile_id) where revoked_at is null;
+create index communities_active_name_trgm on public.communities using gin (lower(name) extensions.gin_trgm_ops) where status='active';
 create table public.vendors (id uuid primary key default gen_random_uuid(), community_id uuid not null references public.communities(id) on delete cascade, name text not null, contact_name text, phone_e164 varchar(20), email citext, service_category text, status text not null default 'active', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
 create table public.staff_assignments (id uuid primary key default gen_random_uuid(), membership_id uuid not null references public.community_memberships(id) on delete cascade, department_id uuid references public.departments(id) on delete set null, vendor_id uuid references public.vendors(id) on delete set null, employment_type text not null, designation text, started_at date not null default current_date, ended_at date, is_active boolean not null default true, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
 create table public.skills (id uuid primary key default gen_random_uuid(), name text not null unique, category text, description text);
@@ -194,9 +196,10 @@ begin
   return jsonb_build_object('community',jsonb_build_object('id',community,'name',p_payload->>'name','communityType',type_value,'enabledModules',coalesce(p_payload->'enabled_features','[]'::jsonb),'unitType',case when type_value='apartment' then 'Blocks' else 'Villas' end,'unitCount',case when type_value='apartment' then jsonb_array_length(p_payload->'blocks') else jsonb_array_length(p_payload->'villas') end),'admin',jsonb_build_object('id',founder_profile,'fullName',p_payload->'admin_profile'->>'fullName','role','Admin','unitNumber',unit_code,'phone',p_payload->'admin_profile'->>'phone));
 end $$;
 
-create or replace function public.search_joinable_communities(p_query text, p_limit integer default 10) returns table(id uuid,name text,community_type text,city text,state text) language sql stable security definer set search_path=public as $$
+create or replace function public.search_joinable_communities(p_query text, p_limit integer default 10, p_profile_id uuid default null) returns table(id uuid,name text,community_type text,city text,state text) language sql stable security definer set search_path=public, extensions as $$
   select c.id,c.name,c.community_type,c.city,c.state from public.communities c
   where c.status='active' and length(btrim(p_query)) between 2 and 100 and lower(c.name) % lower(btrim(p_query))
+    and not exists(select 1 from public.blacklisted_residents b where b.community_id=c.id and b.profile_id=p_profile_id and b.revoked_at is null)
   order by case when lower(c.name) like lower(btrim(p_query)) || '%' then 0 else 1 end, similarity(lower(c.name),lower(btrim(p_query))) desc,c.name,c.id
   limit least(greatest(coalesce(p_limit,10),1),20)
 $$;
@@ -220,6 +223,21 @@ begin
   return jsonb_build_object('request_id',request_row.id,'membership_id',member,'status','approved');
 end $$;
 
+create or replace function public.blacklist_access_request(p_request_id uuid,p_reviewer_profile_id uuid,p_reason text) returns jsonb language plpgsql security definer set search_path=public as $$
+declare request_row public.access_requests%rowtype; reviewer uuid;
+begin
+  select * into request_row from public.access_requests where id=p_request_id for update;
+  if request_row.id is null or request_row.status <> 'pending' then raise exception 'Access request is no longer pending'; end if;
+  select id into reviewer from public.community_memberships where profile_id=p_reviewer_profile_id and community_id=request_row.community_id and role='admin' and status='active' and ended_at is null limit 1;
+  if reviewer is null then raise exception 'Administrator access is required'; end if;
+  insert into public.blacklisted_residents(community_id,profile_id,blacklisted_by_membership_id,reason)
+  values(request_row.community_id,request_row.applicant_profile_id,reviewer,left(btrim(p_reason),500))
+  on conflict (community_id,profile_id) where revoked_at is null do update set reason=excluded.reason,blacklisted_by_membership_id=excluded.blacklisted_by_membership_id;
+  update public.access_requests set status='rejected',reviewed_by_membership_id=reviewer,reviewed_at=now(),rejection_reason=left(btrim(p_reason),500),updated_at=now() where id=request_row.id;
+  insert into public.audit_events(community_id,actor_membership_id,action,payload) values(request_row.community_id,reviewer,'access_request.blacklisted',jsonb_build_object('access_request_id',request_row.id));
+  return jsonb_build_object('request_id',request_row.id,'status','rejected','blacklisted',true);
+end $$;
+
 create or replace function public.reject_access_request(p_request_id uuid,p_reviewer_profile_id uuid,p_reason text) returns jsonb language plpgsql security definer set search_path=public as $$
 declare request_row public.access_requests%rowtype; reviewer uuid;
 begin
@@ -240,6 +258,7 @@ alter table public.community_memberships enable row level security;
 alter table public.units enable row level security;
 alter table public.resident_invites enable row level security;
 alter table public.access_requests enable row level security;
+alter table public.blacklisted_residents enable row level security;
 create policy profiles_self on public.profiles for select using (id=auth.uid());
 create policy memberships_self on public.community_memberships for select using (profile_id=auth.uid());
 create policy communities_member on public.communities for select using (exists(select 1 from public.community_memberships m where m.community_id=id and m.profile_id=auth.uid() and m.status='active' and m.ended_at is null));
@@ -249,14 +268,16 @@ create policy access_requests_applicant_read on public.access_requests for selec
 create policy access_requests_admin_read on public.access_requests for select using (exists(select 1 from public.community_memberships m where m.community_id=access_requests.community_id and m.profile_id=auth.uid() and m.role='admin' and m.status='active' and m.ended_at is null));
 revoke all on function public.claim_email_invitation(uuid,uuid) from public, anon, authenticated;
 revoke all on function public.create_founder_community(jsonb) from public, anon, authenticated;
-revoke all on function public.search_joinable_communities(text,integer) from public, anon, authenticated;
+revoke all on function public.search_joinable_communities(text,integer,uuid) from public, anon, authenticated;
 revoke all on function public.approve_access_request(uuid,uuid,uuid,public.residency_relationship) from public, anon, authenticated;
 revoke all on function public.reject_access_request(uuid,uuid,text) from public, anon, authenticated;
+revoke all on function public.blacklist_access_request(uuid,uuid,text) from public, anon, authenticated;
 grant execute on function public.claim_email_invitation(uuid,uuid) to service_role;
 grant execute on function public.create_founder_community(jsonb) to service_role;
-grant execute on function public.search_joinable_communities(text,integer) to service_role;
+grant execute on function public.search_joinable_communities(text,integer,uuid) to service_role;
 grant execute on function public.approve_access_request(uuid,uuid,uuid,public.residency_relationship) to service_role;
 grant execute on function public.reject_access_request(uuid,uuid,text) to service_role;
+grant execute on function public.blacklist_access_request(uuid,uuid,text) to service_role;
 
 insert into public.feature_catalog(code,name,description,default_enabled) values
  ('resident-management','Resident Management','Resident accounts',true),('visitor-management','Visitor Management','Visitor approvals',true),('complaint-management','Complaint Management','Complaints and work',true),('maintenance-billing','Maintenance and Billing','Invoices and payments',true),('notice-board','Notice Board','Community notices',true),('amenities-booking','Amenities Booking','Shared amenities',false),('security-gate-management','Security and Gate Management','Gate operations',false),('parking-management','Parking Management','Parking',false),('staff-management','Staff Management','Departments and staff',false),('community-marketplace','Community Marketplace','Marketplace',false)

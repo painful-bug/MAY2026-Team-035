@@ -23,6 +23,10 @@ from app.core.exceptions import AuthenticationError
 ACCESS_COOKIE = "__Host-hb_access"
 REFRESH_COOKIE = "__Host-hb_refresh"
 CSRF_COOKIE = "__Host-hb_csrf"
+PREAUTH_CSRF_COOKIE = "hb_preauth_csrf"
+RECOVERY_ACCESS_COOKIE = "hb_recovery_access"
+RECOVERY_REFRESH_COOKIE = "hb_recovery_refresh"
+RECOVERY_CSRF_COOKIE = "hb_recovery_csrf"
 OAUTH_COOKIE = "hb_oauth_transaction"
 INVITATION_COOKIE = "hb_pending_invitation"
 CSRF_HEADER = "X-CSRF-Token"
@@ -101,10 +105,26 @@ def establish_session(response: Response, *, access_token: str, refresh_token: s
     max_age = expires_in or 3600
     common = {"secure": settings.use_secure_cookies, "httponly": True, "samesite": "lax", "path": "/"}
     response.set_cookie(cookie_name("access"), access_token, max_age=max_age, **common)
-    response.set_cookie(cookie_name("refresh"), refresh_token, max_age=60 * 60 * 24 * 30, **common)
+    response.set_cookie(cookie_name("refresh"), refresh_token, max_age=60 * 60 * 24 * settings.auth_session_idle_days, **common)
     response.set_cookie(cookie_name("csrf"), csrf_token(access_token), max_age=max_age, httponly=False, secure=settings.use_secure_cookies, samesite="strict", path="/")
 
 
+def establish_recovery_session(response: Response, *, access_token: str, refresh_token: str, expires_in: int | None) -> None:
+    """Store a short-lived recovery session that cannot satisfy normal auth deps."""
+    settings = get_settings()
+    max_age = min(expires_in or 600, 600)
+    common = {"secure": settings.use_secure_cookies, "httponly": True, "samesite": "lax", "path": "/"}
+    response.set_cookie(RECOVERY_ACCESS_COOKIE, access_token, max_age=max_age, **common)
+    response.set_cookie(RECOVERY_REFRESH_COOKIE, refresh_token, max_age=max_age, **common)
+    response.set_cookie(RECOVERY_CSRF_COOKIE, csrf_token(access_token), max_age=max_age, httponly=False, secure=settings.use_secure_cookies, samesite="strict", path="/")
+
+
+def establish_preauth_csrf(response: Response) -> str:
+    token = random_urlsafe()
+    response.set_cookie(PREAUTH_CSRF_COOKIE, token, max_age=600, httponly=False, secure=get_settings().use_secure_cookies, samesite="strict", path="/")
+    return token
+
+
 def clear_session(response: Response) -> None:
-    for name, http_only in ((cookie_name("access"), True), (cookie_name("refresh"), True), (cookie_name("csrf"), False), (OAUTH_COOKIE, True), (INVITATION_COOKIE, True)):
+    for name, http_only in ((cookie_name("access"), True), (cookie_name("refresh"), True), (cookie_name("csrf"), False), (PREAUTH_CSRF_COOKIE, False), (RECOVERY_ACCESS_COOKIE, True), (RECOVERY_REFRESH_COOKIE, True), (RECOVERY_CSRF_COOKIE, False), (OAUTH_COOKIE, True), (INVITATION_COOKIE, True)):
         clear_cookie(response, name, httponly=http_only)

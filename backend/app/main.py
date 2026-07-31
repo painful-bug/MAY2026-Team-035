@@ -8,13 +8,28 @@ versioned API router. Run locally with::
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_router
 from app.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.realtime import hub
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Stop the SSE outbox poller cleanly on shutdown.
+
+    It is started lazily by the first subscriber rather than here, so a process
+    that never serves a dashboard never polls at all.
+    """
+    yield
+    await hub.stop()
 
 
 def create_app() -> FastAPI:
@@ -27,6 +42,7 @@ def create_app() -> FastAPI:
         title="HomeBandhu API",
         version="0.1.0",
         summary="Backend for the HomeBandhu residential community platform.",
+        lifespan=_lifespan,
     )
 
     app.add_middleware(
@@ -38,6 +54,19 @@ def create_app() -> FastAPI:
     )
 
     register_exception_handlers(app)
+
+    @app.middleware("http")
+    async def prevent_sensitive_response_caching(request: Request, call_next):
+        response: Response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/api/v1/auth/") and not path.endswith("/methods"):
+            response.headers["Cache-Control"] = "no-store, private"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Vary"] = "Cookie, Origin"
+        elif request.cookies.get("__Host-hb_access") or request.cookies.get("hb_access"):
+            response.headers.setdefault("Cache-Control", "no-store, private")
+            response.headers.setdefault("Vary", "Cookie, Origin")
+        return response
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

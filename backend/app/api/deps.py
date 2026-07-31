@@ -15,7 +15,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.exceptions import AuthorizationError
 from app.core.security import decode_token
-from app.core.web_session import CSRF_HEADER, cookie_name, csrf_token
+from app.core.web_session import (
+    CSRF_HEADER,
+    PREAUTH_CSRF_COOKIE,
+    RECOVERY_ACCESS_COOKIE,
+    RECOVERY_CSRF_COOKIE,
+    cookie_name,
+    csrf_token,
+)
 from app.core.supabase_client import get_service_client, get_user_client
 from app.domain.schemas import MembershipContext, Principal
 from supabase import Client
@@ -79,9 +86,17 @@ def require_csrf(request: Request) -> None:
     if origin != expected_origin:
         raise AuthorizationError("Invalid request origin.", code="csrf_origin_invalid")
     access = request.cookies.get(cookie_name("access"))
-    if access and request.headers.get(CSRF_HEADER) != request.cookies.get(cookie_name("csrf")):
+    recovery_access = request.cookies.get(RECOVERY_ACCESS_COOKIE)
+    csrf_cookie = (
+        request.cookies.get(cookie_name("csrf")) if access
+        else request.cookies.get(RECOVERY_CSRF_COOKIE) if recovery_access
+        else request.cookies.get(PREAUTH_CSRF_COOKIE)
+    )
+    if not csrf_cookie or request.headers.get(CSRF_HEADER) != csrf_cookie:
         raise AuthorizationError("CSRF token is required.", code="csrf_invalid")
-    if access and request.cookies.get(cookie_name("csrf")) != csrf_token(access):
+    if access and csrf_cookie != csrf_token(access):
+        raise AuthorizationError("CSRF token is invalid.", code="csrf_invalid")
+    if recovery_access and csrf_cookie != csrf_token(recovery_access):
         raise AuthorizationError("CSRF token is invalid.", code="csrf_invalid")
 
 

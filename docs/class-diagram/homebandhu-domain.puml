@@ -1,0 +1,1409 @@
+@startuml HomeBandhu-Domain-Model
+' ============================================================================
+'  HomeBandhu — UML Class Diagram : DOMAIN MODEL
+'  Multi-tenant residential-community management (Supabase Postgres + RLS)
+'  Render: https://www.plantuml.com/plantuml/uml  or VS Code PlantUML extension
+'  Companion file: homebandhu-architecture.puml (API / service / persistence)
+' ============================================================================
+skinparam dpi 130
+skinparam linetype ortho
+skinparam nodesep 40
+skinparam ranksep 55
+skinparam shadowing false
+skinparam classFontSize 12
+skinparam classAttributeFontSize 11
+skinparam packageStyle rectangle
+skinparam wrapWidth 260
+hide empty members
+
+title HomeBandhu — UML Class Diagram (Domain Model)\nAll ids UUID · DateTime≡timestamptz · Money≡numeric(12,2) · JSON≡jsonb · v1.0
+
+' ============================================================================
+'  ABSTRACT BASE TYPES, INTERFACES, VALUE OBJECTS
+' ============================================================================
+package "Core Abstractions" #F5F5F5 {
+
+  abstract class BaseEntity {
+    - id : UUID {PK}
+    - createdAt : DateTime {readOnly}
+    - updatedAt : DateTime
+    + touch() : void
+    + isPersisted() : Boolean
+  }
+
+  abstract class TenantScopedEntity extends BaseEntity {
+    # communityId : UUID {required}
+    + belongsTo(c : Community) : Boolean
+    + assertTenant(ctx : SecurityContext) : void
+  }
+
+  abstract class AuditableEvent extends BaseEntity {
+    - eventType : String
+    - metadata : JSON [0..1]
+    - occurredAt : DateTime {readOnly}
+    + isImmutable() : Boolean
+  }
+
+  abstract class AttachmentLink {
+    - attachmentType : AttachmentType
+    - createdAt : DateTime
+  }
+
+  interface Schedulable <<interface>> {
+    + scheduledRange() : TimeRange
+    + overlaps(o : Schedulable) : Boolean
+    + assertNoOverlap() : void
+  }
+  interface Approvable <<interface>> {
+    + approve(by : CommunityMembership) : void
+    + reject(by : CommunityMembership, reason : String) : void
+    + isApproved() : Boolean
+  }
+  interface Cancellable <<interface>> {
+    + cancel(by : CommunityMembership, reason : String) : void
+    + isCancelled() : Boolean
+  }
+  interface Auditable <<interface>> {
+    + auditTrail() : List<AuditEvent>
+  }
+
+  class TimeRange <<value object>> {
+    - startsAt : DateTime
+    - endsAt : DateTime
+    + durationMinutes() : Integer
+    + overlaps(o : TimeRange) : Boolean
+    + contains(at : DateTime) : Boolean
+  }
+  class Money <<value object>> {
+    - amount : Decimal
+    - currencyCode : CurrencyCode
+    + plus(o : Money) : Money
+    + minus(o : Money) : Money
+    + isZero() : Boolean
+  }
+  class PostalAddress <<value object>> {
+    - line1 : String {required}
+    - line2 : String [0..1]
+    - city : String {required}
+    - state : String {required}
+    - postalCode : String {required}
+    - countryCode : CountryCode {required}
+    + formatted() : String
+  }
+  class GeoPoint <<value object>> {
+    - latitude : Decimal
+    - longitude : Decimal
+  }
+}
+
+' ============================================================================
+'  NAVY — Identity & community foundation
+' ============================================================================
+package "Identity & Community  (navy)" #E8EAF6 {
+
+  class AuthUser <<external system>> <<entity>> #ffffff {
+    - id : UUID {PK}
+    - email : String {unique}
+    - emailConfirmedAt : DateTime [0..1]
+    - createdAt : DateTime
+    + isConfirmed() : Boolean
+  }
+  note top of AuthUser : Supabase Auth schema **auth.users**\nExternal — outside our deployment
+
+  class Profile <<aggregate root>> {
+    - id : UUID {PK, =auth.users.id}
+    - displayName : String {required}
+    - phoneE164 : String {unique}
+    - phoneVerifiedAt : DateTime [0..1]
+    - avatarObjectPath : String [0..1]
+    - status : ProfileStatus
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + verifyPhone(otp : String) : Boolean
+    + updateAvatar(a : MediaAsset) : void
+    + activeMemberships() : List<CommunityMembership>
+    + membershipIn(c : Community) : Optional<CommunityMembership>
+    + /isActive() : Boolean
+  }
+
+  class CommunityRegistrationRequest <<aggregate root>> {
+    - id : UUID {PK}
+    - associationName : String {required}
+    - communityType : CommunityType
+    - address : PostalAddress
+    - applicantEmail : String {required}
+    - applicantPhoneE164 : String {required}
+    - otpVerifiedAt : DateTime [0..1]
+    - status : RegistrationStatus
+    - reviewNotes : Text [0..1]
+    - reviewedByOperatorRef : String [0..1]
+    - reviewedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + verifyOtp(code : String) : Boolean
+    + approve(operatorRef : String) : Community
+    + reject(reason : String) : void
+    + /isVerified() : Boolean
+  }
+
+  class Community <<aggregate root>> <<tenant root>> {
+    - id : UUID {PK}
+    - name : String {required}
+    - communityType : CommunityType
+    - status : CommunityStatus
+    - address : PostalAddress
+    - location : GeoPoint [0..1]
+    - activatedAt : DateTime [0..1]
+    - archivedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + activate(admin : AdminMembership) : void
+    + archive(reason : String) : void
+    + transferAdmin(successor : CommunityMembership) : AdminMembership
+    + activeAdmin() : AdminMembership
+    + addBuilding(label : String) : Building
+    + addUnit(label : String, t : UnitType) : Unit
+    - assertSingleActiveAdmin() : void
+  }
+  note right of Community
+    <b>{invariant}</b> activeAdmin must reference an
+    <b>active ADMIN</b> membership of the SAME community;
+    every ACTIVE community has exactly one.
+  end note
+}
+
+' ============================================================================
+'  TEAL — Buildings, units, occupancy
+' ============================================================================
+package "Buildings & Occupancy  (teal)" #E0F2F1 {
+
+  class Building <<entity>> {
+    - id : UUID {PK}
+    - label : String {required}
+    - buildingType : String [0..1]
+    - sortOrder : Integer
+    - location : GeoPoint [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + rename(label : String) : void
+    + units() : List<Unit>
+    + archive() : void
+  }
+
+  class Unit <<aggregate root>> {
+    - id : UUID {PK}
+    - unitLabel : String {unique per community}
+    - unitType : UnitType
+    - floorNumber : Integer [0..1]
+    - areaSqft : Decimal [0..1]
+    - location : GeoPoint [0..1]
+    - status : UnitStatus
+    - archivedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + primaryContact() : UnitResidency
+    + transferPrimaryContact(to : UnitResidency, by : CommunityMembership) : void
+    + activeResidents() : List<UnitResidency>
+    + /outstandingBalance() : Money
+    + archive() : void
+  }
+  note right of Unit
+    <b>{invariant}</b> exactly one UnitResidency with
+    isPrimaryContact=true AND status=ACTIVE (partial UQ).
+    Transfer: current primary nominates an active resident
+    of the same unit; admin appoints only if none active.
+  end note
+
+  class UnitResidency <<entity>> {
+    - id : UUID {PK}
+    - occupancyType : OccupancyType
+    - status : MembershipStatus
+    - isPrimaryContact : Boolean
+    - moveInDate : Date [0..1]
+    - moveOutDate : Date [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + makePrimary() : void
+    + nominateSuccessor(next : UnitResidency) : void
+    + endOccupancy(on : Date, reason : String) : void
+    + /isActive() : Boolean
+  }
+}
+
+' ============================================================================
+'  GOLD — Roles, staff, departments, vendors, skills
+' ============================================================================
+package "Roles, Staff & Skills  (gold)" #FFF8E1 {
+
+  abstract class CommunityMembership <<aggregate root>> {
+    - id : UUID {PK}
+    - role : MembershipRole {readOnly}
+    - status : MembershipStatus
+    - activatedAt : DateTime [0..1]
+    - endedAt : DateTime [0..1]
+    - endReason : String [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + activate() : void
+    + end(reason : String) : void
+    + /isActive() : Boolean
+    + can(action : String) : Boolean
+    + scopeCommunityIds() : Set<UUID>
+    - assertSingleCommunityScope() : void
+  }
+  note left of CommunityMembership
+    <b>{enum}</b> role ∈ {RESIDENT, WORKER, SECURITY,
+    MANAGER, ADMIN}. Role lives HERE, never on Profile.
+    There is NO public users(id, role) class.
+    <b>{scope}</b> RESIDENT/ADMIN: one active membership
+    across all communities. WORKER/SECURITY/MANAGER:
+    many communities. Staff & non-staff not mixed.
+  end note
+
+  class ResidentMembership {
+    ' {role = RESIDENT} — single community only
+    + raiseComplaint(...) : Complaint
+    + requestBooking(...) : AmenityBookingSeries
+    + preApproveVisitor(...) : VisitorAccessRequest
+    + payInvoice(i : Invoice, m : PaymentMethod) : Payment
+  }
+  class WorkerMembership {
+    ' {role = WORKER} — multi-community
+    + acceptAssignment(a : WorkOrderAssignment) : void
+    + declineAssignment(a : WorkOrderAssignment, reason : String) : void
+    + propose(range : TimeRange, quote : Money) : WorkOrderProposal
+    + submitCompletionEvidence(wo : WorkOrder, m : MediaAsset) : void
+  }
+  class SecurityMembership {
+    ' {role = SECURITY} — visitor operations only
+    + validateAccessCode(code : String) : VisitorAccessRequest
+    + checkIn(r : VisitorAccessRequest) : void
+    + checkOut(r : VisitorAccessRequest) : void
+  }
+  class ManagerMembership {
+    ' {role = MANAGER} — multi-community
+    + assignWorkOrder(wo : WorkOrder, s : StaffAssignment) : WorkOrderAssignment
+    + manageStaff(a : StaffAssignment) : void
+    + overrideBooking(o : AmenityBookingOccurrence) : void
+  }
+  class AdminMembership {
+    ' {role = ADMIN} — exactly one active per community
+    + inviteResident(u : Unit, email : String) : ResidentInvite
+    + grantRole(p : Profile, r : MembershipRole) : CommunityMembership
+    + issueInvoice(...) : Invoice
+    + publishPolicy(p : Policy) : PolicyRevision
+    + transferAdminRights(to : CommunityMembership) : void
+  }
+  note bottom of SecurityMembership
+    <b>{security}</b> SECURITY has NO broad resident-
+    directory association. Contact lookup for an active
+    visitor request is a narrow audited RPC only.
+  end note
+
+  class Department <<entity>> {
+    - id : UUID {PK}
+    - name : String {unique per community}
+    - description : Text [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + activate() : void
+    + deactivate() : void
+    + /headcount() : Integer
+  }
+
+  class Vendor <<entity>> {
+    ' global scope — shared across communities
+    - id : UUID {PK}
+    - legalName : String {required}
+    - contactName : String [0..1]
+    - contactEmail : String [0..1]
+    - contactPhoneE164 : String [0..1]
+    - address : Text [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + deactivate() : void
+    + assignments() : List<StaffAssignment>
+  }
+
+  class StaffAssignment <<entity>> {
+    - id : UUID {PK}
+    - employmentType : EmploymentType
+    - employeeCode : String [0..1]
+    - jobTitle : String [0..1]
+    - status : StaffAssignmentStatus
+    - assignedAt : DateTime
+    - endedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + addSkill(s : Skill, level : ProficiencyLevel) : StaffSkill
+    + hasSkill(name : String) : Boolean
+    + isAvailable(range : TimeRange) : Boolean
+    + acceptedAssignments() : List<WorkOrderAssignment>
+    + end(reason : String) : void
+  }
+  note bottom of StaffAssignment : {invariant} one active staff assignment per membership
+
+  class Skill <<entity>> {
+    ' global scope
+    - id : UUID {PK}
+    - name : String {unique}
+    - category : String [0..1]
+    - description : Text [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+  }
+  note right of Skill
+    <b>{skill ≠ role}</b> "technician" and "serviceman"
+    are WORKER skills, not permission roles.
+  end note
+
+  class StaffSkill <<association class>> {
+    - proficiencyLevel : ProficiencyLevel [0..1]
+    - verifiedAt : DateTime [0..1]
+    - createdAt : DateTime
+    + verify(by : CommunityMembership) : void
+    + /isVerified() : Boolean
+  }
+
+  class WorkerAvailabilityRule <<entity>> {
+    - id : UUID {PK}
+    - weekday : Weekday
+    - startTime : Time
+    - endTime : Time
+    - effectiveFrom : Date
+    - effectiveTo : Date [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + covers(at : DateTime) : Boolean
+    + toRangeOn(day : Date) : TimeRange
+  }
+  class WorkerUnavailability <<entity>> {
+    - id : UUID {PK}
+    - range : TimeRange
+    - reason : String [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + blocks(range : TimeRange) : Boolean
+  }
+}
+
+' ============================================================================
+'  ONBOARDING
+' ============================================================================
+package "Resident Onboarding  (navy/teal)" #EDE7F6 {
+
+  class ResidentInvite <<aggregate root>> {
+    - id : UUID {PK}
+    - recipientEmail : String {required}
+    - status : InviteStatus
+    - authInviteSentAt : DateTime [0..1]
+    - expiresAt : DateTime
+    - acceptedAt : DateTime [0..1]
+    - revokedAt : DateTime [0..1]
+    - revocationReason : String [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + send() : void
+    + revoke(by : CommunityMembership, reason : String) : void
+    + reissue() : ResidentInvite
+    + accept(p : Profile) : UnitResidency
+    + /isRedeemable() : Boolean
+  }
+  note bottom of ResidentInvite
+    <b>{security}</b> single-use; only token/code DIGESTS
+    are stored; redeem is compare-and-set (no double redeem).
+  end note
+
+  class AccessRequest <<aggregate root>> {
+    - id : UUID {PK}
+    - applicantName : String {required}
+    - applicantEmail : String {required}
+    - applicantPhoneE164 : String {required}
+    - requestedOccupancyType : OccupancyType
+    - status : AccessRequestStatus
+    - reviewedAt : DateTime [0..1]
+    - decisionReason : String [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + approve(by : CommunityMembership) : ResidentInvite
+    + reject(by : CommunityMembership, reason : String) : void
+    + withdraw() : void
+  }
+}
+
+' ============================================================================
+'  RED — Complaints, work orders, scheduling
+' ============================================================================
+package "Complaints & Work Orders  (red)" #FFEBEE {
+
+  class Complaint <<aggregate root>> {
+    - id : UUID {PK}
+    - title : String {required}
+    - description : Text {required}
+    - category : String
+    - urgency : Urgency
+    - status : ComplaintStatus
+    - submittedAt : DateTime
+    - resolvedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + changeStatus(next : ComplaintStatus, actor : CommunityMembership, note : String) : ComplaintEvent
+    + escalate() : void
+    + raiseWorkOrder(dept : Department) : WorkOrder
+    + resolve() : void
+    + reopen(reason : String) : void
+  }
+
+  class ComplaintEvent <<event>> {
+    - id : UUID {PK}
+    - eventType : String
+    - previousStatus : ComplaintStatus [0..1]
+    - newStatus : ComplaintStatus [0..1]
+    - note : Text [0..1]
+    - metadata : JSON [0..1]
+    - createdAt : DateTime
+  }
+
+  class WorkOrder <<aggregate root>> {
+    - id : UUID {PK}
+    - title : String {required}
+    - description : Text {required}
+    - serviceCategory : String
+    - priority : Priority
+    - status : WorkOrderStatus
+    - preferredRange : TimeRange [0..1]
+    - scheduledRange : TimeRange [0..1]
+    - escalationRequired : Boolean
+    - resolvedAt : DateTime [0..1]
+    - closedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + assign(s : StaffAssignment, by : CommunityMembership) : WorkOrderAssignment
+    + schedule(range : TimeRange) : void
+    + recordView(s : StaffAssignment) : WorkOrderView
+    + attachEvidence(m : MediaAsset, t : AttachmentType) : WorkOrderAttachment
+    + verifyCompletion(method : VerificationMethod) : WorkOrderCompletionVerification
+    + close() : void
+  }
+
+  class WorkOrderAssignment <<entity>> {
+    - id : UUID {PK}
+    - status : AssignmentStatus
+    - assignedAt : DateTime
+    - acceptedAt : DateTime [0..1]
+    - declinedAt : DateTime [0..1]
+    - declineReason : String [0..1]
+    - scheduledRange : TimeRange [0..1]
+    - completedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + accept() : void
+    + decline(reason : String) : void
+    + complete(at : DateTime) : void
+    + overlaps(o : WorkOrderAssignment) : Boolean
+  }
+  note bottom of WorkOrderAssignment
+    <b>{exclusion}</b> accepted assignments of one worker
+    must not overlap: EXCLUDE USING gist
+    (staff_assignment_id WITH =, range WITH &&).
+    Proposals may overlap until accepted.
+  end note
+
+  class WorkOrderProposal <<entity>> {
+    - id : UUID {PK}
+    - proposalVersion : Integer
+    - proposedRange : TimeRange
+    - quotedAmount : Money [0..1]
+    - status : ProposalStatus
+    - note : Text [0..1]
+    - expiresAt : DateTime [0..1]
+    - acceptedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + counter(range : TimeRange, quote : Money) : WorkOrderProposal
+    + accept() : WorkOrderAssignment
+    + reject(reason : String) : void
+    + expire() : void
+  }
+
+  class WorkOrderView <<association class>> {
+    - firstViewedAt : DateTime
+    - lastViewedAt : DateTime
+    - viewCount : Integer
+    + touch() : void
+  }
+
+  class WorkOrderCompletionVerification <<entity>> {
+    - id : UUID {PK}
+    - verificationMethod : VerificationMethod
+    - otpDigest : String [0..1]
+    - verifiedAt : DateTime [0..1]
+    - notes : Text [0..1]
+    - createdAt : DateTime
+    + issueOtp() : String
+    + verify(submitted : String) : Boolean
+  }
+}
+
+' ============================================================================
+'  PURPLE — Visitor management
+' ============================================================================
+package "Visitor Management  (purple)" #F3E5F5 {
+
+  class SavedVisitor <<entity>> {
+    - id : UUID {PK}
+    - visitorName : String {required}
+    - phoneE164 : String [0..1]
+    - visitorType : VisitorType
+    - notes : Text [0..1]
+    - isActive : Boolean
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + deactivate() : void
+    + toRequest(u : Unit) : VisitorAccessRequest
+  }
+
+  class VisitorAccessRequest <<aggregate root>> {
+    - id : UUID {PK}
+    - visitorName : String {required}
+    - visitorPhoneE164 : String [0..1]
+    - visitorType : VisitorType
+    - purpose : String [0..1]
+    - status : VisitorRequestStatus
+    - requestedArrivalAt : DateTime [0..1]
+    - validFrom : DateTime [0..1]
+    - validUntil : DateTime [0..1]
+    - accessCodeDigest : String [0..1]
+    - approvedAt : DateTime [0..1]
+    - rejectedAt : DateTime [0..1]
+    - rejectionReason : String [0..1]
+    - checkedInAt : DateTime [0..1]
+    - checkedOutAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + approve(by : CommunityMembership) : void
+    + reject(by : CommunityMembership, reason : String) : void
+    + issueAccessCode() : String
+    + validateCode(code : String) : Boolean
+    + checkIn(by : SecurityMembership) : VisitorEvent
+    + checkOut(by : SecurityMembership) : VisitorEvent
+    + /isValidNow() : Boolean
+  }
+  note bottom of VisitorAccessRequest : {security} only accessCodeDigest is stored
+
+  class VisitorEvent <<event>> {
+    - id : UUID {PK}
+    - eventType : String
+    - metadata : JSON [0..1]
+    - createdAt : DateTime
+  }
+}
+
+' ============================================================================
+'  GREEN — Amenities, bookings, finance
+' ============================================================================
+package "Amenities, Bookings & Finance  (green)" #E8F5E9 {
+
+  class Amenity <<aggregate root>> {
+    - id : UUID {PK}
+    - name : String {unique per community}
+    - description : Text [0..1]
+    - category : String [0..1]
+    - capacity : Integer [0..1]
+    - bookingMode : BookingMode
+    - approvalRequired : Boolean
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + ruleAt(when : DateTime) : AmenityRule
+    + isAvailable(range : TimeRange) : Boolean
+    + requestBooking(by : ResidentMembership, ranges : List<TimeRange>) : AmenityBookingSeries
+    + deactivate() : void
+  }
+
+  class AmenityRule <<entity>> {
+    - id : UUID {PK}
+    - weekday : Weekday [0..1]
+    - opensAt : Time [0..1]
+    - closesAt : Time [0..1]
+    - maxDurationMinutes : Integer [0..1]
+    - maxGuests : Integer [0..1]
+    - advanceBookingDays : Integer [0..1]
+    - cancellationDeadlineMinutes : Integer [0..1]
+    - bookingCharge : Money [0..1]
+    - depositAmount : Money [0..1]
+    - effectiveFrom : Date
+    - effectiveTo : Date [0..1]
+    - status : String
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + allows(range : TimeRange, guests : Integer) : Boolean
+    + chargeFor(range : TimeRange) : Money
+    + isCancellableAt(now : DateTime, start : DateTime) : Boolean
+  }
+
+  class AmenityBookingSeries <<aggregate root>> {
+    - id : UUID {PK}
+    - title : String {required}
+    - bookingType : String
+    - isPrivate : Boolean
+    - guestCount : Integer
+    - notes : Text [0..1]
+    - status : BookingSeriesStatus
+    - requestedAt : DateTime
+    - approvedAt : DateTime [0..1]
+    - rejectedAt : DateTime [0..1]
+    - rejectionReason : String [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + addOccurrence(range : TimeRange) : AmenityBookingOccurrence
+    + approve(by : CommunityMembership) : void
+    + reject(by : CommunityMembership, reason : String) : void
+    + cancelOccurrence(o : AmenityBookingOccurrence, reason : String) : void
+    + addGuest(name : String, phone : String) : BookingGuest
+    + /totalCharges() : Money
+  }
+
+  class AmenityBookingOccurrence <<entity>> {
+    - id : UUID {PK}
+    - range : TimeRange
+    - status : OccurrenceStatus
+    - cancelledAt : DateTime [0..1]
+    - cancellationReason : String [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + cancel(by : CommunityMembership, reason : String) : void
+    + overlaps(o : AmenityBookingOccurrence) : Boolean
+    + raiseCharge(t : ChargeType, amount : Money) : AmenityBookingCharge
+    + complete() : void
+  }
+  note bottom of AmenityBookingOccurrence
+    <b>{exclusion}</b> active occurrences of one amenity
+    must not overlap (EXCLUDE USING gist).
+  end note
+
+  class BookingGuest <<entity>> {
+    - id : UUID {PK}
+    - guestName : String {required}
+    - phoneE164 : String [0..1]
+    - createdAt : DateTime
+  }
+
+  class AmenityBookingCharge <<entity>> {
+    - id : UUID {PK}
+    - chargeType : ChargeType
+    - amount : Money
+    - status : ChargeStatus
+    - description : Text [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + settle() : void
+    + refund(amount : Money, reason : String) : AmenityFinancialEvent
+    + deductDamage(amount : Money, reason : String) : AmenityFinancialEvent
+    + waive(reason : String) : void
+  }
+
+  class AmenityFinancialEvent <<event>> {
+    - id : UUID {PK}
+    - eventType : FinancialEventType
+    - amount : Money
+    - paymentReference : String [0..1]
+    - reason : String [0..1]
+    - metadata : JSON [0..1]
+    - createdAt : DateTime
+  }
+
+  class Invoice <<aggregate root>> {
+    - id : UUID {PK}
+    - invoiceNumber : String {unique}
+    - invoiceType : InvoiceType
+    - status : InvoiceStatus
+    - billingPeriodStart : Date [0..1]
+    - billingPeriodEnd : Date [0..1]
+    - issuedOn : Date
+    - dueOn : Date
+    - subtotalAmount : Money
+    - taxAmount : Money
+    - totalAmount : Money
+    - outstandingAmount : Money
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + addLineItem(desc : String, qty : Decimal, unit : Money) : InvoiceLineItem
+    + issue() : void
+    + applyPayment(p : Payment) : void
+    + recalculateTotals() : void
+    + markOverdue() : void
+    + /isSettled() : Boolean
+  }
+  note right of Invoice
+    <b>{billing}</b> liability belongs to the UNIT;
+    Payment.payer records who actually paid.
+  end note
+
+  class InvoiceLineItem <<entity>> {
+    - id : UUID {PK}
+    - description : Text {required}
+    - quantity : Decimal
+    - unitAmount : Money
+    - totalAmount : Money
+    - createdAt : DateTime
+    + recalculate() : Money
+  }
+
+  class Payment <<aggregate root>> {
+    - id : UUID {PK}
+    - amount : Money
+    - paymentMethod : PaymentMethod
+    - providerReference : String [0..1] {unique}
+    - status : PaymentStatus
+    - paidAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + capture() : void
+    + fail(reason : String) : PaymentEvent
+    + refund(amount : Money) : PaymentEvent
+  }
+
+  class PaymentEvent <<event>> {
+    - id : UUID {PK}
+    - eventType : String
+    - previousStatus : PaymentStatus [0..1]
+    - newStatus : PaymentStatus [0..1]
+    - metadata : JSON [0..1]
+    - createdAt : DateTime
+  }
+}
+
+' ============================================================================
+'  BLUE — Notices, policies, notifications, audit, media
+' ============================================================================
+package "Comms, Policy, Audit & Media  (blue)" #E3F2FD {
+
+  class Notice <<entity>> {
+    - id : UUID {PK}
+    - title : String {required}
+    - body : Text {required}
+    - category : String [0..1]
+    - urgency : Urgency
+    - publishedAt : DateTime [0..1]
+    - expiresAt : DateTime [0..1]
+    - status : NoticeStatus
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + publish() : Notification
+    + expire() : void
+    + archive() : void
+  }
+
+  class Policy <<aggregate root>> {
+    - id : UUID {PK}
+    - policyCode : String {unique per community}
+    - title : String {required}
+    - status : PolicyStatus
+    - currentRevisionNumber : Integer
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + addRevision(body : Text, effectiveAt : DateTime) : PolicyRevision
+    + currentRevision() : PolicyRevision
+    + supersede() : void
+    + archive() : void
+  }
+
+  class PolicyRevision <<entity>> <<immutable>> {
+    - id : UUID {PK}
+    - revisionNumber : Integer
+    - sectionReference : String [0..1]
+    - body : Text {required}
+    - effectiveAt : DateTime
+    - publishImmediately : Boolean
+    - publishedAt : DateTime [0..1]
+    - createdAt : DateTime
+    + publish() : void
+    + /isEffective(at : DateTime) : Boolean
+  }
+
+  class Notification <<entity>> {
+    - id : UUID {PK}
+    - sourceType : String
+    - sourceId : UUID [0..1]
+    - notificationType : String
+    - title : String {required}
+    - body : Text {required}
+    - payload : JSON [0..1]
+    - scheduledFor : DateTime [0..1]
+    - sentAt : DateTime [0..1]
+    - createdAt : DateTime
+    + fanOut(recipients : List<Profile>, channels : Set<NotificationChannel>) : List<NotificationDelivery>
+    + send() : void
+  }
+
+  class NotificationDelivery <<entity>> {
+    - id : UUID {PK}
+    - channel : NotificationChannel
+    - status : DeliveryStatus
+    - deliveredAt : DateTime [0..1]
+    - readAt : DateTime [0..1]
+    - failedAt : DateTime [0..1]
+    - failureReason : String [0..1]
+    - createdAt : DateTime
+    + markRead() : void
+    + markFailed(reason : String) : void
+  }
+  note bottom of NotificationDelivery : {unique (notification, profile, channel)}
+
+  class AuditEvent <<event>> <<immutable>> {
+    - id : UUID {PK}
+    - eventType : String
+    - targetType : String
+    - targetId : UUID [0..1]
+    - metadata : JSON [0..1]
+    - occurredAt : DateTime
+    + {static} record(actor, type, target, meta) : AuditEvent
+  }
+  note left of AuditEvent
+    <b>{auditable}</b> every role change, approval, financial
+    transition, security action, invitation and policy change
+    emits an AuditEvent.
+  end note
+
+  class MediaAsset <<aggregate root>> {
+    - id : UUID {PK}
+    - bucketId : StorageBucket
+    - objectPath : String {unique}
+    - originalFilename : String {required}
+    - mimeType : String {required}
+    - byteSize : Long
+    - sha256 : String [0..1]
+    - status : MediaStatus
+    - createdAt : DateTime
+    - deletedAt : DateTime [0..1]
+    + signedUrl(ttlSeconds : Integer) : String
+    + softDelete() : void
+    + /isReady() : Boolean
+  }
+  note right of MediaAsset
+    <b>{storage}</b> only bridge to Supabase Storage is
+    bucketId + objectPath; buckets private, access via
+    storage.objects RLS.
+  end note
+
+  class WorkOrderAttachment <<association class>> {
+  }
+  class VisitorAttachment <<association class>> {
+  }
+}
+
+class SupabaseStorage <<external system>> #ffffff {
+  - buckets : {profile-avatars, work-evidence, visitor-media}
+  + createSignedUploadUrl(...) : String
+  + createSignedUrl(...) : String
+  + remove(...) : void
+}
+note bottom of SupabaseStorage : External — private buckets
+
+' ============================================================================
+'  ENUMERATIONS  (grouped, connected only where uncluttered)
+' ============================================================================
+package "Enumerations" #FAFAFA {
+  enum MembershipRole {
+    RESIDENT
+    WORKER
+    SECURITY
+    MANAGER
+    ADMIN
+  }
+  enum MembershipStatus {
+    PENDING
+    ACTIVE
+    SUSPENDED
+    ENDED
+  }
+  enum CommunityType {
+    APARTMENT
+    VILLA
+  }
+  enum CommunityStatus {
+    PENDING
+    ACTIVE
+    SUSPENDED
+    ARCHIVED
+  }
+  enum RegistrationStatus {
+    SUBMITTED
+    OTP_VERIFIED
+    UNDER_REVIEW
+    APPROVED
+    REJECTED
+  }
+  enum UnitStatus {
+    ACTIVE
+    VACANT
+    ARCHIVED
+  }
+  enum UnitType {
+    FLAT
+    VILLA
+    SHOP
+    OFFICE
+  }
+  enum OccupancyType {
+    OWNER
+    TENANT
+    FAMILY_MEMBER
+    OCCUPANT
+  }
+  enum ProfileStatus {
+    ACTIVE
+    DISABLED
+  }
+  enum EmploymentType {
+    IN_HOUSE
+    VENDOR_CONTRACT
+    TEMPORARY
+  }
+  enum StaffAssignmentStatus {
+    ACTIVE
+    SUSPENDED
+    ENDED
+  }
+  enum ProficiencyLevel {
+    TRAINEE
+    INTERMEDIATE
+    EXPERT
+  }
+  enum Weekday {
+    SUN_0
+    MON_1
+    TUE_2
+    WED_3
+    THU_4
+    FRI_5
+    SAT_6
+  }
+  enum InviteStatus {
+    ISSUED
+    SENT
+    ACCEPTED
+    EXPIRED
+    REVOKED
+  }
+  enum AccessRequestStatus {
+    PENDING
+    APPROVED
+    REJECTED
+    WITHDRAWN
+  }
+  enum ComplaintStatus {
+    OPEN
+    ACKNOWLEDGED
+    IN_PROGRESS
+    RESOLVED
+    CLOSED
+    REOPENED
+  }
+  enum Urgency {
+    LOW
+    MEDIUM
+    HIGH
+    CRITICAL
+  }
+  enum WorkOrderStatus {
+    DRAFT
+    OPEN
+    ASSIGNED
+    SCHEDULED
+    IN_PROGRESS
+    AWAITING_VERIFICATION
+    RESOLVED
+    CLOSED
+    CANCELLED
+  }
+  enum Priority {
+    LOW
+    NORMAL
+    HIGH
+    EMERGENCY
+  }
+  enum AssignmentStatus {
+    OFFERED
+    ACCEPTED
+    DECLINED
+    IN_PROGRESS
+    COMPLETED
+    CANCELLED
+  }
+  enum ProposalStatus {
+    PROPOSED
+    COUNTERED
+    ACCEPTED
+    REJECTED
+    EXPIRED
+  }
+  enum VerificationMethod {
+    RESIDENT_OTP
+    RESIDENT_CONFIRMATION
+    MANAGER_OVERRIDE
+  }
+  enum VisitorType {
+    GUEST
+    DELIVERY
+    CAB
+    SERVICE
+    VENDOR
+    STAFF
+  }
+  enum VisitorRequestStatus {
+    PENDING
+    APPROVED
+    REJECTED
+    CHECKED_IN
+    CHECKED_OUT
+    EXPIRED
+  }
+  enum BookingMode {
+    SLOT
+    FULL_DAY
+    MULTI_DAY
+  }
+  enum BookingSeriesStatus {
+    REQUESTED
+    APPROVED
+    REJECTED
+    CANCELLED
+    COMPLETED
+  }
+  enum OccurrenceStatus {
+    SCHEDULED
+    CANCELLED
+    COMPLETED
+    NO_SHOW
+  }
+  enum ChargeType {
+    BOOKING_FEE
+    DEPOSIT
+    DAMAGE
+    REFUND
+    ADJUSTMENT
+  }
+  enum ChargeStatus {
+    PENDING
+    INVOICED
+    PAID
+    REFUNDED
+    WAIVED
+  }
+  enum FinancialEventType {
+    CHARGE_RAISED
+    PAYMENT_RECEIVED
+    REFUND_ISSUED
+    DAMAGE_DEDUCTED
+    WAIVED
+  }
+  enum InvoiceType {
+    MAINTENANCE
+    AMENITY
+    PENALTY
+    MISC
+  }
+  enum InvoiceStatus {
+    DRAFT
+    ISSUED
+    PARTIALLY_PAID
+    PAID
+    OVERDUE
+    VOID
+  }
+  enum PaymentStatus {
+    INITIATED
+    SUCCEEDED
+    FAILED
+    REFUNDED
+  }
+  enum PaymentMethod {
+    UPI
+    CARD
+    NETBANKING
+    CASH
+    CHEQUE
+    BANK_TRANSFER
+  }
+  enum NoticeStatus {
+    DRAFT
+    PUBLISHED
+    EXPIRED
+    ARCHIVED
+  }
+  enum PolicyStatus {
+    DRAFT
+    ACTIVE
+    SUPERSEDED
+    ARCHIVED
+  }
+  enum NotificationChannel {
+    IN_APP
+    PUSH
+    EMAIL
+    SMS
+  }
+  enum DeliveryStatus {
+    QUEUED
+    SENT
+    DELIVERED
+    READ
+    FAILED
+  }
+  enum MediaStatus {
+    PENDING
+    READY
+    QUARANTINED
+    DELETED
+  }
+  enum StorageBucket {
+    PROFILE_AVATARS
+    WORK_EVIDENCE
+    VISITOR_MEDIA
+  }
+  enum AttachmentType {
+    EVIDENCE
+    COMPLETION_PHOTO
+    ID_PROOF
+    VISITOR_PHOTO
+    OTHER
+  }
+}
+
+' ============================================================================
+'  GENERALIZATION / REALIZATION
+' ============================================================================
+AuthUser <|.. Profile : <<extends identity>>
+
+CommunityMembership <|-- ResidentMembership
+CommunityMembership <|-- WorkerMembership
+CommunityMembership <|-- SecurityMembership
+CommunityMembership <|-- ManagerMembership
+CommunityMembership <|-- AdminMembership
+
+AuditableEvent <|-- ComplaintEvent
+AuditableEvent <|-- VisitorEvent
+AuditableEvent <|-- PaymentEvent
+AuditableEvent <|-- AmenityFinancialEvent
+AuditableEvent <|-- AuditEvent
+
+AttachmentLink <|-- WorkOrderAttachment
+AttachmentLink <|-- VisitorAttachment
+
+' Representative BaseEntity/TenantScoped generalizations (rest elided — see note)
+TenantScopedEntity <|-- Community
+TenantScopedEntity <|-- Unit
+TenantScopedEntity <|-- CommunityMembership
+TenantScopedEntity <|-- Complaint
+TenantScopedEntity <|-- WorkOrder
+TenantScopedEntity <|-- VisitorAccessRequest
+TenantScopedEntity <|-- AmenityBookingSeries
+TenantScopedEntity <|-- Invoice
+TenantScopedEntity <|-- MediaAsset
+note bottom of TenantScopedEntity
+  All remaining domain classes also specialize BaseEntity /
+  TenantScopedEntity; arrows elided for readability.
+  Global-scope (NOT tenant-scoped): Profile, AuthUser,
+  Vendor, Skill, CommunityRegistrationRequest.
+end note
+
+' Realizations
+Schedulable <|.. WorkOrder
+Schedulable <|.. WorkOrderAssignment
+Schedulable <|.. AmenityBookingOccurrence
+Schedulable <|.. WorkerAvailabilityRule
+Schedulable <|.. WorkerUnavailability
+Approvable  <|.. AccessRequest
+Approvable  <|.. VisitorAccessRequest
+Approvable  <|.. AmenityBookingSeries
+Cancellable <|.. AmenityBookingSeries
+Cancellable <|.. AmenityBookingOccurrence
+Auditable   <|.. Complaint
+Auditable   <|.. VisitorAccessRequest
+Auditable   <|.. Payment
+Auditable   <|.. Policy
+
+' ============================================================================
+'  COMPOSITION (◆ filled) / AGGREGATION (◇ hollow) / ASSOCIATION
+' ============================================================================
+' -- Foundation
+Profile "0..1" -- "0..*" CommunityRegistrationRequest : applicant
+CommunityRegistrationRequest "0..1" -- "0..1" Community : createdCommunity
+Community "1" *-- "0..*" Building : buildings
+Community "1" *-- "0..*" Unit : units
+Building "0..1" o-- "0..*" Unit : unitsInBuilding
+Community "1" *-- "0..*" CommunityMembership : memberships
+Profile "1" -- "0..*" CommunityMembership : memberOf
+Community "1" -- "0..1" AdminMembership : activeAdmin {subsets memberships}
+CommunityMembership "0..1" -- "0..*" CommunityMembership : invitedBy / invitees
+
+' -- Occupancy
+Community "1" -- "0..*" UnitResidency : residencies
+Unit "1" *-- "0..*" UnitResidency : occupancyHistory
+Profile "1" -- "0..*" UnitResidency : occupies
+CommunityMembership "0..1" -- "0..*" UnitResidency : viaMembership
+
+' -- Staffing
+Community "1" *-- "0..*" Department : departments
+CommunityMembership "0..1" -- "0..*" Department : createdBy
+Community "1" -- "0..*" StaffAssignment : staffing
+CommunityMembership "1" -- "0..1" StaffAssignment : staffProfile
+Department "0..1" -- "0..*" StaffAssignment : members
+Vendor "0..1" -- "0..*" StaffAssignment : contractedStaff
+StaffAssignment "1" - "0..*" StaffSkill
+Skill "1" - "0..*" StaffSkill
+(StaffAssignment, Skill) .. StaffSkill
+CommunityMembership "0..1" -- "0..*" StaffSkill : verifiedBy
+StaffAssignment "1" *-- "0..*" WorkerAvailabilityRule : availability
+StaffAssignment "1" *-- "0..*" WorkerUnavailability : timeOff
+
+' -- Onboarding
+Community "1" -- "0..*" ResidentInvite : invites
+Unit "1" -- "0..*" ResidentInvite : forUnit
+UnitResidency "0..1" -- "0..1" ResidentInvite : preparedResidency
+AuthUser "0..1" ..> "0..*" ResidentInvite : invitedAuthUser
+CommunityMembership "0..1" -- "0..*" ResidentInvite : issuedBy
+CommunityMembership "0..1" -- "0..*" ResidentInvite : revokedBy
+Profile "0..1" -- "0..*" ResidentInvite : acceptedBy
+Community "1" -- "0..*" AccessRequest : accessRequests
+Unit "0..1" -- "0..*" AccessRequest : requestedUnit
+Profile "0..1" -- "0..*" AccessRequest : applicant
+CommunityMembership "0..1" -- "0..*" AccessRequest : reviewedBy
+ResidentInvite "0..1" -- "0..1" AccessRequest : resultingInvite
+
+' -- Complaints & work orders
+Community "1" -- "0..*" Complaint : complaints
+Unit "0..1" -- "0..*" Complaint : raisedForUnit
+ResidentMembership "1" -- "0..*" Complaint : raisedBy
+Complaint "1" *-- "0..*" ComplaintEvent : timeline
+CommunityMembership "0..1" -- "0..*" ComplaintEvent : actor
+Community "1" -- "0..*" WorkOrder : workOrders
+Complaint "0..1" -- "0..*" WorkOrder : derivedWorkOrders
+Department "0..1" -- "0..*" WorkOrder : handledBy
+CommunityMembership "0..1" -- "0..*" WorkOrder : createdBy
+WorkOrder "1" *-- "0..*" WorkOrderAssignment : assignments
+StaffAssignment "1" -- "0..*" WorkOrderAssignment : assignedWork
+CommunityMembership "0..1" -- "0..*" WorkOrderAssignment : assignedBy
+WorkOrder "1" *-- "0..*" WorkOrderProposal : proposals
+WorkOrderAssignment "0..1" -- "0..*" WorkOrderProposal : forAssignment
+CommunityMembership "1" -- "0..*" WorkOrderProposal : proposedBy
+WorkOrderProposal "0..1" -- "0..*" WorkOrderProposal : parent / counterOffers
+WorkOrder "1" - "0..*" WorkOrderView
+StaffAssignment "1" - "0..*" WorkOrderView
+(WorkOrder, StaffAssignment) .. WorkOrderView
+WorkOrder "1" -- "0..*" WorkOrderCompletionVerification : verifications
+WorkOrderAssignment "0..1" -- "0..*" WorkOrderCompletionVerification : forAssignment
+ResidentMembership "0..1" -- "0..*" WorkOrderCompletionVerification : residentConfirmedBy
+
+' -- Visitors
+Community "1" -- "0..*" SavedVisitor : savedVisitors
+CommunityMembership "0..1" -- "0..*" SavedVisitor : createdBy
+Community "1" -- "0..*" VisitorAccessRequest : visitorRequests
+Unit "1" -- "0..*" VisitorAccessRequest : visitingUnit
+ResidentMembership "1" -- "0..*" VisitorAccessRequest : requestedBy
+SecurityMembership "0..1" -- "0..*" VisitorAccessRequest : handledBySecurity
+SavedVisitor "0..1" -- "0..*" VisitorAccessRequest : fromSavedVisitor
+CommunityMembership "0..1" -- "0..*" VisitorAccessRequest : approvedBy
+SecurityMembership "0..1" -- "0..*" VisitorAccessRequest : checkedInBy
+SecurityMembership "0..1" -- "0..*" VisitorAccessRequest : checkedOutBy
+VisitorAccessRequest "1" *-- "0..*" VisitorEvent : timeline
+CommunityMembership "0..1" -- "0..*" VisitorEvent : actor
+
+' -- Amenities & bookings
+Community "1" *-- "0..*" Amenity : amenities
+CommunityMembership "0..1" -- "0..*" Amenity : createdBy
+Amenity "1" *-- "0..*" AmenityRule : rules
+Community "1" -- "0..*" AmenityBookingSeries : bookings
+Amenity "1" -- "0..*" AmenityBookingSeries : bookedAmenity
+Unit "0..1" -- "0..*" AmenityBookingSeries : bookedForUnit
+ResidentMembership "1" -- "0..*" AmenityBookingSeries : requestedBy
+CommunityMembership "0..1" -- "0..*" AmenityBookingSeries : approvedBy
+AmenityBookingSeries "1" *-- "1..*" AmenityBookingOccurrence : occurrences
+Amenity "1" -- "0..*" AmenityBookingOccurrence : scheduledOn
+CommunityMembership "0..1" -- "0..*" AmenityBookingOccurrence : cancelledBy
+AmenityBookingSeries "1" *-- "0..*" BookingGuest : guests
+AmenityBookingOccurrence "1" *-- "0..*" AmenityBookingCharge : charges
+AmenityBookingCharge "1" *-- "0..*" AmenityFinancialEvent : ledger
+CommunityMembership "0..1" -- "0..*" AmenityFinancialEvent : actor
+
+' -- Finance
+Community "1" -- "0..*" Invoice : invoices
+Unit "1" -- "0..*" Invoice : billedUnit
+CommunityMembership "0..1" -- "0..*" Invoice : createdBy
+Invoice "1" *-- "1..*" InvoiceLineItem : lineItems
+AmenityBookingCharge "0..1" -- "0..1" InvoiceLineItem : billedCharge
+Invoice "1" -- "0..*" Payment : payments
+Profile "1" -- "0..*" Payment : payer
+CommunityMembership "0..1" -- "0..*" Payment : receivedBy
+Payment "1" *-- "0..*" PaymentEvent : timeline
+CommunityMembership "0..1" -- "0..*" PaymentEvent : actor
+
+' -- Comms, policy, audit, media
+Community "1" -- "0..*" Notice : notices
+CommunityMembership "0..1" -- "0..*" Notice : createdBy
+Community "1" -- "0..*" Policy : policies
+CommunityMembership "0..1" -- "0..*" Policy : createdBy
+Policy "1" *-- "1..*" PolicyRevision : revisions
+CommunityMembership "0..1" -- "0..*" PolicyRevision : authoredBy
+Community "1" -- "0..*" Notification : notifications
+Notification "1" *-- "0..*" NotificationDelivery : deliveries
+Profile "1" -- "0..*" NotificationDelivery : recipient
+Community "0..1" -- "0..*" AuditEvent : auditTrail
+Profile "0..1" -- "0..*" AuditEvent : actorProfile
+CommunityMembership "0..1" -- "0..*" AuditEvent : actorMembership
+
+' -- Media links (association classes) + storage bridge
+WorkOrder "1" - "0..*" WorkOrderAttachment
+MediaAsset "1" - "0..*" WorkOrderAttachment
+(WorkOrder, MediaAsset) .. WorkOrderAttachment
+VisitorAccessRequest "1" - "0..*" VisitorAttachment
+MediaAsset "1" - "0..*" VisitorAttachment
+(VisitorAccessRequest, MediaAsset) .. VisitorAttachment
+Community "0..1" -- "0..*" MediaAsset : media
+Profile "0..1" -- "0..*" MediaAsset : uploadedBy
+SupabaseStorage "1" ..> "0..*" MediaAsset : resolves via bucketId + objectPath
+
+' -- Embedded value objects (composition 1)
+Community *-- "1" PostalAddress
+Community *-- "0..1" GeoPoint
+CommunityRegistrationRequest *-- "1" PostalAddress
+
+' ============================================================================
+'  LEGEND
+' ============================================================================
+legend left
+  <b>HomeBandhu — UML Class Diagram Legend</b>
+  == Visibility ==
+  + public   - private   # protected   {static} class-scope
+  == Relationships ==
+  ──▷ generalization    ┈┈▷ realization
+  ◆── composition       ◇── aggregation
+  ──  association       ┈┈> dependency
+  ( , ) .. X  association class X
+  == Multiplicity ==
+  1   0..1   0..*   1..*
+  == Property strings ==
+  {PK} {unique} {required} {readOnly}   /derived
+  == Stereotypes ==
+  «aggregate root» «entity» «value object» «enumeration»
+  «association class» «event» «external system» «immutable»
+  == Types ==
+  DateTime≡timestamptz · Money≡numeric(12,2) · JSON≡jsonb · ids UUID
+  == Subdomain colours ==
+  navy=Identity  teal=Occupancy  gold=Staff  red=WorkOrders
+  purple=Visitors  green=Amenities/Finance  blue=Comms/Audit
+  dashed border box = external system
+  == Multi-tenancy ==
+  Every TenantScopedEntity carries communityId; Postgres RLS +
+  auth.uid()/membership predicates isolate & authorize each row.
+endlegend
+
+@enduml

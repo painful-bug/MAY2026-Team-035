@@ -6,5 +6,27 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 .env
 .env.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Python
+.venv/
+
+# Python build artefacts
+*.egg-info/
+
+# Local tool output
+graphify-out/
+.claude/worktrees/

@@ -22,6 +22,7 @@ package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
     + initializeAuth()
     + beginGoogleSignIn(next)
     + completeExternalLogin()
+    + authGeneration : Number
     + logout()
   }
   class DashboardDataBootstrap <<React component>> {
@@ -46,8 +47,12 @@ package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
 
 package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
   class AuthRouter <<router>> {
-    + google_start(next)
-    + google_callback(code)
+    + oauth_start(provider, next)
+    + oauth_callback(provider, code)
+    + password_sign_up()
+    + password_sign_in()
+    + verify_email()
+    + password_reset()
     + session()
     + refresh()
     + logout()
@@ -61,6 +66,7 @@ package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
     + mine()
     + approve()
     + reject()
+    + blacklist()
   }
   class InvitationsRouter <<router>> {
     + prepare()
@@ -94,6 +100,10 @@ package "Application services" #FFF3E0 {
   class AuthService <<service>> {
     + start_google_oauth()
     + exchange_google_code()
+    + sign_up_with_password()
+    + sign_in_with_password()
+    + verify_email_token()
+    + complete_password_recovery()
     + refresh_session()
     + get_session_context()
   }
@@ -107,6 +117,7 @@ package "Application services" #FFF3E0 {
     + withdraw()
     + approve()
     + reject()
+    + blacklist()
   }
   class InvitationService <<service>> {
     + create_invitation()
@@ -176,6 +187,22 @@ package "Infrastructure" #F3F4F6 {
     + get_user_client(access_token)
     + get_service_client()
   }
+  class RealtimeHub <<SSE fan-out>> {
+    - _subscribers : dict[community_id, set]
+    - _cursor : int
+    + start()
+    + stop()
+    + subscribe(community_id, last_event_id)
+    - _run()
+    - _dispatch(rows)
+    - _backfill(community_id, last_event_id)
+  }
+  class Event <<SSE frame>> {
+    + id : int
+    + topic : str
+    + payload : dict
+    + frame()
+  }
   class AppError <<exception>>
   class AuthenticationError
   class AuthorizationError
@@ -189,10 +216,12 @@ package "External systems and data" #FAFAFA {
     + authorize()
     + exchange_code_for_session()
     + refresh_session()
+    + sign_in_with_password()
+    + verify_otp()
   }
   database "Supabase Postgres" as Postgres {
     class "profiles / community_memberships" as MembershipTables
-    class "resident_invites / access_requests" as RegistrationTables
+    class "resident_invites / access_requests / blacklisted_residents" as RegistrationTables
     class "dashboard domain tables" as DomainTables
     class "sse_events" as SseEvents
   }
@@ -266,6 +295,175 @@ AppError <|-- AuthenticationError
 AppError <|-- AuthorizationError
 AppError <|-- ConflictError
 AppError <|-- NotFoundError
+
+' ===========================================================================
+' ADMIN DASHBOARD (backend/planning/1)
+'
+' The seven routers the admin dashboard adds, with their services and adapters.
+' Same three-layer shape as the auth/onboarding half above: a router does HTTP
+' and authorization, a service holds the rule, a repository is the only thing
+' that speaks to Postgres.
+'
+' Every write in this half goes through a SECURITY DEFINER RPC rather than a
+' PostgREST insert, because each one touches more than one table and PostgREST
+' has no client-side transaction. Reads go through security_invoker views, so
+' RLS still decides what the caller sees.
+' ===========================================================================
+package "Presentation / API — admin dashboard" #F1F5F9 {
+  class ComplaintsRouter <<router>> {
+    + patch_complaint()
+    + add_comment()
+  }
+  class DepartmentsRouter <<router>> {
+    + list_departments()
+    + create_department()
+    + update_department()
+    + delete_department()
+    + replace_staff()
+    + add_staff_member()
+    + update_staff_member()
+    + remove_staff_member()
+  }
+  class MoneyRouter <<router>> {
+    + create_invoice()
+    + record_payment()
+    + get_billing_settings()
+    + update_billing_settings()
+  }
+  class AmenitiesRouter <<router>> {
+    + list_amenities()
+    + save_amenity()
+    + request_booking()
+    + approve_booking()
+    + reject_booking()
+    + cancel_occurrences()
+    + ledger()
+    + reports()
+  }
+  class SettingsRouter <<router>> {
+    + get_settings()
+    + save_settings()
+  }
+  class NoticesRouter <<router>> {
+    + create_notice()
+  }
+  class AdminsRouter <<router>> {
+    + add_admin()
+  }
+}
+
+package "Application services — admin dashboard" #FFF3E0 {
+  class ComplaintsService <<service>>
+  class DepartmentsService <<service>>
+  class MoneyService <<service>>
+  class AmenitiesService <<service>>
+  class SettingsService <<service>>
+  class NoticesService <<service>>
+  class PeopleService <<service>>
+  class Vocabularies <<value>> {
+    + status_to_storage()
+    + department_status_to_storage()
+    + payment_method_to_storage()
+    .. maps wire strings to the ..
+    .. baseline's stored enums ..
+  }
+}
+
+package "Persistence adapters — admin dashboard" #E2E8F0 {
+  class ComplaintsRepository <<repository>>
+  class DepartmentsRepository <<repository>>
+  class MoneyRepository <<repository>>
+  class AmenitiesRepository <<repository>>
+  class SettingsRepository <<repository>>
+  class NoticesRepository <<repository>>
+  class TenancyRepository <<repository>> {
+    + get_caller_community_id()
+  }
+}
+
+package "Admin dashboard schema (0018-0023)" #FAFAFA {
+  class "views
+(security_invoker)" as AdminViews {
+    department_overview
+    department_staff_overview
+    invoice_overview
+    payment_overview
+    community_settings_overview
+    community_module_overview
+    amenity_overview
+    amenity_booking_overview
+    amenity_ledger_overview
+    amenity_ledger_summary
+    pending_access_request_overview
+  }
+  class "RPCs
+(security definer)" as AdminRpcs {
+    24 write functions
+    guarded by is_community_admin()
+  }
+  class "realtime triggers
+(0024)" as RealtimeTriggers {
+    emit_access_request_sse_event()
+    prune_sse_events()
+  }
+}
+
+ComplaintsRouter --> ComplaintsService
+DepartmentsRouter --> DepartmentsService
+MoneyRouter --> MoneyService
+AmenitiesRouter --> AmenitiesService
+SettingsRouter --> SettingsService
+NoticesRouter --> NoticesService
+AdminsRouter --> PeopleService
+
+ComplaintsService --> ComplaintsRepository
+DepartmentsService --> DepartmentsRepository
+MoneyService --> MoneyRepository
+AmenitiesService --> AmenitiesRepository
+SettingsService --> SettingsRepository
+NoticesService --> NoticesRepository
+
+ComplaintsService ..> Vocabularies
+DepartmentsService ..> Vocabularies
+MoneyService ..> Vocabularies
+AmenitiesService ..> Vocabularies
+
+ComplaintsService ..> TenancyRepository
+DepartmentsService ..> TenancyRepository
+MoneyService ..> TenancyRepository
+AmenitiesService ..> TenancyRepository
+SettingsService ..> TenancyRepository
+NoticesService ..> TenancyRepository
+
+ComplaintsRepository ..> AdminViews
+DepartmentsRepository ..> AdminViews
+MoneyRepository ..> AdminViews
+AmenitiesRepository ..> AdminViews
+SettingsRepository ..> AdminViews
+
+ComplaintsRepository ..> AdminRpcs
+DepartmentsRepository ..> AdminRpcs
+MoneyRepository ..> AdminRpcs
+AmenitiesRepository ..> AdminRpcs
+SettingsRepository ..> AdminRpcs
+
+ComplaintsRouter ..> Dependencies
+DepartmentsRouter ..> Dependencies
+MoneyRouter ..> Dependencies
+AmenitiesRouter ..> Dependencies
+SettingsRouter ..> Dependencies
+NoticesRouter ..> Dependencies
+AdminsRouter ..> Dependencies
+
+AdminRpcs ..> SseEvents : every write fires the outbox trigger
+
+' Live updates: one process-wide poller, not one per connected client.
+RealtimeTriggers ..> SseEvents : access_request.created / .decided
+RealtimeHub ..> SseEvents : single shared poll on a global cursor
+RealtimeHub ..> Event : builds
+DashboardService ..> RealtimeHub : event_stream() delegates
+AdminViews ..> RegistrationTables : pending_access_request_overview projects
+
 
 legend left
   <b>Legend</b>

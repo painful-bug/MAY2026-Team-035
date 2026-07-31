@@ -8,7 +8,9 @@ business logic never has to import FastAPI's ``HTTPException``.
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 class AppError(Exception):
@@ -73,11 +75,82 @@ class ServiceUnavailableError(AppError):
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Register JSON handlers for :class:`AppError` and uncaught exceptions."""
+    """Register JSON handlers so every error response shares one envelope.
+
+    Previously only :class:`AppError` was handled, despite the docstring claiming
+    otherwise. That left **three** wire shapes in production: our
+    ``{"error": {...}}``, FastAPI's ``{"detail": [...]}`` for request-validation
+    failures, and ``{"detail": "Internal Server Error"}`` for uncaught exceptions.
+    A client cannot parse errors generically against three shapes, so all four
+    handlers below emit the same envelope::
+
+        {"error": {"code": "not_found", "message": "..."}}
+
+    with an optional ``details`` array for field-level validation errors.
+    """
 
     @app.exception_handler(AppError)
     async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_request_validation(
+        _: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Malformed request body/query -> 422 in the standard envelope."""
+        details = [
+            {
+                "field": ".".join(str(part) for part in error.get("loc", ())),
+                "message": error.get("msg", ""),
+            }
+            for error in exc.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "request_validation_error",
+                    "message": "The request could not be validated.",
+                    "details": details,
+                }
+            },
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_http_exception(
+        _: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """Framework-raised HTTP errors (404 on an unknown path, 405, ...)."""
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": f"http_{exc.status_code}",
+                    "message": str(exc.detail),
+                }
+            },
+        )
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected(_: Request, exc: Exception) -> JSONResponse:
+        """Anything unanticipated -> 500, logged in full, opaque to the caller.
+
+        The message is deliberately fixed: an exception string can carry a table
+        name, a row value or a connection string, and this is the one handler
+        that sees errors nobody designed.
+        """
+        from app.core.logging import get_logger
+
+        get_logger(__name__).exception("Unhandled error: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "internal_error",
+                    "message": "Something went wrong. Please try again.",
+                }
+            },
         )

@@ -17,11 +17,17 @@ export default function JoinCommunityTab() {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
   const [relationship, setRelationship] = useState('tenant');
+  const [countryCode, setCountryCode] = useState('+91');
   const [phone, setPhone] = useState('');
+  const [dismissedRejected, setDismissedRejected] = useState(false);
   const search = useCommunitySearch(query);
   const mine = useQuery({ queryKey: ['my-access-requests'], queryFn: registrationApi.myAccessRequests });
   const pending = useMemo(
     () => mine.data?.items?.find((item) => item.status === 'pending'),
+    [mine.data]
+  );
+  const rejected = useMemo(
+    () => mine.data?.items?.find((item) => item.status === 'rejected'),
     [mine.data]
   );
   const request = useMutation({
@@ -35,7 +41,7 @@ export default function JoinCommunityTab() {
     request.mutate({
       community_id: selected.id,
       requested_relationship: relationship,
-      phone: phone.trim() || null,
+      phone: phone.trim() ? `${countryCode.trim()}${phone.trim()}` : null,
     });
   };
 
@@ -43,7 +49,17 @@ export default function JoinCommunityTab() {
     return (
       <div className="rounded-2xl border border-amber-100 bg-amber-50 p-6 text-sm text-amber-900">
         <p className="font-extrabold">Your request is pending</p>
-        <p className="mt-1 font-medium">{pending.community.name} will review your request. You can safely return later; this status is stored in HomeBandhu.</p>
+        <p className="mt-1 font-medium">Request to join the community has been sent to the community admin. Kindly wait for his response.</p>
+      </div>
+    );
+  }
+
+  if (rejected && !dismissedRejected) {
+    return (
+      <div className="rounded-2xl border border-rose-100 bg-rose-50 p-6 text-sm text-rose-900">
+        <p className="font-extrabold">Your application was rejected</p>
+        <p className="mt-1 font-medium">The admin rejected your application to join {rejected.community.name}.{rejected.rejection_reason ? ` ${rejected.rejection_reason}` : ''}</p>
+        <button type="button" onClick={() => setDismissedRejected(true)} className="mt-4 rounded-xl bg-white px-4 py-2 text-xs font-bold text-indigo-600">Back to community search</button>
       </div>
     );
   }
@@ -81,7 +97,10 @@ export default function JoinCommunityTab() {
             </select>
           </label>
           <label className="space-y-2 text-xs font-bold uppercase tracking-wider text-slate-500">Phone (optional)
-            <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+919812345678" className="block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
+            <span className="flex gap-2">
+              <input aria-label="Phone country code" value={countryCode} onChange={(event) => setCountryCode(event.target.value)} inputMode="tel" maxLength="4" placeholder="+91" className="block w-20 shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
+              <input aria-label="Phone number" value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" placeholder="9876543210" className="block min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
+            </span>
           </label>
         </div>
       ) : null}
