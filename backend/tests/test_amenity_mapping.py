@@ -15,7 +15,7 @@ into one approval row.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -52,10 +52,6 @@ from app.services.amenities_service import (
     _to_transaction,
     _twelve_hour,
 )
-
-_NOW = datetime(2026, 7, 30, 9, 0, tzinfo=timezone.utc)
-_TOMORROW = (_NOW + timedelta(days=1)).date()
-_YESTERDAY = (_NOW - timedelta(days=1)).date()
 
 
 def _amenity_row(**overrides: object) -> dict:
@@ -668,7 +664,7 @@ def test_a_pending_booking_offers_no_refund() -> None:
             payment_status="pending",
             deposit_paid="0.00",
             remaining_refund="0.00",
-            booking_date=str(_TOMORROW),
+            booking_date=str(date.today() + timedelta(days=1)),
         )
     )
     assert "refund" not in actions
@@ -679,7 +675,7 @@ def test_a_future_confirmed_booking_can_be_force_cancelled() -> None:
     actions = _available_actions(
         _ledger_row(
             booking_status="confirmed",
-            booking_date=str(_TOMORROW),
+            booking_date=str(date.today() + timedelta(days=1)),
             payment_status="paid",
             remaining_refund="0.00",
         )
@@ -692,7 +688,7 @@ def test_a_past_booking_cannot_be_force_cancelled() -> None:
     actions = _available_actions(
         _ledger_row(
             booking_status="confirmed",
-            booking_date=str(_YESTERDAY),
+            booking_date=str(date.today() - timedelta(days=1)),
             payment_status="paid",
             remaining_refund="0.00",
         )
@@ -704,7 +700,7 @@ def test_an_already_force_cancelled_booking_cannot_be_again() -> None:
     actions = _available_actions(
         _ledger_row(
             booking_status="confirmed",
-            booking_date=str(_TOMORROW),
+            booking_date=str(date.today() + timedelta(days=1)),
             force_cancelled=True,
             payment_status="paid",
             remaining_refund="0.00",
