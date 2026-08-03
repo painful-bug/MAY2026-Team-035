@@ -1,23 +1,23 @@
-"""Opt-in demonstrations of API contract regressions found by testing."""
+"""Opt-in regression coverage for known API contract defects."""
 
 import os
 
 import pytest
 from fastapi.testclient import TestClient
 
-_RUN_FAILURE_DEMO = (
-    os.getenv("HOMEBANDHU_MILESTONE3_FAILURE_DEMO", "").strip() == "1"
+_RUN_CONTRACT_REGRESSION = (
+    os.getenv("HOMEBANDHU_RUN_CONTRACT_REGRESSION", "").strip() == "1"
 )
 
 
 @pytest.mark.skipif(
-    not _RUN_FAILURE_DEMO,
+    not _RUN_CONTRACT_REGRESSION,
     reason=(
-        "Set HOMEBANDHU_MILESTONE3_FAILURE_DEMO=1 to reproduce the documented "
-        "OpenAPI/runtime 422 mismatch for the submission screenshot."
+        "Set HOMEBANDHU_RUN_CONTRACT_REGRESSION=1 to reproduce the known "
+        "OpenAPI/runtime 422 contract mismatch."
     ),
 )
-def test_api_016_failure_demo_documented_422_matches_runtime(
+def test_api_016_openapi_422_schema_matches_runtime(
     api_client: TestClient,
     csrf_headers: dict[str, str],
 ) -> None:
@@ -50,6 +50,6 @@ def test_api_016_failure_demo_documented_422_matches_runtime(
         f"Expected output: HTTP 422 with body keys "
         f"{sorted(expected_body_keys)}\n"
         f"Actual output: {actual_output}\n"
-        "Result: FAILED - the generated OpenAPI schema and runtime error "
-        "envelope do not match."
+        "Result: FAILED - testing identified a mismatch between the generated "
+        "OpenAPI schema and runtime error envelope."
     )
