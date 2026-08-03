@@ -17,6 +17,266 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-03 — Session 25: the same bug, fixed twice, and the merge that settled who owns it
+
+`cfe803c` landed on `main` while Session 24's work was still uncommitted. It fixes **the same defect
+Session 24 found** — the spec advertising `HTTPValidationError` for a shape this API never sends —
+and fixes it from a better place: `ErrorResponse`, `ErrorBody` and `ErrorDetail` are now pydantic
+models in `app/core/exceptions.py`, and `app/main.py` declares `responses={422: ErrorResponse}` on
+the router include. The app now states its own error contract instead of a generator asserting it on
+the app's behalf.
+
+Two people finding the same defect independently is the system working. Both fixes surviving into
+the same file would not be, so this session decides what each side owns.
+
+### `docs/openapi.yaml` — regenerated after the merge — `AUDIT`
+
+`cfe803c` regenerated the spec through the *committed* exporter, which does not know about Session
+24's annotation layer. The checked-in file therefore arrived failing three of the four submission
+conditions again:
+
+| Condition | On arrival | After regeneration |
+|---|---|---|
+| Every implemented operation documented | 70 / 70 | unchanged |
+| Description per operation | 38 / 70 | **70 / 70** |
+| User story mapping | **0** | **70 / 70** |
+| Error responses beyond the auto-422 | **1 / 70** | **70 / 70** |
+
+Not a regression anyone introduced — the annotation layer has never been committed, so there was
+nothing for their regeneration to preserve. It is an argument for committing it: until it lands, any
+teammate running the exporter silently reverts the traceability.
+
+### Schema ownership — the hand-written envelope deleted — `DERIVED`
+
+Session 24's `ERROR_SCHEMAS` defined `ErrorDetail`, `Error` and `ErrorResponse` by hand. Two of
+those names now collide with generated models, with a different inner shape (`Error` vs `ErrorBody`).
+The hand-written definitions are **deleted**. `api_annotations.py` keeps only `ERROR_SCHEMA_DOCS`,
+which contributes descriptions to the generated schemas and only where the generator produced none,
+so an upstream `Field(description=...)` always wins.
+
+*Why deletion and not reconciliation:* a schema described in two places is the exact failure this
+whole exporter exists to prevent. The code that emits the envelope should define its shape. Prose is
+the only thing a pydantic model cannot carry, so prose is the only thing contributed. If the models
+are renamed or removed upstream, the enrichment no-ops instead of resurrecting a stale definition.
+
+### Error responses — union, not replacement — `DERIVED`
+
+Session 24's pass **deleted** any 4xx/5xx an operation declared that the annotation table had not
+derived. Against `cfe803c` that would have stripped the blanket 422 off 37 operations — silently
+narrowing a claim the application had just deliberately made. The rule is now a union: the derived
+codes plus whatever the app declares, all rendered through the same `components/responses` entry so
+the document reads consistently regardless of origin.
+
+**The cost is stated rather than hidden.** 422 now appears on 69 operations, not the 33 where a
+reachable validation error was traced. That over-claims on routes with no body and no typed path
+parameter. Over-documenting an error is the cheaper mistake than an exporter overruling a router it
+does not own — but narrowing it is the auth workstream's call to make, and is theirs to take.
+
+### `x-no-user-story` — restated as a verdict about what the operation *is* — `PO`
+
+PO ruled that an operation tracing to no story must say `Not covered by user story` and then
+classify what sort of API it is. The extension changed from a bare reason string to:
+
+```yaml
+x-no-user-story:
+  status: Not covered by user story
+  api-type: Functional
+  rationale: Authentication and session management. Nobody writes a user story about
+    signing in until it breaks.
+```
+
+Five types, defined in `api_annotations.py`: `Feature`, `Functional`, `Configuration`,
+`Master data`, `Non-functional`. Across the 36 untraced operations: Functional 16, **Feature 13**,
+Configuration 3, Master data 3, Non-functional 1.
+
+*Why this is worth more than the reason string it replaced:* four of the five types are plumbing,
+and plumbing having no story is expected. `Feature` is not. Thirteen operations are user-facing
+capability with nothing written about them — which is a gap in the **story set**, not in the API,
+and the old free-text reasons buried that distinction in prose. §14.6 now carries the same column.
+
+### `docs/API.md` §1.4, §14.6 — `DERIVED`
+
+§1.4 said the envelope "is now in `openapi.yaml` as `ErrorResponse`" without saying where it comes
+from; after `cfe803c` that reads as though this workstream owns a schema it does not. Now records
+that the three models live in `app/core/exceptions.py` and that only the prose and the per-operation
+code lists come from `api_annotations.py`.
+
+§14.6 gains an **API type** column matching the extension, and a note that the 13 `Feature` rows are
+the finding — the other 23 are plumbing behaving as expected.
+
+### Verified
+
+`pytest -q` → 311 passed, including `cfe803c`'s API-016 contract test, which asserts the spec's 422
+matches what the runtime emits and passes against the regenerated file. `export_openapi.py --check`
+clean, `openapi_spec_validator` OK, `ruff check scripts/` clean, coverage guard clean — the four new
+commits added tests, not routes, so the table needed no new rows.
+
+### Not changed, deliberately
+
+No application code, no routers, no tests, no migrations. `cfe803c`'s 422 declaration is left as
+written. The two Session 23 dashboard findings remain open — documenting an operation's errors does
+not fix a projection that drops fields.
+
+---
+
+## 2026-08-02 — Session 24: the spec is made to carry what the prose already claimed
+
+PO asked whether the four submission conditions — complete API documentation, user story mapping, a
+description of each endpoint, and error handling details — were expressible in Swagger, and if so to
+make `openapi.yaml` satisfy them. They are: descriptions and `responses` are core OpenAPI, and `x-`
+specification extensions are the standard's own mechanism for exactly this kind of traceability. An
+audit first, then the work.
+
+### `docs/openapi.yaml` — regenerated, +2,000 lines — `PO`
+
+Four conditions, measured before and after:
+
+| Condition | Before | After |
+|---|---|---|
+| Every implemented operation documented | 70 / 70 | unchanged |
+| Description per operation | 38 / 70 | **70 / 70** |
+| User story mapping | **0** occurrences | **70 / 70** carry `x-user-stories` |
+| Error responses beyond the auto-422 | **1 / 70** | **70 / 70** |
+
+### `backend/scripts/api_annotations.py` — **new** — `DERIVED`
+
+A table keyed on `(method, path)` supplying the three things FastAPI cannot infer. *Why a table and
+not `responses=` on each route:* 33 of the 70 operations live in the other workstream's routers, and
+editing those is not ours to do. One table annotates all 70 the same way instead of leaving the
+surface half-decorated.
+
+The cost of a side table is drift, so the exporter refuses to build when a key does not match a live
+operation, when a live operation has no entry, or when an entry declares neither stories nor a
+reason for having none. Adding an endpoint now fails the build until somebody gives it a verdict.
+That guard was tested by renaming a key and confirming both halves of the mismatch are reported.
+
+### The error envelope — `AUDIT`
+
+**The one error shape the spec did document was the wrong shape.** 59 operations declared a 422
+returning FastAPI's stock `HTTPValidationError` — `{"detail": [...]}` — a response this API has
+never sent, because `app/core/exceptions.py` replaces all four default handlers with one
+`{"error": {code, message, details}}` envelope. Any client generated from that spec would have
+failed to parse every error it received. The correct envelope is now `ErrorResponse`, seven reusable
+`components/responses` reference it, and `HTTPValidationError` was **removed** rather than left
+beside the truth.
+
+Which codes each operation declares was derived by walking every handler into its services and
+repositories and collecting the reachable `raise` sites, then verified by hand. Two corrections came
+out of that verification, both recorded in the table: `POST /auth/logout` cannot return 503 (it
+catches the provider error and clears the cookies anyway — a logout that fails because Supabase
+timed out would be worse than an unrevoked token), and the amenity CRUD routes *can* return 404,
+which the first pass missed because those handlers pass their service function to
+`run_in_threadpool` as an argument rather than calling it.
+
+### `docs/API.md` §14.6 — count corrected, 33 → 36 — `AUDIT`
+
+**The matrix said 33 of 70 operations serve no story. The right number is 36.** The group table
+always summed to 36; the total had been reached by subtracting the endpoints §14.3–§14.5 name, which
+assumed every operation not listed as unmapped was mapped. Three were neither — the
+`/dashboard/amenities` catalogue writes — and they now have their own row.
+
+Worth recording *how* it was found. The error survived a hand review last session and did not
+survive machine-checking the same claim: the coverage guard demands a verdict per operation, and
+three operations had none. This is the argument for the guard in one paragraph.
+
+### `docs/API.md` §1.4, §1.5, §14 header, preamble — `DERIVED`
+
+§1.4 now states that the envelope is in the spec and what was there before. §1.5 explains why `400`,
+`405` and `429` appear in its table but in no operation — nothing raises `AppError` bare, `405`
+comes from the router before any operation is reached, and `429` is not implemented — because
+declaring unreachable responses is the same failure in the other direction. The preamble's claim
+that the spec covers *shapes* and this file covers *status-code semantics and error codes* was true
+and is now false; it has been rewritten to say the spec is authoritative for anything a client must
+agree with mechanically, and this file for what a maintainer needs.
+
+### Not changed, deliberately
+
+The four findings from Session 23 stand unfixed: three live in `dashboard_service.py` and
+`dashboard_repository.py`, which belong to the dashboard workstream. Documenting an endpoint's error
+responses does not fix a projection that drops fields, and the annotation pass was careful not to
+paper over it — `PATCH /complaints/{id}` says in its `x-user-stories` role for US-2.8 that assignee
+and due date are stored *and dropped before a resident sees them*.
+
+`backend/pyproject.toml` still declares `requires-python = ">=3.10"`, which is false — the code needs
+3.11+ for `datetime.UTC`, and a 3.10 virtualenv cannot import the app at all. **Not corrected here**
+because `uv.lock` was resolved against `>=3.10` and was regenerated upstream two commits ago;
+changing the floor without regenerating the lock with uv 0.11.32 would break teammates' `uv sync`.
+Flagged for whoever owns the lockfile.
+
+---
+
+## 2026-07-31 — Session 23: the user stories arrive, and are traced to the API
+
+PO supplied the team's `user-identification.txt` and `user-stories.txt` — the requirements this
+backend has been built against for fifteen sessions without ever having them in the repo — and asked
+for the endpoints to be mapped to them.
+
+### `docs/product/` — **new**, 3 files — `PO`
+
+`USER_IDENTIFICATION.md` and `USER_STORIES.md` are the team's two documents transcribed verbatim,
+plus a `README.md`. Stable ids (`UT-1`…`UT-3`, `US-1.1`…`US-3.6`) were added because a matrix needs
+something to point at; no wording was changed and nothing was dropped.
+
+*Why a subfolder rather than two more files in `docs/`:* everything else in `docs/` is a design
+artifact we wrote and may revise. These are **inputs**, owned by the team, and the distinction should
+survive someone skimming a directory listing. The README says so explicitly, and says to replace
+rather than edit them if the team revises the originals.
+
+Two additions that are ours and are marked as such: a table mapping the three user tiers onto the
+implemented role model, and a per-story verdict line. The tier table exists because the mapping is
+not one-to-one and the mismatch matters — **a staff member has no login**, so every story written in
+the voice of a Security Manager is unreachable by that person by construction, not because an
+endpoint is missing.
+
+### `docs/API.md` §14 — **new section**, traceability matrix — `PO`
+
+Every one of the 24 stories against the 70 operations, in both directions, with the shortfall named
+in each partial row. Coverage: **3 served, 12 partial, 9 none**. §14 pushed the changelog to §15;
+the one in-document reference to the range `§7–§14` was updated.
+
+*Why in `API.md` rather than its own file:* PO asked for it in the non-YAML API documentation, and it
+belongs there for a better reason than compliance — a matrix kept next to the endpoint prose is
+updated by the person changing the endpoint. Kept elsewhere it becomes a snapshot of one afternoon.
+The standing rule ("an endpoint added, changed or removed updates the matrix in the same commit") is
+recorded at the top of the section for the same reason.
+
+**Four things surfaced that writing the matrix found and reading any single file would not.** — `AUDIT`
+
+1. **Our writes and their reads disagree about four fields.** `PATCH /complaints/{id}` writes
+   `assignee`, `due_at` and `progress_percent`; `dashboard_service.py:_complaints()` drops the first
+   two and `dashboard_repository.py:66` fetches the third only in its `legacy` branch, so on the path
+   that runs against our migrations **every complaint reports progress 0 or 100**. `POST /notices`
+   loses `category` and `urgency` the same way (already recorded in §12.1). Each is one line, none is
+   ours to change, and together they are not four oversights but one missing convention: nothing
+   asserts that a field a write endpoint accepts is a field the snapshot returns.
+2. **`complaints` has no priority column** — not in the baseline, not in `0020` — yet
+   `dashboard_service.py:86` reads `row["priority"]`, so `urgency` is permanently `Medium`. US-2.5
+   asks for a priority selector; it has nowhere to write.
+3. **`PATCH /residents/{id}` should come back.** It was removed on 2026-07-30 because no screen
+   called it. Correct against the frontend, wrong against US-1.4, which is a direct interviewee
+   quote: *"updating resident details such as email addresses is not sufficiently streamlined."*
+   The frontend wiring audit is a good test of what the product *does*; it is not a test of what the
+   users *asked for*, and this is the first time the two have disagreed.
+4. **Four resident stories reduce to one missing decision.** US-2.1, US-2.4, US-2.7 and US-2.3
+   downstream all mean *"tell the resident without making them open the app"*. There is no push
+   transport of any kind — no device token table, no FCM/APNs registration, no web-push
+   subscription — and SSE requires an open browser, which is the precise thing the interviewees said
+   they should not need. No amount of further endpoint work closes any of the four.
+
+*One thing the matrix found in our favour, recorded because the rest of this entry is deficits:*
+**US-3.1 is most of the way built and nobody planned it.** `visitor_requests` already carries
+`pass_hash`, `valid_from` and `valid_until`, and `0018` added
+`community_settings.visitor_code_ttl_minutes` — a scheduled, time-boxed, hashed access code, which
+is four of the five things that story asks for. The fifth, one code admitting many guests, is the only real schema change.
+
+*Not done, and deliberately:* none of the four findings were fixed. Three live in
+`dashboard_service.py` / `dashboard_repository.py`, which belong to the dashboard workstream, and the
+fourth is a migration whose column nobody has agreed the name of. §14.7 lists all eight follow-ups
+ordered by cost against value; the first five are one-line or one-column changes that close or
+half-close five stories.
+
+---
+
 ## 2026-07-31 — Session 22: consolidating onto `backend/admin_dashboard`
 
 The whole of `backend/planning/1` was fast-forwarded onto `backend/admin_dashboard`, which sat at
