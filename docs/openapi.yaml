@@ -1679,6 +1679,50 @@ components:
       - token_hash
       title: EmailTokenRequest
       type: object
+    ErrorBody:
+      description: Machine-readable error information returned by the API.
+      properties:
+        code:
+          title: Code
+          type: string
+        details:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ErrorDetail'
+            type: array
+          - type: 'null'
+          title: Details
+        message:
+          title: Message
+          type: string
+      required:
+      - code
+      - message
+      title: ErrorBody
+      type: object
+    ErrorDetail:
+      description: Field-level detail included for request-validation failures.
+      properties:
+        field:
+          title: Field
+          type: string
+        message:
+          title: Message
+          type: string
+      required:
+      - field
+      - message
+      title: ErrorDetail
+      type: object
+    ErrorResponse:
+      description: Standard error response envelope.
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      required:
+      - error
+      title: ErrorResponse
+      type: object
     ForceCancelRequest:
       properties:
         reason:
@@ -1759,15 +1803,6 @@ components:
       required:
       - name
       title: GuestInput
-      type: object
-    HTTPValidationError:
-      properties:
-        detail:
-          items:
-            $ref: '#/components/schemas/ValidationError'
-          title: Detail
-          type: array
-      title: HTTPValidationError
       type: object
     InvitationCreated:
       properties:
@@ -3722,32 +3757,6 @@ components:
           title: Status
       title: UpdateStaffMemberRequest
       type: object
-    ValidationError:
-      properties:
-        ctx:
-          title: Context
-          type: object
-        input:
-          title: Input
-        loc:
-          items:
-            anyOf:
-            - type: string
-            - type: integer
-          title: Location
-          type: array
-        msg:
-          title: Message
-          type: string
-        type:
-          title: Error Type
-          type: string
-      required:
-      - loc
-      - msg
-      - type
-      title: ValidationError
-      type: object
   securitySchemes:
     HTTPBearer:
       scheme: bearer
@@ -3778,8 +3787,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Create Access Request
@@ -3795,6 +3804,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccessRequestListResponse'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: My Access Requests
@@ -3821,8 +3836,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Withdraw Access Request
@@ -3860,8 +3875,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Admin Access Requests
@@ -3897,8 +3912,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Approve Access Request
@@ -3934,8 +3949,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Blacklist Access Request
@@ -3971,8 +3986,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Reject Access Request
@@ -3998,8 +4013,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Create Invitation
@@ -4057,8 +4072,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Promote a member to administrator
@@ -4130,8 +4145,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: List booking requests awaiting a decision
@@ -4170,8 +4185,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Block a slot administratively
@@ -4268,8 +4283,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: List an amenity's bookings
@@ -4316,8 +4331,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Create a booking on a resident's behalf
@@ -4374,8 +4389,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Request a booking (resident)
@@ -4455,8 +4470,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: List an amenity's financial transactions
@@ -4491,8 +4506,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Amenity ledger totals
@@ -4531,8 +4546,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Cancel selected booking days
@@ -4573,8 +4588,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Add a charge to a booking
@@ -4617,8 +4632,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Deduct damage from a booking deposit
@@ -4661,8 +4676,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Force-cancel a booking
@@ -4703,8 +4718,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Record a payment against a booking
@@ -4747,8 +4762,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Refund a booking deposit
@@ -4783,8 +4798,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Approve a booking request
@@ -4825,8 +4840,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Reject a booking request
@@ -4913,8 +4928,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Amenity activity report
@@ -4930,6 +4945,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Csrf
       tags:
       - auth
@@ -4953,8 +4974,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Resend Email
       tags:
       - auth
@@ -4978,8 +4999,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Verify Email
       tags:
       - auth
@@ -5005,8 +5026,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Google Callback
       tags:
       - auth
@@ -5032,8 +5053,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Google Start
       tags:
       - auth
@@ -5047,6 +5068,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Logout
       tags:
       - auth
@@ -5059,6 +5086,12 @@ paths:
             application/json:
               schema: {}
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Auth Methods
       tags:
       - auth
@@ -5090,8 +5123,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Oauth Callback
       tags:
       - auth
@@ -5123,8 +5156,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Oauth Start
       tags:
       - auth
@@ -5148,8 +5181,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Password Reset Complete
       tags:
       - auth
@@ -5173,8 +5206,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Password Reset Request
       tags:
       - auth
@@ -5198,8 +5231,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Password Reset Verify
       tags:
       - auth
@@ -5223,8 +5256,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Password Sign In
       tags:
       - auth
@@ -5248,8 +5281,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Password Sign Up
       tags:
       - auth
@@ -5263,6 +5296,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Refresh
       tags:
       - auth
@@ -5276,6 +5315,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/SessionContext'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Session
@@ -5301,6 +5346,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/BillingSettings'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Get billing settings
@@ -5340,8 +5391,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Update billing settings
@@ -5357,6 +5408,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommunityUnitListResponse'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: List Admin Units
@@ -5395,8 +5452,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Search Communities
@@ -5437,8 +5494,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Update a complaint
@@ -5472,8 +5529,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Comment on a complaint
@@ -5501,8 +5558,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Create Amenity
@@ -5531,8 +5588,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Delete Amenity
@@ -5566,8 +5623,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Update Amenity
@@ -5599,8 +5656,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Dashboard Events
@@ -5617,6 +5674,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/DashboardSnapshot'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Get Dashboard Snapshot
@@ -5685,8 +5748,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: List departments
@@ -5720,8 +5783,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Create a department
@@ -5763,8 +5826,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Delete a department
@@ -5791,8 +5854,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Get a department
@@ -5841,8 +5904,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Update a department
@@ -5881,8 +5944,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Add a staff member
@@ -5932,8 +5995,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Replace a department's roster
@@ -5974,8 +6037,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Remove a staff member
@@ -6021,8 +6084,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Update a staff member
@@ -6048,8 +6111,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       summary: Prepare Invitation
       tags:
       - invitations
@@ -6073,8 +6136,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Redeem Invitation
@@ -6115,8 +6178,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Issue an invoice
@@ -6166,8 +6229,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Record a payment
@@ -6221,8 +6284,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Post a notice
@@ -6248,8 +6311,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Create Community
@@ -6273,6 +6336,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/SettingsSnapshot'
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: The community settings snapshot
@@ -6303,8 +6372,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Request validation or business-rule validation error.
       security:
       - HTTPBearer: []
       summary: Patch the community preferences

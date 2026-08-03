@@ -10,7 +10,29 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+class ErrorDetail(BaseModel):
+    """Field-level detail included for request-validation failures."""
+
+    field: str
+    message: str
+
+
+class ErrorBody(BaseModel):
+    """Machine-readable error information returned by the API."""
+
+    code: str
+    message: str
+    details: list[ErrorDetail] | None = None
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response envelope."""
+
+    error: ErrorBody
 
 
 class AppError(Exception):

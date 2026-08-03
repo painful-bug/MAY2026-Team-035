@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_router
 from app.config import get_settings
-from app.core.exceptions import register_exception_handlers
+from app.core.exceptions import ErrorResponse, register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.realtime import hub
 
@@ -63,7 +63,9 @@ def create_app() -> FastAPI:
             response.headers["Cache-Control"] = "no-store, private"
             response.headers["Pragma"] = "no-cache"
             response.headers["Vary"] = "Cookie, Origin"
-        elif request.cookies.get("__Host-hb_access") or request.cookies.get("hb_access"):
+        elif request.cookies.get("__Host-hb_access") or request.cookies.get(
+            "hb_access"
+        ):
             response.headers.setdefault("Cache-Control", "no-store, private")
             response.headers.setdefault("Vary", "Cookie, Origin")
         return response
@@ -73,7 +75,16 @@ def create_app() -> FastAPI:
         """Liveness probe."""
         return {"status": "ok", "env": settings.env}
 
-    app.include_router(api_router, prefix="/api/v1")
+    app.include_router(
+        api_router,
+        prefix="/api/v1",
+        responses={
+            422: {
+                "model": ErrorResponse,
+                "description": "Request validation or business-rule validation error.",
+            }
+        },
+    )
     return app
 
 

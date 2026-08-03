@@ -1,22 +1,8 @@
-"""Opt-in check for an API contract inconsistency identified during testing."""
+"""Check API documentation and runtime responses for contract consistency."""
 
-import os
-
-import pytest
 from fastapi.testclient import TestClient
 
-_RUN_CONTRACT_CHECK = (
-    os.getenv("HOMEBANDHU_RUN_CONTRACT_CHECK", "").strip() == "1"
-)
 
-
-@pytest.mark.skipif(
-    not _RUN_CONTRACT_CHECK,
-    reason=(
-        "Set HOMEBANDHU_RUN_CONTRACT_CHECK=1 to reproduce the known "
-        "OpenAPI/runtime 422 contract mismatch before applying the fix."
-    ),
-)
 def test_api_016_openapi_422_schema_matches_runtime(
     api_client: TestClient,
     csrf_headers: dict[str, str],
@@ -50,6 +36,6 @@ def test_api_016_openapi_422_schema_matches_runtime(
         f"Expected output: HTTP 422 with body keys "
         f"{sorted(expected_body_keys)}\n"
         f"Actual output: {actual_output}\n"
-        "Result: FAILED - initial testing identified a mismatch between the "
-        "generated OpenAPI schema and runtime error envelope."
+        "Result: FAILED - the generated OpenAPI schema and runtime error "
+        "envelope do not match."
     )
