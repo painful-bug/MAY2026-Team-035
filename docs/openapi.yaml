@@ -8,6 +8,91 @@
 # Verify it is current with `--check`. The prose companion, with the reasoning
 # behind each endpoint and its status codes, is docs/API.md.
 components:
+  responses:
+    Conflict:
+      content:
+        application/json:
+          example:
+            error:
+              code: conflict
+              message: That member is already an administrator.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: 'The request is well-formed but disagrees with current state: a duplicate, or a transition
+        the resource''s status does not allow. Retrying without changing something will fail identically.'
+    Forbidden:
+      content:
+        application/json:
+          example:
+            error:
+              code: community_role_required
+              message: You do not have permission for this community action.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: 'Authenticated, but not permitted. Three distinct causes share this status: the community
+        role is insufficient (`community_role_required`), there is no active membership (`active_membership_required`),
+        or the CSRF pair failed (`csrf_invalid`, `csrf_origin_invalid`). Retrying helps only in the last
+        case, and only after re-fetching `GET /auth/csrf`.'
+    InternalServerError:
+      content:
+        application/json:
+          example:
+            error:
+              code: internal_error
+              message: An unexpected error occurred.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: 'An unhandled exception. Logged in full server-side and deliberately opaque here: no
+        message, stack or query ever reaches the caller.'
+    NotFound:
+      content:
+        application/json:
+          example:
+            error:
+              code: not_found
+              message: Department not found.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: The addressed resource does not exist, or is not visible to this caller -- the two
+        are deliberately indistinguishable, so that a 404 never confirms the existence of another community's
+        data.
+    ServiceUnavailable:
+      content:
+        application/json:
+          example:
+            error:
+              code: service_unavailable
+              message: The authentication provider did not respond in time. Please try again.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: A dependency this call needs -- Supabase Auth, or a Postgres object that has not been
+        provisioned -- did not answer. Transient; retry with backoff.
+    Unauthorized:
+      content:
+        application/json:
+          example:
+            error:
+              code: authentication_error
+              message: Missing bearer token.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: No credentials, or credentials that no longer verify. The caller should refresh the
+        session and retry once, then sign in again.
+    UnprocessableEntity:
+      content:
+        application/json:
+          example:
+            error:
+              code: request_validation_error
+              details:
+              - field: body.email
+                message: value is not a valid email address
+              message: The request could not be validated.
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+      description: The request could not be validated. `request_validation_error` is a schema failure
+        and carries `details[]`; every other code here is a business rule that a well-typed request can
+        still break.
   schemas:
     AccessRequestCommunity:
       properties:
@@ -1683,6 +1768,8 @@ components:
       description: Machine-readable error information returned by the API.
       properties:
         code:
+          description: Stable, machine-readable identifier. Clients should branch on this, never on `message`,
+            which is prose and may be reworded.
           title: Code
           type: string
         details:
@@ -1691,8 +1778,10 @@ components:
               $ref: '#/components/schemas/ErrorDetail'
             type: array
           - type: 'null'
+          description: Field-level failures. Only `request_validation_error` sets this.
           title: Details
         message:
+          description: Human-readable and safe to show to the caller.
           title: Message
           type: string
       required:
@@ -1704,9 +1793,11 @@ components:
       description: Field-level detail included for request-validation failures.
       properties:
         field:
+          description: Dotted path to the offending field, e.g. `body.email`.
           title: Field
           type: string
         message:
+          description: What is wrong with it.
           title: Message
           type: string
       required:
@@ -3762,6 +3853,37 @@ components:
       scheme: bearer
       type: http
 info:
+  contact:
+    name: HomeBandhu backend workstream, Team 035
+    url: https://github.com/painful-bug/MAY2026-Team-035
+  description: "Admin-dashboard backend for HomeBandhu, a FastAPI service over Supabase.\n\n## Reading\
+    \ this document\n\nEvery operation carries four things beyond its request and response schemas:\n\n\
+    * a **summary** and a **description** saying what it does and what is\n  surprising about it;\n* the\
+    \ **error responses it can actually return**, derived by walking each\n  handler into its services\
+    \ and repositories rather than assumed;\n* **`x-user-stories`**, tracing the operation back to the\
+    \ team's requirements;\n* **`security`**, or its deliberate absence on the pre-authentication routes.\n\
+    \n## Errors\n\nEvery failure returns one envelope, `ErrorResponse`:\n\n```json\n{\"error\": {\"code\"\
+    : \"not_found\", \"message\": \"Department not found.\", \"details\": []}}\n```\n\nBranch on `error.code`,\
+    \ never on `error.message`, which is prose and may be\nreworded. `details[]` appears only on `request_validation_error`\
+    \ and lists the\noffending fields. This shape is emitted by all four handlers registered in\n`app/core/exceptions.py`,\
+    \ including the catch-all, so a client needs exactly one\nerror path. Note that this is **not** FastAPI's\
+    \ stock `{\"detail\": [...]}`: the\ndefault handlers are replaced.\n\n`404` is returned both for a\
+    \ resource that does not exist and for one the caller\nmay not see. That ambiguity is deliberate --\
+    \ a 404 must never confirm that\nanother community's data exists.\n\n## User stories\n\n`x-user-stories`\
+    \ links an operation to the stories in\n`docs/product/USER_STORIES.md`, with the role it plays in\
+    \ each and whether that\nstory is `served` or `partial`.\n\nAn operation that serves none carries\
+    \ `x-no-user-story` instead, which states\n`Not covered by user story` and then classifies what the\
+    \ operation is --\n`Feature`, `Functional`, `Configuration`, `Master data` or `Non-functional` --\n\
+    with the reason. Absence of a story is therefore a recorded verdict rather than\nan omission, and\
+    \ says what the operation *is* instead of only what it is not.\n\n`docs/API.md` section 14 is the\
+    \ prose matrix, and is the only one of the two\nthat also names the stories **nothing** serves yet\
+    \ -- a spec can only describe\nendpoints that exist.\n\n## Scope\n\nThis describes the admin-dashboard\
+    \ build. `docs/product/USER_IDENTIFICATION.md`\nrecords one consequence worth knowing before reading\
+    \ the traceability: staff\nhave no login, so every story written for a Facility or Security Manager\
+    \ is\neither an administrator acting on their behalf or has no home here.\n"
+  license:
+    identifier: LicenseRef-coursework
+    name: UNLICENSED
   summary: Backend for the HomeBandhu residential community platform.
   title: HomeBandhu API
   version: 0.1.0
@@ -3769,6 +3891,13 @@ openapi: 3.1.0
 paths:
   /api/v1/access-requests:
     post:
+      description: 'Apply to join a community. Answers **201**.
+
+
+        Four distinct refusals, deliberately separated: an unknown community is **404**; already being
+        a member, or already having a request pending, is **409**; a rejected application inside the cool-off
+        window is **409**; and a unit that belongs to a different community is **422**, because the request
+        is coherent but the pairing is not.'
       operationId: create_access_request_api_v1_access_requests_post
       requestBody:
         content:
@@ -3783,19 +3912,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccessRequestResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Create Access Request
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/access-requests/mine:
     get:
+      description: 'List the caller''s own join requests and their current status.
+
+
+        Scoped to the caller by identity rather than by a parameter, so there is nothing here to tamper
+        with.'
       operationId: my_access_requests_api_v1_access_requests_mine_get
       responses:
         '200':
@@ -3804,22 +3950,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccessRequestListResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: My Access Requests
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/access-requests/{request_id}/withdraw:
     post:
+      description: 'Withdraw a pending request.
+
+
+        Only a request still pending can be withdrawn; anything already decided is **409**. Withdrawal
+        is a status transition, not a deletion, so the community''s audit trail keeps the attempt.'
       operationId: withdraw_access_request_api_v1_access_requests__request_id__withdraw_post
       parameters:
-      - in: path
+      - description: Access-request id.
+        in: path
         name: request_id
         required: true
         schema:
@@ -3832,22 +3990,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccessRequestResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Withdraw Access Request
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/admin/access-requests:
     get:
+      description: 'The administrator''s review queue for the caller''s community.
+
+
+        `status` defaults to `pending`, which is the screen''s default view; `limit` is capped at 100.
+        Both are validated by pattern and range, so a bad filter is **422** rather than a silent empty
+        page.'
       operationId: admin_access_requests_api_v1_admin_access_requests_get
       parameters:
-      - in: query
+      - description: 'Queue to show: `pending`, `approved`, `rejected` or `withdrawn`. Anything else is
+          422 rather than an empty page.'
+        in: query
         name: status
         required: false
         schema:
@@ -3855,7 +4031,8 @@ paths:
           pattern: ^(pending|approved|rejected|withdrawn)$
           title: Status
           type: string
-      - in: query
+      - description: Maximum rows to return (1-100).
+        in: query
         name: limit
         required: false
         schema:
@@ -3871,22 +4048,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccessRequestListResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Admin Access Requests
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/admin/access-requests/{request_id}/approve:
     post:
+      description: 'Approve a join request, creating the membership.
+
+
+        Approving a request that is not pending is **409** -- which is what two administrators clicking
+        the same row a second apart will get, and the reason the second one is not silently ignored.'
       operationId: approve_access_request_api_v1_admin_access_requests__request_id__approve_post
       parameters:
-      - in: path
+      - description: Access-request id.
+        in: path
         name: request_id
         required: true
         schema:
@@ -3908,22 +4099,40 @@ paths:
                   Post
                 type: object
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Approve Access Request
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/admin/access-requests/{request_id}/blacklist:
     post:
+      description: 'Reject a request and bar the applicant from re-applying.
+
+
+        The difference from `reject` is only the cool-off: a blacklisted applicant has no expiry to wait
+        out.'
       operationId: blacklist_access_request_api_v1_admin_access_requests__request_id__blacklist_post
       parameters:
-      - in: path
+      - description: Access-request id.
+        in: path
         name: request_id
         required: true
         schema:
@@ -3945,22 +4154,40 @@ paths:
                   Post
                 type: object
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Blacklist Access Request
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/admin/access-requests/{request_id}/reject:
     post:
+      description: 'Reject a join request, with a reason recorded against it.
+
+
+        The applicant may apply again after the cool-off window; see `POST /access-requests`, which enforces
+        it.'
       operationId: reject_access_request_api_v1_admin_access_requests__request_id__reject_post
       parameters:
-      - in: path
+      - description: Access-request id.
+        in: path
         name: request_id
         required: true
         schema:
@@ -3982,19 +4209,36 @@ paths:
                   Post
                 type: object
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Reject Access Request
       tags:
       - access requests
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/admin/invitations:
     post:
+      description: 'Issue a resident invitation, returning its code and link.
+
+
+        The invite is bound to the email address given here. Redemption later checks that the Google identity
+        signing in matches it, which is why the address is required rather than optional.'
       operationId: create_invitation_api_v1_admin_invitations_post
       requestBody:
         content:
@@ -4009,17 +4253,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/InvitationCreated'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Create Invitation
       tags:
       - invitations
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/admins:
     post:
       description: 'Give an existing community member the ``admin`` role.
@@ -4068,17 +4320,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/AdminSummary'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Promote a member to administrator
       tags:
       - people
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Promotes an existing member, so the directory reflects who is actually in charge
+        title: Verified management contact directory
   /api/v1/amenities/{amenity_id}/approvals:
     get:
       description: 'The approvals tab -- **one row per request, not per day**.
@@ -4102,7 +4365,8 @@ paths:
         (DECISIONS_NEEDED E18).'
       operationId: list_approvals_api_v1_amenities__amenity_id__approvals_get
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -4117,7 +4381,8 @@ paths:
           description: pending | approved | rejected | cancelled | all
           title: Status
           type: string
-      - in: query
+      - description: 1-based page number.
+        in: query
         name: page
         required: false
         schema:
@@ -4125,7 +4390,8 @@ paths:
           minimum: 1
           title: Page
           type: integer
-      - in: query
+      - description: Rows per page. The maximum differs per endpoint; see the schema.
+        in: query
         name: pageSize
         required: false
         schema:
@@ -4141,17 +4407,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_ApprovalRequest_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: List booking requests awaiting a decision
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.5
+        role: The approval queue
+        title: Simplified booking management workflow
   /api/v1/amenities/{amenity_id}/blocks:
     post:
       description: 'Reserve a slot for maintenance or an association event.
@@ -4162,7 +4437,8 @@ paths:
         repairs is closed to everybody. Carries no flat and no charges.'
       operationId: block_slot_api_v1_amenities__amenity_id__blocks_post
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -4181,17 +4457,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/BookingSummary'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Block a slot administratively
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.5
+        role: Takes a slot out of circulation without inventing a fake booking
+        title: Simplified booking management workflow
   /api/v1/amenities/{amenity_id}/bookings:
     get:
       description: 'The day timeline.
@@ -4211,13 +4496,15 @@ paths:
         stored as ``approved`` -- that is a fact about the clock, not about the row.'
       operationId: list_amenity_bookings_api_v1_amenities__amenity_id__bookings_get
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
           title: Amenity Id
           type: string
-      - in: query
+      - description: Restrict to a single day (`YYYY-MM-DD`). Mutually exclusive with `from`/`to`.
+        in: query
         name: date
         required: false
         schema:
@@ -4226,7 +4513,8 @@ paths:
             type: string
           - type: 'null'
           title: Date
-      - in: query
+      - description: Start of an inclusive date range (`YYYY-MM-DD`).
+        in: query
         name: from
         required: false
         schema:
@@ -4235,7 +4523,8 @@ paths:
             type: string
           - type: 'null'
           title: From
-      - in: query
+      - description: End of an inclusive date range (`YYYY-MM-DD`).
+        in: query
         name: to
         required: false
         schema:
@@ -4255,7 +4544,8 @@ paths:
             false for the full history.
           title: Timelineonly
           type: boolean
-      - in: query
+      - description: 1-based page number.
+        in: query
         name: page
         required: false
         schema:
@@ -4263,7 +4553,8 @@ paths:
           minimum: 1
           title: Page
           type: integer
-      - in: query
+      - description: Rows per page. The maximum differs per endpoint; see the schema.
+        in: query
         name: pageSize
         required: false
         schema:
@@ -4279,17 +4570,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_BookingSummary_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: List an amenity's bookings
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.1
+        role: The individual days an administrator chooses between
+        title: Partial cancellation of multi-day bookings
     post:
       description: 'The admin''s Create Booking modal. Confirmed on creation, never pending.
 
@@ -4308,7 +4608,8 @@ paths:
         does not waive the deposit, which is coming back.'
       operationId: create_admin_booking_api_v1_amenities__amenity_id__bookings_post
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -4327,17 +4628,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/BookingSummary'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Create a booking on a resident's behalf
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.5
+        role: An administrator books on a resident's behalf in one call, with no impersonation
+        title: Simplified booking management workflow
   /api/v1/amenities/{amenity_id}/bookings/request:
     post:
       description: 'A resident asking for one or more days of the same slot.
@@ -4366,7 +4676,8 @@ paths:
         is how a resident is surprised by the other two.'
       operationId: request_booking_api_v1_amenities__amenity_id__bookings_request_post
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -4385,17 +4696,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_BookingSummary_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Request a booking (resident)
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.5
+        role: The resident-initiated path into the same approval queue
+        title: Simplified booking management workflow
   /api/v1/amenities/{amenity_id}/ledger:
     get:
       description: 'The ledger tab.
@@ -4417,7 +4737,8 @@ paths:
         enforce, so a button the client renders is a button the API will honour.'
       operationId: list_ledger_api_v1_amenities__amenity_id__ledger_get
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -4433,7 +4754,8 @@ paths:
           - type: 'null'
           description: paid | pending | partially_paid | refund_pending | refunded | cancelled | all
           title: Paymentstatus
-      - in: query
+      - description: Free-text search. Matching is case-insensitive and substring-based.
+        in: query
         name: q
         required: false
         schema:
@@ -4442,7 +4764,8 @@ paths:
             type: string
           - type: 'null'
           title: Q
-      - in: query
+      - description: 1-based page number.
+        in: query
         name: page
         required: false
         schema:
@@ -4450,7 +4773,8 @@ paths:
           minimum: 1
           title: Page
           type: integer
-      - in: query
+      - description: Rows per page. The maximum differs per endpoint; see the schema.
+        in: query
         name: pageSize
         required: false
         schema:
@@ -4466,17 +4790,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_LedgerTransaction_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: List an amenity's financial transactions
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.2
+        role: cancellationHistory, refundHistory, auditTrail and paymentStatus, all derived from the event
+          stream rather than stored
+        title: Auto-sync cancellations to accounts
+      - coverage: partial
+        id: US-1.6
+        role: Amenity billing, per booking
+        title: Automated administrative reports
   /api/v1/amenities/{amenity_id}/ledger/summary:
     get:
       description: 'The eight cards above the ledger table.
@@ -4489,7 +4827,8 @@ paths:
         zeros with HTTP 200, never a 404.'
       operationId: get_ledger_summary_api_v1_amenities__amenity_id__ledger_summary_get
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -4502,17 +4841,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/LedgerSummary'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Amenity ledger totals
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.2
+        role: The money totals, derived the same way
+        title: Auto-sync cancellations to accounts
   /api/v1/amenity-bookings/cancel:
     post:
       description: 'Cancel one or more days of a request.
@@ -4542,17 +4890,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResult'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Cancel selected booking days
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.1
+        role: Takes a list of occurrence ids rather than a booking id -- this story is the reason for
+          that signature
+        title: Partial cancellation of multi-day bookings
   /api/v1/amenity-bookings/{occurrence_id}/charges:
     post:
       description: 'Bill something after the fact -- housekeeping, or a late-cancellation fee.
@@ -4565,7 +4921,8 @@ paths:
         on Tuesday is two things, not the later one.'
       operationId: add_charge_api_v1_amenity_bookings__occurrence_id__charges_post
       parameters:
-      - in: path
+      - description: A single booked day. Not the booking -- see `seriesId` for the whole request.
+        in: path
         name: occurrence_id
         required: true
         schema:
@@ -4584,17 +4941,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/LedgerTransaction'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Add a charge to a booking
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.2
+        role: Additional and late-cancellation charges, so the ledger reflects the full cost of a change
+        title: Auto-sync cancellations to accounts
   /api/v1/amenity-bookings/{occurrence_id}/damage:
     post:
       description: 'Take damage out of the held deposit.
@@ -4609,7 +4975,8 @@ paths:
         hiding the error. Returns 409 instead. A reason is required.'
       operationId: deduct_damage_api_v1_amenity_bookings__occurrence_id__damage_post
       parameters:
-      - in: path
+      - description: A single booked day. Not the booking -- see `seriesId` for the whole request.
+        in: path
         name: occurrence_id
         required: true
         schema:
@@ -4628,17 +4995,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/LedgerTransaction'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Deduct damage from a booking deposit
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.2
+        role: Deducts damage from the deposit, on the same ledger the cancellation wrote to
+        title: Auto-sync cancellations to accounts
   /api/v1/amenity-bookings/{occurrence_id}/force-cancel:
     post:
       description: 'Override a booking the resident still wants.
@@ -4653,7 +5029,8 @@ paths:
         approved or confirmed.'
       operationId: force_cancel_booking_api_v1_amenity_bookings__occurrence_id__force_cancel_post
       parameters:
-      - in: path
+      - description: A single booked day. Not the booking -- see `seriesId` for the whole request.
+        in: path
         name: occurrence_id
         required: true
         schema:
@@ -4672,17 +5049,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/BookingSummary'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Force-cancel a booking
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.1
+        role: The administrator override when the resident objects; the ledger records who
+        title: Partial cancellation of multi-day bookings
   /api/v1/amenity-bookings/{occurrence_id}/payments:
     post:
       description: 'Record money received against one charge -- the booking fee or the deposit.
@@ -4695,7 +5081,8 @@ paths:
         rather than being clamped, because clamping accepts money and then loses it.'
       operationId: record_payment_api_v1_amenity_bookings__occurrence_id__payments_post
       parameters:
-      - in: path
+      - description: A single booked day. Not the booking -- see `seriesId` for the whole request.
+        in: path
         name: occurrence_id
         required: true
         schema:
@@ -4714,17 +5101,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/LedgerTransaction'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Record a payment against a booking
       tags:
       - amenities
+      x-user-stories:
+      - coverage: partial
+        id: US-2.12
+        role: Records the payment against the booking in one transaction; paymentStatus is derived from
+          the rows, never set alongside them
+        title: Reliable booking payment confirmation
   /api/v1/amenity-bookings/{occurrence_id}/refund:
     post:
       description: 'Return what is left of the deposit.
@@ -4739,7 +5136,8 @@ paths:
         while the booking is still ahead of it, or once nothing is left.'
       operationId: refund_deposit_api_v1_amenity_bookings__occurrence_id__refund_post
       parameters:
-      - in: path
+      - description: A single booked day. Not the booking -- see `seriesId` for the whole request.
+        in: path
         name: occurrence_id
         required: true
         schema:
@@ -4758,17 +5156,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/LedgerTransaction'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Refund a booking deposit
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.2
+        role: Returns the deposit, and moves the booking off refund_pending
+        title: Auto-sync cancellations to accounts
   /api/v1/amenity-bookings/{series_id}/approve:
     post:
       description: 'Approve a whole request -- every day of it.
@@ -4781,7 +5188,8 @@ paths:
         request has already been decided.'
       operationId: approve_booking_api_v1_amenity_bookings__series_id__approve_post
       parameters:
-      - in: path
+      - description: Booking request id, covering every day the resident asked for at once.
+        in: path
         name: series_id
         required: true
         schema:
@@ -4794,17 +5202,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_BookingSummary_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Approve a booking request
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.5
+        role: One decision per request rather than per day -- the redundant step the story asks to remove
+        title: Simplified booking management workflow
   /api/v1/amenity-bookings/{series_id}/reject:
     post:
       description: 'Reject a whole request and release its slots.
@@ -4817,7 +5234,8 @@ paths:
         refuses it as well. Returns 409 if the request has already been decided.'
       operationId: reject_booking_api_v1_amenity_bookings__series_id__reject_post
       parameters:
-      - in: path
+      - description: Booking request id, covering every day the resident asked for at once.
+        in: path
         name: series_id
         required: true
         schema:
@@ -4836,17 +5254,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_BookingSummary_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Reject a booking request
       tags:
       - amenities
+      x-user-stories:
+      - coverage: served
+        id: US-1.5
+        role: The other half of one decision per request
+        title: Simplified booking management workflow
   /api/v1/amenity-reports:
     get:
       description: 'The reports page.
@@ -4866,7 +5293,8 @@ paths:
         the moment nothing currently has that status.'
       operationId: get_report_api_v1_amenity_reports_get
       parameters:
-      - in: query
+      - description: Start of the reporting window (`YYYY-MM-DD`), inclusive.
+        in: query
         name: startDate
         required: false
         schema:
@@ -4875,7 +5303,8 @@ paths:
             type: string
           - type: 'null'
           title: Startdate
-      - in: query
+      - description: End of the reporting window (`YYYY-MM-DD`), inclusive.
+        in: query
         name: endDate
         required: false
         schema:
@@ -4884,7 +5313,8 @@ paths:
             type: string
           - type: 'null'
           title: Enddate
-      - in: query
+      - description: Restrict the report to one amenity. Omit for all of them.
+        in: query
         name: amenityId
         required: false
         schema:
@@ -4892,7 +5322,8 @@ paths:
           - type: string
           - type: 'null'
           title: Amenityid
-      - in: query
+      - description: Restrict the report to one booking status. Omit for all of them.
+        in: query
         name: bookingStatus
         required: false
         schema:
@@ -4900,7 +5331,8 @@ paths:
           - type: string
           - type: 'null'
           title: Bookingstatus
-      - in: query
+      - description: 1-based page number.
+        in: query
         name: page
         required: false
         schema:
@@ -4908,7 +5340,8 @@ paths:
           minimum: 1
           title: Page
           type: integer
-      - in: query
+      - description: Rows per page. The maximum differs per endpoint; see the schema.
+        in: query
         name: pageSize
         required: false
         schema:
@@ -4924,19 +5357,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/AmenityReport'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Amenity activity report
       tags:
       - amenities
+      x-user-stories:
+      - coverage: partial
+        id: US-1.6
+        role: Rows plus six KPIs aggregated over every matching row, not the current page -- the whole
+          reason this endpoint exists
+        title: Automated administrative reports
   /api/v1/auth/csrf:
     get:
+      description: 'Issue the pre-authentication CSRF cookie.
+
+
+        Call once before any unauthenticated write. Sign-up, sign-in, password reset and invitation preparation
+        all reject a request whose `X-CSRF-Token` header does not match this cookie, so skipping this
+        step turns every one of them into a **403**.'
       operationId: csrf_api_v1_auth_csrf_get
       responses:
         '200':
@@ -4946,16 +5395,27 @@ paths:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Csrf
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/email/resend:
     post:
+      description: 'Accepted, and always answered identically.
+
+
+        **This endpoint does not currently send anything.** Supabase exposes no standalone resend primitive
+        that is safe to call through this backend-for-frontend, so rather than leak whether an unconfirmed
+        account exists, it returns the neutral message unconditionally. Retrying sign-up re-sends the
+        confirmation. Documented as-is because a client that believes this delivers mail will wait forever.'
       operationId: resend_email_api_v1_auth_email_resend_post
       requestBody:
         content:
@@ -4970,17 +5430,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Resend Email
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/email/verify:
     post:
+      description: 'Exchange a token from a confirmation email for a session.
+
+
+        `verificationType` must be `email` or `signup`; anything else is **422** before the provider is
+        called. A consumed or expired token is **401**. On success the session cookies are established,
+        so a confirmed user lands signed in.'
       operationId: verify_email_api_v1_auth_email_verify_post
       requestBody:
         content:
@@ -4995,20 +5467,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Verify Email
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/google/callback:
     get:
+      description: 'Compatibility alias for `GET /auth/oauth/google/callback`.
+
+
+        Registered with Google as a redirect URI, which is why it cannot simply be removed. Delegates
+        to the generic route.'
       operationId: google_callback_api_v1_auth_google_callback_get
       parameters:
-      - in: query
+      - description: Authorization code returned by the provider. Absent means the user declined.
+        in: query
         name: code
         required: false
         schema:
@@ -5022,20 +5512,37 @@ paths:
             application/json:
               schema: {}
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Google Callback
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/google/start:
     get:
+      description: 'Compatibility alias for `GET /auth/oauth/google/start`.
+
+
+        Kept because it is registered as a redirect URI with Google and exists in shipped bookmarks; it
+        delegates to the generic route and behaves identically. Prefer the generic form in new clients.'
       operationId: google_start_api_v1_auth_google_start_get
       parameters:
-      - in: query
+      - description: 'Path to return to after sign-in. Validated, not sanitised: anything absolute or
+          off-site is rejected outright, so this cannot be used as an open redirect.'
+        in: query
         name: next
         required: false
         schema:
@@ -5050,16 +5557,27 @@ paths:
               schema: {}
           description: Successful Response
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Google Start
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/logout:
     post:
+      description: 'Revoke the session and clear every session cookie.
+
+
+        **Cannot fail because the provider failed.** Revocation is attempted and its errors are swallowed,
+        then the cookies are cleared regardless -- a logout that leaves the browser holding a session
+        because Supabase timed out is worse than an unrevoked server-side token. Only the CSRF guard can
+        refuse this call.'
       operationId: logout_api_v1_auth_logout_post
       responses:
         '200':
@@ -5068,17 +5586,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Logout
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/methods:
     get:
+      description: 'List the sign-in methods this deployment has enabled.
+
+
+        Unauthenticated, and the only cacheable endpoint in the API: it returns an `ETag` with `Cache-Control:
+        public, max-age=300`, and answers **304** to a matching `If-None-Match`. The sign-in screen calls
+        this before rendering, so that a disabled provider is never offered as a button that cannot work.'
       operationId: auth_methods_api_v1_auth_methods_get
       responses:
         '200':
@@ -5087,25 +5617,37 @@ paths:
               schema: {}
           description: Successful Response
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Auth Methods
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/oauth/{provider}/callback:
     get:
+      description: 'Complete an OAuth sign-in and answer **307** to the stored return path.
+
+
+        Exchanges the authorization code against the verifier from the transaction cookie, establishes
+        the session cookies, and clears the transaction. A missing code, an expired transaction cookie
+        or a verifier mismatch is **401** -- the exchange is the authentication.'
       operationId: oauth_callback_api_v1_auth_oauth__provider__callback_get
       parameters:
-      - in: path
+      - description: OAuth provider key. Must be in the deployment's enabled set, or the answer is 422.
+        in: path
         name: provider
         required: true
         schema:
           title: Provider
           type: string
-      - in: query
+      - description: Authorization code returned by the provider. Absent means the user declined.
+        in: query
         name: code
         required: false
         schema:
@@ -5119,26 +5661,46 @@ paths:
             application/json:
               schema: {}
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Oauth Callback
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/oauth/{provider}/start:
     get:
+      description: 'Begin an OAuth sign-in. Answers **307** to the provider''s consent screen.
+
+
+        A signed, five-minute transaction cookie carries the PKCE verifier and the return path across
+        the round trip. `next` is validated before it is stored -- an absolute or off-site value is rejected
+        rather than sanitised, so this cannot be turned into an open redirect. A provider not in the enabled
+        set is **422**, not 404: the route exists, the configuration does not permit it.'
       operationId: oauth_start_api_v1_auth_oauth__provider__start_get
       parameters:
-      - in: path
+      - description: OAuth provider key. Must be in the deployment's enabled set, or the answer is 422.
+        in: path
         name: provider
         required: true
         schema:
           title: Provider
           type: string
-      - in: query
+      - description: 'Path to return to after sign-in. Validated, not sanitised: anything absolute or
+          off-site is rejected outright, so this cannot be used as an open redirect.'
+        in: query
         name: next
         required: false
         schema:
@@ -5153,16 +5715,26 @@ paths:
               schema: {}
           description: Successful Response
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Oauth Start
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/password/reset/complete:
     post:
+      description: 'Set a new password using the recovery session, then clear it.
+
+
+        Requires the recovery cookies from `reset/verify`; without them the answer is **401** and the
+        caller must request a fresh link. On success every session cookie is cleared, so the user signs
+        in again with the new password -- a password change should not leave an old session alive.'
       operationId: password_reset_complete_api_v1_auth_password_reset_complete_post
       requestBody:
         content:
@@ -5177,17 +5749,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Password Reset Complete
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/password/reset/request:
     post:
+      description: 'Send a password recovery email.
+
+
+        Answers the same neutral message for a known and an unknown address. A CAPTCHA token is required
+        when `AUTH_CAPTCHA_ENABLED`.'
       operationId: password_reset_request_api_v1_auth_password_reset_request_post
       requestBody:
         content:
@@ -5202,17 +5789,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Password Reset Request
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/password/reset/verify:
     post:
+      description: 'Exchange a recovery token for a short-lived **recovery** session.
+
+
+        The cookies this sets are separate from the normal session pair and authorise exactly one thing:
+        `POST /auth/password/reset/complete`. Verifying a recovery link therefore does not sign the caller
+        in.'
       operationId: password_reset_verify_api_v1_auth_password_reset_verify_post
       requestBody:
         content:
@@ -5227,17 +5828,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Password Reset Verify
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/password/sign-in:
     post:
+      description: 'Sign in with email and password, establishing the session cookies.
+
+
+        Wrong password and unknown address both answer **401** with the same message, for the same anti-enumeration
+        reason as sign-up. The access and refresh tokens are set as `HttpOnly` cookies and are never returned
+        in the body.'
       operationId: password_sign_in_api_v1_auth_password_sign_in_post
       requestBody:
         content:
@@ -5252,17 +5871,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Password Sign In
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/password/sign-up:
     post:
+      description: 'Create an email and password account.
+
+
+        The response is **deliberately identical** whether or not the address is already registered --
+        *"If the account can be created, check your email"* -- so this endpoint cannot be used to enumerate
+        accounts. A CAPTCHA token is required when `AUTH_CAPTCHA_ENABLED`. No session is established;
+        the address must be confirmed first.'
       operationId: password_sign_up_api_v1_auth_password_sign_up_post
       requestBody:
         content:
@@ -5277,17 +5915,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Password Sign Up
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/refresh:
     post:
+      description: 'Rotate the session from the refresh cookie.
+
+
+        Takes no body: the refresh token is read from its `HttpOnly` cookie and never travels through
+        JavaScript. Absent or rejected, the answer is **401** and the client must sign in again.'
       operationId: refresh_api_v1_auth_refresh_post
       responses:
         '200':
@@ -5296,17 +5949,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Refresh
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/auth/session:
     get:
+      description: 'Return the caller''s profile, memberships and active community.
+
+
+        The first call a signed-in client makes: it decides which community context the rest of the API
+        will resolve, and whether the caller has a membership at all. A verified token whose profile row
+        is missing is **404**, not 401 -- the credential is good, the record is not.'
       operationId: session_api_v1_auth_session_get
       responses:
         '200':
@@ -5315,17 +5986,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/SessionContext'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Session
       tags:
       - auth
+      x-no-user-story:
+        api-type: Functional
+        rationale: Authentication and session management. Nobody writes a user story about signing in
+          until it breaks.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/billing-settings:
     get:
       description: 'The community''s billing configuration.
@@ -5346,17 +6025,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/BillingSettings'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Get billing settings
       tags:
       - money
+      x-user-stories:
+      - coverage: partial
+        id: US-1.6
+        role: The rates every reported figure is derived from
+        title: Automated administrative reports
     put:
       description: 'Patch the billing configuration. Omitted fields are left unchanged.
 
@@ -5387,19 +6075,33 @@ paths:
               schema:
                 $ref: '#/components/schemas/BillingSettings'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Update billing settings
       tags:
       - money
+      x-no-user-story:
+        api-type: Configuration
+        rationale: Sets behaviour other features then obey, rather than being a feature the stories name.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/communities/admin/units:
     get:
+      description: 'List the units in the caller''s community, for pickers.
+
+
+        Feeds the unit selector on the join-request and invitation screens; the ids returned here are
+        the ones `POST /access-requests` accepts.'
       operationId: list_admin_units_api_v1_communities_admin_units_get
       responses:
         '200':
@@ -5408,22 +6110,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommunityUnitListResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: List Admin Units
       tags:
       - communities
+      x-no-user-story:
+        api-type: Feature
+        rationale: Founding a community and finding one to found against -- a once-per-community act no
+          resident story reaches.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/communities/search:
     get:
+      description: 'Search the public community directory by name.
+
+
+        For a signed-in user who does not belong anywhere yet, so it is the one read that works without
+        a membership. `q` must be 2-100 characters. **503** means the directory''s search index is rebuilding
+        -- transient, and distinguished from a genuine failure so the client can retry rather than report
+        an error.'
       operationId: search_communities_api_v1_communities_search_get
       parameters:
-      - in: query
+      - description: 'Community name fragment, 2-100 characters. Shorter than two is 422: a one-character
+          search would return most of the directory.'
+        in: query
         name: q
         required: true
         schema:
@@ -5431,7 +6150,8 @@ paths:
           minLength: 2
           title: Q
           type: string
-      - in: query
+      - description: Maximum matches to return (1-20).
+        in: query
         name: limit
         required: false
         schema:
@@ -5448,17 +6168,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommunitySearchResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       security:
       - HTTPBearer: []
       summary: Search Communities
       tags:
       - communities
+      x-no-user-story:
+        api-type: Feature
+        rationale: Founding a community and finding one to found against -- a once-per-community act no
+          resident story reaches.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/complaints/{complaint_id}:
     patch:
       description: 'Change status, assignee, progress or the expected resolution date.
@@ -5471,7 +6199,8 @@ paths:
         resident-visible timeline entry even when nothing else changes.'
       operationId: update_complaint_api_v1_complaints__complaint_id__patch
       parameters:
-      - in: path
+      - description: Complaint id, scoped to the caller's community.
+        in: path
         name: complaint_id
         required: true
         schema:
@@ -5490,23 +6219,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResult'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Update a complaint
       tags:
       - complaints
+      x-user-stories:
+      - coverage: partial
+        id: US-2.6
+        role: Writes the status and its timeline entries in one transaction, so a status cannot change
+          without a trace
+        title: Complaint status tracking with history
+      - coverage: partial
+        id: US-2.7
+        role: Every transition the story names -- acknowledged, updated, reassigned, resolved -- writes
+          a complaint_events row
+        title: Complaint lifecycle notifications
+      - coverage: partial
+        id: US-2.8
+        role: Accepts assignee and expectedResolutionAt; both are stored, and both are dropped by the
+          snapshot projection before a resident sees them
+        title: Complaint accountability
   /api/v1/complaints/{complaint_id}/comments:
     post:
       description: Add a comment. Any member may comment; only admins may write `internal`.
       operationId: add_comment_api_v1_complaints__complaint_id__comments_post
       parameters:
-      - in: path
+      - description: Complaint id, scoped to the caller's community.
+        in: path
         name: complaint_id
         required: true
         schema:
@@ -5525,19 +6275,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResult'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Comment on a complaint
       tags:
       - complaints
+      x-user-stories:
+      - coverage: partial
+        id: US-2.6
+        role: A resident-visible comment joins the timeline; an internal one never does
+        title: Complaint status tracking with history
   /api/v1/dashboard/amenities:
     post:
+      description: 'Create an amenity in the caller''s community.
+
+
+        Catalogue upkeep, not booking: this defines the thing that later gets booked through `/amenities/{amenityId}/bookings`.'
       operationId: create_amenity_api_v1_dashboard_amenities_post
       requestBody:
         content:
@@ -5554,22 +6317,38 @@ paths:
                 title: Response Create Amenity Api V1 Dashboard Amenities Post
                 type: object
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Create Amenity
       tags:
       - dashboard
+      x-no-user-story:
+        api-type: Master data
+        rationale: Amenity catalogue upkeep. The booking stories assume amenities already exist; something
+          still has to create them.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/dashboard/amenities/{amenity_id}:
     delete:
+      description: 'Remove an amenity from the catalogue.
+
+
+        Returns the id that was removed. Existing bookings keep their ledger rows -- history stays attributable
+        after the amenity itself is gone.'
       operationId: delete_amenity_api_v1_dashboard_amenities__amenity_id__delete
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -5584,21 +6363,37 @@ paths:
                 title: Response Delete Amenity Api V1 Dashboard Amenities  Amenity Id  Delete
                 type: object
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Delete Amenity
       tags:
       - dashboard
+      x-no-user-story:
+        api-type: Master data
+        rationale: Amenity catalogue upkeep. The booking stories assume amenities already exist; something
+          still has to create them.
+        status: Not covered by user story
+      x-user-stories: []
     put:
+      description: 'Replace an amenity''s definition.
+
+
+        A full replace, not a patch: every field the body omits is reset to its default. **404** if the
+        amenity is not in the caller''s community.'
       operationId: update_amenity_api_v1_dashboard_amenities__amenity_id__put
       parameters:
-      - in: path
+      - description: Amenity id. Must belong to the caller's community, or the answer is 404.
+        in: path
         name: amenity_id
         required: true
         schema:
@@ -5619,17 +6414,27 @@ paths:
                 title: Response Update Amenity Api V1 Dashboard Amenities  Amenity Id  Put
                 type: object
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Update Amenity
       tags:
       - dashboard
+      x-no-user-story:
+        api-type: Master data
+        rationale: Amenity catalogue upkeep. The booking stories assume amenities already exist; something
+          still has to create them.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/dashboard/events:
     get:
       description: Same-origin SSE stream. No provider token is exposed to the browser.
@@ -5649,20 +6454,23 @@ paths:
             text/event-stream: {}
           description: 'Event stream. Frame format and topics: docs/API.md 5.1.'
         '401':
-          description: No session.
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: No active membership.
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Dashboard Events
       tags:
       - dashboard
+      x-user-stories:
+      - coverage: partial
+        id: US-1.3
+        role: Server-sent events; dashboard.refresh fires on writes to 12 tables
+        title: Real-time sync across modules
   /api/v1/dashboard/snapshot:
     get:
       description: Return the caller's current, tenant-authorized dashboard records.
@@ -5674,17 +6482,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/DashboardSnapshot'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Get Dashboard Snapshot
       tags:
       - dashboard
+      x-user-stories:
+      - coverage: partial
+        id: US-1.3
+        role: The authoritative re-read every SSE event asks the client to perform
+        title: Real-time sync across modules
+      - coverage: partial
+        id: US-1.4
+        role: users[], complaints[], bookings[] and payments[] in one response -- the single-screen read
+        title: Streamlined resident information update
+      - coverage: partial
+        id: US-2.1
+        role: visitors[], already scoped to the caller's own for a non-admin
+        title: Reliable visitor approval notifications
+      - coverage: partial
+        id: US-2.2
+        role: The read half of visitor pre-approval; no write endpoint exists yet
+        title: Fast visitor pre-approval
+      - coverage: partial
+        id: US-2.6
+        role: complaints[] carries status, comments[] and history[], filtered to the caller's own
+        title: Complaint status tracking with history
   /api/v1/departments:
     get:
       description: 'Departments with their staff, category claims and complaint counts.
@@ -5720,7 +6551,8 @@ paths:
           - type: 'null'
           description: Active | Inactive. Omit for both.
           title: Status
-      - in: query
+      - description: 1-based page number.
+        in: query
         name: page
         required: false
         schema:
@@ -5728,7 +6560,8 @@ paths:
           minimum: 1
           title: Page
           type: integer
-      - in: query
+      - description: Rows per page. The maximum differs per endpoint; see the schema.
+        in: query
         name: pageSize
         required: false
         schema:
@@ -5744,17 +6577,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Page_DepartmentDetail_'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: List departments
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: The directory itself, with contact details, hours and the head
+        title: Verified management contact directory
     post:
       description: 'Create a department together with its categories, roster and head.
 
@@ -5779,17 +6621,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/DepartmentDetail'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Create a department
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Keeping the directory current
+        title: Verified management contact directory
   /api/v1/departments/{department_id}:
     delete:
       description: 'Permanently remove a department, its category claims and its roster.
@@ -5809,7 +6660,8 @@ paths:
         through. Deactivate instead.'
       operationId: delete_department_api_v1_departments__department_id__delete
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
@@ -5822,22 +6674,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResult'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Delete a department
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Deactivation rather than deletion, so past assignments stay attributable
+        title: Verified management contact directory
     get:
       description: One department with its active roster and each member's open workload.
       operationId: get_department_api_v1_departments__department_id__get
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
@@ -5850,17 +6712,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/DepartmentDetail'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Get a department
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: One directory entry in full
+        title: Verified management contact directory
     patch:
       description: 'Patch a department. Omitted fields are left unchanged.
 
@@ -5881,7 +6752,8 @@ paths:
         have no action left.'
       operationId: update_department_api_v1_departments__department_id__patch
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
@@ -5900,17 +6772,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/DepartmentDetail'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Update a department
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Designates the head, and corrects contact details as they change
+        title: Verified management contact directory
   /api/v1/departments/{department_id}/staff:
     post:
       description: 'Add one person to a roster.
@@ -5921,7 +6802,8 @@ paths:
         what the department form actually collects.'
       operationId: add_staff_member_api_v1_departments__department_id__staff_post
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
@@ -5940,17 +6822,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/StaffMember'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Add a staff member
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Adds one person; membership_id stays null because staff have no login
+        title: Verified management contact directory
     put:
       description: 'Reconcile the whole roster in one transaction.
 
@@ -5969,7 +6860,8 @@ paths:
         roster twice leaves the same result.'
       operationId: replace_staff_api_v1_departments__department_id__staff_put
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
@@ -5991,17 +6883,26 @@ paths:
                 title: Response Replace Staff Api V1 Departments  Department Id  Staff Put
                 type: array
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Replace a department's roster
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Replaces the roster wholesale
+        title: Verified management contact directory
   /api/v1/departments/{department_id}/staff/{staff_id}:
     delete:
       description: 'Take a member off the active roster.
@@ -6014,13 +6915,15 @@ paths:
         slot in the same statement.'
       operationId: remove_staff_member_api_v1_departments__department_id__staff__staff_id__delete
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
           title: Department Id
           type: string
-      - in: path
+      - description: Staff assignment id. Must belong to `departmentId`, or the answer is 422.
+        in: path
         name: staff_id
         required: true
         schema:
@@ -6033,17 +6936,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResult'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Remove a staff member
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Removes a person from the roster
+        title: Verified management contact directory
     patch:
       description: 'Patch one roster entry.
 
@@ -6055,13 +6967,15 @@ paths:
         the incumbent in the same transaction.'
       operationId: update_staff_member_api_v1_departments__department_id__staff__staff_id__patch
       parameters:
-      - in: path
+      - description: Department id, scoped to the caller's community.
+        in: path
         name: department_id
         required: true
         schema:
           title: Department Id
           type: string
-      - in: path
+      - description: Staff assignment id. Must belong to `departmentId`, or the answer is 422.
+        in: path
         name: staff_id
         required: true
         schema:
@@ -6080,19 +6994,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/StaffMember'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Update a staff member
       tags:
       - departments
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: Corrects a roster entry's role or contact details
+        title: Verified management contact directory
   /api/v1/invitations/prepare:
     post:
+      description: 'Resolve an invitation link or code and stage it for redemption.
+
+
+        Unauthenticated by design -- the recipient has not signed in yet. Accepts exactly one of `token`
+        or `code`; both or neither is **422**. On success the invitation id is stored in a signed five-minute
+        cookie, so the id never crosses the browser in a form the recipient could edit before `redeem`.'
       operationId: prepare_invitation_api_v1_invitations_prepare_post
       requestBody:
         content:
@@ -6107,17 +7036,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Prepare Invitation
       tags:
       - invitations
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/invitations/redeem:
     post:
+      description: 'Redeem the staged invitation for the signed-in Google identity.
+
+
+        Requires **both** factors: the signed cookie from `prepare` and a verified access token. The invitation
+        token is a mandatory second factor and there is no path that redeems on identity alone. An invitation
+        already used or revoked is **409**.'
       operationId: redeem_invitation_api_v1_invitations_redeem_post
       requestBody:
         content:
@@ -6132,17 +7073,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Redeem Invitation
       tags:
       - invitations
+      x-no-user-story:
+        api-type: Feature
+        rationale: Joining a community, and the admin review of those requests; the interviews were with
+          people already in one.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/invoices:
     post:
       description: 'Issue one invoice against one flat.
@@ -6174,17 +7125,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/InvoiceDetail'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Issue an invoice
       tags:
       - money
+      x-user-stories:
+      - coverage: partial
+        id: US-1.6
+        role: Creates the maintenance billing rows the reports aggregate
+        title: Automated administrative reports
   /api/v1/invoices/{invoice_id}/payments:
     post:
       description: 'Record money received against an invoice and return the settled invoice.
@@ -6206,7 +7166,8 @@ paths:
         it. Also 409 once the invoice has been voided.'
       operationId: record_payment_api_v1_invoices__invoice_id__payments_post
       parameters:
-      - in: path
+      - description: Invoice id, scoped to the caller's community.
+        in: path
         name: invoice_id
         required: true
         schema:
@@ -6225,17 +7186,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/InvoiceDetail'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Record a payment
       tags:
       - money
+      x-user-stories:
+      - coverage: partial
+        id: US-2.12
+        role: Payment and confirmation are one transaction, so money cannot be taken without the record
+          moving with it
+        title: Reliable booking payment confirmation
   /api/v1/notices:
     post:
       description: 'Publish a notice to the caller''s community.
@@ -6280,19 +7251,33 @@ paths:
               schema:
                 $ref: '#/components/schemas/NoticeCreated'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Post a notice
       tags:
       - notices
+      x-user-stories:
+      - coverage: partial
+        id: US-2.4
+        role: Publishes immediately and fires the notices SSE trigger; nothing carries it to a resident
+          who has not opened the app
+        title: Reliable notifications for society notices
   /api/v1/onboarding/community:
     post:
+      description: 'Found a community and make the caller its first administrator.
+
+
+        The bootstrap case: the only write that does not require an existing membership, because it creates
+        one. Requires a verified Google identity. **409** if the community could not be created -- almost
+        always a name collision; **503** if the registration path itself has not been provisioned.'
       operationId: create_community_api_v1_onboarding_community_post
       requestBody:
         content:
@@ -6307,17 +7292,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommunityOnboardingResponse'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       security:
       - HTTPBearer: []
       summary: Create Community
       tags:
       - onboarding
+      x-no-user-story:
+        api-type: Feature
+        rationale: Founding a community and finding one to found against -- a once-per-community act no
+          resident story reaches.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/settings:
     get:
       description: 'Everything the settings screen needs, in one request.
@@ -6336,17 +7333,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/SettingsSnapshot'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: The community settings snapshot
       tags:
       - settings
+      x-no-user-story:
+        api-type: Configuration
+        rationale: 'Sets behaviour other features then obey, rather than being a feature the stories name.
+          Worth one exception, though: modules[].backendStatus reports which features are unimplemented,
+          which makes it the only endpoint that describes this matrix''s gaps in machine-readable form.'
+        status: Not covered by user story
+      x-user-stories: []
     put:
       description: 'Patch the community preferences. Omitted fields are left unchanged.
 
@@ -6368,17 +7376,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/SettingsSnapshot'
           description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Request validation or business-rule validation error.
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       security:
       - HTTPBearer: []
       summary: Patch the community preferences
       tags:
       - settings
+      x-no-user-story:
+        api-type: Configuration
+        rationale: Sets behaviour other features then obey, rather than being a feature the stories name.
+        status: Not covered by user story
+      x-user-stories: []
   /health:
     get:
       description: Liveness probe.
@@ -6393,9 +7410,16 @@ paths:
                 title: Response Health Health Get
                 type: object
           description: Successful Response
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       summary: Health
       tags:
       - system
+      x-no-user-story:
+        api-type: Non-functional
+        rationale: Platform liveness for operators and orchestrators, deliberately outside /api/v1.
+        status: Not covered by user story
+      x-user-stories: []
 servers:
 - description: Local development
   url: http://localhost:8000

@@ -12,8 +12,16 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+# Secrets. Never commit real credentials.
+# Both spellings, dotted and not: a file named `env` is NOT matched by `.env`,
+# and one holding a live service-role key sat untracked-but-committable here
+# until 2026-08-02. Only the .example templates are allowed through.
 .env
-.env.local
+.env.*
+env
+*.env
+!.env.example
+!env.example
 
 # Temporary files
 tmp/

@@ -34,17 +34,30 @@
 This document is the contract between the backend and the React frontend. It is
 **normative**: if the code and this document disagree, that is a bug in one of them.
 
+**[§14](#14-user-stories--endpoints) traces every endpoint back to the user story it serves**, and
+names the stories nothing serves yet. The stories and the user identification they came from are
+checked in under **[`product/`](product/)**.
+
 > **Standing rule.** Every backend change updates this file in the same commit — new endpoints,
 > changed shapes, changed status codes. The frontend team is not in the room, and an endpoint that
 > exists only in Python is invisible to them.
 
 An OpenAPI 3.1 schema is generated from the code at **`GET /openapi.json`**, with interactive docs at
-**`/docs`** (Swagger UI) and **`/redoc`**. That schema is authoritative for *shapes*; this file adds
-what a generated schema cannot: status-code semantics, error codes, caching behaviour, and the
-reasons behind the conventions.
+**`/docs`** (Swagger UI) and **`/redoc`**. The same schema is checked in as
+**[`openapi.yaml`](openapi.yaml)**, so the contract can be read, diffed and used to generate clients
+without running the service.
 
-The same schema is checked in as **[`openapi.yaml`](openapi.yaml)**, so the contract can be read,
-diffed and used to generate clients without running the service.
+**What lives where.** The spec is authoritative for anything a client must agree with mechanically:
+shapes, every status code an operation can return, the error envelope, per-parameter meaning, and
+the user story each operation traces to. This file carries what a client cannot act on but a
+maintainer needs — why a delete is really a deactivation, which guard returns 409 and what it is
+protecting, the shape of the gaps in §14. Read the spec to write a client; read this to change one.
+
+Everything a generator cannot infer — error responses, story traceability, and descriptions for the
+handlers with no docstring — is supplied by
+[`backend/scripts/api_annotations.py`](../backend/scripts/api_annotations.py), one table the
+exporter applies. It exists because roughly half these operations sit in the other workstream's
+routers, which are not ours to edit.
 
 > **Standing rule.** `openapi.yaml` is **generated, never hand-edited**, and is regenerated in the
 > same commit as any API change:
@@ -138,6 +151,19 @@ safe to display. Validation failures add a `details` array:
 }
 ```
 
+This envelope is in [`openapi.yaml`](openapi.yaml) as `ErrorResponse`, and **every one of the 70
+operations declares the specific codes it can return**, each pointing at a shared
+`components/responses` entry. Until 2026-08-02 the spec instead carried FastAPI's stock
+`HTTPValidationError` — `{"detail": [...]}` — on 59 operations and nothing else anywhere: a shape
+this API has never sent, because `register_exception_handlers` replaces the default handlers. A
+client generated from that spec would have failed to parse every error it ever received. The
+schema has been removed rather than left beside the correct one.
+
+`ErrorResponse`, `ErrorBody` and `ErrorDetail` are **pydantic models in
+`app/core/exceptions.py`**, so their shape is generated from the code that emits them rather than
+described alongside it. Only the prose on those schemas, and the per-operation code lists, come
+from `backend/scripts/api_annotations.py`.
+
 ### 1.5 Status codes
 
 | Code | Meaning | When |
@@ -156,6 +182,12 @@ safe to display. Validation failures add a `details` array:
 
 **401 vs 403 is not interchangeable.** 401 means *we do not know who you are* — re-authenticate.
 403 means *we know exactly who you are and the answer is no* — re-authenticating will not help.
+
+Three rows above are deliberately **absent from every operation** in `openapi.yaml`. `400` is the
+`AppError` base default and nothing raises it bare — only its subclasses, which carry their own
+statuses. `405` is produced by Starlette's router before any operation is reached, so it belongs to
+no path. `429` is not implemented at all (§1.8). Declaring them per operation would advertise
+responses that cannot occur, which is the failure this document has just spent a section correcting.
 
 ### 1.6 Pagination
 
@@ -300,7 +332,7 @@ removals were `GET /dashboard/admin`, `GET /communities/current`, `GET /notices`
 [`../backend/API_REFERENCE.md`](../backend/API_REFERENCE.md) for the snapshot's contract.
 
 The heading is kept so the section numbering below does not shift; renumbering would break every link and
-reference into §7–§14 for no gain.
+reference into §7–§15 for no gain.
 
 ### 5.1 Live updates — `GET /dashboard/events`
 
@@ -1828,10 +1860,404 @@ one shared invite; we mint one invite per phone instead, which is agenda item 5 
 
 ---
 
-## 14. Changelog
+## 14. User stories → endpoints
+
+The team's requirements live in **[`product/`](product/)**:
+[`USER_IDENTIFICATION.md`](product/USER_IDENTIFICATION.md) (three user tiers) and
+[`USER_STORIES.md`](product/USER_STORIES.md) (24 stories, `US-1.1` … `US-3.6`). This section is the
+traceability matrix between them and the surface documented above.
+
+> **Standing rule.** An endpoint added, changed or removed updates this matrix in the same commit.
+> A matrix that is 80% current is worse than none, because it is believed.
+>
+> **This is now enforced, not just asked for.** The same mapping is carried per operation in
+> [`openapi.yaml`](openapi.yaml) as `x-user-stories`, sourced from
+> [`backend/scripts/api_annotations.py`](../backend/scripts/api_annotations.py). The exporter
+> refuses to build if an operation has no entry there, or if an entry names a route that no longer
+> exists — so adding an endpoint fails the build until somebody says which stories it serves,
+> including saying that it serves none. Prose and spec can still disagree about *wording*; they can
+> no longer disagree about *which endpoints exist*.
+
+**Read the gaps first.** A matrix that only recorded hits would be a list of things we already knew.
+The rows marked *none* and *partial* are the ones that change what anybody does next, so the
+shortfall is named in every row rather than being inferable from a blank cell.
+
+### 14.1 Scope, stated once
+
+This branch is the **admin dashboard** backend. Two whole surfaces the stories assume — the resident
+mobile app and the security gate — have no workstream. That is the agreed scope, not a miss, and
+it accounts for 11 of the 24 stories on its own. The matrix still lists them, because a story with
+no owner is a decision that should be visible rather than a silence.
+
+**One structural cause explains most of §3 and half of §2.** A staff member has no login: `POST
+/departments/{id}/staff` writes a `staff_assignments` row and leaves `membership_id` null on
+purpose. So every story written in the voice of a Security Manager or a Facility Manager is
+unreachable by that person *by construction*, not because an endpoint is missing. Closing those
+stories starts with deciding whether staff get accounts — see
+[`product/USER_IDENTIFICATION.md`](product/USER_IDENTIFICATION.md).
+
+### 14.2 Coverage
+
+| | Served | Partial | None |
+|---|---|---|---|
+| §1 Administrative staff (6) | 3 | 3 | 0 |
+| §2 Resident (12) | 0 | 8 | 4 |
+| §3 Security manager (6) | 0 | 1 | 5 |
+| **Total (24)** | **3** | **12** | **9** |
+
+The shape of that table is the honest summary of this branch: **the administrator's stories are
+substantially built, the resident's are built but unreachable, and the security manager's are not
+started.** Not one resident story is fully served, and the reason is almost never a missing
+capability — it is a missing delivery path. Three separate resident stories are blocked on the same
+absent push transport, and three more are blocked on one projection dropping fields our own
+endpoints wrote (§14.4).
+
+### 14.3 Administrative staff
+
+#### US-1.1 — Partial cancellation of multi-day bookings — **served**
+
+| Endpoint | Role |
+|---|---|
+| [`POST /amenity-bookings/cancel`](#post-apiv1amenity-bookingscancel) | Cancels a **list of occurrence ids**, not a booking |
+| [`POST /amenity-bookings/{occurrenceId}/force-cancel`](#post-apiv1amenity-bookingsoccurrenceidforce-cancel) | Admin override when the resident objects |
+| [`GET /amenities/{amenityId}/bookings`](#get-apiv1amenitiesamenityidbookings) | The days to choose from |
+
+The story is the reason the cancel route takes `occurrenceIds[]` rather than a booking id. The
+all-or-nothing rule is the same story read carefully: an administrator cancelling day 3 of 5 must
+not be told "success" when day 3 was the one that failed.
+
+#### US-1.2 — Auto-sync cancellations to accounts — **served**
+
+| Endpoint | Role |
+|---|---|
+| [`GET /amenities/{amenityId}/ledger`](#get-apiv1amenitiesamenityidledger) | `cancellationHistory`, `refundHistory`, `auditTrail`, `paymentStatus` |
+| [`GET /amenities/{amenityId}/ledger/summary`](#get-apiv1amenitiesamenityidledgersummary) | The money totals |
+| [`POST /amenity-bookings/{occurrenceId}/refund`](#post-apiv1amenity-bookingsoccurrenceidrefund) | Returns the deposit |
+
+**There is no sync, which is why it cannot fall out of sync.** Every figure the ledger reports is
+derived from the same append-only event stream the cancellation writes to; no balance is stored, so
+no balance can disagree with the rows beneath it. A cancelled booking still holding a refundable
+deposit reports `refund_pending`, not `cancelled` — the interviewee's "not reflected in accounts"
+was exactly this case, and the `CASE` arm ordering is what fixes it.
+
+*Caveat worth stating plainly:* "the accounts module" in the interview means their existing finance
+system. This satisfies the story for **amenity money**. Invoices (§9) are a separate ledger, and
+nothing exports to an external accounting package.
+
+#### US-1.3 — Real-time sync across modules — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`GET /dashboard/events`](#51-live-updates--get-dashboardevents) | SSE; `dashboard.refresh` fires on writes to 12 tables, including bookings |
+| `GET /dashboard/snapshot` | The authoritative re-read every event asks for |
+
+**Shortfall:** the story names three consumers — resident app, admin portal, reports. The stream
+serves the **admin portal only**. There is no resident client subscribed to it, and reports are
+computed per request rather than pushed. Delivery is also at-most-once by design: correctness comes
+from re-reading the snapshot, not from the event.
+
+#### US-1.4 — Streamlined resident information update — **partial**
+
+| Endpoint | Role |
+|---|---|
+| `GET /dashboard/snapshot` | `users[]`, `complaints[]`, `bookings[]`, `payments[]` in **one** response |
+
+**Shortfall: there is no write.** The single-screen *read* is the strongest part of the whole API —
+one call returns everything the story asks to see in one place. `PATCH /residents/{id}` and
+`DELETE /residents/{id}` existed and were **removed** on 2026-07-30 by the frontend wiring audit,
+because no screen called them. That was correct at the time and is wrong against this story: the
+interviewee's complaint was *"updating resident details such as email addresses is not sufficiently
+streamlined"*, which is a write.
+
+> **Recommendation.** Restore `PATCH /residents/{id}`. It is the cheapest closed gap in this matrix —
+> the service and repository code was deleted but is recoverable from history, and the story is a
+> direct interviewee quote.
+
+#### US-1.5 — Simplified booking management workflow — **served**
+
+| Endpoint | Role |
+|---|---|
+| [`POST /amenities/{amenityId}/bookings`](#post-apiv1amenitiesamenityidbookings) | Admin books **on a resident's behalf** — one call, no impersonation |
+| [`POST /amenities/{amenityId}/bookings/request`](#post-apiv1amenitiesamenityidbookingsrequest) | The resident path |
+| [`GET /amenities/{amenityId}/approvals`](#get-apiv1amenitiesamenityidapprovals) | The queue |
+| [`POST /amenity-bookings/{seriesId}/approve`](#post-apiv1amenity-bookingsseriesidapprove) · [`reject`](#post-apiv1amenity-bookingsseriesidreject) | One decision per **request**, not per day |
+| [`POST /amenities/{amenityId}/blocks`](#post-apiv1amenitiesamenityidblocks) | Take a slot out of circulation |
+
+"Redundant steps removed" is met structurally: approval covers a whole request rather than one day,
+and the cleaning buffer no longer blocks shared bookings. `availableActions` on each ledger row is
+computed from the same rules the write endpoints enforce, so the UI cannot offer a step the API will
+reject — a class of redundant step the interviewee would have experienced as an error message.
+
+#### US-1.6 — Automated administrative reports — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`GET /amenity-reports`](#get-apiv1amenity-reports) | Rows + six KPIs, filtered by date, amenity and status |
+| [`GET /amenities/{amenityId}/ledger`](#get-apiv1amenitiesamenityidledger) | Amenity billing, per booking |
+| [`GET /billing-settings`](#get-apiv1billing-settings) | The rates the numbers come from |
+
+"Generated automatically" is met — `kpis` aggregates **every matching row**, not the current page,
+which is the whole reason that endpoint exists. Two shortfalls:
+
+1. **"Exportable" is not built.** Every response is JSON. Nothing emits CSV or PDF, so export is
+   still whatever the browser does with the rows it happens to have loaded.
+2. **"Gym subscription reports" have no data model.** There are bookings and there are invoices;
+   there is no recurring subscription anywhere in the schema. This is a missing entity, not a
+   missing endpoint.
+
+### 14.4 Resident
+
+Read this section against one fact: **no resident-facing client calls this API.** The frontend in
+this repo is the admin dashboard. So "partial" below almost always means *the data is right and
+nothing shows it to a resident* — a materially different problem from *the backend cannot do it*,
+and a much cheaper one.
+
+#### US-2.1 / US-2.2 — Visitor notifications and pre-approval — **partial**
+
+| Object | State |
+|---|---|
+| `visitor_requests`, `visitor_events` | **Exist in the baseline** — status enum, `valid_from` / `valid_until`, `pass_hash`, check-in/out timestamps |
+| `GET /dashboard/snapshot` → `visitors[]` | **Exists**, and filters to the caller's own for non-admins |
+| `community_settings.require_visitor_preapproval` | **Stored by `0018`**, read by nothing |
+| Any write endpoint | **Missing** |
+
+The gap is narrower than "no visitor surface". The table models a pre-approval and the read is
+already scoped correctly per resident; what is absent is `POST /visitors` and everything after it.
+`GET /settings` reports this honestly — `visitor-management` returns its `backendStatus` as not
+implemented rather than claiming coverage.
+
+**Push is a separate and larger gap.** Both stories are fundamentally about *notification delivery*,
+and this system has no push transport at all: no FCM/APNs registration, no device token table, no
+web-push subscription. SSE requires an open browser, which is the precise thing the interviewee said
+they should not need. Nothing in the admin-dashboard build order provides one.
+
+#### US-2.3 — One-tap quick access — **none**
+
+A client concern. Recorded rather than dismissed because the widget it describes needs endpoints
+that do not exist (visitor approve/deny), so it is blocked on US-2.1 regardless of client work.
+
+#### US-2.4 — Notifications for notices — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`POST /notices`](#121-post-notices--post-a-notice) | Publishes immediately; fires the `notices` SSE trigger |
+
+**Shortfall:** the same missing push transport as US-2.1. The event reaches connected admin
+browsers. A resident who has not opened the app learns nothing — which is the story verbatim.
+
+#### US-2.5 — Simple complaint submission with priority — **none**
+
+**A resident cannot raise a complaint through this API.** There is no `POST /complaints`. Creation
+was never in the admin-dashboard build order, because the admin dashboard reads complaints rather
+than filing them.
+
+**The priority selector has nowhere to write.** `complaints` has no priority column — not in the
+baseline, not in `0020`. The only `priority` in the schema is on `work_orders`, which is a different
+thing. The snapshot still reports an `urgency` on every complaint:
+`dashboard_service.py:86` computes it as `str(row.get("priority") or "Medium").title()`, from a
+column the non-legacy query does not select and the database does not have — so **every complaint
+reports `Medium`, permanently.** This story needs one column before it needs an endpoint.
+
+#### US-2.6 — Complaint status tracking with history — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`PATCH /complaints/{complaintId}`](#patch-apiv1complaintscomplaintid) | Writes the status **and its timeline entries in one transaction** |
+| [`POST /complaints/{complaintId}/comments`](#post-apiv1complaintscomplaintidcomments) | `resident` visibility appears on the timeline; `internal` never does |
+| `GET /dashboard/snapshot` → `complaints[]` | Returns `status`, `comments[]` and `history[]`, **filtered to the caller's own complaints** for a non-admin |
+
+The *writing* half answers the first pain point by design rather than by feature. *"Statuses are not
+updated consistently"* — a status cannot change without a timeline entry, because the two are one
+transaction; an audit trail with holes is worse than none, since it looks complete. Resolving stamps
+`resolvedAt` and reopening clears it, so a reopened complaint never keeps claiming it was resolved.
+`updateNote` writes a resident-visible entry **even when nothing else changes**, so an administrator
+can report progress without faking a status change.
+
+> **Shortfall — and it is the interviewee's own words.** *"Residents cannot see meaningful
+> progress."* `0020` adds `progress_percent` as a real column and `PATCH /complaints/{id}` writes it.
+> But `dashboard_repository.py:66` selects that column **only in the `legacy` branch**; on the path
+> that runs against our migrations it is never fetched, so `dashboard_service.py:85` falls through to
+> its default and **every complaint reports progress 0, or 100 once resolved.** The number this story
+> is about is written correctly and then not read.
+
+#### US-2.7 — Complaint lifecycle notifications — **partial**
+
+Every transition the story names — acknowledged, updated, reassigned, resolved — writes a
+`complaint_events` row (`0020`), and `complaints` is one of the 12 tables on the `dashboard.refresh`
+trigger. **The events exist and nothing delivers them.** Same missing transport as US-2.1 and
+US-2.4; this is one gap, not three.
+
+#### US-2.8 — Complaint accountability — **partial**
+
+`PATCH /complaints/{complaintId}` accepts `assignee` and `expectedResolutionAt`, stored by `0019` as
+`assigned_to_membership_id` / `assignee_label` / `due_at`. Ownership and expected resolution are
+therefore **recorded**.
+
+> **Finding — the fourth instance of one bug.** `dashboard_service.py:_complaints()` projects
+> `{id, title, description, category, status, progress, urgency, raisedBy, flat, date, comments,
+> history}` and **drops `assignee` and `due_at` entirely**. Both fields this story is about are
+> written by our endpoint and discarded before any resident or administrator can read them. Overdue
+> flagging is therefore impossible client-side: there is no due date to compare against.
+>
+> It is worth stating as one problem rather than four, because it is one problem. **Our writes and
+> their reads disagree about four fields**, in two files, all in the same direction:
+>
+> | Field | Written by | Lost at |
+> |---|---|---|
+> | `assignee` / `due_at` | `PATCH /complaints/{id}` | the projection (US-2.8) |
+> | `progress_percent` | `PATCH /complaints/{id}` | the non-legacy column list (US-2.6) |
+> | `category` / `urgency` on notices | `POST /notices` | the projection (§12.1) |
+>
+> Each is one line. None is ours to change — `dashboard_service.py` and `dashboard_repository.py`
+> belong to the dashboard workstream. Raising them together is more useful than raising them
+> separately, because separately each looks like an oversight and together they look like a missing
+> convention: **no check anywhere asserts that a field a write endpoint accepts is a field the
+> snapshot returns.**
+
+#### US-2.9 — Verified management contact directory — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`GET /departments`](#get-apiv1departments) · [`GET /departments/{departmentId}`](#get-apiv1departmentsdepartmentid) | The directory, with `contactEmail`, `contactPhone`, hours and the head |
+| [`POST`](#post-apiv1departments) · [`PATCH`](#patch-apiv1departmentsdepartmentid) · [`DELETE /departments/{departmentId}`](#delete-apiv1departmentsdepartmentid) | Keeping it current |
+| [`PUT`](#put-apiv1departmentsdepartmentidstaff) · [`POST`](#post-apiv1departmentsdepartmentidstaff) · [`PATCH`](#patch-apiv1departmentsdepartmentidstaffstaffid) · [`DELETE …/staff`](#delete-apiv1departmentsdepartmentidstaffstaffid) | Roster and roles |
+
+*"Outdated, unclear, or insufficiently maintained"* is met on two of three counts. **Clear** —
+every entry has a role and a department. **Maintained** — deactivation rather than deletion means a
+past assignment stays attributable, so the directory can be tidied without corrupting complaint
+history.
+
+**Shortfall: "verified" is nobody's job.** No field records who last confirmed a number, or when.
+A directory nobody is accountable for re-checking goes stale exactly as the interviewee described,
+and the API cannot currently tell a maintained entry from an abandoned one.
+
+#### US-2.10 — Designated building representative — **none**
+
+`PATCH /departments/{departmentId}` designates a **head**, and `POST /admins` promotes a member. But
+`departments` has no `building_id`, and `staff_assignments` has no building. Buildings exist
+(`units.building_id`); nothing connects a person to one. This is a schema gap, and small: one
+nullable column on `departments` plus a filter.
+
+#### US-2.11 — Timely notices with effective dates — **none**
+
+`POST /notices` publishes **immediately** — there is no draft state, no schedule, and, decisively,
+**no effective date**. The story asks to be reminded *before a rule takes effect*; there is no
+stored moment for a reminder to point at. Needs a nullable `effective_at` column, plus the same
+absent push transport. §12.1 records why publishing is immediate: the screen has no schedule
+control, and a nullable `publishedAt` left unset would create notices nobody could ever see.
+
+#### US-2.12 — Reliable booking payment confirmation — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`POST /amenity-bookings/{occurrenceId}/payments`](#post-apiv1amenity-bookingsoccurrenceidpayments) | Records the payment against the booking |
+| [`POST /invoices/{invoiceId}/payments`](#post-apiv1invoicesinvoiceidpayments) | The maintenance equivalent |
+
+The failure the interviewee described — *money deducted, no booking* — cannot happen **within this
+API**, because the payment and the booking state are one database transaction and `paymentStatus` is
+derived from the payment rows rather than set alongside them.
+
+**Shortfall: no payment gateway is integrated.** These endpoints record a payment somebody else
+already took. The interviewee's failure happens between the gateway and the backend, which is
+precisely the seam this API does not yet have. Closing the story means a webhook and an idempotency
+key — `idempotency_records` exists in the schema and nothing writes to it.
+
+### 14.5 Security manager
+
+| Story | Verdict |
+|---|---|
+| US-3.1 event-specific access codes | **partial** — see below |
+| US-3.2 auto guest access on booking | **none** |
+| US-3.3 digital registers | **none** — no table |
+| US-3.4 water tanker log | **none** — no table |
+| US-3.5 offline fallback verification | **none** |
+| US-3.6 retention + downloadable reports | **none** for gate operations |
+
+**US-3.1 is closer than the rest and nobody planned it that way.** `visitor_requests` carries
+`pass_hash` (a hashed code, unique), `valid_from` and `valid_until` (a scheduled window that can be
+set days ahead and activate later), and `0018` added `community_settings.visitor_code_ttl_minutes`.
+That is four of the story's five requirements modelled already. The fifth — one code admitting
+*many* guests — is the only genuine schema change, and it is the one thing the current model cannot
+express, since a pass belongs to one request. No endpoint issues, scans or revokes any of it.
+
+**US-3.2 has a trigger point ready.** `POST /amenities/{amenityId}/bookings` and the approve route
+are exactly where "prepare guest access on booking" would hook in, and `0007`'s outbox already fires
+on amenity tables. What is missing is the visitor write endpoint it would call — so US-3.2 is
+blocked on US-2.2, not on amenities.
+
+**US-3.6, stated fairly.** Retention is *not* a gap: nothing this backend writes is ever deleted or
+aged out, complaint and booking history are append-only, and the ledger reconstructs any past state
+from its event stream. So *"records older than three months are unavailable"* is already solved for
+everything we store. What is missing is (a) any gate-operations data to retain and (b) the
+downloadable report — the same export gap as US-1.6.
+
+### 14.6 Endpoints that serve no story, and why that is fine
+
+**36 of the 70 operations map to no story in the document.** Not a defect — the team wrote stories
+about pain points in an existing product, not about the plumbing every product needs.
+
+| Group | Ops | API type | Why no story |
+|---|---|---|---|
+| `/auth/*` | 16 | Functional | Nobody writes a user story about signing in until it breaks |
+| `/access-requests/*`, `/admin/access-requests/*` | 7 | Feature | Joining a community; the interviews were with people already in one |
+| `/invitations/*`, `/admin/invitations` | 3 | Feature | Same |
+| `/communities/*`, `/onboarding/community` | 3 | Feature | Founding a community — a once-per-community act |
+| `/dashboard/amenities` `POST` · `PUT` · `DELETE` | 3 | Master data | Amenity catalogue upkeep; the stories assume amenities already exist |
+| `/settings`, `/billing-settings` | 3 (of 4) | Configuration | Configuration behind other features |
+| `/health` | 1 | Non-functional | Platform liveness, deliberately outside `/api/v1` |
+
+**The API type is the point of this table, not the absence.** Each of these operations carries
+`x-no-user-story` in [`openapi.yaml`](openapi.yaml), stating `Not covered by user story` and then
+what the operation *is*. `Functional`, `Configuration`, `Master data` and `Non-functional` are
+plumbing, and their absence from the story set is expected. **`Feature` is not**: 13 operations here
+are user-facing capability nobody wrote a story for. That is a finding about the story set, not
+about the API, and §14.7 is where it turns into work.
+
+> **This number was 33 and was wrong.** The groups above always summed to 36; the earlier total was
+> arrived at by subtracting the endpoints §14.3–§14.5 name in their tables, which silently assumed
+> that every operation not listed as unmapped was mapped. Three were neither — the amenity catalogue
+> writes, now their own row. The error survived a hand review and did not survive machine-checking
+> the same claim: the exporter's coverage guard requires a verdict per operation, and three
+> operations had none. **34 operations serve at least one story, 36 serve none, and 34 + 36 = 70.**
+
+The one worth flagging: **`GET /settings` is the only endpoint that reports its own gaps.** Its
+`modules[]` carries a `backendStatus` per module, and `visitor-management`, `notice-board`,
+`security-gate-management` and `parking-management` all report themselves unimplemented. That is
+the machine-readable form of half this matrix, and it is already wired.
+
+### 14.7 What the matrix says to do next
+
+Ordered by cost against value, not by story number.
+
+| # | Action | Unblocks | Size |
+|---|---|---|---|
+| 1 | Stop the snapshot dropping `assignee`, `dueAt` and `progress_percent` (§14.4) | **US-2.6, US-2.8** | Two lines, dashboard workstream |
+| 2 | Restore `PATCH /residents/{id}` | **US-1.4** | Recoverable from git history |
+| 3 | Add `complaints.priority` | US-2.5 (half) | One column; the read already expects it |
+| 4 | Add `notices.effective_at` | US-2.11 (half) | One column, one field |
+| 5 | Add `departments.building_id` | US-2.10 | One column, one filter |
+| 6 | Build the visitor write endpoints | US-2.1, US-2.2, US-3.2 | A surface |
+| 7 | Choose a push transport | US-2.1, US-2.4, US-2.7 | An architecture decision, not a task |
+| 8 | Add CSV export | US-1.6, US-3.6 | Small, and asked for twice |
+
+**Items 1–5 are five small changes that close or half-close five stories.** They are the whole
+argument for keeping this matrix. None would have been found by reading the code, because none of
+them is a bug in any one file: three are fields written by one workstream and dropped by another,
+and two are single missing columns behind features that otherwise work. The expensive items — 6 and
+7 — were already known.
+
+**Item 7 is the largest single lever in the table.** Four stories (US-2.1, US-2.4, US-2.7, and
+US-2.3 downstream) reduce to *"tell the resident without making them open the app"*, and none of
+them can be closed by any amount of backend work until something can deliver a message to a device.
+It is worth deciding before more endpoints are written, not after.
+
+---
+
+## 15. Changelog
 
 | Date | Change |
 |---|---|
+| 2026-07-31 | **§14 added — the traceability matrix from the team's 24 user stories to this API**, with the stories themselves checked in under [`product/`](product/). Changelog moved from §14 to §15. Coverage is 3 served / 12 partial / 9 none. Four findings came out of writing it, none visible from any single file: `PATCH /complaints/{id}` writes `assignee`, `due_at` and `progress_percent` that the dashboard snapshot then drops; `complaints` has no priority column although the snapshot reads one; `PATCH /residents/{id}` was removed on 2026-07-30 and a direct interviewee quote asks for it; and four resident stories are blocked on one absent push transport. |
 | 2026-07-30 | **Merged `origin/main` @ `94556e5`; cut the surface to what the frontend calls.** 32 operations removed — every read the shared `GET /dashboard/snapshot` serves, the amenity CRUD their `/dashboard/amenities` serves, and the registration-review trio duplicating their `/admin/access-requests`. Adds §12: `POST /notices` and `POST /admins`. Two contract-wide changes: cookie-first auth with roles resolved from `community_memberships` instead of a JWT claim, and `X-CSRF-Token` required on every unsafe request. §5–§11 prose still describes removed endpoints — see [FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md). |
 | 2026-07-30 | Build step 9 — Settings. Adds five endpoints plus six fields on `/billing-settings`. Records that the admin Settings screen has never persisted anything, so its field names are ours; that the four toggles belong to two different tables; that three of them are stored and acted on by nothing; and that module enforcement and community rename were deliberately not built. Answers A10 (community timezone). |
 | 2026-07-30 | Build step 8 — Amenities. Adds twenty-two endpoints across the catalogue, bookings, approvals, the booking ledger and reports. Records that approval now covers a whole request rather than one day, that the cleaning buffer no longer blocks shared bookings, and that the frontend has two unrelated amenity models. |
