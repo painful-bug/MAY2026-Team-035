@@ -332,6 +332,88 @@ President / Secretary / Treasurer / Committee Member / Association Manager / Oth
 >
 > **Answer:** ______________________________________________
 
+### A25 🔴 A resident payment must settle the full balance. Should a part payment be allowed?
+
+> **What we found** — nothing in the product describes a part payment. `Payments.jsx` has one button
+> reading *"Confirm Payment of ₹4,250"*, and the invoice statuses include `partially_paid`, which only
+> the admin's `record_payment` can currently produce.
+> **What we did** — `POST /invoices/{id}/pay` requires `amount` to equal the outstanding balance, and
+> compares it against the balance the **database** computes rather than the number the client sent.
+> The amount is in the request so a client working from a stale screen can be told so, not so it can
+> choose.
+> **What we need** — whether a resident may pay part of a bill. It is a policy question, not a
+> technical one: the column already supports it.
+> **Cost if wrong** — low. Relaxing the check is one line; the danger is the other direction, where
+> accepting a part payment silently would leave a resident believing they had paid.
+>
+> **Answer:** ______________________________________________
+
+### A26 🟡 The contact directory has no way to say which number is the emergency one
+
+> **What we found** — `Profile.jsx` labels its five hard-coded numbers *"Emergency / Gate"*,
+> *"Administrative"*, *"Maintenance Staff"*. The nearest thing a department carries is `category`,
+> which is free text an admin types.
+> **What we did** — `GET /directory/contacts` returns `category` and **nothing decides which
+> categories mean emergency.** Inferring it from a text match would be a classification invented in
+> SQL and wrong the first time somebody writes "Emergencies".
+> **What we need** — whether the product wants the distinction. If so it is one boolean on
+> `departments` plus a checkbox on the department form.
+> **Cost if wrong** — low, but it is `US-2.9`'s "reach the right person quickly", and a directory
+> where the fire number sorts between plumbing and accounts is a directory nobody scans in a hurry.
+>
+> **Answer:** ______________________________________________
+
+### A27 🟡 A number added to a flat is not a member. Is that the behaviour you want?
+
+> **What we found** — `createUsersSlice.js` implements *add a number to my flat* by inventing a whole
+> user: a name, the role `Resident`, and the status `Active`.
+> **What we did** — a separate `unit_contacts` table. It cannot be done the prototype's way —
+> `profiles.id` references `auth.users`, so somebody with no account cannot be a profile — and it
+> should not be: a membership manufactured from a phone number puts a person in the community's member
+> count who cannot sign in and never agreed to join. `GET /me/household` returns both kinds with a
+> `source` field saying which.
+> **What we need** — confirmation that a flat contact grants **nothing**: no login, no visitor pass,
+> no vote, no place in the member count.
+> **Cost if wrong** — moderate. If these are meant to be real members, the flow is an invitation, not
+> a text box, and that is a different screen.
+>
+> **Answer:** ______________________________________________
+
+### A28 🟡 We recorded US-2.3 as partial, not served, because of the widget
+
+> **What we found** — the story asks for one-tap access *"including a home-screen widget"*, and its
+> own note reads *"Backend: **None** — a client concern, but it needs endpoints that do not exist."*
+> **What we did** — built those endpoints. `GET /resident/snapshot` returns everything the home
+> screen shows in one call, and carries pending visitor passes **whole**, so approving one is a tap
+> on the card rather than a journey into the visitors page. Then we recorded the story as **partial**
+> rather than served.
+> **Why** — a home-screen widget is an operating-system surface, and HomeBandhu is a web application
+> with no native client (`PO`, 2026-08-03). The ceiling is a PWA install and a shortcut. Calling the
+> story served would be a claim about the platform rather than about the API.
+> **What we need** — either agreement that the widget is out of scope and the row stays partial
+> permanently, or a ruling that a PWA shortcut *counts* as the widget the interviewee described, in
+> which case the row is served and nothing needs building.
+> **Cost if wrong** — low either way. This is a verdict in a matrix, not a line of code — but it is
+> the difference between a coverage table that is honest and one that is generous to itself.
+>
+> **Answer:** ______________________________________________
+
+### A29 🟢 The home screen sums the bills it can read, and says so when there are more
+
+> **What we found** — nothing; this is a bound we chose.
+> **What we did** — `dues.outstandingTotal` is summed over the first hundred unpaid bills, and
+> `dues.isPartialTotal` is `true` when there were more. The visitor counts have the same bound over
+> current passes.
+> **Why** — the alternative is a second aggregate query per part on every home-screen load, to
+> support a resident who does not exist. A number that is quietly too small is the failure worth
+> avoiding, and the flag avoids it without the query: the resident is told the total is a floor
+> rather than shown a wrong figure with confidence.
+> **What we need** — nothing, unless a hundred unpaid bills is a real scenario in your buildings, in
+> which case say so and the total moves into SQL.
+> **Cost if wrong** — negligible. One aggregate query.
+>
+> **Answer:** ______________________________________________
+
 ### A22 🔴 The Settings screen offers automatic billing and late fines. Neither exists. What are they?
 
 The screen (`pages/AdminDashboard/Settings.jsx`) shows two switches whose labels promise machinery

@@ -465,6 +465,313 @@ DashboardService ..> RealtimeHub : event_stream() delegates
 AdminViews ..> RegistrationTables : pending_access_request_overview projects
 
 
+' ===========================================================================
+' RESIDENT BACKEND (docs/design/RESIDENT_BACKEND_DESIGN.md)
+'
+' Same three-layer shape again. Two things here are structurally new:
+'
+'   1. A SECOND background worker. RealtimeHub fans one poll out to connected
+'      clients; PushSender delivers to clients that are NOT connected. They obey
+'      opposite rules -- the hub may drop a frame, the sender may not duplicate
+'      one -- which is why the sender's claim is atomic in Postgres rather than
+'      in Python, and why it starts from the app lifespan instead of lazily.
+'   2. A SECOND settings class. PushSettings reads the same .env through
+'      pydantic-settings without touching app/config.py, which the auth
+'      workstream owns.
+' ===========================================================================
+package "Presentation / API — resident" #F1F5F9 {
+  class EventsRouter <<router>> {
+    + events()
+    .. GET /events, the canonical stream ..
+  }
+  class ResidentAmenitiesRouter <<router>> {
+    + list_available_amenities()
+  }
+  class NotificationsRouter <<router>> {
+    + list_notifications()
+    + mark_notification_read()
+    + mark_all_notifications_read()
+  }
+  class PushRouter <<router>> {
+    + vapid_key()
+    + subscribe()
+    + unsubscribe()
+  }
+  class ResidentComplaintsRouter <<router>> {
+    + list_my_complaints()
+    + raise_complaint()
+    + get_complaint()
+    + reopen_complaint()
+    + confirm_resolution()
+    + mark_complaint_read()
+    .. two guards: member for reads ..
+    .. and raising, resident for the ..
+    .. two writes that are a verdict ..
+    .. on the association's work ..
+  }
+  class ResidentVisitorPassesRouter <<router>> {
+    + list_my_visitor_passes()
+    + create_visitor_pass()
+    + get_visitor_pass()
+    + approve_visitor_pass()
+    + reject_visitor_pass()
+    + cancel_visitor_pass()
+    .. no role guard: everyone has visitors ..
+    .. the RESIDENT half of the lifecycle. ..
+    .. the gate's half is security software ..
+    .. this repository does not contain ..
+  }
+  class ResidentMoneyRouter <<router>> {
+    + list_my_invoices()
+    + pay_invoice()
+    + list_my_bookings()
+    + pay_booking()
+    .. a DECLINE IS A 200 with ..
+    .. status=failed. 4xx is for the ..
+    .. request being wrong, not for an ..
+    .. ordinary business outcome ..
+  }
+  class ResidentHomeRouter <<router>> {
+    + list_notices()
+    + get_household()
+    + add_household_phone()
+    + list_contacts()
+  }
+  class ResidentSnapshotRouter <<router>> {
+    + resident_snapshot()
+    .. takes NO parameters. Tenancy is ..
+    .. the resolved membership, so there ..
+    .. is nothing a caller could send ..
+    .. that would widen the answer ..
+  }
+}
+
+package "Application services — resident" #FFF3E0 {
+  class ResidentAmenitiesService <<service>>
+  class NotificationsService <<service>> {
+    + list_feed()
+    + mark_read()
+    + render(kind, payload)
+    .. the ONLY place a notification ..
+    .. becomes words -- both transports ..
+    .. call it, so the feed row and the ..
+    .. lock screen cannot disagree ..
+  }
+  class PushService <<service>> {
+    + public_key()
+    + register()
+    + push_payload(row)
+  }
+  class ResidentComplaintsService <<service>> {
+    + list_mine()
+    + get_mine()
+    + raise_complaint()
+    + reopen()
+    + confirm_resolution()
+    - _event_message(type, payload)
+    .. decides almost nothing -- the SLA, ..
+    .. the transitions and the ownership ..
+    .. checks all live in the RPCs. What ..
+    .. it owns is what a timeline SAYS, ..
+    .. because a sentence in the database ..
+    .. cannot be reworded without a migration ..
+  }
+  class ResidentVisitorPassesService <<service>> {
+    + list_mine()
+    + get_mine()
+    + create_pass()
+    + decide()
+    - _mint_security_code()
+    .. the ONLY place a plaintext code or ..
+    .. token exists. Minted here, hashed ..
+    .. here, and never sent to the database ..
+    .. -- so no statement log can carry one ..
+  }
+  class ResidentMoneyService <<service>> {
+    + list_invoices()
+    + list_bookings()
+    + pay_invoice()
+    + pay_booking()
+    - _run_simulator(body)
+    - _outcome_payload(body, outcome)
+    .. THE SEAM. Calls the simulator, ..
+    .. then one RPC. A real gateway ..
+    .. replaces the first and changes ..
+    .. neither the router nor the RPC ..
+  }
+  class ResidentHomeService <<service>> {
+    + list_notices()
+    + get_household()
+    + add_household_phone()
+    + list_contacts()
+  }
+  class ResidentSnapshotService <<service>> {
+    + snapshot()
+    - _dues(client)
+    - _visitors(client)
+    - _primary_invoice(items)
+    .. the ONLY service that calls other ..
+    .. services rather than repositories. ..
+    .. Every figure here already has an ..
+    .. owner; reaching past them would ..
+    .. copy each rule into a second place ..
+    .. and the copies would be right on ..
+    .. the day they were written ..
+  }
+}
+
+package "Payment gateway seam" #FFFDE7 {
+  class PaymentSimulator <<pure function>> {
+    + simulate(instrument, today) : SimulatedOutcome
+    - _simulate_card(...)
+    - _simulate_upi(vpa)
+    .. no database, no network, no clock ..
+    .. beyond one expiry comparison. ..
+    .. Deterministic: a demo that fails ..
+    .. one time in ten cannot be run twice ..
+    .. Only the published TEST cards are ..
+    .. accepted -- a simulator that took ..
+    .. any Luhn-valid number would one day ..
+    .. be handed a real one ..
+  }
+  class SimulatedOutcome <<frozen dataclass>> {
+    + status : str
+    + failure_code : str | None
+    + instrument_label : str
+    .. what LEAVES the simulator. No PAN, ..
+    .. no CVV, no expiry -- by construction ..
+  }
+}
+
+package "Persistence adapters — resident" #E2E8F0 {
+  class ResidentAmenitiesRepository <<repository>>
+  class NotificationsRepository <<repository>>
+  class PushRepository <<repository>>
+  class ResidentComplaintsRepository <<repository>>
+  class ResidentVisitorPassesRepository <<repository>>
+  class ResidentMoneyRepository <<repository>>
+  class ResidentHomeRepository <<repository>>
+}
+
+package "Infrastructure — resident" #F3F4F6 {
+  class PushSender <<web push worker>> {
+    - _task : asyncio.Task
+    + start()
+    + stop()
+    - _claim()
+    - _deliver(row)
+    - _send_one(subscription, body)
+    .. one worker per PROCESS ..
+    .. at-most-once by design ..
+  }
+  class PushSettings <<settings>> {
+    + vapid_public_key
+    + vapid_private_key
+    + vapid_subject
+    + enabled
+    + configuration_problem()
+  }
+}
+
+package "Resident schema (0029-0033)" #FAFAFA {
+  class "views
+(security_invoker)" as ResidentViews {
+    bookable_amenity
+    notification_overview
+    complaint_overview
+    visitor_pass_overview
+    resident_invoice_overview
+    resident_booking_overview
+    resident_notice_overview
+    household_overview
+    management_contact_overview
+  }
+  class "RPCs
+(security definer)" as ResidentRpcs {
+    notify_member
+    notify_community_staff
+    mark_notification_read
+    mark_all_notifications_read
+    register_push_subscription
+    delete_push_subscription
+    claim_push_batch
+    record_push_success
+    record_push_failure
+    is_own_membership
+    --
+    raise_complaint
+    reopen_complaint
+    confirm_complaint_resolution
+    mark_complaint_read
+    complaint_sla_hours
+    --
+    create_visitor_pass
+    decide_visitor_pass
+    visitor_code_ttl_minutes
+    expire_visitor_passes
+    is_community_security
+    notify_community_roles
+    --
+    settle_resident_payment
+    settle_amenity_booking_payment
+    add_unit_contact
+    is_own_invoice
+    is_own_booking
+  }
+  class Notifications <<table>>
+  class PushSubscriptions <<table>>
+  class UnitContacts <<table>> {
+    .. a phone number the household ..
+    .. registers. NOT a membership: it ..
+    .. grants nothing and its holder ..
+    .. has no account ..
+  }
+}
+
+NotificationsRouter ..> NotificationsService
+PushRouter ..> PushService
+ResidentAmenitiesRouter ..> ResidentAmenitiesService
+NotificationsService ..> NotificationsRepository
+PushService ..> PushRepository
+PushService ..> NotificationsService : renders through
+ResidentAmenitiesService ..> ResidentAmenitiesRepository
+NotificationsRepository ..> ResidentViews : reads notification_overview
+NotificationsRepository ..> ResidentRpcs
+PushRepository ..> ResidentRpcs
+ResidentAmenitiesRepository ..> ResidentViews : reads bookable_amenity
+ResidentRpcs ..> Notifications : notify_member is the only writer
+ResidentRpcs ..> PushSubscriptions
+Notifications ..> SseEvents : trigger emits one member-addressed row
+PushSender ..> ResidentRpcs : claim_push_batch, for update skip locked
+PushSender ..> PushService : builds the payload
+PushSender ..> PushSettings : refuses to start without a keypair
+ResidentComplaintsRouter ..> ResidentComplaintsService
+ResidentComplaintsService ..> ResidentComplaintsRepository
+ResidentComplaintsRepository ..> ResidentViews : reads complaint_overview
+ResidentComplaintsRepository ..> ResidentRpcs
+ComplaintsRouter ..> ResidentRpcs : 0031 replaced update_complaint\nand add_complaint_comment to notify
+ResidentVisitorPassesRouter ..> ResidentVisitorPassesService
+ResidentVisitorPassesService ..> ResidentVisitorPassesRepository
+ResidentVisitorPassesRepository ..> ResidentViews : reads visitor_pass_overview\nneither hash is selected
+ResidentVisitorPassesRepository ..> ResidentRpcs : hashes travel inwards only
+ResidentMoneyRouter ..> ResidentMoneyService
+ResidentMoneyService ..> PaymentSimulator : the ONLY caller, and the only\nplace a card is unwrapped
+PaymentSimulator ..> SimulatedOutcome : returns a mask, never a number
+ResidentMoneyService ..> ResidentMoneyRepository
+ResidentMoneyRepository ..> ResidentViews : reads resident_invoice_overview\nand resident_booking_overview
+ResidentMoneyRepository ..> ResidentRpcs : settlement takes an outcome,\nnever decides one
+ResidentSnapshotRouter ..> ResidentSnapshotService
+ResidentSnapshotService ..> ResidentMoneyService : dues
+ResidentSnapshotService ..> ResidentVisitorPassesService : guests, not passes
+ResidentSnapshotService ..> ResidentComplaintsService : the newest five
+ResidentSnapshotService ..> ResidentHomeService : the notice board
+ResidentSnapshotService ..> NotificationsService : the activity strip IS the feed,\nnot member_activity (§5.7 corrected)
+ResidentHomeRouter ..> ResidentHomeService
+ResidentHomeService ..> ResidentHomeRepository
+ResidentHomeRepository ..> ResidentViews : notices, household, directory
+ResidentHomeRepository ..> ResidentRpcs : add_unit_contact resolves the\nflat from the residency
+ResidentRpcs ..> UnitContacts
+
 legend left
   <b>Legend</b>
   solid arrow: state/result flow   dashed arrow: dependency

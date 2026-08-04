@@ -221,6 +221,41 @@ Table unit_residencies [headercolor: #0F766E] {
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
   indexes { (unit_id, membership_id) [unique, note: 'Partial: ended_at is null'] }
+
+  // 0033 -- RLS, which this table had none of. It says who lives in which flat,
+  // it is reachable through PostgREST, and until this migration every
+  // authenticated user in the project could read all of it. A resident sees
+  // their own flat's occupants; an admin sees the community's.
+}
+
+// 0033 -- extra numbers a household registers against its flat.
+//
+// NOT memberships, and the distinction is the whole reason this table exists.
+// `Profile.jsx` lets a resident add a number without going through an admin, and
+// the prototype implements it by inventing a whole user -- name, role, status.
+// That cannot be done here: `profiles.id` references `auth.users`, so a person
+// with no account cannot be a profile, and manufacturing a membership for a
+// phone number would put somebody in the community's member count who cannot log
+// in and never agreed to join.
+//
+// Scoped to the UNIT rather than to the resident who added it, because that is
+// what the screen says -- "Numbers Registered to Flat B-1204". When they move
+// out, the number belongs to the flat's history and not to them.
+//
+// `household_overview` unions these with real residencies and labels each row
+// with a `source`, so a caller never has to guess which kind it is holding.
+Table unit_contacts [headercolor: #0F766E] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  unit_id uuid [not null, ref: > units.id]
+  added_by_membership_id uuid [ref: > community_memberships.id]
+  full_name text [not null]
+  phone_e164 varchar(20) [not null]
+  relationship text
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes { (unit_id, phone_e164) [unique, note: 'the same number twice is the same number'] }
 }
 
 // Joining and staffing
@@ -345,22 +380,66 @@ Table complaints [headercolor: #C53030] {
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
   resolved_at timestamptz
+
+  department_id uuid [ref: > departments.id, note: '0019']
+  assigned_to_membership_id uuid [ref: > community_memberships.id, note: '0019']
+  assignee_label text [note: '0019 - staff without an account']
+  due_at timestamptz [note: '0019 - the admin queue deadline']
+  progress_percent integer [not null, default: 0, note: '0020']
+
+  priority text [not null, default: 'low', note: '0031 - low/medium/high; the form calls it urgency']
+  location text [note: '0031']
+  expected_resolution_at timestamptz [note: '0031 - computed on insert from priority']
+  reopened_count integer [not null, default: 0, note: '0031']
+  resolution_rating smallint [note: '0031 - 1..5, set only by the resident']
+  resident_feedback text [note: '0031']
+
+  indexes {
+    (department_id, status) [name: 'complaints_department_idx']
+    (raised_by_membership_id, created_at) [name: 'complaints_raised_by_created_idx']
+  }
+
+  Note: '''
+  RLS from 0031. Admins see the community queue, a resident sees their own:
+  `is_community_admin(community_id) or is_own_membership(raised_by_membership_id)`.
+  No write policy - raise_complaint, update_complaint, reopen_complaint and
+  confirm_complaint_resolution are SECURITY DEFINER and authorize themselves.
+
+  `resolved` and `closed` are not synonyms. The association resolves; only the
+  resident closes, through confirm_complaint_resolution.
+
+  The 0019 and 0020 columns above were missing from this diagram until 2026-08-04.
+  They had been in the schema since those migrations; the omission was this file's.
+  '''
 }
 
 Table complaint_events [headercolor: #C53030] {
   id uuid [pk]
   complaint_id uuid [not null, ref: > complaints.id]
   actor_membership_id uuid [ref: > community_memberships.id]
+  actor_label text [note: '0020 - the name AT THE TIME of the event']
   event_type text [not null]
   payload jsonb [not null]
   created_at timestamptz [not null]
+
+  Note: '''
+  Append-only. Written only by the complaint RPCs, never directly.
+  0031 adds `reopened` and `resolution_confirmed` to the event vocabulary.
+
+  A `comment_added` event is written for internal comments too, because this
+  timeline was built for the admin screen. The resident detail endpoint drops
+  those rows: an entry saying something was said, leading to a thread where
+  nothing new is visible, is a worse leak than the comment would have been.
+  '''
 }
 
 Table complaint_comments [headercolor: #C53030] {
   id uuid [pk]
   complaint_id uuid [not null, ref: > complaints.id]
-  author_membership_id uuid [not null, ref: > community_memberships.id]
+  author_membership_id uuid [ref: > community_memberships.id, note: '0020 made this nullable']
+  author_label text [note: '0020']
   body text [not null]
+  visibility text [not null, default: 'public', note: '0020 - public | internal']
   created_at timestamptz [not null]
 }
 
@@ -368,6 +447,12 @@ Table complaint_read_state [headercolor: #C53030] {
   complaint_id uuid [pk, ref: > complaints.id]
   membership_id uuid [pk, ref: > community_memberships.id]
   last_read_at timestamptz [not null]
+
+  Note: '''
+  In the baseline from the start; nothing wrote to it until 0031.
+  Per membership, so an admin opening a complaint cannot clear a resident marker.
+  `complaint_overview.is_unread` is computed from it.
+  '''
 }
 
 Table work_orders [headercolor: #C53030] {
@@ -404,6 +489,29 @@ Table visitor_requests [headercolor: #6B46C1] {
   checked_out_at timestamptz
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  // 0032 -- what the resident's pre-approval form collects, and the second
+  // credential. `code_hash` is the short code they read aloud; `pass_hash` is
+  // the QR token, and the two are separate artifacts stored the same way.
+  //
+  // Uniqueness on `code_hash` is a PARTIAL index on (community_id, code_hash)
+  // over live passes only -- not the global unique the design sketch asked for.
+  // Six digits is 900k values, so a project-wide unique index starts colliding
+  // at a few hundred live passes and every collision is a cross-tenant write
+  // failure. A code only has to be unambiguous at one gate among passes that
+  // could currently open it.
+  //
+  // That holds only because something retires a lapsed pass. An index predicate
+  // must be IMMUTABLE, so `live` there is a STATUS and not a time -- and the
+  // baseline's `expired` status was written by nothing. `expire_visitor_passes`
+  // settles a community's lapsed passes before each issue; without it the six
+  // digits leak rather than recycle and the argument above is just a hope.
+  purpose text
+  purpose_details text
+  guest_count integer [not null, default: 1]
+  code_hash text
+  decided_at timestamptz
+  cancelled_at timestamptz
 }
 
 Table visitor_events [headercolor: #6B46C1] {
@@ -501,6 +609,28 @@ Table payments [headercolor: #2F855A] {
   status payment_status [not null, default: 'initiated']
   idempotency_key text
   created_at timestamptz [not null]
+
+  // 0033 -- what a payment has to say when it FAILS. `record_payment` writes
+  // `succeeded` and nothing else, because an admin only records money that
+  // already arrived; a gateway declines, and "failed" alone is a row nobody can
+  // act on.
+  //
+  // `failure_code` is a stable identifier and never prose -- `card_declined`,
+  // not "Your card was declined." A CHECK enforces that it is null unless the
+  // payment failed, because a decline reason on a succeeded payment is a
+  // contradiction.
+  //
+  // `instrument_label` is a RECEIPT LINE and never a credential: `•••• 4242`,
+  // `resident@upi`. No PAN, no CVV and no expiry is stored in this table or any
+  // other -- they are read by a pure function in the API and discarded in the
+  // same call.
+  //
+  // `provider` is the column that matters most here and it is not new. Resident
+  // payments write 'simulator'; the admin's write 'offline'. On the day a real
+  // gateway arrives, that string is the only thing that can separate the money
+  // that moved from the money that did not.
+  failure_code text
+  instrument_label text
   indexes { (community_id, idempotency_key) [unique] }
 }
 
@@ -519,9 +649,17 @@ Table notices [headercolor: #2B6CB0] {
   author_membership_id uuid [ref: > community_memberships.id]
   title text [not null]
   body text [not null]
-  published_at timestamptz
+  published_at timestamptz [note: 'null means DRAFT -- excluded from the resident view and by policy']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  // 0033 -- RLS, which this table also had none of. Members read published
+  // notices; admins and managers read everything, because a draft is theirs and
+  // the admin dashboard reads this table through the caller's own client.
+  //
+  // Still no `effective_at`. US-2.11 asks to be reminded BEFORE a rule takes
+  // effect and there is no stored moment for a reminder to point at. One column,
+  // and `notices` belongs to the admin workstream, so the story is theirs.
 }
 
 Table notifications [headercolor: #2B6CB0] {
@@ -531,6 +669,26 @@ Table notifications [headercolor: #2B6CB0] {
   payload jsonb [not null]
   read_at timestamptz
   created_at timestamptz [not null]
+  push_sent_at timestamptz [note: '0030 — set when a sender CLAIMS the row, not when the push succeeds']
+  push_attempts smallint [not null, default: 0, note: '0030']
+  indexes {
+    (recipient_membership_id, created_at) [note: 'desc — the feed read and the unread count']
+    (created_at) [note: 'partial, where push_sent_at is null — the sender claim']
+  }
+  Note: 'The durable record. Every user-visible event writes a row here first; SSE and Web Push are two deliveries of it, never the record of it. Written only by notify_member(), in the same transaction as the change it describes. RLS enabled by 0030 with a read policy (is_own_membership) and no write policy, so marking read is mark_notification_read().'
+}
+
+Table push_subscriptions [headercolor: #718096] {
+  id uuid [pk]
+  membership_id uuid [not null, ref: > community_memberships.id]
+  endpoint text [not null, unique]
+  p256dh_key text [not null]
+  auth_key text [not null]
+  user_agent text
+  created_at timestamptz [not null]
+  last_success_at timestamptz
+  failure_count smallint [not null, default: 0]
+  Note: 'One row per BROWSER, not per resident: a phone and a laptop are two. endpoint is unique across the table because the endpoint URL is the browser identity to the push service, so a shared device re-subscribing moves the row instead of duplicating it. RLS enabled with no policy (service_role only) — p256dh_key and auth_key are encryption material, and a readable table is one from which an attacker collects the ability to push as us. Added by 0030.'
 }
 
 Table member_activity [headercolor: #2B6CB0] {
@@ -582,8 +740,14 @@ Table sse_events [headercolor: #718096] {
   topic text [not null]
   payload jsonb [not null]
   created_at timestamptz [not null]
-  indexes { (community_id, id) }
-  Note: 'Tenant-scoped dashboard refresh outbox. Browser clients consume the backend SSE projection, not database subscriptions. RLS enabled with no policy (0024), so only service_role reads it: rows are cross-tenant by construction and the backend fans them out after checking membership. Retention bounded by prune_sse_events().'
+  audience text [not null, default: 'community', note: '0028 — community | role | member']
+  audience_roles "text[]" [note: '0028 — set iff audience = role']
+  recipient_membership_id uuid [ref: > community_memberships.id, note: '0028 — set iff audience = member']
+  indexes {
+    (community_id, id)
+    (recipient_membership_id, id) [note: '0028']
+  }
+  Note: 'Tenant-scoped live-update outbox, audience-scoped since 0028: a check constraint makes the three audiences mutually exclusive and complete, and the reader fails closed on anything it cannot classify. Browser clients consume the backend SSE projection, not database subscriptions. RLS enabled with no policy (0024), so only service_role reads it. EPHEMERAL — pruned every 15 minutes by prune_sse_events(), which is why nothing durable is built on it and notifications exists.'
 }
 
 // Deliberately separate to make the community/member circular relationship
@@ -642,6 +806,7 @@ TableGroup amenities_and_finance {
 TableGroup communication_and_platform {
   notices
   notifications
+  push_subscriptions
   member_activity
   audit_events
   media
@@ -739,11 +904,12 @@ Table amenity_financial_events [headercolor: #6B46C1] {
   id uuid [pk]
   community_id uuid [not null, ref: > communities.id]
   booking_charge_id uuid [not null, ref: > amenity_booking_charges.id]
-  event_type text [not null, note: 'payment | refund | damage_deduction | charge']
+  event_type text [not null, note: 'payment | refund | damage_deduction | charge | payment_failed (0033). The fifth was added because the first four had no word for "this did not go through": a decline written as a charge puts a phantom line in the ledger, and written as a payment it shows the booking as paid. Every aggregate in amenity_ledger_overview filters on this column, so the new type counts towards nothing.']
   amount numeric(12,2) [not null]
   payment_reference text [note: 'UQ (community_id, event_type, payment_reference) — makes record_amenity_payment idempotent']
   reason text
   notes text
+  instrument_label text [note: 'Masked receipt line — 0033. NEVER a PAN, a CVV or an expiry. Added because a replayed idempotency key must be answered from the row that recorded the attempt, and a row that never stored what was paid with cannot describe it.']
   actor_membership_id uuid [ref: > community_memberships.id]
   created_at timestamptz [not null]
   Note: 'Append-only. Money moves against a CHARGE, not a booking, so a refund can say which deposit it returned.'
@@ -805,6 +971,34 @@ TableGroup admin_dashboard {
 //   amenity_overview, amenity_booking_overview,
 //   amenity_ledger_overview, amenity_ledger_summary       (0023)
 //   pending_access_request_overview                       (0024)
+//   bookable_amenity                                      (0029)
+//   notification_overview                                 (0030)
+//   complaint_overview                                    (0031)
+//   visitor_pass_overview                                 (0032)
+//
+// complaint_overview is the RESIDENT's projection of a complaint. It computes
+// three things the API would otherwise have to: is_overdue (the same predicate
+// department_overview uses for its overdue count, so the two screens cannot
+// disagree about one complaint), comment_count and last_activity_at (so a list
+// is one query rather than one plus N), and is_unread -- which is per-caller and
+// therefore could never have been a column on the row. Per-caller means the
+// read_state join matches the CALLER's rows, not the raiser's: mark_complaint_read
+// writes one row per membership so an admin cannot clear a resident's marker, and
+// a view keyed to the raiser would ignore every row it wrote for anyone else.
+//
+// visitor_pass_overview is the RESIDENT's projection of a visitor pass, and the
+// notable thing about it is a column list that stops short: NEITHER hash is
+// selected. Not because a hash is dangerous to display -- it is not -- but
+// because a column that never leaves the database cannot be leaked by a later
+// `select *`, and no reader on that surface has any use for one. It also
+// computes is_current, which is what splits the resident's two tabs, so the
+// split cannot drift from the transitions decide_visitor_pass allows.
+//
+// bookable_amenity is the RESIDENT's projection of amenities -- the resident
+// column list, filtered to active amenities with no temporary closure. Two
+// views over one table, each owned by the surface that reads it: sharing
+// amenity_overview would leave the resident payload one column away from an
+// admin field the moment one was added for the admin card.
 //
 // pending_access_request_overview backs DashboardSnapshot.pendingRequests --
 // the field the admin sidebar badge counts. No new table: it is a projection of
@@ -817,6 +1011,17 @@ TableGroup admin_dashboard {
 //   the generic dashboard.refresh that 0007 already emits from 12 tables.
 //   Both carry the live pending count so a badge can update from the event.
 //   See the "Live updates" section of docs/ARCHITECTURE.md.
+//
+// NOTIFICATIONS AND PUSH (0028, 0030)
+//
+//   0028 gives every outbox row an audience, so one stream serves every role
+//   without a resident receiving admin traffic.
+//   0030 makes notifications the durable record: notify_member() writes it in
+//   the causing transaction, a trigger emits one member-addressed sse_events
+//   row from it, and claim_push_batch() leases un-pushed rows with
+//   `for update skip locked` so two sender processes cannot buzz one phone
+//   twice. push_subscriptions holds the browsers. See
+//   docs/design/RESIDENT_BACKEND_DESIGN.md 10.
 //
 // community_module_overview reads feature_catalog + community_features, NOT
 // module tables of ours. That is conflict C-11 closed: there is exactly one

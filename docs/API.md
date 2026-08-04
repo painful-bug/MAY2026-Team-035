@@ -34,7 +34,7 @@
 This document is the contract between the backend and the React frontend. It is
 **normative**: if the code and this document disagree, that is a bug in one of them.
 
-**[§14](#14-user-stories--endpoints) traces every endpoint back to the user story it serves**, and
+**[§16](#16-user-stories--endpoints) traces every endpoint back to the user story it serves**, and
 names the stories nothing serves yet. The stories and the user identification they came from are
 checked in under **[`product/`](product/)**.
 
@@ -51,7 +51,7 @@ without running the service.
 shapes, every status code an operation can return, the error envelope, per-parameter meaning, and
 the user story each operation traces to. This file carries what a client cannot act on but a
 maintainer needs — why a delete is really a deactivation, which guard returns 409 and what it is
-protecting, the shape of the gaps in §14. Read the spec to write a client; read this to change one.
+protecting, the shape of the gaps in §16. Read the spec to write a client; read this to change one.
 
 Everything a generator cannot infer — error responses, story traceability, and descriptions for the
 handlers with no docstring — is supplied by
@@ -151,8 +151,9 @@ safe to display. Validation failures add a `details` array:
 }
 ```
 
-This envelope is in [`openapi.yaml`](openapi.yaml) as `ErrorResponse`, and **every one of the 70
-operations declares the specific codes it can return**, each pointing at a shared
+This envelope is in [`openapi.yaml`](openapi.yaml) as `ErrorResponse`, and **every operation declares
+the specific codes it can return** — all 72 of them today, and the exporter refuses to write a spec
+in which one does not — each pointing at a shared
 `components/responses` entry. Until 2026-08-02 the spec instead carried FastAPI's stock
 `HTTPValidationError` — `{"detail": [...]}` — on 59 operations and nothing else anywhere: a shape
 this API has never sent, because `register_exception_handlers` replaces the default handlers. A
@@ -188,6 +189,17 @@ Three rows above are deliberately **absent from every operation** in `openapi.ya
 statuses. `405` is produced by Starlette's router before any operation is reached, so it belongs to
 no path. `429` is not implemented at all (§1.8). Declaring them per operation would advertise
 responses that cannot occur, which is the failure this document has just spent a section correcting.
+
+**`422` is the opposite case, and it is declared far more widely than the tables below claim.**
+It appears on nearly every operation in the spec because `app/main.py` declares it once on the
+whole `include_router(...)`, so every route inherits it; `scripts/api_annotations.py` traces it to
+a specific rule on about half that number. The generator unions the two and never subtracts —
+narrowing a claim the application itself makes is not the exporter's decision, and a spec that
+contradicts the app is worse than one that over-promises. Nor is the wide claim false: FastAPI
+returns `422` from any operation with a path, query or body parameter it fails to coerce. Read the
+per-endpoint `422` rows below as *the validation this endpoint does on purpose*, and the spec's as
+*where a `422` is reachable at all*. The one route that suppresses it deliberately is
+`GET /events` (§5.1), whose `Last-Event-ID` is browser-written and reconnects instead.
 
 ### 1.6 Pagination
 
@@ -323,35 +335,60 @@ Mint a resident invite. **Requires `ADMIN`.**
 | `403` | `insufficient_role` | Caller is not an admin |
 | `422` | `request_validation_error` | Malformed body |
 
-## 5. Admin dashboard
+## 5. Live updates, notifications and the admin dashboard
 
-**No endpoints of ours live here.** Every one this section documented was removed by the frontend wiring audit,
+**No admin-dashboard endpoints of ours live here.** Every one this section documented was removed by the frontend wiring audit,
 because their `GET /dashboard/snapshot` already serves the same reads and the frontend already calls it. The
 removals were `GET /dashboard/admin`, `GET /communities/current`, `GET /notices` and `GET /residents`. See
 [FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md) §3 for the evidence behind each one, and
 [`../backend/API_REFERENCE.md`](../backend/API_REFERENCE.md) for the snapshot's contract.
 
 The heading is kept so the section numbering below does not shift; renumbering would break every link and
-reference into §7–§15 for no gain.
+reference into §7–§17 for no gain. It has since acquired a second job: §5.1–§5.3 are the three delivery
+layers of one design, and keeping them together is worth more than a heading that names only one of them.
 
-### 5.1 Live updates — `GET /dashboard/events`
+### 5.1 Live updates — `GET /events`
 
-Owned by the dashboard workstream, documented here because our migrations feed it and because it is how every
-write in §7–§12 reaches an open screen without a matching read endpoint.
+One stream for every portal. It is how every write in §7–§12 reaches an open screen without a matching read
+endpoint.
+
+> **`GET /dashboard/events` is a deprecated alias** for this endpoint — same handler, same behaviour, same
+> audience scoping. It stays because the admin frontend is already wired to it. New clients use `/events`.
+>
+> The stream was never dashboard-specific: its guard has always been *any active membership*, not an admin
+> role. What changed is that the rows now carry an audience (below), which is what makes one endpoint correct
+> for every role.
 
 **Transport: server-sent events** (`text/event-stream`), same-origin, over the browser's native `EventSource`.
-No Supabase key or provider token reaches the browser. Auth is the session cookie; the stream is bound to the
-community on the caller's verified membership, so a client cannot widen its own scope by replaying someone
-else's `Last-Event-ID`.
+No Supabase key or provider token reaches the browser. Auth is the session cookie.
 
 Rationale and the rejected alternatives — Supabase Realtime, `LISTEN`/`NOTIFY`, client polling — are in
 [ARCHITECTURE.md § Live updates](ARCHITECTURE.md#live-updates).
+
+**Who receives what**
+
+Every outbox row carries an audience, added by
+[`0028_event_audience.sql`](../backend/supabase/migrations/0028_event_audience.sql):
+
+| Audience | Delivered to | Used by |
+|---|---|---|
+| `community` | every subscriber in the community | genuinely community-wide news |
+| `role` | subscribers whose role is in the row's `audience_roles` | `dashboard.refresh`, `access_request.*` — both `{admin, manager}` |
+| `member` | the one subscriber matching the row's `recipient_membership_id` | anything addressed to one person |
+
+The filter runs on the community id, membership id and role of the membership the request already resolved
+out of Postgres — never on a header, a query parameter or a `Last-Event-ID`. A client therefore cannot widen
+its own stream by replaying someone else's resume point, and cannot widen it at all.
+
+Before `0028` the fan-out was by community alone, so **any** member who opened the stream received
+`access_request.created` for their neighbours, applicant name included. Nothing exploited it, because no
+non-admin client connected; the fix landed before the resident portal rather than after.
 
 **Request**
 
 | Header | Required | Meaning |
 |---|---|---|
-| `Last-Event-ID` | no | Resume point. The stream backfills everything after this id for the caller's community before attaching to the live feed, so a reconnect across a network blip loses nothing. Non-numeric values are treated as `0`. |
+| `Last-Event-ID` | no | Resume point. The stream backfills everything after this id **that the caller is in the audience for** before attaching to the live feed, so a reconnect across a network blip loses nothing. Non-numeric or negative values are treated as `0` — the header is written by the browser, not by application code, so a malformed one reconnects rather than `422`s. |
 
 **Frames**
 
@@ -363,19 +400,166 @@ data: {"request_id":"…","applicant_name":"Asha R","requested_relationship":"te
 
 `data` is always JSON. A comment frame (`: keepalive`) is sent every 20s so proxies do not reap an idle stream.
 
-| Event | When | Payload |
-|---|---|---|
-| `access_request.created` | someone asks to join the community | `request_id`, `applicant_name`, `requested_relationship`, `status`, `created_at`, `pending_count` |
-| `access_request.decided` | a request is approved, rejected or blacklisted | `request_id`, `applicant_name`, `from`, `to`, `pending_count` |
-| `dashboard.refresh` | any write to one of 12 domain tables | `{"table": "…"}`, or `{"resync": true}` if this connection fell behind and events were dropped |
+| Event | Audience | When | Payload |
+|---|---|---|---|
+| `access_request.created` | `{admin, manager}` | someone asks to join the community | `request_id`, `applicant_name`, `requested_relationship`, `status`, `created_at`, `pending_count` |
+| `access_request.decided` | `{admin, manager}` | a request is approved, rejected or blacklisted | `request_id`, `applicant_name`, `from`, `to`, `pending_count` |
+| `dashboard.refresh` | `{admin, manager}` | any write to one of 12 domain tables | `{"table": "…"}`, or `{"resync": true}` if this connection fell behind and events were dropped |
+| `stream.resync` | the affected connection | this connection fell behind and events were dropped | `{"resync": true}` |
+
+`stream.resync` and `dashboard.refresh`-with-`resync` are the same instruction — *you have a gap, re-read
+everything*. They differ only in name: an admin gets the topic its listener is already wired to, and every
+other role gets one that does not claim to be about the admin dashboard. **Any client that opens this stream
+must handle `stream.resync`**; it is the only frame that can arrive without a preceding domain event.
 
 **Contract notes**
 
-- Delivery is **at-most-once**, and the payload is a hint. `GET /dashboard/snapshot` is authoritative; treat
-  every event as "re-read", which is what `dashboard.refresh` means literally.
+- Delivery is **at-most-once**, and the payload is a hint, never truth. The matching `GET` is authoritative;
+  treat every event as "re-read", which is what `dashboard.refresh` means literally.
+- **A resident does not receive a blanket refresh frame.** `dashboard.refresh` means "re-read the admin
+  snapshot", which a resident would be refused; it has always been a wasted wake-up for them. Resident
+  screens get specific topics instead — five hundred flats re-fetching on every unrelated row change is a
+  thundering herd, not a feature.
 - `pending_count` is the community's live count of pending join requests, included so a badge or toast can
   update without a round trip.
 - Status codes: `200` (stream opens), `401` (no session), `403` (no active membership).
+
+### 5.2 Notifications — the layer that survives being offline
+
+**Three layers deliver one record, and only one of them is durable.**
+
+| Layer | Mechanism | Lifetime | Reaches |
+|---|---|---|---|
+| Record | a `notifications` row | until read and pruned | anyone, later |
+| In-app live | an SSE frame (§5.1) | the connection | an open tab |
+| Out-of-app | Web Push (§5.3) | one delivery attempt | a closed tab, a locked phone |
+
+> **The stream is not the notification system.** SSE is at-most-once and connection-scoped — §5.1 makes *the
+> payload is a hint, never truth* load-bearing, and it is only safe **because** of that rule. A push may
+> simply not arrive. So every user-visible event writes the row **first**, inside the transaction that caused
+> it, and the two transports carry it. A resident whose phone was locked when a visitor reached the gate must
+> still find out.
+
+Nothing durable can be built on `sse_events`: it is pruned every fifteen minutes, deliberately, because it is
+ephemeral. Building a feed on a table designed to be deleted inverts both.
+
+The notification a resident sees is **rendered strings, not a record**: a title, a body and a deep link. The
+record itself is fetched through its own endpoint, where the ownership predicate lives. That has a second
+effect worth stating — a field the renderer was not asked for cannot leave the database, which is how the one
+absolute rule in §5.3 is enforced rather than remembered.
+
+#### `GET /api/v1/notifications`
+
+The caller's own feed, newest first. **Any active member** — an admin receives `complaint.raised` and
+`access_request.created`, and a feed that refused them would mean building a second one later.
+
+**There is no recipient parameter, and the tenancy here is doubled.** The recipient is the membership
+`get_active_membership` resolved from Postgres, and `notifications` also carries an RLS policy of its own
+(`is_own_membership`), so a query that asked for someone else's rows would come back empty from the database
+regardless of what the API did. This is the first table in this backend where that is true.
+
+| Query | Default | Notes |
+|---|---|---|
+| `unread` | `false` | Only unread rows. `unread` in the *response* still counts the whole feed |
+| `page` | `1` | |
+| `pageSize` | `20` | Max `100` |
+
+| Response field | Notes |
+|---|---|
+| `items[].id`, `items[].kind` | `kind` is the vocabulary in `RESIDENT_BACKEND_DESIGN.md` §10.3, e.g. `visitor.approval_requested`. Not an enum on the wire: every later build step adds kinds |
+| `items[].title`, `items[].body` | Rendered when the row was written. A notification whose writer set no title falls back to one derived from its `kind` — a blank line in a feed reads as a bug in the app |
+| `items[].url` | Where a click goes, as a frontend path. `""` when there is nowhere to route |
+| `items[].isUnread`, `items[].createdAt` | |
+| `unread` | Unread across the **whole feed**, not this page. It is what a badge renders, and a badge that changed as the resident scrolled would be wrong |
+
+Paged, unlike the amenity catalogue in §10: a feed grows without bound and the screen that reads it shows the
+newest handful.
+
+#### `POST /api/v1/notifications/{notificationId}/read`
+
+Marks one read and returns `{ marked, unread }`, so a badge can be set from the response rather than by
+re-fetching the feed.
+
+**`404` for a notification that does not exist and for one that is not yours — deliberately the same answer.**
+Telling a caller that an id is real but not theirs is how an id space gets enumerated. Idempotent: marking an
+already-read notification read is a `200`, and the original `readAt` is kept rather than moved forward.
+
+#### `POST /api/v1/notifications/read-all`
+
+Clears the badge. `marked` is how many rows actually moved, so a second call answers `0` rather than erroring.
+`unread` is re-read afterwards instead of assumed to be zero — a notification can arrive between the update
+and the count, and a badge told `0` while one is already waiting stays wrong until the next fetch.
+
+| Status | When |
+|---|---|
+| `200` | Feed returned, or the state was reached |
+| `401` / `403` | No session; no active membership, or a failed CSRF pair on the two writes |
+| `404` | Only on `/{notificationId}/read` — unknown, or not the caller's |
+
+### 5.3 Web Push — `GET /push/vapid-key`, `POST` / `DELETE /push/subscriptions`
+
+Standards Web Push (RFC 8291/8292) over this server's own VAPID keypair. **No vendor account, no SDK in the
+frontend bundle, and no third party ever learns who visited which flat and when** — Google, Mozilla and Apple
+relay ciphertext they cannot read, because RFC 8291 encrypts the payload end to end between this server and
+the browser.
+
+**The push body carries the detail.** `US-2.1`'s recorded pain point is a notification that produces *"only a
+notification sound without displaying the actual notification"*, so a generic *"open the app"* push would be a
+milder version of the exact failure that story exists to fix — and a resident being asked to approve or reject
+someone needs the name to decide.
+
+> **One thing may never appear in a push body: the visitor security code.** It is a hashed credential returned
+> exactly once (§10 of the design), and a credential on a lock screen is a credential readable by anyone
+> holding the phone. Names, purposes, flat numbers and amounts — yes. The thing that opens the gate — never.
+> This is enforced by construction: the renderer reads `title`, `body` and `url` and copies no other key, so a
+> writer that puts a secret anywhere else in the payload finds it stays in the database.
+
+The push is built from the same stored row the feed renders, so the line on the lock screen and the line in
+the list can never tell different stories about one event. `tag` is the entity id where the writer supplies
+one, so three gate attempts for one visitor collapse into one notification; without one it is the notification
+id, which is unique and therefore never coalesces — wrongly merging two complaints loses a notification, while
+wrongly showing two lines costs a scroll.
+
+| Route | Body | Notes |
+|---|---|---|
+| `GET /push/vapid-key` | — | `{ publicKey }`. Public by construction, still behind a membership guard: an unauthenticated endpoint naming our key is free reconnaissance for no benefit |
+| `POST /push/subscriptions` | `PushSubscription.toJSON()` — `{ endpoint, keys: { p256dh, auth }, userAgent? }` | Idempotent on `endpoint`. A repeat is `200`, not `409`: the client is describing a state |
+| `DELETE /push/subscriptions` | `{ endpoint }` | Always `200`, even when the row had already gone |
+
+**The browser's own document is accepted unchanged.** A transcription step between `PushSubscription.toJSON()`
+and our field names is somewhere to put `auth` into the `p256dh` field, and that failure looks like a push
+that silently never decrypts.
+
+**`DELETE` takes a body, not a query string.** Unusual, and deliberate: a push endpoint URL is a device
+identifier, and a request whose whole purpose is to stop tracking a device should not write it into every
+access log between here and the browser. A `DELETE` body is legal but not universally respected by HTTP
+clients, so this was checked rather than assumed: `frontend/src/lib/api/client.js` spreads its options
+straight into `fetch`, which sends the body. If a future client drops it, the fix is a second path, not a
+query parameter.
+
+**A client must re-read `GET /push/vapid-key` on load and compare it against the `applicationServerKey` its
+stored subscription was created with.** A subscription is bound to the key that created it, the protocol
+offers no dual-key period, and a rotation therefore stops push permanently and *silently* — no error anywhere,
+pushes simply stop arriving.
+
+| Status | When |
+|---|---|
+| `200` | Key returned, or subscription registered/removed |
+| `401` / `403` | No session; no active membership, or a failed CSRF pair |
+| `422` | The subscription document is missing an endpoint or a key |
+| `503` `push_not_configured` | This server has no VAPID keypair. Only `GET /push/vapid-key` and `POST /push/subscriptions` |
+
+**Fail closed, but do not fail loudly.** An environment with no keypair returns `503` on those two routes, the
+sender never starts, and **everything else in the product works normally** — including `DELETE`, because
+turning notifications off must not depend on an operator not having lost a key. Push is an enhancement; an
+unconfigured environment must not be a broken environment.
+
+> **This ships backend-complete and unverifiable end to end.** Nothing in `frontend/public/` is a service
+> worker, no manifest exists, and no resident page opens a connection of any kind — so no push can be
+> *observed* arriving yet. The backend tests cover registration and idempotency, payload construction, the
+> `410`-prunes-the-subscription rule and the claim's at-most-once behaviour, with the call to the push service
+> mocked. That is honest coverage of this half and should not be described as more. What the frontend must add
+> is listed in `RESIDENT_BACKEND_DESIGN.md` §10.6.
 
 ## 6. People
 
@@ -391,6 +575,26 @@ anywhere.
 
 Reads and comments are open to **any member** of the community — a resident must be able to follow and
 discuss their own complaint. Editing is **admin-only**.
+
+Backed by migrations `0020` (the timeline and the two admin writes) and `0031` (the resident's
+columns, the SLA rule, the six resident operations, and the notification every complaint write now
+emits).
+
+> **Every write in this section notifies somebody.** A status change reaches the resident who raised
+> the complaint; raising, reopening, confirming and a resident's own comment reach the community's
+> admins and managers. The notification is written **inside the same transaction** as the change that
+> caused it, in the RPC rather than in this API, so there is no path that changes a complaint without
+> telling anyone — including the paths this API does not own. See §5.2 for how it is delivered.
+
+### The two vocabularies
+
+The database column is `priority`; the form field is `urgency`. Neither side is renamed —
+`domain/vocabularies.py` translates, as it does for every other pair.
+
+`status` on the wire is `Pending` | `In Progress` | `Resolved` | `Cancelled`. The stored enum has six
+members, and the mapping is deliberately **not** a round trip: `closed` renders as `Resolved`, because
+the frontend's select has three options and closed is not one of them. What `closed` means is in
+`POST /complaints/{id}/resolution` below.
 
 ### `PATCH /api/v1/complaints/{complaintId}`
 
@@ -431,13 +635,176 @@ Add a comment. **Any member.** `201 Created`.
 **Request** — `{ "message": "Plumber will visit at 4pm.", "visibility": "resident" }`
 
 `visibility` is `resident` (default, visible to the resident and on the timeline) or `internal`
-(**admins only** — never returned to a resident, and never written to the timeline).
+(**admins only**, never returned to a resident).
+
+> **Correction.** This section previously said an internal comment is "never written to the
+> timeline". It is — `0020` writes a `comment_added` event for every comment, because the timeline it
+> was written for is admin-facing, and the policy on `complaint_events` scopes rows to the complaint
+> rather than to a comment's visibility. So the *event* did reach the resident even though the
+> *comment* did not, which would have put a row on their timeline saying something was said and
+> refusing to say what. `GET /complaints/{id}` drops those events; the comment itself was never
+> reachable.
+
+A public comment notifies the other party — the resident if an admin wrote it, the community's admins
+and managers if the resident did. An **internal comment notifies nobody**, for the same reason it
+leaves no timeline row.
 
 | Status | Code | Cause |
 |---|---|---|
 | `403` | `forbidden` | Not a member, or a non-admin asked for `internal` |
 | `404` | `not_found` | No such complaint |
 | `409` | `conflict` | Empty message, or unknown visibility |
+
+### `GET /api/v1/complaints`
+
+The caller's **own** complaints, newest first. **Requires an active membership** — any role.
+
+**Always the caller's own, whatever their role.** An admin calling this gets the complaints they
+personally raised, not the community queue; that is `GET /dashboard/snapshot`. One route that returns
+a resident's list to one caller and the whole association's to another is the shape
+`RESIDENT_BACKEND_DESIGN.md` §5.1 exists to prevent.
+
+| Query | Notes |
+|---|---|
+| `status` | `Pending` \| `In Progress` \| `Resolved` \| `Cancelled`. **Unrecognised is `422`, not an empty page** — a filter typo must not be indistinguishable from *you have no resolved complaints*. Matches on what a complaint **displays as**, not on one stored value: `Resolved` covers `resolved` and `closed`, `In Progress` covers `acknowledged` and `in_progress`. Stored words are not accepted — `?status=Closed` is a `422`, because it is a caller guessing at a vocabulary this API does not speak |
+| `category` | Exact match |
+| `unread` | Only complaints changed since the caller last opened them |
+| `page`, `pageSize` | `pageSize` ≤ 100, default 20 |
+
+| Response field | Notes |
+|---|---|
+| `id`, `title`, `category`, `location` | Null text reads as `""`; a missing `category` reads as `General` |
+| `status` | The four wire values above |
+| `urgency` | `High` \| `Medium` \| `Low`. The column is `priority` |
+| `progress` | `0`–`100`, the admin's slider |
+| `assignee` | The label recorded on the complaint, or `Unassigned`. **Not** a membership id — a resident shown one learns an identifier they have no endpoint for |
+| `expectedResolutionAt` | Computed on insert from `urgency`. See `POST /complaints` |
+| `isOverdue` | Past `expectedResolutionAt` and not resolved. **Computed in the database**, against the same clock the admin's overdue count uses, so the two screens cannot disagree about one complaint |
+| `isUnread` | Per-caller, from `complaint_read_state`. Cleared by `POST /complaints/{id}/read` |
+| `reopenedCount`, `commentCount`, `lastActivityAt`, `createdAt`, `updatedAt`, `resolvedAt` | |
+
+### `POST /api/v1/complaints`
+
+Raise a complaint. **Requires an active membership.** `201 Created`, and the body is the complaint as
+`GET /complaints/{id}` would return it.
+
+**Request**
+```json
+{
+  "title": "Lift stuck between floors",
+  "description": "The B-block lift has been stopping between 3 and 4.",
+  "category": "Elevator",
+  "urgency": "High",
+  "location": "B Block"
+}
+```
+
+> **`expectedResolutionAt` is not accepted.** High → 24h, Medium → 48h, Low → 72h, applied by the
+> database on insert. The rule used to live in `createComplaintsSlice.js`, where a resident could have
+> sent themselves a one-minute deadline and where the admin portal could not see it at all. The
+> admin's `dueAt` is set to the same instant, so the resident's expectation and the association's
+> deadline start out as one number rather than two formulas.
+
+The response is the created complaint rather than an acknowledgement, because the SLA deadline is the
+one thing the client could not have computed and is exactly what it is about to display.
+
+**Attachments are not accepted yet.** The form collects them, `media` exists in the schema, and no
+upload endpoint does — so this endpoint takes what it can honour rather than accepting data it drops.
+Tracked in §15.
+
+Raising notifies every active admin and manager of the community.
+
+| Status | Code | Cause |
+|---|---|---|
+| `422` | `unknown_urgency` | Not `High`, `Medium` or `Low`. **Not defaulted** — a silent fallback would file the complaint under a deadline the resident did not choose |
+| `422` | — | Empty or whitespace-only `title` or `category` |
+
+### `GET /api/v1/complaints/{complaintId}`
+
+One complaint with its timeline and public comment thread. **Requires an active membership**, and it
+must be the caller's own complaint.
+
+A complaint that exists but belongs to somebody else is a **`404`, identical to one that does not
+exist**. The lookup filters on the membership rather than checking afterwards, so there is no code
+path in which the two could be told apart.
+
+Adds `description`, `resolutionRating`, `residentFeedback`, `timeline[]`, `comments[]`,
+`hasOlderEvents` and `hasOlderComments` to the list row's fields. A timeline entry is
+`{ id, type, label, actor, message, createdAt }`; `actor` is the label recorded **at the time of the
+event**, not a lookup of what that person is called today. `type` is the raw event type, for a client
+choosing an icon; `label` is the heading a human reads, and an unrecognised type falls back to the
+type itself rather than vanishing from the history.
+
+> **The timeline and the thread are bounded at 200, and the bound keeps the recent end.** Reading
+> them oldest-first and stopping at 200 would keep the *opening* of a long-running complaint and
+> discard everything since — on the one screen where the bound could ever bite, exactly inverted, and
+> silent about it. Both are read newest-first and reversed for display. `hasOlderEvents` and
+> `hasOlderComments` are **measured, not assumed**: a bounded read that reports completeness it never
+> checked is the one kind of truncation a client cannot detect for itself. No endpoint serves the
+> older entries yet, so today they mean *say earlier history is not shown*, not *offer a button*.
+
+### `POST /api/v1/complaints/{complaintId}/reopen`
+
+Send a resolved complaint back. **Requires `RESIDENT`**, and it must be their own complaint.
+
+**Request** — `{ "reason": "The lift stopped again the same evening." }`
+
+The reason is required by the model *and* by the database: a complaint that comes back with no
+statement of what is still wrong gives the association the same row again and no new information.
+
+**The SLA clock restarts from now**, because a reopened complaint carrying its original deadline would
+be overdue the instant it reopened — a failure nobody committed. Any `resolutionRating` and
+`residentFeedback` are cleared; they described a resolution that is no longer being claimed.
+
+Notifies the community's admins and managers. Returns the complaint.
+
+> **A complaint the resident already confirmed can still be reopened.** Both `resolved` and `closed`
+> display as `Resolved`, so from their side it is one state and it behaves as one. `/resolution` is
+> the asymmetric half: it accepts only a complaint the association has resolved and the resident has
+> not yet answered. Two complaints can therefore both read `Resolved` while only one offers *confirm*
+> — the client should key that button off `resolvedAt` with no `resolutionRating`, not off `status`.
+> Not from `Cancelled`: the other two are the association saying the work is done, which is a claim a
+> resident may disagree with, while a cancelled complaint was withdrawn and reopening it is filing it
+> again.
+
+| Status | Code | Cause |
+|---|---|---|
+| `403` | `community_role_required` | Not a resident |
+| `403` | `insufficient_privilege` | Not the resident who raised it |
+| `404` | `not_found` | No such complaint |
+| `422` | `check_violation` | Not currently resolved, or an empty reason |
+
+### `POST /api/v1/complaints/{complaintId}/resolution`
+
+Accept the resolution and rate it. **Requires `RESIDENT`**, and it must be their own complaint.
+
+**Request** — `{ "rating": 4, "feedback": "Fixed, though it took two visits." }`
+
+> **`Resolved` is what the association says; closed is what the resident agrees.** The baseline's enum
+> has carried both since the beginning and nothing has used the distinction — `PATCH /complaints/{id}`
+> treats them as one terminal state. This is the only endpoint that closes a complaint.
+
+The rating is required and must be 1–5; the feedback is optional. A rating with no comment is a
+complete answer; a comment with no rating is not what `US-2.6` asks for. Returns the complaint.
+
+| Status | Code | Cause |
+|---|---|---|
+| `422` | — | `rating` outside 1–5 |
+| `422` | `check_violation` | The complaint is not `Resolved` |
+
+### `POST /api/v1/complaints/{complaintId}/read`
+
+Clear the unread marker. **Requires an active membership.** `200`, idempotent, and a `200` whether or
+not a marker was there to clear.
+
+Per membership, so an admin opening a complaint cannot clear the resident's marker.
+`complaint_read_state` has been in the schema since the baseline with nothing writing to it; this is
+the writer, and `isUnread` is what it turns off.
+
+`complaint_overview` reads the marker belonging to **whoever is asking**, not to whoever raised the
+complaint. Those are the same row on the only surface that reads the view today and stop being the
+same row the moment anything else does — a view keyed to the raiser would quietly ignore every marker
+this endpoint wrote for anybody else.
 
 ## 8. Departments and staff
 
@@ -932,6 +1299,78 @@ Every figure is computed by Postgres in `numeric`, including the reports page's 
 **Nothing is ever deleted except an amenity nobody has booked.** `DELETE /amenities/{id}` returns
 `409` the moment anything has been booked on it, because the cascade would take the bookings, their
 charges and their financial events with it — including deposits residents are still owed.
+
+### `GET /api/v1/amenities/available`
+
+The bookable catalogue. **Requires an active membership** — any role, not `resident` only, because
+nothing in the response is per-resident and a security guard asking what facilities exist is a
+reasonable question to answer.
+
+**This is the read that makes `POST /amenities/{id}/bookings/request` usable.** That write has never
+been admin-guarded — it was written for residents and its docstring says so — but until this endpoint
+the catalogue reached a client exactly once, inside `GET /dashboard/snapshot`, which is guarded by
+`ADMIN`/`MANAGER`. The result was a write path a resident could legitimately call with an argument
+they had no legitimate way to obtain. See `docs/design/RESIDENT_BACKEND_DESIGN.md` §3.1.
+
+> **"Available" means bookable in principle, not free right now.** Every amenity in the response
+> exists, is active, and has no temporary closure recorded against it. It does **not** mean a slot is
+> open. Whether a particular slot is free is decided on write, under an advisory lock, by the booking
+> guard — a read endpoint that answered it would be describing a moment already in the past by the
+> time the resident submitted the form. This is the same rule the rest of §10 follows: *no
+> availability check happens in the API.*
+
+**The community comes from the caller's membership**, resolved from Postgres by
+`get_active_membership`. There is no community parameter, so there is nothing to tamper with. This
+matters more here than elsewhere: `amenities` carries no RLS policy of its own, so the view below
+runs as the caller and inherits nothing, and that one filter is the whole tenancy boundary — which is
+why it is applied in the query rather than after the fetch.
+
+**This is a different projection from the admin card, not a filtered one.** `AmenitySummary` carries
+`pendingRequests` and `outstandingDues` — how many neighbours are waiting on this hall, and how much
+the community is still owed against it. `BookableAmenity` is a separate model that has no such
+fields, so the resident response cannot grow one by someone adding a column to the admin view. The
+query reads its own view, `bookable_amenity` (migration `0029`), rather than `amenity_overview` — two
+views over one table, each owned by the surface that reads it. Sharing the admin's would leave the
+resident response one column away from an admin field, since the next column added there for the
+admin card is in scope here the moment it is added; it would also compute two lateral aggregates per
+row that this response discards.
+
+`bookable_amenity` applies the row filter as well as the column list — active, and no temporary
+closure — so *bookable* is defined in one place rather than assembled by whoever writes the query.
+
+| Response field | Notes |
+|---|---|
+| `id`, `name`, `description`, `category`, `location`, `image` | Null text reads as `""`; a missing `category` reads as `Utility` |
+| `capacity` | `null` when the amenity sets none. `0` is normalised to `null` |
+| `bookingMode` | `Shared` \| `Exclusive` \| `Hybrid` |
+| `requiresApproval` | Whether a request lands pending rather than confirmed. Surfaced so the form can say so before submitting |
+| `openingTime`, `closingTime` | `HH:MM` wall-clock in the community's own time. `00:00` when unrecorded, never `null` |
+| `slotDurationMinutes` | Falls back to `60`. The one limit that is never `null`: a client divides the day by it |
+| `minimumBookingDurationMinutes`, `maximumBookingDurationMinutes`, `advanceBookingWindowDays`, `maxActiveBookingsPerResident` | `null` means *this amenity sets no limit*, not *there is no limit* — the booking RPC still applies conflict and capacity rules on write |
+| `closedDays` | Weekday names, e.g. `["Sunday"]`. Stored as ISO day numbers; out-of-range entries are dropped rather than rendered |
+| `allowPrivateBooking`, `allowGuestBooking`, `allowRecurringBooking`, `allowSameDayBooking` | What the booking form may offer |
+| `bookingFee`, `securityDeposit`, `currencyCode` | Two amounts, not a total: the deposit is coming back and the fee is not, and a resident shown one number cannot tell which is which |
+| `refundPolicy` | Free text. `""` when unset |
+
+There is no `status` field. Every row returned is active — the filter *is* the meaning, and a
+`status` reading `Active` on every row is noise the client has to ignore.
+
+**Unpaged.** `page` is always `1` and `pageSize` is the item count: an amenity catalogue is a fixed
+list a client renders whole, and paging it would make the common case two round trips for nothing.
+The `Page` envelope is kept anyway so every collection on this API has one shape (§1.6), and so
+paging can be added later without changing the response type.
+
+`hasMore` is `false` for any community this product will plausibly see, but it is **computed rather
+than asserted**. The read is bounded at 500 rows so a pathological community cannot page the whole
+view into memory, and that bound is asked for alongside an exact count. A `true` therefore means one
+thing only — the catalogue has outgrown being unpaged and rows are being withheld — which a client
+has no other way to detect. A bound that truncates while the envelope reports completeness is the
+same defect as a page that lies about its total; it is only harder to notice.
+
+| Code | Error | When |
+|---|---|---|
+| `401` | `authentication_error` | No session |
+| `403` | `active_membership_required` | Authenticated, but no active membership in any community |
 
 ### `GET /api/v1/amenities/{amenityId}/bookings`
 
@@ -1837,7 +2276,496 @@ Promotion is also the flow `roles.md` describes — *"Resident → Committee mem
 
 ---
 
-## 13. Not yet implemented
+## 13. Visitors
+
+Backed by migration `0032`. Six operations, all of them the **resident's** half of the visitor
+lifecycle. The gate's half — presenting a pass, checking a guest in, raising an approval request when
+somebody arrives unannounced — belongs to security software that does not exist in this repository,
+and the boundary is drawn here rather than left to be inferred.
+
+`visitor_requests` arrived in the baseline already carrying a status enum for the whole lifecycle, a
+unique `pass_hash`, a validity window and check-in/check-out timestamps. What `0032` adds is what the
+resident's form collects — purpose, guest count, and the short code they read aloud.
+
+**No role guard on any route.** A resident, a manager and an admin all have visitors; the passes each
+of them sees are the ones they raised.
+
+### The security code appears in exactly one response
+
+`securityCode` and `passToken` are returned by `POST /visitor-passes` and **by nothing else, ever**.
+Both are stored as SHA-256 hashes, and `visitor_pass_overview` does not select the hash columns at
+all — so a list read, a detail read and all three decisions are structurally incapable of carrying
+one.
+
+Both plaintexts are generated **in the API and never sent to the database**. Only the hashes are RPC
+parameters. That is stronger than hashing on the way in: there is no statement log, slow-query log or
+replication stream in which the code could appear.
+
+> **The cost, stated plainly.** A resident who loses the code cannot recover it and must issue a new
+> pass. That is the correct trade for something that opens a gate, and it is exactly how the invite
+> flow already behaves.
+
+> **An obligation on the client, and it is a change from the prototype.** *Show QR* on the Visitors
+> screen rebuilds the payload from the visitor in the store, which works because the prototype keeps
+> the plaintext in the browser forever. Against this API the code and token arrive once, in the `201`,
+> and **no later read can return them** — so a client that wants that button has to keep what it was
+> handed for the life of the pass. Clearing storage or signing in on another device loses the QR, not
+> the pass; the pass is still there, still valid at the gate for anyone who wrote the six digits down.
+> If the product wants recovery rather than reissue, say so — a `POST /visitor-passes/{passId}/code`
+> that mints a *fresh* code and invalidates the old one is the shape that keeps the rule, and it is
+> not built.
+
+> **An obligation on whoever builds the gate.** The code is six digits because a resident reads it
+> down a phone line — about twenty bits, which does not stand alone against online guessing. Three
+> things carry the difference: it is unique only among *live* passes in one community, a pass expires
+> on the community's TTL, and **any gate-verification endpoint must rate-limit by community**. The
+> third does not exist yet. It is recorded here so it is a requirement rather than a rediscovery.
+
+### The setting that nothing read
+
+`community_settings.visitorCodeTtlMinutes` has been writable from the admin settings screen since
+`0018` under the comment *"Reserved by the ERD for a subsystem that does not exist. Nothing reads
+it."* These endpoints are the reader. A control that stores a value nothing consults is worse than a
+missing control, because it looks like it worked.
+
+`requireVisitorPreapproval` still has no reader, and correctly so: it governs whether the **gate** may
+admit someone with no pass. Tracked in §15.
+
+### The status nothing ever wrote
+
+`Expired` has been in the visitor status enum since the baseline and no code path has ever set it.
+Two things need it to be real: the uniqueness rule above, whose whole argument is that a dead pass
+releases its six digits, and the resident's list, where a pass that lapsed last Tuesday should not sit
+in `Expected` forever.
+
+`POST /visitor-passes` settles the community's lapsed passes immediately before it mints a code into
+that community's live set. Not a trigger — a trigger cannot fire on the passage of time — and not a
+scheduled job, which would be a second deployment artifact for a property one statement can hold. The
+cost is that a pass lapses *lazily*: between issues it is still `Expected` on the wire, which is what
+`isLapsed` is for.
+
+### `GET /api/v1/visitor-passes`
+
+The caller's own passes, newest first. **Requires an active membership.**
+
+| Query | Notes |
+|---|---|
+| `view` | `current` \| `history`. Omitted returns both. An unrecognised value returns **both**, not a `422` — unlike the complaint status filter. `view` is a tab selector with two known values, and the honest answer to a third is everything, rather than an error about a parameter the caller did not mean to constrain |
+| `page`, `pageSize` | `pageSize` ≤ 100, default 20 |
+
+| Response field | Notes |
+|---|---|
+| `visitorName`, `purpose`, `purposeDetails`, `guestCount` | `purposeDetails` is what the form collects when `purpose` is `Other`; kept separate so a typed "Delivery" stays distinguishable from the selected one |
+| `status` | `Expected` \| `Pending Approval` \| `Approved` \| `Rejected` \| `Checked In` \| `Checked Out` \| `Expired` \| `Cancelled`. The column says `denied`; every screen says `Rejected` |
+| `validFrom`, `validUntil` | The window. Computed in the database — see `POST` below |
+| `isCurrent` | **This is what splits the two tabs**, computed in the view rather than from a status list in the API, so the split cannot drift from the transitions the RPC allows. Open and not past its window — **or `Checked In`**, whatever the window says. A guest who is through the gate is the one pass a resident might actually need to look at, and `Visitors.jsx` keeps them on the front tab for the same reason. The clock only constrains the states where nobody has arrived |
+| `isLapsed` | Still open but past its window — the pass the gate will refuse while the resident's screen still says `Expected`. Surfaced as its own fact rather than leaving a resident to compare two timestamps |
+| `checkedInAt`, `checkedOutAt`, `decidedAt`, `cancelledAt`, `createdAt` | |
+
+### `POST /api/v1/visitor-passes`
+
+Pre-approve a visitor. **Requires an active membership.** `201 Created`.
+
+**Request**
+```json
+{
+  "purpose": "Guest",
+  "purposeDetails": "",
+  "guestCount": 3,
+  "expectedAt": "2026-08-04T16:00:00Z"
+}
+```
+
+`expectedAt` is one instant rather than the form's separate date and time fields: two fields is a
+rendering decision, one instant is what a validity window is computed from, and the browser is the
+only place its own timezone is known.
+
+> **`visitorName` is optional, because the form does not collect one.** The pre-approval screen asks
+> for a purpose, a date, a time and a guest count and nothing else, while `visitor_requests` requires
+> a name — so `createVisitorsSlice.js` composes one, *"Guest group"* or *"Family event group"*. Sent
+> empty or omitted, the API composes the same label from the same rule. It is accepted when present
+> because the gate's own screen does collect a name, and that surface is coming. **Requiring it would
+> have meant requiring a field no client has.**
+
+> **`validUntil` is not accepted.** The window runs from `expectedAt` (or now) for the community's
+> `visitorCodeTtlMinutes`. A resident who could choose it could mint a pass valid for a year. The TTL
+> runs from the arrival **or from issue, whichever is later** — the form floors the date at today but
+> not the time, so a four-o'clock pre-approval for a nine-o'clock arrival would otherwise mint a pass
+> whose window had already closed: unusable, and reported as nothing.
+
+**The status is `Expected`, not `Approved`.** A pre-approved visitor has been *announced*, not
+approved by anybody. `Approved` is what answering a gate request produces, and a gate log needs to
+keep those apart.
+
+The response is `VisitorPassCreated` — every field of a pass, plus `securityCode` and `passToken`.
+
+> **A code the community is already using is redrawn, not reported.** `(communityId, codeHash)` is
+> unique across a community's *live* passes, so two residents can be handed the same six digits and
+> the second insert is refused. Nothing about that request was wrong, and the database cannot fix it
+> itself — it holds a hash and no way back to a code. The API re-mints, up to five times. Against a
+> community holding a thousand live passes at once, one draw collides about once in nine hundred, so
+> the `409` below is a bound on the loop rather than an outcome anyone should expect.
+
+| Status | Code | Cause |
+|---|---|---|
+| `409` | `unique_violation` | Five draws in a row collided with a live pass in the same community |
+| `422` | — | Empty or whitespace-only `purpose`; `guestCount` outside 1–50. **Not** an absent `visitorName` |
+
+### `GET /api/v1/visitor-passes/{passId}`
+
+One pass — the QR screen's read. A pass belonging to somebody else is a **`404`, identical to one
+that does not exist**; the lookup filters on the membership rather than checking afterwards.
+
+**The QR payload is not reconstructible from this response.** The token it embeds was returned once,
+so a client that did not keep it cannot rebuild the credential from a later read.
+
+### `POST /api/v1/visitor-passes/{passId}/approve` · `/reject`
+
+Answer a gate request. Only from `Pending Approval`.
+
+> **No endpoint in this repository creates a `Pending Approval` pass.** The security app does, and it
+> does not exist yet. These two routes are built now because they answer `visitor.approvalRequested`,
+> which is `US-2.1`'s recorded pain point, and because a reply is the wrong thing to build after the
+> notification that prompts it. They are correct and, today, unreachable from our own API.
+
+`reject` stores `denied` and shows `Rejected`. Both notify the community's `security` role, and its
+admins — so a community with nobody on security is not told nothing at all. **The visitor's name
+travels in the notification; the code never does** (§10.8's one hard rule).
+
+### `POST /api/v1/visitor-passes/{passId}/cancel`
+
+Withdraw a pass that has not been used. From `Expected`, `Pending Approval` or `Approved`.
+
+> **A pass whose guest is already inside cannot be cancelled** — `409`, `pass_already_used`. Once
+> someone is through the gate, *cancel* is a physical-world operation and no database write performs
+> it; a pass that flipped back would leave a record disagreeing with what happened, and the record is
+> all anyone will have later. `PO`, 2026-08-04.
+
+The refusal lives in the RPC, not the route, so it holds for every future caller.
+
+| Status | Code | Cause |
+|---|---|---|
+| `404` | `not_found` | No such pass, or not the caller's |
+| `409` | `pass_already_used` | The guest has checked in or out. **A distinct code from `check_violation` on purpose**: "too late, they are already inside" is a fact about the world, and "that is not a state you can do this from" is a bug in the caller |
+| `422` | `check_violation` | A state this decision cannot be made from |
+
+---
+
+## 14. The resident's money and home
+
+Backed by migration `0033`. Nine operations across the surfaces the resident portal has and the
+backend did not: their own bills, their own bookings, the notice board, their flat, the numbers they
+should be able to ring — and the home screen that summarises all of it.
+
+**One of the nine needed no schema change at all.** `GET /resident/snapshot` is assembled entirely
+from endpoints already in this section and the ones before it, which is the point of it: every figure
+it reports already has an owner, and a home screen that computed its own would eventually disagree
+with the page it links to.
+
+**There is already a money section (§9) and a notices section (§12), and this is deliberately not
+either.** §5.5 of the design document: an admin *records* a payment that happened somewhere else,
+with an arbitrary amount, an arbitrary method and possibly a backdated date. A resident *initiates*
+one against their own bill, for the full balance, through whatever gateway exists. Merging them
+produces one endpoint where half the fields are forbidden depending on who is calling.
+
+**No role guard on any route here.** An admin who lives in the community owes maintenance, has a flat
+and needs the plumber's number like anybody else.
+
+### 14.1 The gateway is a simulator, and every row it writes says so
+
+The gateway is one we build (`PO`, 2026-08-04). No money moves. Any payment passes by default, with a
+few deliberate failure cases — a card past its expiry being the worked example — *"so that we can
+show we handle that too, and maintain business logic for this."*
+
+That last clause is the design. The point is not a fake success screen; it is that **every path a
+real gateway produces is exercised end to end**, so that swapping in a real one changes one Python
+module and nothing else.
+
+> **`provider = 'simulator'` is written on every payment this section creates**, and it is the single
+> most important string in the migration. A demo database becomes a staging database becomes,
+> occasionally, the thing somebody reconciles against a bank statement. If simulated money were
+> recorded as `offline` — which is what the admin's `record_payment` writes — then on the day a real
+> gateway arrives, **nobody could ever separate the money that moved from the money that did not.**
+> That is not a recoverable mistake; the information was never recorded. One string, written
+> correctly on day one, makes it a `where` clause forever.
+
+The row does say `succeeded`, because within the simulated gateway the payment succeeded, and it says
+`simulator`, because that is which gateway said so. Both facts are recorded and neither is implied.
+
+`payment_events` gets two rows per attempt — `initiated`, then `simulated_authorized` or
+`simulated_declined` — because that is the shape a real integration's audit trail has, arriving at
+different times and sometimes from different directions.
+
+### 14.2 A declined payment is a `200`
+
+`POST /invoices/{invoiceId}/pay` and `POST /amenity-bookings/{bookingId}/pay` return `200` with an
+outcome object for **both** `succeeded` and `failed`. Branch on `status`; read `failureCode` for the
+reason.
+
+A declined card is not a failed API call. The request was well-formed, authorized, processed
+correctly and produced a durable record; the *payment* failed. A `402` would mean the client's error
+branch — the one handling "your session expired" and "the server is down" — also has to handle a
+perfectly ordinary business outcome, and would have to dig a payment id out of an error envelope with
+nowhere sensible to put one.
+
+`4xx` still means what it always meant: `404` for somebody else's invoice, `409` for one already
+settled, `422` for a body that does not add up.
+
+`failureCode` is a stable identifier and never prose — `card_expired`, `insufficient_funds`,
+`payment_declined`. The wording a resident reads is the client's to choose and to translate.
+
+### 14.3 What the simulator accepts, and what it never keeps
+
+| Instrument | Outcome | `failureCode` |
+|---|---|---|
+| `4242 4242 4242 4242`, expiry in the future | `succeeded` | — |
+| **Any test card with an expiry date in the past** | `failed` | `card_expired` |
+| `4000 0000 0000 0002` | `failed` | `card_declined` |
+| `4000 0000 0000 9995` | `failed` | `insufficient_funds` |
+| `4000 0000 0000 0069` | `failed` | `card_expired`, whatever the expiry says |
+| CVV not three digits, or a month that is not a month | `failed` | `card_invalid` |
+| Any other card number | `failed` | `card_not_supported` |
+| UPI `failure@…` or `fail@…` | `failed` | `payment_declined` |
+| Any other well-formed `name@handle` | `succeeded` | — |
+| **UPI with no handle at all** | `succeeded` | — |
+
+> **Only the published test numbers are accepted, and that is the part worth arguing.** A simulated
+> gateway that took any Luhn-valid number is a system that *will* be handed a real card — by a tester
+> being thorough, by a demo audience member being helpful, by a marker trying the app the way a
+> resident would. At that moment we are an application that received a live PAN, with none of the
+> obligations discharged that receiving one implies. Restricting the input closes that by
+> construction, which is worth more than a warning banner nobody reads. Stripe's sandbox can accept
+> anything because Stripe is PCI-DSS certified infrastructure whose business is holding card data
+> safely; copying the affordance without the substrate is the mistake.
+
+> **Nothing about the card is stored, logged, echoed in an error, or written to `payment_events`.**
+> The number, the CVV and the expiry are `SecretStr` on the request model — so an accidental `repr()`
+> in a log line or a traceback prints `**********` — are read once by a pure function, and are
+> discarded in the same call. What survives is `paymentMethod` and `instrumentLabel`, a masked
+> receipt line: `•••• 4242`, `resident@upi`, `UPI`.
+
+**The last row of that table is about your screen.** `Payments.jsx` renders UPI as the only enabled
+method and its Confirm button collects no instrument at all, so a payment with no handle has to
+succeed or the endpoint could not be called from the screen it was built for. The consequence is that
+**the failure demonstration is not reachable from the current UI** — showing a decline needs either a
+VPA field or the card fields the modal currently disables.
+
+### 14.4 `idempotencyKey` is required, and the rule is the client's
+
+The database has had `unique (communityId, idempotencyKey)` since the baseline and the RPC returns the
+existing payment rather than raising on a repeat. What that constraint cannot do is decide when a key
+is new:
+
+* **One key per press of Pay.** A double-tap, a flaky network, a retried request — same key, same
+  payment returned, and the caller cannot tell whether it settled now or a moment ago. This is the
+  case that stops a resident paying twice.
+* **A new key for a new attempt.** Once the client has *shown* someone a decline, the next press is a
+  different attempt and mints a fresh key. Otherwise a corrected card would replay the old failure
+  forever.
+
+The key identifies **an attempt**, not an invoice. Backwards, it produces either a double charge or an
+unpayable bill — which is why it is written here rather than left to whoever wires the button.
+
+### `GET /api/v1/invoices/mine`
+
+The caller's own bills, newest first.
+
+| Query | Notes |
+|---|---|
+| `view` | `unpaid` \| `paid`. Omitted, or unrecognised, returns both. It filters on `status`, **not** on `isPayable` — those two agree on every bill a resident normally holds and part company on the ones that matter, since a cancelled bill is not payable and was never paid |
+| `page`, `pageSize` | `pageSize` ≤ 100, default 20 |
+
+**Two rules about which bills appear at all.** A **draft** never does: it is a bill an admin has not
+issued, with no number and nothing to pay, and it was previously reaching the resident as an amount
+owed on something nobody had sent. A bill raised against the **flat** rather than against a person
+always does, even though it carries no membership — it is the caller's to pay, and the list is
+filtered by the same `is_own_invoice` the settlement path enforces so that the two can never
+disagree about whose bill this is.
+
+| Response field | Notes |
+|---|---|
+| `status` | `Unpaid` \| `Paid` \| `Cancelled`. Six stored statuses collapse to the two the screen has: `partially_paid`, `issued` and `overdue` all read as `Unpaid`, which is what they are to the person who owes the money |
+| `storedStatus` | The real one, beside it |
+| `totalAmount`, `amountPaid`, `outstandingAmount` | Aggregates over `succeeded` payments only. An initiated or failed payment has settled nothing |
+| `isOverdue` | Derived on every read, never stored. A stored overdue flag is true until the next midnight and a lie afterwards |
+| `isPayable` | **The precondition the settlement RPC enforces**, computed once in the database. A Pay button drawn from a different rule than the write path applies is a button that fails |
+| `instrumentLabel` | The masked receipt line of whatever settled it |
+
+### `POST /api/v1/invoices/{invoiceId}/pay`
+
+Settle a bill through the simulator. `200` for both outcomes — see §14.2.
+
+**Request**
+```json
+{
+  "amount": "4250.00",
+  "idempotencyKey": "pay-8f2c1e04-0001",
+  "method": "upi",
+  "upi": { "vpa": "resident@okhdfcbank" }
+}
+```
+
+`amount` must equal the outstanding balance, and it is compared against the balance **the database
+computes** rather than accepted as an instruction. It is in the request so a client working from a
+stale screen can be told so — not so it can choose what to pay. A partial payment is a policy
+question nobody has answered, and accepting one silently would leave a resident believing they had
+paid.
+
+| Status | Code | Cause |
+|---|---|---|
+| `404` | `invoice_not_found` | No such invoice, or not the caller's |
+| `409` | `conflict` | Already paid or voided |
+| `422` | `check_violation` | The amount is not the outstanding balance |
+| `422` | `card_required` | `method` is `card` and no card was sent |
+| `422` | — | No `idempotencyKey` |
+
+### `GET /api/v1/amenity-bookings/mine`
+
+The caller's own bookings and what is still owed on each. `?view=upcoming|past`.
+
+> **`amenity_booking_charges` was admin-only until `0033`**, under the reasoning that the ledger
+> records what residents were charged and that is not a community-wide fact. Correct about the
+> community and wrong about the resident: the one person entitled to know what a booking costs is the
+> person being asked to pay for it. The policy now has an own-booking clause and nothing more.
+
+### `POST /api/v1/amenity-bookings/{bookingId}/pay`
+
+**This is the endpoint `US-2.12` asks for**, and the story is not about the gateway. The pain point is
+*"amenity booking payments can fail even after money has been deducted"*, which is not a gateway
+defect — it is a payment recorded in one transaction and a booking confirmed in another, with a crash
+in between.
+
+`settle_amenity_booking_payment` does both or neither:
+
+* on `succeeded` — write the payment, append the event, **confirm the booking**, notify the resident,
+  notify the staff. One transaction.
+* on `failed` — write the attempt with its reason, **leave the booking exactly as it was**, tell the
+  resident it did not go through. Also one transaction.
+
+The second half is the one that gets forgotten, and it is the one the story is about: a failed payment
+must not leave a half-confirmed booking a resident believes they hold. A declined attempt is recorded
+as `payment_failed` in the ledger — a new event type, because writing it as a `charge` would put a
+phantom line in the admin's ledger and writing it as a `payment` would show the booking as paid.
+
+Same request shape and same `200`-on-decline rule as paying an invoice.
+
+### `GET /api/v1/notices`
+
+The community's published notices, newest first. `?category=` is an exact match.
+
+**Drafts never appear.** A notice with no `publishedAt` is one an admin is still writing, and it is
+excluded by the resident view *and* by the policy `0033` adds. Two independent reasons, because
+half-written words reaching a whole community is not a failure worth having one guard against.
+
+`urgency` is `Info` | `Important` | `Urgent` — title-cased on the wire because that is what
+`Notices.jsx` renders, while the CHECK in `0018` stores lower case.
+
+Posting a notice is unchanged and remains an admin action (§12.1).
+
+### `GET /api/v1/me/household`
+
+Everyone and every number registered to the caller's flat. Not paginated: a household is not a
+quantity that needs a page control.
+
+| Response field | Notes |
+|---|---|
+| `source` | `member` \| `contact`. **The field that stops a caller guessing.** A `member` is a person with an account, a membership and a role; a `contact` is a phone number somebody in the flat added so the gate and the office have it — it grants nothing at all, and its holder has no account |
+| `status` | `Active` \| `Pending` \| `Suspended` \| `Ended` for a member; `Contact` for a number |
+
+A caller with no residency gets `[]`, not an error. Staff have a membership and no flat, and *nobody*
+is a legitimate answer to "who lives in your flat".
+
+### `POST /api/v1/me/household/phones`
+
+Register another number against the caller's own flat — the thing `Profile.jsx` lets a resident do
+without waiting for an admin. Returns the whole list, because that is what the screen renders and a
+client merging one row into it can merge it wrongly.
+
+> **The flat is not in the request.** It is resolved from the caller's own residency inside the RPC: a
+> unit id in a body is a unit id somebody can change, and the entire point of this endpoint is that a
+> resident may edit their own flat's list and nobody else's.
+
+> **A flat contact is not a member, and this is a change from the prototype.**
+> `createUsersSlice.js` implements *add a number* by inventing a whole user — name, role, status and
+> all. That cannot be done here and should not be: `profiles.id` references `auth.users`, so a person
+> with no account cannot be a profile, and manufacturing a membership for a phone number would put
+> somebody in the community's member count who cannot log in and never agreed to join.
+
+Idempotent on the number: adding the same one twice updates the name rather than failing, since a
+correction is the likeliest reason anybody repeats it.
+
+### `GET /api/v1/directory/contacts`
+
+The management and emergency directory (§5.6), served from `departments` rather than a table of its
+own — so it stays current as a side effect of admin work that already happens, which is the only kind
+of freshness that survives contact with a real committee. `US-2.9` asks for a directory somebody can
+trust and names the failure mode as a list nobody updates, which is precisely what five numbers
+hard-coded in `Profile.jsx` are.
+
+> **There is no emergency flag, deliberately.** `Profile.jsx` labels its numbers *"Emergency / Gate"*,
+> *"Administrative"*, *"Maintenance Staff"*; the nearest thing a department has is `category`, free
+> text an admin types. Deciding which categories mean *emergency* by matching strings in SQL would be
+> a classification invented in the backend and wrong the first time somebody writes "Emergencies". If
+> the product wants that distinction it is one boolean on `departments`, and that table belongs to
+> the admin workstream.
+
+`US-2.10` — a designated **building** representative — is still unserved. Nothing in the schema ties a
+department or a person to a building. Tracked in §15.
+
+### 14.5 The home aggregate, and why it owns nothing
+
+`GET /resident/snapshot` is a projection of the endpoints above, not a source of truth. Every part of
+it is the model the endpoint that owns it returns — `ResidentInvoice`, `VisitorPass`,
+`ComplaintSummary`, `Notice`, `NotificationItem` — and the only things computed here are counts over
+those.
+
+That is a deliberate constraint rather than an economy. A home screen that renders a bill in its own
+bespoke shape is a home screen that will one day show a different amount than the Payments page, and
+the resident will believe the smaller one.
+
+**It is separate from `/dashboard/snapshot`, not a role branch inside it.** An admin wants counts
+across the community; a resident wants *their* dues, *their* visitors, *their* complaints. One payload
+whose shape depends on a runtime role cannot be typed, needs a fixture per role to test, and is one
+`if` away from putting a community-wide figure in front of a resident.
+
+**The parts are read in sequence, not in one transaction.** The dues can be a heartbeat older than
+the visitors, so `generatedAt` is when the payload was assembled — not when any part of it was true.
+A resident refreshing a home screen is not asking for a consistent cut of the database, and paying
+for one would be paying for something nobody wanted.
+
+### `GET /api/v1/resident/snapshot`
+
+Everything the resident home screen renders, in one call. **Takes no parameters** — tenancy is the
+resolved membership and its community, so there is nothing a caller could send that would widen what
+comes back.
+
+| Response field | Notes |
+|---|---|
+| `unreadNotifications` | The badge. Counted across the **whole feed**, never across the five events below — a badge drawn from the page would be wrong the moment anybody scrolled |
+| `dues.outstandingTotal` | Summed over the unpaid bills actually read |
+| `dues.isPartialTotal` | True when there were more unpaid bills than one read carries, which makes the total a lower bound. False for any resident with a normal number of them. A number that is quietly too small is worse than a number with a caveat: the resident pays what they are shown and believes they are square |
+| `dues.primaryInvoice` | The bill the home screen offers to settle: the maintenance one if there is one, otherwise the **oldest** payable. Never the newest — that would hide an overdue bill behind a fresh one. A whole `ResidentInvoice`, so the home screen's Pay button and the Payments page's are drawn from one `isPayable` |
+| `visitors.expectedGuests` | **Guests, not passes.** One pass for a party of twelve counts as twelve. `Expected` and `Approved` are counted together, because to the resident they are one thing: somebody who has not arrived yet |
+| `visitors.checkedInGuests` | Guests currently inside, counted the same way |
+| `visitors.pendingApproval` | Up to three whole passes, because the home screen approves and rejects from the card without navigating. `pendingCount` is all of them |
+| `complaints` | The newest five, and how many the caller has raised. No open/closed split: the screen renders statuses and counts nothing, and a number nobody asked for is a number that has to be kept correct forever |
+| `notices` | The three most recent published notices. The one part of this payload that is not personal |
+| `activity` | The caller's five most recent notifications |
+| `generatedAt` | When the server assembled this |
+
+**`activity` is the notification feed, and the design document said it should not be.** §5.7 of
+`RESIDENT_BACKEND_DESIGN.md` reserved `member_activity` for this, reasoning that a second activity
+table would mean two feeds that disagree. The reasoning is right; its premise is not. Nothing in this
+project writes `member_activity` — not a trigger, not a service, and not the admin dashboard, which
+reads `audit_events` instead — so serving the home screen from it would ship a strip that is empty by
+construction and stays empty. §5.8 had already made `notifications` the durable record of *every
+user-visible event*, which is exactly what an activity strip shows; writing those events a second time
+would create the very pair of disagreeing feeds §5.7 set out to prevent. The design document has been
+corrected rather than obeyed.
+
+---
+
+## 15. Not yet implemented
 
 Planned in the build order (`ADMIN_DASHBOARD_BUILD_PLAN.md` §4). Listed so the frontend team can see
 what is coming and in what order — **none of these exist yet**, and calling them returns `404`.
@@ -1849,10 +2777,42 @@ What remains is not endpoints but wiring, tracked in `DECISIONS_NEEDED.md` §F: 
 `complaint-attachments` does not exist yet (F2), and rate limiting (F3) and optimistic concurrency
 (F4) are unowned.
 
-Two whole surfaces the frontend has and the backend does not, neither of them in the admin-dashboard
-build order: **visitors** and **notices beyond reading them**. Both are frontend dummy data with no
-table of their own — `visitor-management` and `notice-board` report this as their `backendStatus` at
-`GET /settings/modules` (§11).
+**Visitors are now half-built, and it is worth being exact about which half.** §13 serves everything
+a *resident* does: mint a pass, list and read their own, and answer or withdraw one. Nothing serves
+the **gate** — no endpoint presents a pass, verifies a code, checks a guest in or out, or raises the
+`Pending Approval` request that `/approve` and `/reject` exist to answer. That is security software,
+it is not in this repository, and two things wait on it:
+
+- **A gate-verification endpoint must rate-limit by community** before a six-digit code is exposed to
+  guessing. §13 states the obligation; nothing enforces it yet because nothing verifies yet.
+- **`requireVisitorPreapproval`** (§11) stays a stored setting with no reader, because the rule it
+  expresses — may the gate admit someone with no pass — belongs entirely to the missing half.
+
+`0022` had visitors and security sharing one catalogue row — `absent`, *"no visitor backend"*. `0032`
+splits them: `visitor-management` becomes `partial`, and **`security-gate-management` stays
+`absent`**, because it is the missing half rather than a partly built one. Rounding it up because a
+neighbouring feature moved is how a status board stops being worth reading.
+
+> **Every one of `0022`'s catalogue updates had matched zero rows until 2026-08-04.** It wrote
+> `('complaints', 'complaint_management')`, `('visitors', 'visitor_management', 'security')` and four
+> more in that shape; the catalogue holds ten hyphenated codes seeded in `0001` and none of those is
+> one of them. Nothing failed, because an `update … where` that selects nothing is a success — so
+> every module sat at the column default, `absent`, and the Settings screen, which exists precisely
+> so a toggle cannot imply a backend that is not there, would have reported that none of this backend
+> exists. `0022` is corrected in place; it has never been applied to any database.
+
+**Three things about money remain unbuilt**, and they are the same three as before §14: nothing runs
+a billing cycle, nothing charges a late fee, and no real payment gateway is integrated (`0033`'s is a
+simulator, and every row it writes says `simulator` so the two can never be confused). The first two
+are `DECISIONS_NEEDED.md` A22 and A23.
+
+**A notice still has no effective date**, so `US-2.11` — being reminded before a rule takes effect —
+has nothing to build on. It is one column, and `notices` belongs to the admin workstream, so the story
+is theirs to schedule.
+
+**Nothing verifies a resident's contact details.** `US-2.9` asks for a *verified* directory; §14
+serves a current and maintained one, which is the part a schema can carry. Verification is a process,
+and it is nobody's job yet.
 
 **Adding a resident** has no dedicated endpoint and will not get one: it is
 `POST /admin/invitations` (§4). The frontend's "Add Resident" creates one user record per phone plus
@@ -1860,7 +2820,7 @@ one shared invite; we mint one invite per phone instead, which is agenda item 5 
 
 ---
 
-## 14. User stories → endpoints
+## 16. User stories → endpoints
 
 The team's requirements live in **[`product/`](product/)**:
 [`USER_IDENTIFICATION.md`](product/USER_IDENTIFICATION.md) (three user tiers) and
@@ -1882,7 +2842,7 @@ traceability matrix between them and the surface documented above.
 The rows marked *none* and *partial* are the ones that change what anybody does next, so the
 shortfall is named in every row rather than being inferable from a blank cell.
 
-### 14.1 Scope, stated once
+### 16.1 Scope, stated once
 
 This branch is the **admin dashboard** backend. Two whole surfaces the stories assume — the resident
 mobile app and the security gate — have no workstream. That is the agreed scope, not a miss, and
@@ -1896,23 +2856,55 @@ unreachable by that person *by construction*, not because an endpoint is missing
 stories starts with deciding whether staff get accounts — see
 [`product/USER_IDENTIFICATION.md`](product/USER_IDENTIFICATION.md).
 
-### 14.2 Coverage
+### 16.2 Coverage
 
 | | Served | Partial | None |
 |---|---|---|---|
 | §1 Administrative staff (6) | 3 | 3 | 0 |
-| §2 Resident (12) | 0 | 8 | 4 |
+| §2 Resident (12) | 5 | 5 | 2 |
 | §3 Security manager (6) | 0 | 1 | 5 |
-| **Total (24)** | **3** | **12** | **9** |
+| **Total (24)** | **8** | **9** | **7** |
 
-The shape of that table is the honest summary of this branch: **the administrator's stories are
-substantially built, the resident's are built but unreachable, and the security manager's are not
-started.** Not one resident story is fully served, and the reason is almost never a missing
-capability — it is a missing delivery path. Three separate resident stories are blocked on the same
-absent push transport, and three more are blocked on one projection dropping fields our own
-endpoints wrote (§14.4).
+The shape of that table was, until 2026-08-04, the honest summary of this branch: **the
+administrator's stories substantially built, the resident's built but unreachable, and the security
+manager's not started.** Not one resident story was fully served, and the reason was almost never a
+missing capability — it was a missing delivery path.
 
-### 14.3 Administrative staff
+The first three resident stories to close are all complaints (US-2.5, US-2.6, US-2.8), and they
+closed together because they were one gap seen from three angles: a surface the resident could
+actually reach. **US-2.2 closed next, the same way** — the visitor table had modelled a pre-approval
+since the baseline and no endpoint reached it. The pattern is worth naming, because four of the five
+remaining partials have the same shape: the capability exists, the projection that would show it to a
+resident does not.
+
+**US-2.1 and US-2.2 were compiled as one row and are now two verdicts.** One surface blocked both;
+the surface arrived and only one finished. A matrix that keeps stories paired after the thing joining
+them is gone reports the weaker of the two as the state of both.
+
+**US-2.12 closed on the transaction, not on the gateway** — which is what the story asks for. Its
+recorded reason for being partial was *"no gateway is integrated"*, and that was reading the story as
+being about payments; it is about a payment and a booking confirmation happening together. Both are
+one statement now, and the gateway that drives them is a simulator the product asked for, labelled as
+one on every row it writes. The failure path is the part worth having: with a real provider in test
+mode a decline is a card you have to go and find, and here it is one expiry date.
+
+**The totals were briefly level at 8/8/8**, which was a coincidence and not a milestone. It is
+recorded because a reader who saw three equal numbers would have assumed somebody rounded — and
+because step 7 has since moved US-2.3 off zero, which is the more useful fact.
+
+**US-2.3 moved from none to partial, and stops there for a reason no endpoint can fix.**
+`GET /resident/snapshot` is the enabling backend the story's own *"Backend: None"* note asks for:
+everything the home screen shows in one call, with pending visitor passes carried whole so that
+approving one is a tap rather than a journey. The half that remains is the **home-screen widget** —
+an operating-system surface, on a product that is a web application with no native client. Recording
+this as served would claim a capability the platform does not have.
+
+**US-2.7 is the deliberate exception.** It is backend-complete and still recorded partial: the
+notifications are written, both transports carry them, and no phone can receive one until the
+frontend has a service worker. That is the one row in this table where *served* would be a claim
+about software this repository does not contain.
+
+### 16.3 Administrative staff
 
 #### US-1.1 — Partial cancellation of multi-day bookings — **served**
 
@@ -1948,13 +2940,22 @@ nothing exports to an external accounting package.
 
 | Endpoint | Role |
 |---|---|
-| [`GET /dashboard/events`](#51-live-updates--get-dashboardevents) | SSE; `dashboard.refresh` fires on writes to 12 tables, including bookings |
+| [`GET /events`](#51-live-updates--get-events) | SSE, audience-scoped; one stream serving every portal |
+| [`GET /dashboard/events`](#51-live-updates--get-events) | Deprecated alias for the above; the admin frontend is wired to this path |
 | `GET /dashboard/snapshot` | The authoritative re-read every event asks for |
 
-**Shortfall:** the story names three consumers — resident app, admin portal, reports. The stream
-serves the **admin portal only**. There is no resident client subscribed to it, and reports are
-computed per request rather than pushed. Delivery is also at-most-once by design: correctness comes
-from re-reading the snapshot, not from the event.
+**Shortfall:** the story names three consumers — resident app, admin portal, reports. The transport
+now serves all roles: `0028_event_audience.sql` gives every outbox row an audience, so a single
+stream can reach a resident without also handing them admin traffic. What is still missing is a
+**resident client subscribed to it** and resident-facing topics to subscribe to — those arrive with
+the notification substrate. Reports remain computed per request rather than pushed. Delivery is also
+at-most-once by design: correctness comes from re-reading, not from the event.
+
+> **Correction.** This section previously read "the stream serves the admin portal only", which
+> stated a live disclosure as a missing feature. The stream was open to *any* active member and
+> fanned out by community alone — a resident who opened it received their neighbours'
+> `access_request.created` frames, applicant name included. Nothing exploited it because no
+> non-admin client connected. `0028` closes it.
 
 #### US-1.4 — Streamlined resident information update — **partial**
 
@@ -2005,14 +3006,34 @@ which is the whole reason that endpoint exists. Two shortfalls:
    there is no recurring subscription anywhere in the schema. This is a missing entity, not a
    missing endpoint.
 
-### 14.4 Resident
+### 16.4 Resident
 
 Read this section against one fact: **no resident-facing client calls this API.** The frontend in
 this repo is the admin dashboard. So "partial" below almost always means *the data is right and
 nothing shows it to a resident* — a materially different problem from *the backend cannot do it*,
 and a much cheaper one.
 
-#### US-2.1 / US-2.2 — Visitor notifications and pre-approval — **partial**
+#### US-2.1 — Visitor approval notifications — **partial** · US-2.2 — Pre-approval — **served**
+
+> **Closed for US-2.2, 2026-08-04**, by `0032` and §13. The two stories were compiled as one row
+> because one missing surface blocked both; they separate here because that surface arrived and only
+> one of them is finished.
+>
+> | Endpoint | Role |
+> |---|---|
+> | [`POST /visitor-passes`](#post-apiv1visitor-passes) | Pre-approval in one call. Purpose, guest count, and a code returned exactly once |
+> | [`GET /visitor-passes`](#get-apiv1visitor-passes) | Current and history, split by a column the database computes |
+> | [`GET /visitor-passes/{passId}`](#get-apiv1visitor-passespassid) | The QR screen |
+> | [`POST /visitor-passes/{passId}/approve`](#post-apiv1visitor-passespassidapprove--reject) · `/reject` | The resident's answer to a gate request |
+> | [`POST /visitor-passes/{passId}/cancel`](#post-apiv1visitor-passespassidcancel) | Withdraw an unused pass |
+>
+> **US-2.1 stays partial for a reason that is not a missing feature.** Its answer exists — approve
+> and reject are real, and they notify the gate. What does not exist is the *question*:
+> `visitor.approvalRequested` is written when somebody arrives unannounced, and nothing writes it,
+> because that is gate software this repository does not contain. On top of that sits the same
+> absent service worker as US-2.7. A story about being asked cannot be served by building the reply.
+>
+> `require_visitor_preapproval` also stays unread, and correctly — see §15.
 
 | Object | State |
 |---|---|
@@ -2026,26 +3047,64 @@ already scoped correctly per resident; what is absent is `POST /visitors` and ev
 `GET /settings` reports this honestly — `visitor-management` returns its `backendStatus` as not
 implemented rather than claiming coverage.
 
-**Push is a separate and larger gap.** Both stories are fundamentally about *notification delivery*,
-and this system has no push transport at all: no FCM/APNs registration, no device token table, no
-web-push subscription. SSE requires an open browser, which is the precise thing the interviewee said
-they should not need. Nothing in the admin-dashboard build order provides one.
+**Push was a separate and larger gap. It is now built** (§5.2, §5.3): a durable `notifications`
+record, an audience-scoped SSE frame, and Web Push over our own VAPID keypair — no FCM account, no
+device-token table, no vendor SDK. What is still missing for *these two stories* is narrower and
+different in kind: **nothing writes a visitor notification yet**, because the visitor write endpoints
+that would call `notify_member` do not exist. The transport is no longer the blocker; the emitter is.
 
-#### US-2.3 — One-tap quick access — **none**
+The paragraph above is left in place because it was true when the matrix was compiled and it is the
+reason the transport was built. The correction is the entry, not a rewrite of the finding.
 
-A client concern. Recorded rather than dismissed because the widget it describes needs endpoints
-that do not exist (visitor approve/deny), so it is blocked on US-2.1 regardless of client work.
+#### US-2.3 — One-tap quick access — **partial**
+
+| Endpoint | Role |
+|---|---|
+| [`GET /resident/snapshot`](#get-apiv1residentsnapshot) | Dues, visitors, complaints, notices and recent activity in **one call**, so no common task begins with a navigation |
+| [`POST /visitor-passes/{passId}/approve` · `/reject`](#post-apiv1visitor-passespassidapprove--reject) | The action the story names. The snapshot carries pending passes **whole**, so answering one is a tap on the card rather than a journey into the visitors page |
+| [`POST /invoices/{invoiceId}/pay`](#post-apiv1invoicesinvoiceidpay) | The other one-tap action: the home screen offers a specific bill, and `primaryInvoice` is the whole invoice so the button beside it is the same button the Payments page draws |
+
+The story's own note reads *"Backend: **None** — a client concern, but it needs endpoints that do not
+exist."* Those endpoints exist now, which is why this row moved off zero.
+
+**It stops at partial because of the widget.** The story asks for *"one-tap access, including a
+home-screen widget"*, and a home screen in that sense is an operating-system surface. HomeBandhu is a
+web application with no native client and none planned (`PO`, 2026-08-03), so the ceiling is what a
+browser can do — a PWA install and a shortcut, not an OS widget. No endpoint closes that, and calling
+this served would be a claim about the platform rather than about the API.
 
 #### US-2.4 — Notifications for notices — **partial**
 
 | Endpoint | Role |
 |---|---|
+| [`GET /notices`](#get-apiv1notices) | The resident's read of the board — published notices only |
 | [`POST /notices`](#121-post-notices--post-a-notice) | Publishes immediately; fires the `notices` SSE trigger |
 
-**Shortfall:** the same missing push transport as US-2.1. The event reaches connected admin
-browsers. A resident who has not opened the app learns nothing — which is the story verbatim.
+**Shortfall, as it was:** the same missing push transport as US-2.1. The event reaches connected
+admin browsers. A resident who has not opened the app learns nothing — which is the story verbatim.
 
-#### US-2.5 — Simple complaint submission with priority — **none**
+**Shortfall now:** the transport exists (§5.2, §5.3) and `POST /notices` does not yet call
+`notify_member`. One line inside the write, and it lands with the notice in the same transaction —
+which is the discipline the whole design insists on, and the reason it is not being retrofitted here.
+`0033` gives residents somewhere to read a notice; the story is about being *told* about one, and a
+read endpoint is not a notification.
+
+#### US-2.5 — Simple complaint submission with priority — **served**
+
+| Endpoint | Role |
+|---|---|
+| [`POST /complaints`](#post-apiv1complaints) | The create endpoint, with `urgency` writing to a real `priority` column (`0031`) |
+
+> **Closed, 2026-08-04, by `0031_resident_complaints.sql`.** Both halves the assessment below asks
+> for landed together: the column, and the endpoint that writes it. The form's minimal shape is
+> honoured as it stands — five fields, one of them optional — except for attachments, which are
+> tracked in §15 rather than half-accepted.
+>
+> One thing changed on the way in that the assessment did not name. `dashboard_service.py`'s
+> permanent `Medium` was not a projection bug so much as a symptom: the field it read did not exist.
+> It does now, so that line reports the real value without anyone editing it.
+>
+> The present tense below is left as it stood. It is the argument that produced the endpoint.
 
 **A resident cannot raise a complaint through this API.** There is no `POST /complaints`. Creation
 was never in the admin-dashboard build order, because the admin dashboard reads complaints rather
@@ -2058,13 +3117,26 @@ thing. The snapshot still reports an `urgency` on every complaint:
 column the non-legacy query does not select and the database does not have — so **every complaint
 reports `Medium`, permanently.** This story needs one column before it needs an endpoint.
 
-#### US-2.6 — Complaint status tracking with history — **partial**
+#### US-2.6 — Complaint status tracking with history — **served**
 
 | Endpoint | Role |
 |---|---|
+| [`GET /complaints`](#get-apiv1complaints) | The list the tracking starts from — status, progress and expected resolution on every row |
+| [`GET /complaints/{complaintId}`](#get-apiv1complaintscomplaintid) | The timestamped update history, read by the resident who raised it |
+| [`POST /complaints/{complaintId}/reopen`](#post-apiv1complaintscomplaintidreopen) | The resident's half of the history: back, with a reason |
+| [`POST /complaints/{complaintId}/resolution`](#post-apiv1complaintscomplaintidresolution) | Closes the loop the story leaves open |
 | [`PATCH /complaints/{complaintId}`](#patch-apiv1complaintscomplaintid) | Writes the status **and its timeline entries in one transaction** |
-| [`POST /complaints/{complaintId}/comments`](#post-apiv1complaintscomplaintidcomments) | `resident` visibility appears on the timeline; `internal` never does |
+| [`POST /complaints/{complaintId}/comments`](#post-apiv1complaintscomplaintidcomments) | `resident` visibility reaches the resident; `internal` reaches neither their thread nor their timeline |
 | `GET /dashboard/snapshot` → `complaints[]` | Returns `status`, `comments[]` and `history[]`, **filtered to the caller's own complaints** for a non-admin |
+
+> **Closed, 2026-08-04, by `0031`.** The shortfall below was real and is no longer this story's
+> problem: `complaint_overview` selects `progress_percent` and `GET /complaints` returns it as
+> `progress`, so *"residents cannot see meaningful progress"* has an endpoint that answers it. The
+> snapshot still drops the column on its own path — that is unchanged, it is the dashboard
+> workstream's line, and it now affects only the admin projection rather than every reader.
+>
+> *"Repeated calls and follow-ups are often necessary"* is answered from the other side as well: every
+> transition notifies the resident, so following a complaint stops meaning asking about it.
 
 The *writing* half answers the first pain point by design rather than by feature. *"Statuses are not
 updated consistently"* — a status cannot change without a timeline entry, because the two are one
@@ -2084,10 +3156,45 @@ can report progress without faking a status change.
 
 Every transition the story names — acknowledged, updated, reassigned, resolved — writes a
 `complaint_events` row (`0020`), and `complaints` is one of the 12 tables on the `dashboard.refresh`
-trigger. **The events exist and nothing delivers them.** Same missing transport as US-2.1 and
-US-2.4; this is one gap, not three.
+trigger. **The events existed and nothing delivered them.** That was one gap across US-2.1, US-2.4
+and US-2.7, not three, and it is why the delivery layer was built as its own step rather than three
+times over. With §5.2 and §5.3 in place, what is left for this story is the complaint RPCs calling
+`notify_member` — which lands with the complaint endpoints, in the same transaction as the
+transition it describes.
 
-#### US-2.8 — Complaint accountability — **partial**
+> **Backend-complete, 2026-08-04, and still recorded as partial.** `0031` supplies the emitters the
+> paragraph above is waiting for: `raise_complaint`, `reopen_complaint`,
+> `confirm_complaint_resolution`, and — the ones this story actually names — `update_complaint` and
+> `add_complaint_comment`, both replaced so that a status change and a public comment write a
+> notification inside the transaction that causes them. Every transition the story lists now produces
+> a durable record, an SSE event, and a queued push.
+>
+> **What is missing is not in this repository's backend.** `frontend/public/` has no service worker
+> and no manifest, so a push cannot be received while the app is closed — which is the whole of what
+> the story asks for. Reporting this closed would be reporting a phone that does not buzz as a phone
+> that buzzes. The in-app half (feed, badge, live update) does work end to end.
+>
+> One deliberate omission: a **reassignment does not notify**. The story lists it, and an assignee
+> changing or a progress bar moving from 40% to 45% is not something to wake a phone for. A resident
+> notified about everything stops reading notifications, which costs more than the ones they miss.
+> The change is on the timeline either way. Reversing this is one `if` in `0031` §9.
+
+#### US-2.8 — Complaint accountability — **served**
+
+| Endpoint | Role |
+|---|---|
+| [`GET /complaints`](#get-apiv1complaints) | `assignee`, `expectedResolutionAt` and `isOverdue` reach the resident here |
+| [`POST /complaints`](#post-apiv1complaints) | The expected resolution is computed on insert, so it exists before anyone asks |
+
+> **Closed, 2026-08-04, by `0031`.** All three things the story asks for — who is responsible, when to
+> expect action, and overdue flagging — now reach the person who raised the complaint. `isOverdue` is
+> computed in `complaint_overview` rather than by a client, against the same clock and the same
+> predicate `department_overview` already uses for its overdue count, so the resident's screen and the
+> admin's cannot disagree about one complaint.
+>
+> The finding below stands unchanged as a description of the **snapshot**: it still drops those
+> fields, it is still one line in someone else's file, and it is still worth reading as one problem
+> rather than four. What changed is that it is no longer the only path to the data.
 
 `PATCH /complaints/{complaintId}` accepts `assignee` and `expectedResolutionAt`, stored by `0019` as
 `assigned_to_membership_id` / `assignee_label` / `due_at`. Ownership and expected resolution are
@@ -2127,9 +3234,16 @@ every entry has a role and a department. **Maintained** — deactivation rather 
 past assignment stays attributable, so the directory can be tidied without corrupting complaint
 history.
 
+**The half that was missing arrived with `0033`.** Until then the directory was maintained and no
+resident could read it — [`GET /directory/contacts`](#get-apiv1directorycontacts) is the resident's
+projection of the same departments, so it is current for the reason admin screens are: somebody keeps
+it up for purposes of their own. `Profile.jsx`'s five hard-coded numbers were the
+stale-by-construction version of exactly this.
+
 **Shortfall: "verified" is nobody's job.** No field records who last confirmed a number, or when.
 A directory nobody is accountable for re-checking goes stale exactly as the interviewee described,
-and the API cannot currently tell a maintained entry from an abandoned one.
+and the API cannot currently tell a maintained entry from an abandoned one. That is a process, not a
+column, which is why serving the read did not close the story.
 
 #### US-2.10 — Designated building representative — **none**
 
@@ -2146,23 +3260,32 @@ stored moment for a reminder to point at. Needs a nullable `effective_at` column
 absent push transport. §12.1 records why publishing is immediate: the screen has no schedule
 control, and a nullable `publishedAt` left unset would create notices nobody could ever see.
 
-#### US-2.12 — Reliable booking payment confirmation — **partial**
+#### US-2.12 — Reliable booking payment confirmation — **served**
 
 | Endpoint | Role |
 |---|---|
-| [`POST /amenity-bookings/{occurrenceId}/payments`](#post-apiv1amenity-bookingsoccurrenceidpayments) | Records the payment against the booking |
-| [`POST /invoices/{invoiceId}/payments`](#post-apiv1invoicesinvoiceidpayments) | The maintenance equivalent |
+| [`POST /amenity-bookings/{bookingId}/pay`](#post-apiv1amenity-bookingsbookingidpay) | **The story.** Payment and confirmation in one statement, or neither |
+| [`GET /amenity-bookings/mine`](#get-apiv1amenity-bookingsmine) | What a resident has booked and what is still owed on it |
+| [`POST /amenity-bookings/{occurrenceId}/payments`](#post-apiv1amenity-bookingsoccurrenceidpayments) | The admin's record of a payment taken elsewhere |
 
-The failure the interviewee described — *money deducted, no booking* — cannot happen **within this
-API**, because the payment and the booking state are one database transaction and `paymentStatus` is
-derived from the payment rows rather than set alongside them.
+The failure the interviewee described — *money deducted, no booking* — is not a gateway defect. It is
+a payment recorded in one transaction and a booking confirmed in another, with a crash in between.
+`settle_amenity_booking_payment` does both or neither, and on a decline it leaves the booking exactly
+as it was rather than half-confirmed.
 
-**Shortfall: no payment gateway is integrated.** These endpoints record a payment somebody else
-already took. The interviewee's failure happens between the gateway and the backend, which is
-precisely the seam this API does not yet have. Closing the story means a webhook and an idempotency
-key — `idempotency_records` exists in the schema and nothing writes to it.
+**This was recorded partial on the grounds that "no payment gateway is integrated", and that was
+reading the story as being about payments.** It is about a payment and a confirmation happening
+together. One is integrated now — a simulator the product asked for, which writes `provider =
+'simulator'` on every row so that simulated money can never be mistaken for money that moved.
 
-### 14.5 Security manager
+**What that costs, stated plainly.** No real money moves, so nothing here has met a real acquirer,
+and the asynchronous half a live integration adds — a webhook arriving after the response — is not
+built. `payment_events` and the idempotency key are already the right shape for it, which is why they
+are used now rather than added later (§14.1, §14.4). What the simulator buys is the part a real
+provider makes hardest: **the failure path can be run in front of somebody on demand**, and it is one
+expiry date rather than a card you have to go and find.
+
+### 16.5 Security manager
 
 | Story | Verdict |
 |---|---|
@@ -2178,12 +3301,24 @@ key — `idempotency_records` exists in the schema and nothing writes to it.
 set days ahead and activate later), and `0018` added `community_settings.visitor_code_ttl_minutes`.
 That is four of the story's five requirements modelled already. The fifth — one code admitting
 *many* guests — is the only genuine schema change, and it is the one thing the current model cannot
-express, since a pass belongs to one request. No endpoint issues, scans or revokes any of it.
+express, since a pass belongs to one request.
 
-**US-3.2 has a trigger point ready.** `POST /amenities/{amenityId}/bookings` and the approve route
-are exactly where "prepare guest access on booking" would hook in, and `0007`'s outbox already fires
-on amenity tables. What is missing is the visitor write endpoint it would call — so US-3.2 is
-blocked on US-2.2, not on amenities.
+> **Updated 2026-08-04 by `0032`.** *Issue* and *revoke* now exist —
+> `POST /visitor-passes` and `/cancel`, with the code hashed and returned once. **Scan does not**,
+> and it is the requirement the story is actually about: no endpoint verifies a code, and §13
+> records the rate-limiting obligation that a verification endpoint will carry. The multi-guest
+> requirement is nearer than it was — `guest_count` is a column now — but one code still admits one
+> *request*, so the fifth requirement is still the genuine schema change.
+>
+> The paragraph above is left as compiled. Two of its five requirements moved; the verdict did not,
+> because the missing one is the point of the story.
+
+**US-3.2's blocker has moved, not cleared.** `POST /amenities/{amenityId}/bookings` and the approve
+route are where "prepare guest access on booking" would hook in, `0007`'s outbox already fires on
+amenity tables, and — as of `0032` — `create_visitor_pass` is a real function it could call. What is
+missing now is the hook itself, which is a decision nobody has made: whether an approved booking
+should mint passes automatically, and for whom. It was blocked on US-2.2; it is now blocked on a
+product ruling.
 
 **US-3.6, stated fairly.** Retention is *not* a gap: nothing this backend writes is ever deleted or
 aged out, complaint and booking history are append-only, and the ledger reconstructs any past state
@@ -2191,9 +3326,9 @@ from its event stream. So *"records older than three months are unavailable"* is
 everything we store. What is missing is (a) any gate-operations data to retain and (b) the
 downloadable report — the same export gap as US-1.6.
 
-### 14.6 Endpoints that serve no story, and why that is fine
+### 16.6 Endpoints that serve no story, and why that is fine
 
-**36 of the 70 operations map to no story in the document.** Not a defect — the team wrote stories
+**48 of the 99 operations map to no story in the document.** Not a defect — the team wrote stories
 about pain points in an existing product, not about the plumbing every product needs.
 
 | Group | Ops | API type | Why no story |
@@ -2204,59 +3339,128 @@ about pain points in an existing product, not about the plumbing every product n
 | `/communities/*`, `/onboarding/community` | 3 | Feature | Founding a community — a once-per-community act |
 | `/dashboard/amenities` `POST` · `PUT` · `DELETE` | 3 | Master data | Amenity catalogue upkeep; the stories assume amenities already exist |
 | `/settings`, `/billing-settings` | 3 (of 4) | Configuration | Configuration behind other features |
+| `/amenities/available` | 1 | Feature | Reading the catalogue. The booking stories assume a resident already knows which amenity they are booking |
+| `/notifications/{id}/read`, `/notifications/read-all` | 2 | Feature | Managing the list rather than being notified. US-2.1, US-2.4 and US-2.7 all ask to be *told* |
+| `/push/vapid-key`, `/push/subscriptions` `POST` · `DELETE` | 3 | Non-functional | Web Push plumbing. A resident experiences US-2.1; nobody experiences a VAPID key |
+| `/complaints/{id}/read` | 1 | Feature | Bookkeeping the unread badge US-2.6 and US-2.8 imply. Nobody narrates having read an update when asked what is wrong with complaints |
+| `/invoices/mine`, `/invoices/{id}/pay` | 2 | Feature | **Listing and paying maintenance dues.** A whole screen, and no story: `US-2.12`, the only payment story anybody wrote, is specifically about *amenity booking* payment, and mapping an invoice path onto it would claim coverage the interviews never gave |
+| `/invoices/{id}/payments` | 1 | Feature | The admin's record of a maintenance payment taken outside the app. **Moved here from `US-2.12` on 2026-08-04** — see the note below |
+| `/me/household`, `/me/household/phones` | 2 | Feature | Who is registered to a flat, and adding a number without waiting for an admin. Drawn from the prototype's Profile screen; the stories are about reaching **management** (US-2.9, US-2.10), not about the household reaching itself |
 | `/health` | 1 | Non-functional | Platform liveness, deliberately outside `/api/v1` |
 
 **The API type is the point of this table, not the absence.** Each of these operations carries
 `x-no-user-story` in [`openapi.yaml`](openapi.yaml), stating `Not covered by user story` and then
 what the operation *is*. `Functional`, `Configuration`, `Master data` and `Non-functional` are
-plumbing, and their absence from the story set is expected. **`Feature` is not**: 13 operations here
+plumbing, and their absence from the story set is expected. **`Feature` is not**: 22 operations here
 are user-facing capability nobody wrote a story for. That is a finding about the story set, not
-about the API, and §14.7 is where it turns into work.
+about the API, and §16.7 is where it turns into work.
 
-> **This number was 33 and was wrong.** The groups above always summed to 36; the earlier total was
-> arrived at by subtracting the endpoints §14.3–§14.5 name in their tables, which silently assumed
-> that every operation not listed as unmapped was mapped. Three were neither — the amenity catalogue
-> writes, now their own row. The error survived a hand review and did not survive machine-checking
-> the same claim: the exporter's coverage guard requires a verdict per operation, and three
-> operations had none. **34 operations serve at least one story, 36 serve none, and 34 + 36 = 70.**
+**One of those 22 arrived by a correction rather than by new code.**
+`POST /invoices/{id}/payments` carried `US-2.12` in the generated spec until 2026-08-04, and should
+not have: [`USER_STORIES.md`](product/USER_STORIES.md) scopes that story to *amenity booking*
+payment, §16.4's own table for it never listed this operation, and the resident invoice path beside
+it was already refusing the identical mapping in writing. The role text claimed for it — payment and
+record moving together — is true, and is a property of **every** settlement in this backend rather
+than of the story. Traceability that flatters is worse than traceability that admits a gap, because
+the gap is the finding. The recount below moves with it: **51 serve a story and 48 serve none.**
+
+**The four `0033` added are the sharpest instance of it so far.** `Payments.jsx` is a finished screen
+with a modal, two tabs and a gateway dialog, and the story set contains nothing about paying a
+maintenance bill — only about paying for an amenity booking, which is a different flow. Nobody was
+asked about the thing they do every month; they were asked what had gone wrong lately.
+
+`GET /amenities/available` is the clearest example of what the category means.
+`GET /amenities/available` was not derived from a story and could not have been: no interviewee
+described the act of finding out which amenities exist, because in the building that is a
+noticeboard. It came from the code instead — the resident booking write has never been guarded while
+nothing let a resident learn an amenity id, which is a defect no amount of reading the story set
+would surface. **A `Feature` row is not always a story someone forgot to write; sometimes it is one
+nobody could have written.**
+
+> **The totals move with the surface, and these are recounted, not estimated.** The figures above
+> come from `x-user-stories` in the generated spec. **51 operations serve at least one story, 48
+> serve none, and 51 + 48 = 99.** `0033` added eight operations, of which four map and four do not,
+> and step 7 added a ninth, `GET /resident/snapshot`, which maps. The `Feature` count moved from 17
+> to 21 on those eight and then to 22 when `POST /invoices/{id}/payments` gave up a story it had
+> never earned. `Functional`, `Configuration`, `Master data` and `Non-functional` are unchanged at
+> 16, 3, 3 and 4.
+>
+> **An earlier version of this section said 33 and was wrong** — a different kind of error, worth
+> keeping visible. The groups always summed to 36; the 33 came from subtracting the endpoints
+> §16.3–§16.5 name in their tables, which silently assumed every operation not listed as unmapped
+> was mapped. Three were neither — the amenity catalogue writes, now their own row. The mistake
+> survived a hand review and did not survive machine-checking the same claim, which is the argument
+> for counting these from the spec rather than from this document.
 
 The one worth flagging: **`GET /settings` is the only endpoint that reports its own gaps.** Its
-`modules[]` carries a `backendStatus` per module, and `visitor-management`, `notice-board`,
-`security-gate-management` and `parking-management` all report themselves unimplemented. That is
-the machine-readable form of half this matrix, and it is already wired.
+`modules[]` carries a `backendStatus` per module. `security-gate-management`, `parking-management` and
+`community-marketplace` report themselves unimplemented; `visitor-management` moved to `partial` in
+`0032` while `security-gate-management` deliberately did not — which is the table earning its keep,
+reporting two halves of one feature separately because only one of them was built. `notice-board` and
+`maintenance-billing` moved to `partial` in `0033`. That is the machine-readable form of half this
+matrix, and it is already wired.
 
-### 14.7 What the matrix says to do next
+> **It was also, until 2026-08-04, reporting nothing at all.** `0022` seeded those statuses with
+> catalogue codes that do not exist, so every one of its six updates matched zero rows and every
+> module would have read `absent` — including the ones this document has called `partial` for weeks.
+> The one screen built to be honest about what is missing would have been the one lying. Corrected in
+> place; the migration has never been applied.
+
+### 16.7 What the matrix says to do next
 
 Ordered by cost against value, not by story number.
 
 | # | Action | Unblocks | Size |
 |---|---|---|---|
-| 1 | Stop the snapshot dropping `assignee`, `dueAt` and `progress_percent` (§14.4) | **US-2.6, US-2.8** | Two lines, dashboard workstream |
+| 1 | ~~Stop the snapshot dropping `assignee`, `dueAt` and `progress_percent`~~ — **routed around, not fixed**: `GET /complaints` returns all three, so US-2.6 and US-2.8 no longer depend on it. The snapshot still drops them, and it is still two lines in the dashboard workstream's file | US-2.6, US-2.8 | Two lines, still theirs |
 | 2 | Restore `PATCH /residents/{id}` | **US-1.4** | Recoverable from git history |
-| 3 | Add `complaints.priority` | US-2.5 (half) | One column; the read already expects it |
+| 3 | ~~Add `complaints.priority`~~ — **done** (`0031`), with the endpoint that writes it | US-2.5 | Closed |
 | 4 | Add `notices.effective_at` | US-2.11 (half) | One column, one field |
 | 5 | Add `departments.building_id` | US-2.10 | One column, one filter |
-| 6 | Build the visitor write endpoints | US-2.1, US-2.2, US-3.2 | A surface |
-| 7 | Choose a push transport | US-2.1, US-2.4, US-2.7 | An architecture decision, not a task |
+| 6 | ~~Build the visitor write endpoints~~ — **done for the resident half** (`0032`, §13): US-2.2 closes. US-2.1 does not, because nothing raises the request it answers, and US-3.2 does not, because whether an approved booking should mint passes is a ruling nobody has made | US-2.2 | Closed; the gate half is a separate surface |
+| 7 | ~~Choose a push transport~~ — **done**: Web Push over our own VAPID keypair (§5.3) | US-2.1, US-2.4, US-2.7 | Was an architecture decision; now the emitters remain |
 | 8 | Add CSV export | US-1.6, US-3.6 | Small, and asked for twice |
 
-**Items 1–5 are five small changes that close or half-close five stories.** They are the whole
+**Items 2, 4 and 5 are three small changes that close or half-close three stories.** They are the whole
 argument for keeping this matrix. None would have been found by reading the code, because none of
 them is a bug in any one file: three are fields written by one workstream and dropped by another,
 and two are single missing columns behind features that otherwise work. The expensive items — 6 and
-7 — were already known.
+7 — were already known, and both have now been built. **What that leaves is a table whose remaining
+rows are all small**, which is a better position than it looks: the two entries that needed a design
+decision are spent, and nothing left in it is blocked on anything but doing it.
 
-**Item 7 is the largest single lever in the table.** Four stories (US-2.1, US-2.4, US-2.7, and
-US-2.3 downstream) reduce to *"tell the resident without making them open the app"*, and none of
-them can be closed by any amount of backend work until something can deliver a message to a device.
-It is worth deciding before more endpoints are written, not after.
+**Item 7 was the largest single lever in the table, and it has been pulled.** Four stories (US-2.1,
+US-2.4, US-2.7, and US-2.3 downstream) reduce to *"tell the resident without making them open the
+app"*, and none of them could be closed by any amount of backend work until something could deliver
+a message to a device. It was worth deciding before more endpoints were written rather than after,
+which is exactly where it landed: §5.2 and §5.3 ship before the visitor and complaint writes that
+will call into them.
+
+What it did **not** do is close those four stories, and the distinction is worth keeping sharp. A
+transport with nothing emitting into it delivers nothing. Each of the four now waits on a one-line
+`notify_member` call inside a write that has yet to be built — which is a task, not a decision, and
+that is the whole difference this item made.
+
+> **The first of those tasks is done.** `0031` puts `notify_member` inside all five complaint writes,
+> including the two that already existed. US-2.7's emitters therefore exist, and the story is *still*
+> partial — because what remains is a service worker in `frontend/public/`, which is not a backend
+> task at all. The visitor, notice and payment emitters are steps 5 and 6.
+>
+> Worth recording plainly: **items 1 and 3 closed by different means, and only one of them is a
+> fix.** Item 3 was built. Item 1 was routed around — the fields now reach a resident through a
+> different endpoint, while the projection that drops them is unchanged. The stories are served
+> either way, and the line in someone else's file is still wrong. A matrix that marked item 1 done
+> would be recording the story's state as if it were the code's.
 
 ---
 
-## 15. Changelog
+## 17. Changelog
 
 | Date | Change |
 |---|---|
+| 2026-08-04 | **Traceability audit of the generated spec, and §16.6 recounted.** Every route the application registers is in [`openapi.yaml`](openapi.yaml) and every operation carries errors, a description and a story verdict — the export guard had held. Two things it cannot check did not: eight parameters were undescribed (`booking_id`, `pass_id`, `notification_id`, the `Last-Event-ID` header), and **`POST /invoices/{id}/payments` was claiming `US-2.12`**, a story [`USER_STORIES.md`](product/USER_STORIES.md) scopes to *amenity-booking* payment — an overclaim three other documents here already contradicted, including the resident invoice path's written refusal of the same mapping. Now `Feature`, untraced, with the reason recorded. Coverage of operations by story is **51 served / 48 none**; §16.6's header also still said *"47 of the 98"* after the surface grew to 99. |
+| 2026-08-04 | **§14.5 added — `GET /resident/snapshot`, and the resident backend is complete.** The last endpoint of the build order, and the only one that needed no schema change: it is a projection of the endpoints around it, so a bill on the home screen and the same bill on the Payments page are the same model and cannot disagree. **US-2.3 moves from none to partial** — the enabling backend its own *"Backend: None"* note asks for now exists, and the home-screen widget it also asks for is an OS surface a web application does not have. Coverage is 8 served / 9 partial / 7 none across 99 operations. Records one correction to the design document: `activity` is the notification feed, not `member_activity`, because nothing in this project writes that table and §5.8 had already made notifications the durable record of every user-visible event. Also fixes four defects in step 6 — the invoice list was filtered by a *narrower* ownership rule than the settlement path enforces, so a bill raised against the flat was payable and invisible; the Paid tab was defined as "not payable" and so contained cancelled bills; drafts were reaching residents as amounts owed on unissued bills; and a replayed `idempotencyKey` called the gateway before checking for the duplicate and then reported the new verdict over the stored one. |
+| 2026-08-04 | **§14 added — the resident's money and home.** Eight operations backed by `0033`: their own invoices and bookings, a simulated gateway that pays either, the notice board, the flat's roster, and a contact directory served from `departments` instead of five numbers hard-coded in `Profile.jsx`. Adding the section shifted the three meta-sections again — Not yet implemented is now §15, the matrix §16, this changelog §17. **US-2.12 closes**, on the transaction rather than on the gateway; coverage is 8 served / 8 partial / 8 none. Two things worth reading before wiring anything: a declined payment is a `200` with `status: "failed"`, and `idempotencyKey` is required with a rule the API cannot enforce (§14.4). Also records that **every one of `0022`'s module-catalogue updates had matched zero rows** since it was written, so `GET /settings` would have reported that none of this backend exists. |
 | 2026-07-31 | **§14 added — the traceability matrix from the team's 24 user stories to this API**, with the stories themselves checked in under [`product/`](product/). Changelog moved from §14 to §15. Coverage is 3 served / 12 partial / 9 none. Four findings came out of writing it, none visible from any single file: `PATCH /complaints/{id}` writes `assignee`, `due_at` and `progress_percent` that the dashboard snapshot then drops; `complaints` has no priority column although the snapshot reads one; `PATCH /residents/{id}` was removed on 2026-07-30 and a direct interviewee quote asks for it; and four resident stories are blocked on one absent push transport. |
 | 2026-07-30 | **Merged `origin/main` @ `94556e5`; cut the surface to what the frontend calls.** 32 operations removed — every read the shared `GET /dashboard/snapshot` serves, the amenity CRUD their `/dashboard/amenities` serves, and the registration-review trio duplicating their `/admin/access-requests`. Adds §12: `POST /notices` and `POST /admins`. Two contract-wide changes: cookie-first auth with roles resolved from `community_memberships` instead of a JWT claim, and `X-CSRF-Token` required on every unsafe request. §5–§11 prose still describes removed endpoints — see [FRONTEND_WIRING_AUDIT.md](FRONTEND_WIRING_AUDIT.md). |
 | 2026-07-30 | Build step 9 — Settings. Adds five endpoints plus six fields on `/billing-settings`. Records that the admin Settings screen has never persisted anything, so its field names are ours; that the four toggles belong to two different tables; that three of them are stored and acted on by nothing; and that module enforcement and community rename were deliberately not built. Answers A10 (community timezone). |

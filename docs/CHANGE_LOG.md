@@ -17,6 +17,1293 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-04 — Session 36 (part 4): a traceability audit of the generated spec
+
+**Context.** A pass over `docs/openapi.yaml` asking, of every one of the 99 operations, whether it is
+actually there and actually annotated the way this project says it annotates things — rather than
+trusting that it is because the export ran without complaint.
+
+**What was already sound.** Every route the application registers appears in the spec, and no path in
+the spec is absent from the code. Every operation carries a summary, a description, error responses
+beyond the framework's automatic `422`, a `500`, and either `x-user-stories` or `x-no-user-story`.
+That is not luck: `export_openapi.py` refuses to build when the annotation table and the live routes
+disagree, which is why adding an endpoint fails the export until its errors and its stories are
+declared. The guard has been doing its job.
+
+**What was not.** Two things, both found by asking questions the guard cannot ask.
+
+### Eight parameters had no description
+
+`booking_id`, `pass_id`, `notification_id` and the `Last-Event-ID` header reached the spec undescribed
+— 90 of 98 parameters documented, and the eight missing were all on endpoints added after the
+annotation layer was built. Added to `PARAMETER_DESCRIPTIONS`, and each says the thing a reader
+cannot infer from the name: that `booking_id` is scoped by `is_own_booking` rather than by community,
+that approve and reject need the pass to be undecided or the answer is `409`, and that a malformed
+`Last-Event-ID` is read as `0` rather than refused, because the browser sets that header itself and
+rejecting the reconnect would leave a client no way to recover. `AUDIT`.
+
+### `POST /invoices/{id}/payments` was claiming a user story it had not earned
+
+It carried `US-2.12` — *"Reliable booking payment confirmation"* — since the money layer was built.
+[`USER_STORIES.md`](product/USER_STORIES.md) scopes that story to **amenity-booking** payment; this
+operation records a maintenance payment an administrator took by hand. Three things in this
+repository already said so and were not reconciled with the table: §16.4's endpoint list for
+`US-2.12` never included it, `RESIDENT_BACKEND_DESIGN.md` §11.7 says the story is about the booking
+transaction, and the resident invoice path beside it carries an explicit written refusal of the
+identical mapping. The role text claimed for it — payment and record moving together — is true and is
+a property of **every settlement in this backend**, which is what made it plausible enough to survive
+review. Now `x-no-user-story` with a `Feature` classification that states what it is and what it was.
+
+The recount that follows from it: **51 operations serve a story, 48 serve none**, `Feature` 21 → 22.
+API.md §16.6 updated, including its own header, which still said *"47 of the 98"* after the surface
+grew to 99. **A traceability matrix that flatters is worse than one that admits a gap**, because the
+gap is the finding — §16.6 exists to argue that 48 untraced operations are a fact about the story set
+rather than a defect in the API, and an overclaim inside it undermines the argument it is making.
+`AUDIT`.
+
+---
+
+## 2026-08-04 — Session 36 (part 3): the home aggregate, and four defects in step 6
+
+**Context.** Steps 7 and 8 of `RESIDENT_BACKEND_DESIGN.md` §9, plus a review pass over step 6 before
+building on top of it. `GET /resident/snapshot` is the last endpoint of the build order. **The
+resident backend is complete; no migration has been applied to any database.**
+
+### Four defects in step 6, and what each of them was
+
+**The read path and the write path disagreed about whose invoice it is.** `0033` §2's own comment
+names this as the worst possible bug in the file — *"a resident able to pay a bill they cannot
+see"* — and then the repository shipped it: `GET /invoices/mine` filtered on `membership_id`, which
+is a **narrower** rule than the `is_own_invoice` the settlement RPC enforces. `0021` drops the NOT
+NULL on `invoices.membership_id` precisely so a bill can be raised against a **flat**; such a bill is
+payable through the second branch of the predicate and matches no membership filter. The list now
+calls the same function the write path does, and two tests assert the predicate rather than the rows,
+because nothing else in the suite would have noticed. `AUDIT`.
+
+**The Paid tab was defined as "not payable", so it contained cancelled bills.** `is_payable` is false
+for four different reasons — paid, void, draft, nothing outstanding — and only one of them means
+paid. A voided ₹12,000 bill appeared in the resident's list of settled ones. The tabs now filter on
+the wire `status`, which is the word the screen shows and the question a tab actually asks. **Same
+defect class as step 5's `is_current`**: a computed flag reused for a split it does not describe.
+`AUDIT`.
+
+**Drafts were reaching residents.** A draft invoice is one an admin has not issued — no number, no
+promise, nothing to pay — and it was arriving as an amount owed on a bill nobody had sent. The
+resident projection now excludes them at the view. `AUDIT`.
+
+**A replayed idempotency key called the gateway first and then reported the wrong verdict.** Two
+faults in one path. The service ran the simulator *before* the RPC that detects the duplicate: with a
+pure function that is merely untidy, and with a real provider behind the same seam — which is the
+entire claim the module makes — it is a double charge on every double-tap, the one failure an
+idempotency key exists to prevent. And the response was built from the fresh simulation rather than
+the stored row, so retrying with a card that declines would have answered `failed` beside a
+`settledStatus` of `Paid`. Both RPCs now **return the payment rather than an id**, a `find_*` lookup
+runs before the gateway, and a key that already settled a *different* invoice is a `409` instead of a
+friendly success against a bill that remains unpaid. `AUDIT`.
+
+Two smaller ones fell out of the same read: `amenity_financial_events` gained an `instrument_label`
+so a replayed booking payment can be described from the row that recorded it, and `0033`'s claim that
+the unique index would refuse a duplicate was corrected — the index is on
+`(community_id, event_type, payment_reference)`, so a decline followed by a fall-through would have
+written a `payment` beside the `payment_failed` and confirmed a booking off a card that declined.
+
+### The activity strip is the notification feed — §5.7 corrected rather than obeyed
+
+§5.7 reserved `member_activity` for the home screen's activity list, reasoning that a second activity
+table would mean two feeds that disagree. **The reasoning is right and its premise is not.** Nothing
+in this project writes `member_activity` — not a trigger, not a service, and not the admin dashboard,
+which reads `audit_events` instead — so serving the strip from it would have shipped a list that is
+empty by construction and stays empty. §5.8 had already made `notifications` the durable record of
+*every user-visible event*, which is exactly what an activity strip shows; writing those events a
+second time would have created the very pair of disagreeing feeds §5.7 set out to prevent. `AUDIT`,
+overturning `RESIDENT_BACKEND_DESIGN.md` §5.7 as written.
+
+### The aggregate owns nothing
+
+`GET /resident/snapshot` is a projection of the endpoints around it: every part of it is the model
+the endpoint that owns it returns, and the only things computed here are counts. That is a constraint
+rather than an economy — a home screen that renders a bill in its own shape will one day show a
+different amount than the Payments page, and the resident will believe the smaller one. It is also
+the only endpoint in this backend that needed **no schema change at all**. `DERIVED` from §5.1.
+
+Three rules in it came from reading `DashboardHome.jsx` rather than from the design: the visitor
+counts are **guests, not passes** (one pass for a party of twelve is twelve people at the gate); the
+bill offered is the maintenance one, or else the **oldest** payable rather than the newest, so an
+overdue bill is never hidden behind a fresh one; and the badge counts the whole feed rather than the
+five events returned, because a badge drawn from a page is wrong the moment anybody scrolls.
+
+`dues.isPartialTotal` is the one field invented here. The outstanding total is summed over the bills
+actually read, and a resident holding more than one read carries would otherwise be shown a number
+that is quietly too small — which is worse than a number with a caveat, because they pay what they
+are shown and believe they are square. `DERIVED`.
+
+### US-2.3 moves from none to partial, and stops there
+
+The story asks for one-tap access *"including a home-screen widget"*, and its own note reads
+*"Backend: **None** — a client concern, but it needs endpoints that do not exist."* Those endpoints
+exist now, which is what moves the row off zero. A home-screen widget is an operating-system surface
+and this is a web application with no native client (`PO`, 2026-08-03), so no endpoint closes that
+half. Coverage is **8 served / 9 partial / 7 none** across 99 operations. `DERIVED`.
+
+---
+
+## 2026-08-04 — Session 36 (part 2): the resident's money and home
+
+**Context.** Step 6 of `RESIDENT_BACKEND_DESIGN.md` §9. `0033_resident_money_and_home.sql`, eight
+operations, and the first thing in this backend that says anything about money on a resident's
+behalf. **US-2.12 closes.**
+
+### The gateway is a simulator, and every row it writes says so
+
+`payments.provider` has existed since the baseline and the admin's `record_payment` writes
+`'offline'`. Resident payments write **`'simulator'`**, and that string is the most important thing
+in the migration. A demo database becomes a staging database becomes, occasionally, the thing
+somebody reconciles against a bank statement — and if simulated money is recorded as `offline`, then
+on the day a real gateway arrives **nobody can ever separate the money that moved from the money that
+did not.** That is not a recoverable mistake; the information was never recorded. `DERIVED` from
+§11.1.
+
+It is also the honest answer to the rule §5.5 has carried since the first draft — *never report a
+payment as succeeded when no money moved*. The row says `succeeded`, because inside the simulated
+gateway it did; and it says `simulator`, because that is which gateway said so. Both facts recorded,
+neither implied.
+
+### The simulator is a pure function, and that is the entire architecture
+
+`simulate(instrument) -> SimulatedOutcome`. No database, no network, no clock beyond one expiry
+comparison, no randomness. The RPC it feeds **takes an outcome and never decides one**, so swapping
+in a real provider changes one Python module and leaves the router, the RPC and the migration
+untouched.
+
+Deterministic on purpose: a demo that fails one time in ten is a demo nobody can run twice. And the
+failure paths are the reason the simulator exists rather than a stub that always succeeds — with a
+real provider in test mode a decline is a card you have to go and find, and here it is one expiry
+date. `DERIVED` from §11.6.
+
+**Only the published test card numbers are accepted**, which is the part worth arguing. A simulator
+that took any Luhn-valid number is one that *will* be handed a real card — by a tester being
+thorough, by someone in a demo audience being helpful. At that moment this is an application holding
+a live PAN with none of the obligations discharged that holding one implies. Stripe's sandbox can
+accept anything because Stripe is PCI-DSS certified infrastructure; copying the affordance without
+the substrate is the mistake. `AUDIT`.
+
+Nothing about the card survives the call: number, CVV and expiry are `SecretStr`, read once, and
+discarded. What is stored is `•••• 4242`.
+
+### A declined payment is a `200`
+
+The request was well-formed, authorized, processed and produced a durable record; the *payment*
+failed. A `402` would put an ordinary business outcome in the same client branch as *"your session
+expired"* and leave a payment id to be dug out of an error envelope with nowhere to put one. Clients
+branch on `status`. `DERIVED` from §11.5.
+
+### US-2.12 closes on the transaction, not on the gateway
+
+Its recorded reason for being partial was *"no payment gateway is integrated"*, and that was reading
+the story as being about payments. It is about *"a successful payment always yields a confirmed
+booking"*, and the pain point — money deducted, no booking — is a payment recorded in one transaction
+and a confirmation in another with a crash between them.
+
+`settle_amenity_booking_payment` does both or neither. On a decline it writes the attempt with its
+reason and **leaves the booking exactly as it was** — the half that gets forgotten, and the half the
+story is about. `PO`'s story text, read closely; this overturns the earlier `partial` verdict.
+
+### Five things the build added that §7 did not anticipate
+
+**`unit_contacts`, a table.** §7 assumed `household_overview` could serve *add a number to my flat*
+from rows that already exist. It cannot. The prototype implements it by inventing a whole user, and
+here `profiles.id` references `auth.users` — a person with no account cannot be a profile, and
+manufacturing a membership for a phone number would put somebody in the member count who cannot log
+in and never agreed to join. A flat contact is a different kind of thing and gets its own table.
+`AUDIT`, against the frontend gate.
+
+**`resident_notice_overview`.** Notices looked like a read of an existing table. Two vocabularies and
+one exclusion is a projection.
+
+**RLS on `notices`, `unit_residencies` and `departments`.** None of the three had any, so every
+authenticated user in the project could read every notice, every department, and — worst — **who
+lives in which flat**. Fifth instance of the timing rule: the policy ships in the migration that
+first serves the data. `AUDIT`.
+
+**A resident may now read their own booking charges.** `0023` made the ledger admin-only, reasoning
+that what residents were charged is not a community-wide fact. True of the community and false of
+the resident: the one person entitled to know what a booking costs is the one being asked to pay it.
+The policy gains an own-booking clause and nothing more.
+
+**`payment_failed`, a fifth `amenity_financial_events` type.** The four that existed had no word for
+*this did not go through*.
+
+**And one inherited gap closed while passing:** `0021` gave `invoices_read` two routes to an invoice
+— by membership, and by current residency of the billed unit — and gave `invoice_line_items_read`
+only the first. A resident who inherited a vacant flat's bill could see the total and not one line of
+what it was for. Both now go through `is_own_invoice`, which is why that function exists rather than
+a repeated predicate.
+
+### Two things stated rather than solved
+
+**The failure demonstration is not reachable from the current UI.** `Payments.jsx` renders UPI as the
+only enabled method and its Confirm button collects no instrument at all, so a UPI payment with no
+handle has to succeed or the endpoint could not be called from the screen it was built for. Showing a
+decline needs a VPA field or the card fields the modal currently disables. Recorded in `API.md` §14.3
+rather than worked around.
+
+**`idempotencyKey` is required and the rule for minting it cannot be enforced from this side.** One
+key per press of Pay; a *new* key once a decline has been shown. The key identifies an attempt, not
+an invoice — backwards, it produces either a double charge or an unpayable bill. §14.4.
+
+### One scope call
+
+`GET /amenity-bookings/mine` is in §6 under *Amenities* and step 6's title does not mention it. It is
+built here anyway, because `POST /amenity-bookings/{id}/pay` needs a booking id and nothing else in
+this API would have given a resident one. Shipping a pay endpoint whose id has no source is the same
+defect class this session spent its first half fixing.
+
+### Artifacts
+
+`API.md` (**new §14**; meta-sections renumbered 14→15, 15→16, 16→17 with every cross-reference
+updated; §16.2 coverage now 8/8/8; §16.4 US-2.4, US-2.9 and US-2.12 rewritten; §16.6 recounted at
+51 + 47 = 98), `openapi.yaml` (regenerated), `migrations/README.md` (20 views, 65 functions, 46
+called from Python), `RESIDENT_BACKEND_DESIGN.md` §7 and §9, the ERD, the class diagram, this file.
+Tests: 612, up from 548.
+
+---
+
+## 2026-08-04 — Session 36 (part 1): six defects in the visitor surface
+
+**Context.** A review of step 5 before starting step 6. Six findings, none of which any test was
+failing on. Four are in `0032`, one was inherited from `0022`, and one is a mismatch with the only
+client that exists.
+
+### A guest standing in the living room was filed under History
+
+`is_current` was *"open and not past its window"*, which excludes `checked_in` — so the moment a
+visitor walked through the gate their pass left the front tab. The prototype's own predicate is
+`['Checked Out', 'Rejected'].includes(status) || date < today` (`Visitors.jsx`), which keeps them
+there, and correctly: a guest who is inside is the one pass a resident might actually need. The clock
+now constrains only the states where nobody has arrived. `AUDIT`, against the frontend gate.
+
+Worth naming as a class rather than an instance: this was an expiry rule applied to a state that
+expiry does not describe. The column's comment claimed it existed so the split could not drift from
+the frontend's — while drifting from it.
+
+### `Expired` was a status nothing ever wrote
+
+The uniqueness argument recorded in part 2 above — *"expired passes returning their numbers to
+circulation is what makes six digits sufficient"* — **was not true when it was written, and this
+entry overturns it.** An index predicate must be IMMUTABLE, so it cannot ask the clock; `live` in
+that index means a *status*, and no code path in this project has ever set `expired`. A pass that
+lapsed at six o'clock would have held its number for the life of the project.
+
+`expire_visitor_passes(community)` makes the claim true: it settles that community's lapsed passes
+immediately before a new code is minted into its live set. Not a trigger — a trigger cannot fire on
+the passage of time — and not a cron job, which would be a second deployment artifact for a property
+one statement holds. Passes therefore lapse lazily, which is what `is_lapsed` on the view is for.
+`DERIVED` from the uniqueness deviation, which depended on it.
+
+The same review found the neighbouring case: `valid_until` was `expected_at + ttl`, and the form
+floors the date at today but not the *time*. A four-o'clock pre-approval for a nine-o'clock arrival
+minted a pass whose window had already closed — unusable, reported as nothing, and retired by the
+very next sweep. The TTL now runs from the arrival **or from issue, whichever is later**.
+
+### Six statements that had matched zero rows since `0022`
+
+`feature_catalog` holds ten codes, seeded once in `0001`, all hyphenated: `visitor-management`,
+`security-gate-management`, `complaint-management`. `0022` wrote `('complaints',
+'complaint_management')`, `('visitors', 'visitor_management', 'security')` and four more in the same
+shape, and `0032` copied the habit. **None of them matches anything.**
+
+Nothing failed, because an `update ... where` that selects nothing is a success. Every module would
+have sat at the column defaults — `sort_order = 0`, `backend_status = 'absent'` — and the Settings
+screen, which exists precisely so a toggle cannot imply a backend that is not there, would have
+reported that none of this backend exists. **The one screen built to be honest about what is missing
+would have been the one lying.** `AUDIT`.
+
+`0022` is corrected in place; it has never been applied, and a fix-up migration would have left the
+wrong statement in the file for the next reader to copy, which is exactly how `0032` acquired it. All
+ten modules are listed now — the section header has always claimed to seed the ten that
+`onboardingModules.js` offers, and four were never mentioned.
+
+### The gate could read a pass and not the log of what was done to it
+
+`visitor_requests` got a three-audience policy; `visitor_events` got two. A `security` member could
+see a pass and not its event history — which is the only record a check-in leaves. The `security`
+clause had been spelled out inline in one policy and forgotten in the other, in a file that quotes
+`0019`'s warning that *"a predicate copied and pasted is correct twenty times and will eventually be
+wrong once"*. `is_community_security(community)` now joins `is_community_member` and
+`is_community_admin`, and both policies call it. `AUDIT`.
+
+### `visitorName` was required, and no client can produce one
+
+The resident's pre-approval form collects a purpose, a date, a time and a guest count. **There is no
+name field on it.** `visitor_requests.visitor_name` is `not null`, so `createVisitorsSlice.js`
+composes a label — *"Guest group"*, *"Family event group"*. The API demanded the field anyway.
+
+It is now optional, and the same label is composed in the service when it is absent. The rule lives
+in one place, and it is the product's rule rather than a client's rendering choice: it ends up in the
+notification a gate reads and in an event log that outlives the screen. Still accepted when present,
+because the gate's own screen does collect a name. `AUDIT`, against the frontend gate.
+
+### A collision the database could not resolve and the resident could not act on
+
+Two residents in one community can be handed the same six digits; the partial unique index refuses
+the second. The refusal is right and it is not the caller's problem — nothing about their request was
+wrong. The database cannot retry either, because it holds a hash and no way back to a code, so
+re-minting can only happen where the plaintext is, which by design is the service and nowhere else.
+Five attempts, then a `409`: an unbounded retry against a full code space is an outage rather than a
+retry. `DERIVED` from the uniqueness deviation.
+
+### One consequence recorded rather than built
+
+*Show QR* on the Visitors screen rebuilds the payload from the store, which works only because the
+prototype keeps the plaintext forever. Against this API the code arrives once and no read returns it,
+so a client that wants that button must keep what the `201` handed it. Losing it loses the QR, not
+the pass. `API.md` §13 now says so, and names the shape a recovery endpoint would take — mint a
+*fresh* code, invalidate the old one — without building it, because reissuing a pass already works.
+
+### Artifacts
+
+`API.md` §13 (`visitorName`, `isCurrent`, the `409`, the TTL floor, two new subsections),
+`openapi.yaml` (regenerated, 77 paths / 90 operations), `migrations/README.md`,
+`RESIDENT_BACKEND_DESIGN.md` §9 step 5, this file. Tests: 548, up from 539.
+
+---
+
+## 2026-08-04 — Session 35 (part 2): visitor passes
+
+**Context.** Step 5 of `RESIDENT_BACKEND_DESIGN.md` §9. `0032_visitor_passes.sql`, six operations,
+and the first credential this backend mints. **US-2.2 closes; US-2.1 does not.**
+
+### The code is a credential, so it is never stored and never re-read
+
+§5.4 asked for a hash and a plaintext returned once. It is built one step stronger: both the security
+code and the QR token are generated **in the API and never sent to the database at all** — only their
+hashes are RPC parameters. There is no statement log, slow-query log or replication stream in which a
+code could appear. `visitor_pass_overview` does not select the hash columns either, so a list read, a
+detail read and all three decisions are structurally incapable of carrying one. `DERIVED` from §5.4.
+
+The entropy is stated rather than quietly fixed. Six digits is about twenty bits, because a resident
+reads it down a phone line; what carries the difference is that a code is unique only among *live*
+passes in one community, that passes expire, and that **any future gate-verification endpoint must
+rate-limit by community**. That endpoint does not exist. The obligation is recorded in `API.md` §13
+and §14 so whoever builds it inherits it rather than rediscovering it.
+
+### Uniqueness: a deliberate deviation from §9
+
+§9's sketch says `code_hash text unique`. Global uniqueness would have broken in production: 900,000
+values against a project-wide index collides at a few hundred live passes, and every collision would
+be one community's pass failing to issue because an unrelated community held that number. Replaced by
+a **partial unique index on `(community_id, code_hash)` over live passes only** — a code has to be
+unambiguous where and when it is used, and expired passes returning their numbers to circulation is
+what makes six digits sufficient rather than merely tolerable. `DERIVED`, and it overrides §9.
+
+### The setting that had never been read
+
+`community_settings.visitor_code_ttl_minutes` has been writable from the admin settings screen since
+`0018`, under the comment *"Reserved by the ERD for a subsystem that does not exist. Nothing reads
+it."* These endpoints are the reader. **A control that stores a value nothing consults is worse than
+a missing control, because it looks like it worked.** `AUDIT`.
+
+`require_visitor_preapproval` still has no reader and correctly so — it governs whether the *gate*
+may admit someone with no pass, which is the half that does not exist.
+
+### Row security, fourth instance of the same timing rule
+
+`visitor_requests` and `visitor_events` have had none since the baseline, so any authenticated user
+could read every visitor row in the project — names, phone numbers, and which flat is expecting whom.
+Tolerable only while nothing served them; this migration is what stops that being true, so the policy
+lands in the same file. Same rule as `0028`, `0030` and `0031`. The new element is a **third
+audience**: `security` has to see a pass it neither raised nor owns.
+
+### One fan-out function, not two
+
+`notify_community_staff` (`0031`) reaches admins and managers — the right audience for a complaint
+and the wrong one for a gate. Rather than write a second loop, `0032` introduces
+`notify_community_roles` and replaces `0031`'s function with a one-line delegation. Two copies of a
+fan-out loop is how one of them ends up filtering on `status = 'active'` and the other does not, and
+the one that forgets is the one that notifies people who have left the community. `DERIVED`.
+
+### The catalogue row that was three features
+
+`0022` had `visitors`, `visitor_management` and `security` sharing one `absent` row. `0032` splits
+them: `visitors` → `partial`, **`security` stays `absent`**. Rounding it up because a neighbouring
+feature moved is how a status board stops being worth reading. `AUDIT`.
+
+### API.md
+
+- **New §13 Visitors.** The three meta-sections shift: *Not yet implemented* 13 → 14, *User stories*
+  14 → 15, *Changelog* 15 → 16, with every in-prose cross-reference updated. The 2026-07-31 entry
+  recording the earlier 14 → 15 move is left untouched — it is history, not a reference.
+- §15.2 coverage: resident 3/6/3 → **4/5/3**, totals 6/10/8 → **7/9/8**.
+- §15.4: US-2.1 and US-2.2 were compiled as one row and are now two verdicts. A matrix that keeps
+  stories paired after the thing joining them is gone reports the weaker of the two as the state of
+  both.
+- §15.5: US-3.1's *issue* and *revoke* now exist; **scan** does not, and that is what the story is
+  about, so the verdict is unchanged. US-3.2's blocker moved from a missing endpoint to a product
+  ruling nobody has made.
+- §15.6 recounted from the spec: **47 mapped + 43 unmapped = 90**. All six new operations map, so the
+  unmapped table is unchanged.
+- §15.7 item 6 closed for the resident half.
+
+### Other artifacts
+
+- **ARCHITECTURE.md** — `notify_community_roles` and the visitor emitter row.
+- **ERD** — the six `0032` columns, the partial-index reasoning, and `visitor_pass_overview` with a
+  note on why its column list stops short of both hashes.
+- **Class diagram** — router, service and repository; the schema package renamed `0029-0032`.
+- **Migrations README** — the `0032` row, the numbering rule applied without incident, and recounted
+  totals: **15 views, 58 functions, 43 called from Python**.
+
+---
+
+## 2026-08-04 — Session 35: reading the complaint surface back
+
+**Context.** Before step 5, a pass back over step 4. Five findings, four of them in code written last
+session and one older. None came from a failing test — every one came from reading two artifacts next
+to each other and finding they disagreed.
+
+### The status filter answered correctly and returned the wrong list
+
+`GET /complaints?status=Resolved` translated through `status_to_storage`, which answers *what do I
+store when the user picks this* — the right question when writing and the wrong one when filtering.
+Two stored statuses render as `Resolved` (`resolved`, `closed`) and two as `In Progress`
+(`acknowledged`, `in_progress`), so the filter returned a strict subset of the rows the same list
+displays under the word the caller typed. **A resident filtering by `Resolved` would not have seen the
+complaints they had themselves confirmed** — which reads as lost data, not as a filter.
+
+Fixed with `complaint_status_filter`, derived by *inverting* `_COMPLAINT_STATUS_TO_WIRE` rather than
+restating it. A hand-written second map is a promise that two dictionaries get edited together, and
+this module exists because that promise is not kept. Words the surface never renders — `Closed` — are
+a `422` rather than an empty match: a caller asking for one is guessing at a vocabulary this API does
+not speak. `AUDIT`.
+
+> This is the more dangerous sibling of the Session 34 `hasMore` finding. A filter that is spelled
+> correctly and answers wrongly produces no error, no empty page and no complaint from the user —
+> nothing about it looks like a mistake.
+
+### The timeline bound kept the wrong end
+
+The timeline and comment thread were read oldest-first under a 200-row bound. The order and the bound
+are not independent choices: together they keep the *opening* of a long-running complaint and discard
+everything that has happened since. On the one screen where the bound could ever bite, that is exactly
+inverted — the resident opens a months-old complaint and sees it frozen on the day they raised it.
+
+Both now read newest-first and are reversed in the service. `hasOlderEvents` and `hasOlderComments`
+are measured with a one-row probe past the bound. Same rule as the amenity envelope, arrived at from
+the other direction. `AUDIT`.
+
+### `complaint_overview.is_unread` was per-raiser, not per-caller
+
+The view's own comment said per-caller and the join said `raised_by_membership_id`. They are the same
+row on the only surface reading the view today, and stop being the same row the moment anything else
+does — `mark_complaint_read` deliberately writes one row per membership so an admin cannot clear a
+resident's marker, and the view would have ignored every row it wrote for anybody but the raiser. Now
+a lateral `max()` over the caller's own rows; `max()` rather than a plain join so a user with two
+memberships cannot turn one complaint into two list rows. `AUDIT`.
+
+### A ten-entry label map that nothing called
+
+`_EVENT_LABELS` was defined with four lines of comment explaining a fallback that no code path
+reached, and `ComplaintEvent` shipped a raw `event_type` for the client to translate. Wired up as
+`label`, kept **alongside** `type` rather than replacing it: a UI keying behaviour off a translated
+string is a UI that breaks when the wording changes. `AUDIT`.
+
+### Two statements about reopening, and a message left alone
+
+`reopen_complaint` accepts `resolved` **and** `closed` while its error message and `API.md` said only
+resolved. The first instinct — widen the message — was wrong: both statuses render as `Resolved` on
+the wire, so a message naming `closed` would describe a state the resident's screen never shows. The
+message stands; the SQL comment now says which statuses it means and why the wording differs, and
+`API.md` records the asymmetry the frontend actually needs — a complaint already confirmed can be
+reopened but not re-confirmed, so *both read `Resolved` while only one offers confirm*. `DERIVED`.
+
+### API.md
+
+- §7 `GET /complaints`: `status` documented as matching on what a complaint **displays as**.
+- §7 `GET /complaints/{id}`: `hasOlderEvents` / `hasOlderComments`, `label` on a timeline entry, and
+  the paragraph on why the bound keeps the recent end.
+- §7 `/reopen`: the reopen/confirm asymmetry, and why `Cancelled` is excluded.
+- §7 `/read`: the view reads the caller's marker, not the raiser's.
+- A claim in `GET /complaints/{id}` that internal comments were filtered by the policy *and not by
+  this API* — the repository does filter as well. Corrected rather than deleted; the policy is still
+  what makes it true.
+
+### ERD
+
+`complaint_overview`'s note now states which membership the read-state join matches, and why.
+
+---
+
+## 2026-08-04 — Session 34: the first water in the pipe
+
+**Context.** Step 4 of `RESIDENT_BACKEND_DESIGN.md` §9 — the resident complaint surface, and the
+notifications every complaint write now emits. `0031_resident_complaints.sql`, six new operations, and
+two of `0020`'s functions replaced. Also, the one item left over from step 2.
+
+### The step-2 leftover: a bound that truncated silently
+
+`GET /amenities/available` read under a 500-row bound and returned `hasMore: false` unconditionally.
+Those two facts cannot both be safe. The bound is real — it exists so a pathological community cannot
+page a whole view into memory — so a permanent `false` was the envelope asserting completeness it had
+never checked, in the one situation where a client has no way to detect the difference. The read now
+asks for an exact count alongside the bound, and `hasMore` means the one thing worth meaning: the
+catalogue has outgrown being unpaged. **The number is not expected to be reached; that is not an
+argument for leaving it unmeasured.** `AUDIT`.
+
+### The migration number, and why it is not 0025
+
+`0025` was free and would have been wrong. Every RPC in this file calls `notify_member`, `0030`
+creates it, and migrations apply in filename order — so a file numbered `0025` would run five files
+before its own dependency. **Postgres would not have objected**: a plpgsql body is not resolved
+against the catalogue until it executes, so the migration would have applied cleanly and failed at the
+first complaint. Session 32 retired *reserve a number in advance*; this is the other half of the same
+rule — *allocate at write time* does not mean *take the smallest free one*. `DERIVED`.
+
+### `complaints` had no row security, and this is the step that makes that matter
+
+`0020` enabled RLS on `complaint_events` and `complaint_comments` and left the parent table open. Any
+authenticated user could read every complaint in the project through PostgREST. That was survivable
+while complaints were an admin surface reached through an admin-guarded API; **this step is what puts
+a resident's grievances behind an endpoint they call themselves**, so the policy ships in the same
+file. The same timing rule as `0028` and `0030`, for the third time.
+
+The two child policies were tightened at the same time. They used `is_community_member`, which would
+have let any resident read a neighbour's complaint timeline the moment residents had a reason to look.
+Admins see the queue; a resident sees their own. `AUDIT`.
+
+### `resolved` and `closed` stop being synonyms
+
+The baseline's enum has carried both since the beginning and nothing used the distinction —
+`PATCH /complaints/{id}` treats them as one terminal state. `POST /complaints/{id}/resolution` gives
+the second one meaning: **the association resolves, and only the resident closes.** That is what
+`US-2.6`'s *"confirm resolution with a rating"* is actually asking for, and it needed no new column to
+express. `DERIVED`.
+
+### Two of `0020`'s functions were replaced, not wrapped
+
+The complaint events a resident most needs to hear about are the ones an **admin** causes, so
+`update_complaint` and `add_complaint_comment` gained a `notify_member` call inside the transaction
+they already had. §7 of the design says a notification retrofitted onto a working write path is how
+you get an event that fires for some callers and not others — which is precisely the argument for
+replacing the one writer rather than adding a trigger or a second path. `DERIVED`.
+
+Two rules were set here that every later emitter inherits. **A status change notifies; an assignee or
+a progress bar does not** — a resident notified about everything stops reading notifications, which
+costs more than the ones they miss. And **an internal comment notifies nobody**, for the same reason
+it now leaves no timeline row.
+
+### An internal comment was casting a shadow on the resident's timeline
+
+Found while writing the API.md section, not while writing the code. `0020` writes a `comment_added`
+event for *every* comment, internal ones included, because the timeline it was written for is
+admin-facing — and the policy on `complaint_events` scopes rows to the complaint, not to a comment's
+visibility. So the resident's new timeline would have shown a row saying something was said, with
+nothing to read. **That is a worse outcome than showing the comment**: it tells them they were
+discussed and refuses to say how. `GET /complaints/{id}` drops those events. API.md §7 previously
+claimed internal comments were "never written to the timeline"; that claim was wrong and is corrected
+in place rather than deleted. `AUDIT`.
+
+### Stories
+
+US-2.5 **none → served**, US-2.6 **partial → served**, US-2.8 **partial → served**. Resident coverage
+moves from 0 served / 8 partial / 4 none to 3 / 6 / 3.
+
+**US-2.7 stays partial, deliberately.** Its emitters now exist — every transition the story names
+writes a notification, and both transports carry it. What is missing is a service worker in
+`frontend/public/`, so no phone can receive one. Marking it served would be reporting software this
+repository does not contain.
+
+Two items on §14.7's list closed by different means, and only one is a fix: item 3 (`complaints.priority`)
+was **built**; item 1 (the snapshot dropping `assignee`, `dueAt`, `progress_percent`) was **routed
+around** — the fields now reach a resident through a different endpoint while the projection that drops
+them is unchanged, and it is still two lines in the dashboard workstream's file. Recorded as such,
+because a matrix that marked item 1 done would be recording the story's state as if it were the code's.
+
+### Artifacts
+
+- **`docs/API.md`** — §7 rewritten: the six resident operations, the two vocabularies, the
+  notification note, and the correction above. §14.2 recounted, §14.4 US-2.5/2.6/2.7/2.8 rewritten
+  with the old assessments left in place beneath their closures, §14.6 recounted from the spec
+  (**41 mapped + 43 unmapped = 84**, Feature 16 → 17), §14.7 items 1 and 3 struck through.
+- **`docs/ARCHITECTURE.md`** — new *Who writes into it* subsection: the emitter table, the fan-out
+  helper, and the two notification rules.
+- **`docs/diagrams/homebandhu_submission_erd.dbml`** — the `0031` columns, `complaint_overview`, and
+  **the `0019`/`0020` complaint columns, which had been missing from this diagram since those
+  migrations** — a pre-existing omission, this file's rather than the schema's.
+- **`docs/diagrams/HomeBandhu-Architecture-Classes.puml`** — the resident complaint router, service
+  and repository; five RPCs; the dependency from the admin router to the replaced functions.
+- **`docs/design/RESIDENT_BACKEND_DESIGN.md`** — step 4 marked done; §7's complaint block promoted to
+  a written migration with the four unanticipated additions recorded; the numbering constraint stated
+  where it would have been broken.
+- **`backend/supabase/migrations/README.md`** — `0031` row, the second half of the numbering rule,
+  recounted at **14 views and 54 functions**, 41 called from Python.
+
+---
+
+## 2026-08-04 — Session 33: something can finally reach a resident who is not looking
+
+**Context.** Step 3 of `RESIDENT_BACKEND_DESIGN.md` §9 — the notification substrate, the feed, Web Push
+registration and the sender. `0030_notifications.sql`, six new operations, and the first runtime dependency
+this workstream has added.
+
+**What it closes, and what it does not.** Three stories — US-2.1, US-2.4, US-2.7 — have been *Partial* for one
+shared reason: the event fires and nothing delivers it. That is now a transport that exists. **It is not three
+closed stories, and saying so would be reporting a pipe as water.** Nothing emits into it yet: the visitor
+pass, the complaint transition and the published notice each need one `notify_member` call inside the write
+that causes them, and those writes are steps 4 to 6. The difference the step made is that each is now a task
+rather than an architecture decision — which is exactly what `API.md` §14.7 item 7 said it was.
+
+**`docs/API.md`** — §5 gains two subsections; §14.4, §14.6 and §14.7 corrected — `DERIVED`, and one `AUDIT`.
+
+§5 is retitled *Live updates, notifications and the admin dashboard*. The heading had been kept only to avoid
+renumbering; it now has a second job, because §5.1–§5.3 are the three delivery layers of one design and
+keeping them together is worth more than a heading that names one of them. No section numbers moved.
+
+The entry worth reading is the rule §5.2 opens with: **the stream is not the notification system.** SSE is
+at-most-once and connection-scoped — §5.1 makes *the payload is a hint, never truth* load-bearing, and it is
+only safe *because* of that rule — and a push may simply not arrive. So the row is written first, inside the
+transaction that caused it, and both transports carry it. Nothing durable can be built on `sse_events`: it is
+pruned every fifteen minutes precisely because it is ephemeral.
+
+§5.3 records the `PO` ruling from Session 31's design work in the reference doc where a frontend developer
+will meet it: **the push body carries the detail**, because US-2.1's pain point is a notification that makes a
+sound and shows nothing, and a resident being asked to approve someone needs the name. With the one absolute
+exception — **the visitor security code may never appear in a push body** — and the note that this is enforced
+by construction rather than by review: the renderer reads `title`, `body` and `url` and copies no other key.
+
+The `AUDIT` is in §14.4 and §14.7. Three story sections and one action item asserted *"no push transport at
+all"*, which stopped being true in this session. The old text is left in place with the correction beneath it
+rather than rewritten, for the same reason §3.1 of the design doc keeps its present tense: it is the argument
+that produced the work. §14.6's totals are recounted from the spec — **36 mapped + 42 unmapped = 78** — and the
+`Feature` count moves 14 → 16.
+
+**A design-document claim that had already gone stale** — `AUDIT`.
+
+§6 of the design says the seven live-update endpoints *"will be annotated `x-no-user-story` … except
+`GET /notifications`"*. `GET /events` was annotated against **US-1.3** in Session 29, so the sentence was
+wrong before this session started. Annotated accurately — two stories-bearing operations in that table, not
+one — and recorded here rather than fixed silently, because a count nobody re-derives is the kind of claim
+that decays.
+
+**`backend/supabase/migrations/0030_notifications.sql`** — the substrate — `DERIVED`.
+
+Four things the design's §7 list did not anticipate, all of them consequences of `notifications` being written
+for the first time:
+
+- **Row-level security on `notifications`, with a read policy.** The table is reachable through PostgREST and
+  had none, so any authenticated user could read every notification in the project — complaint updates,
+  visitor names, invoice amounts. Nothing exploited it because nothing wrote the table. **This migration is
+  what starts writing it**, so the policy lands in the same file: the same timing rule as `0028`, where the
+  fix ships before the thing that makes it exploitable.
+- **`is_own_membership(uuid)`**, the third shared RLS predicate beside `0019`'s two. §5.2 of the design says
+  ownership is enforced in SQL rather than in Python; this is the function that lets it be.
+- **Reads get a policy, writes get none.** Marking read is therefore a SECURITY DEFINER function, which is the
+  better shape anyway: knowing a notification id is not enough to mark someone else's read.
+- **`push_subscriptions` is `service_role` only**, so registration cannot be a PostgREST insert. Both
+  subscription functions check `is_own_membership` first — a SECURITY DEFINER function that trusts a
+  caller-supplied membership id is one that lets anyone subscribe a device to anyone else's notifications.
+
+**The sender obeys a rule the SSE hub does not** — `DERIVED`.
+
+> The hub may drop. The sender may not duplicate.
+
+The hub tolerates several processes: each polls on its own cursor and fans out to its own connections, so two
+workers means two harmless copies. Two senders reading one unsent notification means a phone that buzzes twice
+for one visitor. Claiming is therefore atomic in the database — `for update skip locked` inside
+`claim_push_batch` — and the row is marked sent **before** the HTTP call, so a crash loses a buzz rather than
+repeating one. At-most-once is the correct bias for something that vibrates a phone at night, and the
+notification is in the feed either way.
+
+Two things the build decided that §10.4 had not. The sender starts from the **application lifespan**, not
+lazily like the hub — it exists to reach someone with nothing open, so a sender that waited for a connection
+would only run when it was not needed. And **nothing retries a send**: a transient failure increments the
+subscription's counter and the *next* notification is the retry, because retrying one against a struggling
+push service is how a backlog becomes a herd.
+
+**The VAPID keypair, and what this workstream did not do** — `PO`, restated because it matters.
+
+`PushSettings` is a second `pydantic-settings` class reading the same `.env`, so `app/config.py` — the auth
+workstream's file — is untouched. `.env.example` documents the three variables as optional.
+`backend/scripts/generate_vapid_keys.py` prints three lines to stdout and writes no file.
+
+**No real key was generated, held or seen while building this.** The script was exercised in a way that
+reported only the *shape* of its output — lengths and character class — and never the values. The tests use
+strings shaped like keys that sign nothing. One thing the build added: `configuration_problem()` returns prose
+for a log line and never echoes the value it rejected, because half a private key in a log file is a leaked
+private key.
+
+**Honest scope** — `AUDIT`.
+
+Push ships **backend-complete and unverifiable end to end.** `frontend/public/` holds a favicon and an icon
+sprite: there is no service worker, no manifest, and no resident page opens a connection of any kind. So no
+push can be *observed* arriving. What the 52 new tests cover is registration and idempotency, payload
+construction, the `410`-prunes-the-subscription rule, the per-subscription isolation of failures, and the
+configuration gate — with the call to the push service mocked. That is honest coverage of this half and is
+described that way in `API.md` §5.3 rather than left for someone to discover.
+
+**A new runtime dependency.** `pywebpush>=2.0`, the first this workstream has added to `dependencies` rather
+than to `dev`. It brings `py-vapid`, which the key script uses. The alternative was implementing RFC 8291
+encryption by hand, which is not a thing to hand-roll.
+
+**`docs/ARCHITECTURE.md`, the ERD and the class diagram** — all three updated, and one of them found a
+pre-existing gap — `DERIVED`, plus one `AUDIT`.
+
+`ARCHITECTURE.md` gains *Out-of-app delivery: notifications and Web Push*, beside the live-updates section
+rather than inside it, because the point being made is that **the stream is not the notification system**.
+It carries the transport choice with its rejected alternatives, the sender's non-duplication rule, the four
+limits worth knowing before someone rediscovers them (4 KB payloads, `410` prunes, iOS needs an installed PWA,
+rotation is silent), and the fail-closed configuration behaviour. `notification.created` is added to the topic
+table.
+
+The ERD gains `push_subscriptions`, the two new columns and indexes on `notifications`, and the two new views.
+**The `AUDIT`:** `sse_events` was still documented without the three columns `0028` added in Session 29 — the
+migration landed and the diagram did not. Corrected in the same pass, and the entry is the reminder that a
+diagram is only as current as the last person who thought to open it.
+
+The class diagram gains a resident package: four routers, three services, three repositories, `PushSender`,
+`PushSettings`, and the `0029`–`0030` schema, with the relationships that matter — `PushService` renders
+*through* `NotificationsService`, and `notify_member` is the only writer of `notifications`.
+
+**Not changed.** `app/config.py`, `app/api/deps.py` and anything else in the auth workstream's territory.
+`frontend/src/` — untouched, as always; what it must add for any of this to be visible is listed in the design
+doc §10.6 rather than built here.
+
+---
+
+## 2026-08-04 — Session 32: the `[~]` becomes a tick, and the numbers stop being promises
+
+**Context.** Two things left standing at the end of step 2, fixed before step 3 rather than after it.
+
+**The divergence is closed, and the reason it could be is a scheduling one** — `PO`, overturning
+Session 31.
+
+Session 31 recorded `bookable_amenity` as "worth doing when a second resident reader appears".
+That deferral rested on a schedule argument, not a design one: writing the view would have made the
+schema change of a step whose entire premise was *this needs no migration* non-zero. **That argument
+expires the moment the next step needs a migration anyway**, and step 3 does. So the view was written
+first, and the checklist item that read `[~] Reads through views` is a tick again.
+
+`0029_bookable_amenity_view.sql` is two views over one table, each owned by the surface that reads
+it. It carries the resident column list, applies the row filter — active, no temporary closure — and
+is `security_invoker` like every other view here. *Bookable* is now defined in one place rather than
+assembled by whoever writes the query. §12 keeps the whole argument, including the version of it that
+was true for one step, because a checklist that quietly rewrites its own history is not evidence of
+anything.
+
+**One duplication was kept on purpose, and it is the interesting part.** The service still applies
+the temporary-closure test in Python, on a column the view exposes and has already filtered on. The
+reason is stated in the migration and in §12: **no migration in this project has been applied to any
+database yet**, so the view's predicate has never executed, while the service's has tests behind it —
+and the endpoint should not depend on which of the two is true. The SQL is written as an exact
+transcription of the Python test, every `jsonb` value `bool()` reads as false spelled out, because
+two readers disagreeing about whether the pool is shut is worse than either answer alone. When the
+migrations are applied, the Python pass is the half to drop.
+
+**The design doc stops naming migration files that do not exist** — `DERIVED`, from Session 30.
+
+Session 30 replaced per-file number reservations with per-workstream *ranges*, on the argument that
+reserving a number binds a filename to work whose shape is not yet decided. §7 and §9 were left
+naming a file per planned schema change, which is the same mistake in a different document — and it
+had already gone wrong twice: step 2 was planned with a migration and shipped without one, then the
+view took `0029`, which §7 had reserved for notifications.
+
+So §7 now names only the files that exist and describes the rest as schema changes, and §9's steps no
+longer carry a number each. The ordering constraint that actually matters is stated instead of
+implied by the numbering: **the notification substrate comes before the feature migrations**, because
+every feature RPC calls `notify_member(...)` and a notification retrofitted onto a working write path
+is how you get an event that fires for some callers and not others.
+
+**`backend/supabase/migrations/README.md`** — `0029` added to the table, view count `11` → `12`. The
+paragraph on numbering now uses `0029` as the worked example of the rule: it was drafted as the
+notification migration, that step has not been written, and the number went to the file that was.
+
+**`docs/API.md`** — the §10 entry now says the read goes through `bookable_amenity` and that the view
+applies the row filter as well as the column list. The tenancy paragraph gains one clause: the view
+is `security_invoker`, `amenities` carries no RLS policy, so it inherits nothing and the
+`community_id` filter is still the entire boundary.
+
+**Not changed.** `docs/openapi.yaml` — regenerated, still 63 paths / 72 operations and no drift,
+which is the expected result: the response model, the guard and the error set are untouched, and a
+change of storage that moved the spec would have meant one of them had leaked into it. `ARCHITECTURE.md`
+— a second view over an existing table is not a new mechanism. The ERD and class diagram — no table,
+column or class changed; `bookable_amenity` is a projection of `amenities`, and an ERD that grew a
+box per view would stop being an ERD.
+
+---
+
+## 2026-08-04 — Session 31: the resident can finally see what they were already allowed to book
+
+**Context.** Step 2 of `RESIDENT_BACKEND_DESIGN.md` §9 — `GET /amenities/available`. No migration,
+which was the point of putting it second: it makes an endpoint that already ships usable, at zero
+schema cost.
+
+**What §3.1 was.** `POST /amenities/{id}/bookings/request` has never carried an admin guard — it was
+written for residents and its docstring says so. But the amenity catalogue reached a client exactly
+once, inside `GET /dashboard/snapshot`, behind `require_membership_role('admin', 'manager')`. So the
+product contained a write path a resident was entitled to call with an argument they had no
+entitled way to obtain. Not a security hole; worse in a mundane way — **a feature that could not be
+used.** It happened because the amenity work was built outward from the admin screens, which get
+their catalogue from a snapshot they were already fetching, so nobody ever needed a list endpoint
+and the resident half inherited the absence.
+
+**`docs/API.md`** — §10 gained the endpoint; §1.4 and §14.6 recounted — `DERIVED`, and one `AUDIT`.
+
+The endpoint entry states the thing its name does not: **"available" means bookable in principle,
+not free right now.** Every row is active with no temporary closure. Whether a *slot* is free is
+decided on write under an advisory lock by the booking guard, which is the rule the rest of §10
+already follows — *no availability check happens in the API* — and a read endpoint that answered it
+would be describing a moment already past by the time the resident submitted.
+
+The `AUDIT` is in §14.6, and it is a counting one. The section read *"36 of the 70 operations map to
+no story"*; the surface is now 72 operations, 35 mapped and 37 not. The totals had already drifted
+when `GET /events` landed in Session 29 and were not corrected then. They are now taken from
+`x-user-stories` in the generated spec rather than derived by hand — the same lesson the section's
+own earlier correction records, applied to itself. §1.4's *"every one of the 70 operations"* was
+rewritten to state the guarantee rather than a number, since the exporter enforces it per operation.
+
+**`docs/design/RESIDENT_BACKEND_DESIGN.md`** — §3.1 closed, §9 step 2 done, §12 amended — `DERIVED`.
+
+§3.1 keeps its present tense and gains a *Closed* note, as §3.5 did: the argument that produced the
+endpoint is worth being able to read as it stood. The note records the two things decided during the
+build that the section had not covered — excluding temporarily closed amenities, and returning the
+catalogue unpaged.
+
+**§12's coherence checklist has its first item that is not a clean tick, and that is the entry worth
+reading.** *"Reads through views"* is now `[~]`, because this read goes to the `amenities` table.
+The available view, `amenity_overview`, exists to give the admin card two lateral aggregates this
+response discards — and, more to the point, reading it would leave the resident projection one
+column away from an admin field, since the next column added to that view for the admin card would
+immediately be in scope here. §3.1 is a finding about precisely that failure. The fix that would
+make it a clean tick is a `bookable_amenity` view, and it is recorded as worth doing when a second
+resident reader appears; inventing one now would have given a step whose whole premise was "no
+migration" a migration, for a cosmetic reason.
+
+**A new `x-no-user-story` category, and an honest reason** — `AUDIT`.
+
+The endpoint traces to no user story, and `catalogue_read` says why in a way the existing
+`catalogue` entry could not: that one covers amenity *upkeep*. No interviewee described the act of
+finding out which amenities exist, because in the building that is a noticeboard. §14.6 now uses it
+to make a point the table had been carrying implicitly — **a `Feature` row is not always a story
+someone forgot to write; sometimes it is one nobody could have written.** This gap surfaced from
+reading the code, and no amount of reading the story set would have produced it.
+
+**Not changed.** `ARCHITECTURE.md` — the endpoint introduces no new mechanism, transport or trust
+boundary, and adding a row for every route would turn a wiring document into a second API reference.
+The ERD and class diagram — no table, column or class changed.
+
+---
+
+## 2026-08-04 — Session 30: housekeeping between steps, sorted by who owns the file
+
+**Context.** Step 1 left a handful of loose ends. Rather than open a cleanup session for them, they
+were sorted by a single question — *who else can edit this?* — because that, not severity, decides
+what shape a fix can take. Items in files this workstream owns are fixed inline. Items in shared
+files get one small commit each so a merge conflict is one hunk. Items in another workstream's
+semantic territory are **not fixed at all**; they are documented or handed off, because a silent
+change to someone else's runtime behaviour is worse than an open item.
+
+**`backend/supabase/migrations/README.md`** — number reservation replaced with number ranges —
+`DERIVED`.
+
+The file previously reserved `0025`–`0027` and `0029`–`0030` for specific planned resident
+migrations. That binds filenames to work whose shape is not yet decided: step 2 of §9 turns out to
+need no migration at all, so the reservations were already drifting one step into the build. Ranges
+are now reserved per workstream (`0018`–`0024` admin, `0025`–`0039` resident) and a number is
+allocated to a file when the file is written. Clash avoidance is unchanged — a workstream still only
+takes numbers from its own range — but reordering or dropping a step no longer makes this file
+wrong. Nothing requires contiguity; only filename order matters, which is why `0028` shipping before
+`0025` exists is not a problem to be tidied.
+
+**`docs/API.md`** — §1.5 gained a paragraph on the `422` over-declaration — `AUDIT`.
+
+`422` is declared on nearly every operation in `openapi.yaml` while `api_annotations.py` traces it
+to a specific validation rule on roughly half that many. The source is `app/main.py` declaring it
+once on the whole `include_router(...)`, so every route inherits it. **This is deliberately not
+being fixed.** Fixing it means either editing the application shell — another workstream's file —
+or teaching the exporter to subtract a claim the running app makes, which would let the spec
+contradict the app and is a worse property than over-promising. It is also not false: FastAPI
+returns `422` from any operation with a parameter it fails to coerce. So the document now explains
+the two readings instead: the per-endpoint tables list validation done *on purpose*, the spec lists
+where a `422` is *reachable*. This closes the item as documented rather than as fixed.
+
+**`backend/pyproject.toml`** — `pglast>=6.0` added to the `dev` extra — `AUDIT`.
+
+The migrations README claims every migration is validated with `pglast`, but it was not declared
+anywhere, so the claim depended on whoever last ran the check having installed it by hand. It is now
+installable from the project file like `pyyaml`, which is in there for the same reason: a tool a
+documented process depends on belongs in the manifest.
+
+**Not changed, and deliberately.**
+
+- **No trigger on the tables `0018`–`0023` added.** The non-invasive form exists — a new migration
+  extending `0007`'s `to_regclass`-guarded loop, with no edit to `0007` itself. It is still not
+  written, because those tables belong to the admin workstream and adding triggers changes how often
+  *their* dashboards refresh. It also acquired a dependency `0007` never had: after `0028`, any new
+  trigger must declare an audience. Handed off rather than done.
+- **The `update` closing `0028`.** Flagged in Session 29 as the file's one non-additive statement.
+  Kept. It is idempotent — its `where` clause matches nothing on a second run — and splitting it into
+  its own file would allow the schema to be applied without the repair it exists to perform.
+- **`requires-python = ">=3.10"`.** Previously recorded here and in session notes as *false*. That
+  was an over-claim and is corrected: there is no 3.11+ syntax in `app/`, `scripts/` or `tests/`, and
+  `uv.lock` resolves at `>=3.10` with nothing forcing higher. The accurate statement is that the 3.10
+  floor is **declared but never exercised** — the only interpreter anyone runs is 3.13 and there is
+  no CI. Left alone pending a ruling, since raising it changes a shared file on the strength of a
+  preference rather than a defect.
+
+---
+
+## 2026-08-04 — Session 29: the first resident step ships, and a disclosure closes
+
+**Context.** Step 1 of `RESIDENT_BACKEND_DESIGN.md` §9 — `0028_event_audience.sql`, the audience
+filter in the realtime hub, and `GET /events`. It is first in the build order because it is the only
+item on the list that is a **defect in code that already ships** rather than a feature that is
+missing, and because every later step points more clients at the stream it affects.
+
+This is the first session in which the resident design stops being purely a document. That changes
+how the design file must be read, so the status markers are part of this entry rather than an
+afterthought.
+
+**What the disclosure was (`AUDIT`, recorded in Session 28 §3.5, closed here).** `GET
+/dashboard/events` is guarded by `get_active_membership` — *any* active member, never an admin role —
+and the hub fanned out on `community_id` alone. Every subscriber in a community therefore received
+every event in it, including `0024`'s `access_request.created`, which carries a neighbour's name,
+their requested relationship and the community's pending count. Nothing exploited it because no
+non-admin client connected to anything; the resident portal is what would have made it exploitable,
+which is the whole reason this step comes before the portal rather than after.
+
+**`docs/API.md`** — §5.1 retitled and rewritten; §14 US-1.3 corrected — `DERIVED`.
+
+- §5.1 is now *Live updates — `GET /events`*, with `GET /dashboard/events` documented as a deprecated
+  alias of the same handler. Adds the audience table, the rule that the filter runs on values
+  resolved out of Postgres rather than anything client-supplied, the `stream.resync` topic, and an
+  explicit statement that a resident does not get a blanket refresh frame.
+- The §14 US-1.3 entry said *"the stream serves the admin portal only"*. That was wrong in a way
+  worth naming: it described a live disclosure as a missing feature. Corrected in place with a
+  visible `> **Correction.**` block, per the convention in `docs/design/README.md`, because the
+  reasoning that produced the wrong sentence — *the path says `dashboard`, so the audience must be
+  admins* — is exactly the reasoning the next reader is liable to repeat.
+- US-1.3 stays **partial**. `0028` fixes the transport, not the consumers: there is still no resident
+  client subscribed and no resident-facing topic to subscribe to, and reports are still computed per
+  request rather than pushed.
+
+**`docs/ARCHITECTURE.md`** — new *Audience scoping* subsection; Topics table gains an audience
+column; transport row and sequence diagram renamed to `GET /events` — `DERIVED`.
+
+- The *Guarantees and limits* reconnect bullet now records that the backfill filters **twice**, and
+  why that is not redundancy: the query is capped at 100 rows, so filtering only in Python would let
+  a burst of admin traffic fill the page and hide a resident's own events behind it, while filtering
+  only in the query would put a security decision in a hand-written PostgREST string. Together, a
+  mistake in that string loses an event and cannot leak one.
+
+**`docs/design/RESIDENT_BACKEND_DESIGN.md`** — status markers, §3.5 closure note, §9 status column,
+§10.2 extended — `DERIVED`.
+
+- Header changed from **Status: proposed** to **Status: in build**, and says that where a section
+  describes something now built, the code is the authority and a disagreement is a bug in the
+  document. Per-step status lives in the §9 table and nowhere else, so there is one place to update.
+- §3.5 gains a *Closed* note but keeps its present tense. A finding rewritten as though it had never
+  been true is how the same mistake gets made a second time.
+- §9 gains a status column, and the note that **done means merged, tested and documented — not
+  written** — and that whether a migration has been *applied* is a separate question again, still
+  answered *no* for every file including `0001`.
+
+**Two things the build added that the design had not anticipated** (`DERIVED`, both recorded in
+§10.2):
+
+- **A shape `check` constraint, not just a default.** `sse_events_audience_shape_check` makes the
+  three audiences mutually exclusive and complete; the reader independently fails closed on anything
+  it cannot classify. Either half alone is worse than both — a fail-closed reader with no constraint
+  turns a malformed row into a silent non-delivery, and a constraint with a permissive reader means
+  that the day a fourth audience value is added, every older process treats it as community-wide. The
+  pair is what makes a bad row *unwritable* rather than *undeliverable*.
+- **The resync frame needed a topic per role.** A connection that falls behind is told "you have a
+  gap, re-read". The admin frontend already listens for `dashboard.refresh` and this workstream does
+  not edit frontend code — but `0028` retargets that *topic* to `{admin,manager}`, so sending it to a
+  resident would contradict the migration in the same breath as writing it. The synthesised frame is
+  therefore `dashboard.refresh` for an admin or manager and `stream.resync` for every other role: one
+  instruction, two names, chosen from the subscriber's verified role. Any resident client must handle
+  `stream.resync` — it is the only frame that arrives with no domain event behind it.
+
+**`backend/supabase/migrations/README.md`** — `0028` listed; `0025`–`0027` and `0029`–`0030` marked
+reserved with the reason the numbering is out of order; the "none applied yet" line strengthened to
+say **including `0001_baseline.sql`** — `AUDIT`. That fact was true and stated elsewhere, but the
+sentence a reader lands on first read as though only `0018`–`0024` were unapplied.
+
+**One decision worth flagging as mine to overrule.** `0028` ends with an `update` that retargets
+rows *already* in `sse_events` for the three admin topics. Without it, the disclosure would persist
+for the length of the retention window — `prune_sse_events` keeps two hours — after the migration
+ran. It is the one non-additive statement in the file. It touches only rows the same migration is
+about, and on an unapplied database it matches nothing at all.
+
+**Not changed.** No frontend file. No auth-workstream file. `docs/openapi.yaml` was regenerated by
+`scripts/export_openapi.py`, never hand-edited; the exporter's two-way guard failed the build twice
+during this step — once for an unannotated operation, once for a stale checked-in spec — which is the
+behaviour it exists for.
+
+---
+
+## 2026-08-04 — Session 28: four rulings, one of which reverses a default this document set
+
+**Rulings (`PO`).** Four answers to open questions in `RESIDENT_BACKEND_DESIGN.md` §8, plus an
+instruction to give the design folder a README.
+
+**`docs/design/README.md`** — new (`PO`).
+
+- The folder had two documents and no explanation of what it was. The README states the split the
+  folder exists for — every other document under `docs/` answers *what*, these answer *why* — and
+  why that needs its own home: the *what* documents regenerate or fail loudly when they are wrong,
+  and nothing at all breaks when a reason is lost. It records the shared shape of both documents, the
+  conventions they follow (state the cost; cite `file:line`; correct in place with a note rather than
+  silently; separate decided from defaulted), and the five artifacts a new design is checked against
+  before it is written.
+- It also names the difference a reader has to know: `ADMIN_DASHBOARD_DESIGN.md` is retrospective and
+  can be checked against code, `RESIDENT_BACKEND_DESIGN.md` is prospective and none of its §6 exists.
+  Neither is evidence of what runs.
+
+**`docs/design/RESIDENT_BACKEND_DESIGN.md`** — §5.5 rewritten, new §11, §10.5 rewritten, new §10.8,
+§8 Q2/Q3/Q6/Q8 answered, and consequent edits to §6, §7 and §9. Checklist renumbered §11 → §12.
+
+- **§8 Q2 — `checked_in` is terminal (`PO`).** Default confirmed, not changed. Recorded with the
+  reason rather than just the answer: once the guest is through the gate, "cancel" is a physical-world
+  operation and no database write performs it, so allowing the transition would produce a record that
+  disagrees with what happened. Enforced in the RPC with a stable `pass_already_used` code, not in the
+  service — the invariant lives next to the data.
+- **§8 Q6 — the push body carries full detail (`PO`). This reverses the default this document set,
+  and the default was wrong on the requirements rather than merely over-cautious.** `US-2.1`'s
+  recorded pain point is *"notifications sometimes produce only a notification sound without
+  displaying the actual notification"*; a generic *"Visitor at the gate"* is a milder version of the
+  exact failure the story exists to fix. The privacy objection also does not survive contact with the
+  protocol: RFC 8291 encrypts the payload end to end keyed to the subscription, so the push services
+  relay ciphertext they cannot read — which is precisely the property §5.11 bought by rejecting
+  OneSignal, and having paid for it we should use it.
+- **§10.8 (`DERIVED`).** New section: what a push actually carries. One hard exclusion — **the visitor
+  security code may never appear in a push body**, because §5.4 makes it a hashed credential returned
+  once and a credential on a lock screen is readable by anyone holding the phone. Also bounds "all
+  details" by what a web push can actually render (`PO`: *"this is not a push like the one we have in
+  a native app"*): title, body, `tag` for coalescing, `data` for the deep link, and at most two
+  actions which iOS does not show — so the flow never depends on them.
+- **§8 Q8 / §10.5 — the VAPID keypair (`PO` asked for the most secure option that fits the framework).**
+  Answered: environment variables through a second `pydantic-settings` `BaseSettings` class, one pair
+  per environment, held by whoever holds that environment's `SUPABASE_SERVICE_ROLE_KEY`. The argument
+  is that the environment is already this application's trust root and holds something strictly more
+  dangerous — the service-role key bypasses RLS on every table, where the VAPID private key only signs
+  pushes to endpoints stored in a `service_role`-only table. Putting the weaker secret behind a
+  stronger mechanism while the stronger one stays in `.env` adds a moving part and moves no risk.
+  Four alternatives rejected in a table, one of them (generate at boot) as broken rather than
+  inelegant: `applicationServerKey` is baked into every subscription, so a regenerated key silently
+  kills all of them.
+- **§10.5, corrected (`AUDIT`).** Session 27 said the config module this workstream must not edit is
+  `app/core/config.py`. It is `app/config.py`. The boundary it describes is unchanged and the
+  separate-settings-class decision still holds — and it holds for a better reason than was known then:
+  `Settings` is configured `extra="ignore"`, so a second class reads the same `.env` with no edit to
+  the first.
+- **§10.5, new (`DERIVED`).** Two operational facts that were missing. Push fails *closed but quiet* —
+  no keys means `push_enabled = False`, the sender does not start, the two push endpoints return 503
+  `push_not_configured`, and nothing else in the product degrades, the same shape as `0024` no-opping
+  when pg_cron is absent. And rotation is an incident, not hygiene: it unsubscribes every browser
+  silently, the protocol offers no dual-key period, and the only mitigation is a client-side key
+  comparison on load, now listed in §10.6.
+- **§5.5 rewritten and §11 added — the payment gateway is a simulator we build (`PO`).** *"It is not
+  an actual payment; any payment will pass, with a few cases like a card past its expiry triggering a
+  payment failed, to show we can handle that too and maintain business logic."* This supersedes
+  §8 Q3, which asked whether the endpoint should exist before a gateway did.
+  - **§11.1 (`DERIVED`).** `provider = 'simulator'`, and this is the decision everything else rests
+    on. A demo database becomes a staging database becomes something somebody reconciles; if
+    simulated payments are written as `'offline'` or under a real provider's name, then on the day a
+    real gateway lands **nobody can separate the money that moved from the money that did not**, and
+    the information to do so was never recorded. It also gives the honest form of the rule §5.5 has
+    carried since the first draft: the row says `succeeded` *and* says which gateway said so.
+  - **§11.3 (`DERIVED`).** The simulator accepts published test cards only and rejects anything else
+    with `card_not_supported`. A mock gateway that accepts any Luhn-valid number *will* be handed a
+    real card — by a tester being thorough or a demo audience being helpful — and at that moment we
+    are an application holding a live PAN with none of the obligations discharged. Closing it by
+    construction beats a warning nobody reads, and it costs nothing against the brief: the same test
+    card passes with a future expiry and fails with a past one, which is the demonstration asked for.
+    Nothing card-shaped is stored, logged or echoed; the fields are `SecretStr` so a stray `repr()` in
+    a traceback prints asterisks.
+  - **§11.5 (`DERIVED`).** A declined payment is `200` with a `status` field, not `402`. The request
+    was well-formed and produced a durable record; the *payment* failed. Making it an error would put
+    an ordinary business outcome in the same client branch as "your session expired", and leave the
+    payment id nowhere sensible to live.
+  - **§11.6 (`DERIVED`).** The simulator is a pure function in one module, sitting exactly where a
+    real gateway will sit, with the settlement RPC unchanged either way. The argument for building it
+    properly rather than stubbing a success: the failure paths are the ones that are hard to exercise
+    against a real provider, and they are the ones `US-2.12` is about.
+  - **§11.7 (`AUDIT`).** `US-2.12` is about the transaction, not the gateway. Its pain point —
+    *"payments can fail even after money has been deducted"* — describes a payment recorded in one
+    transaction and a booking confirmed in another. So the failure branch is specified as explicitly
+    as the success branch: a failed payment writes its row, leaves the booking untouched, and never
+    enters a balance, because every recomputation sums `succeeded` rows only.
+- **§6 (`AUDIT`).** `POST /amenity-bookings/{id}/pay` added. `US-2.12` is the only user story about
+  payment and it is about **amenity-booking** payment; an invoice-only path would have left it
+  untouched while appearing to serve it. Second caller of one simulator, not a second system.
+- **§6, corrected (`AUDIT`).** The endpoint total in §6 has been wrong since Session 26. The prose
+  said 19 feature endpoints and 26 total; counted from the tables it was 21 and 28, and it is 22 and
+  29 after the addition above. Session 27's entry below inherits the wrong figure and is left as
+  written — it records what was believed at the time. The cause is worth more than the number: a
+  count kept in prose next to a table nobody re-derives it from. Corrected in place with a note, so
+  the next person to add a row sees that the failure mode exists.
+- **§7.** `0030_payment_simulation.sql` added — `failure_code`, `instrument_label`, and the two
+  settlement RPCs. Explicitly **no new index**: the baseline's `unique (community_id,
+  idempotency_key)` is already the right constraint, and what was missing was a stated rule about who
+  mints the key. §11.4 states it — one key per press of Pay, a new key for a new attempt after a
+  shown decline. The key identifies an attempt, not an invoice; backwards, it produces either a double
+  charge or an unpayable invoice.
+- **§9.** Step 6 absorbs `0030` and the simulator rather than splitting it, because splitting would
+  separate the two halves of one transaction across two shippable units — the exact thing `US-2.12`
+  is about not doing. Also states explicitly that spec regeneration, the `api_annotations.py` entry
+  and the `API.md` section are **part of each step**, enforced by the exporter's two-way guard, and
+  that step 8 is the traceability-matrix pass rather than a catch-up for skipped documentation.
+
+**`docs/design/ADMIN_DASHBOARD_DESIGN.md`** — two edits.
+
+- Header links the new folder README.
+- §9 gains a row: **taking money was never in scope.** `record_payment` is offline reconciliation with
+  `provider = 'offline'` and must not be mistaken for a gateway. Added because a reader who now knows
+  a simulator exists will go looking for it in the wrong document, and because the two provider values
+  are what keep the distinction permanent.
+
+---
+
+## 2026-08-03 — Session 27: live for everyone, which turns a latent flaw into the first task
+
+**Ruling (`PO`).** *"All updates are supposed to be live across all users. The push notifications are
+to be implemented too."* This closes open question 5 in `RESIDENT_BACKEND_DESIGN.md`, which had been
+left with no default because the answer changed scope. It changes it in more ways than the question
+anticipated.
+
+**`docs/design/RESIDENT_BACKEND_DESIGN.md`** — new §3.5, §5.8–5.11, §10, and consequent edits to §6,
+§7, §8 and §9. Checklist renumbered §10 → §11.
+
+- **§3.5 — the live stream already crosses roles (`AUDIT`).** `GET /dashboard/events` is guarded by
+  `get_active_membership`, not by role, and `RealtimeHub` fans out on `community_id` alone. Any
+  active member therefore receives every event in their community, including `0024`'s
+  `access_request.created`, which carries an applicant's name and requested relationship. Nothing
+  exploits it today because no resident client connects to anything — and the ruling above is
+  precisely what stops that being true.
+  **This overturns a statement in Session 26's own §8 Q5, which called the stream admin-only.** It is
+  not; that mis-stated a live disclosure as a missing feature. Corrected in both documents.
+- **§3.5, second half (`DERIVED`).** Twelve tables emit `dashboard.refresh` on every row change and
+  the contract for that frame is *re-read your snapshot*. Community-wide delivery to five hundred
+  residents means five hundred snapshot fetches per unrelated row change. Audience scoping is a load
+  fix as much as a privacy one, which is worth recording because it is the argument that survives
+  even if someone decides the disclosure is acceptable.
+- **§5.8 (`DERIVED`).** Delivery is three layers and the durable one is not SSE. Every user-visible
+  event writes a `notifications` row first; SSE and Web Push are two deliveries of that row. Rejected:
+  making the stream the feed — `sse_events` is pruned every fifteen minutes by `0024`, so durability
+  built on it is durability built on a table designed to be deleted.
+- **§5.9 (`DERIVED`).** `sse_events` gains `audience` / `audience_roles` / `recipient_membership_id`;
+  `_Subscriber` gains the membership id and role, both from the verified membership. Rejected: a
+  separate resident stream with a topic allow-list — two filters to keep right, and an allow-list is a
+  denylist wearing a disguise.
+- **§5.10 (`DERIVED`).** One trigger on `notifications` emits the outbox row. Feature code writes
+  notifications and never touches the outbox, so live delivery is a property of the system rather than
+  a per-feature checklist item.
+- **§5.11 (`PO` needed, default set).** Web Push over VAPID, not FCM and not a hosted provider. No
+  vendor account, no SDK in a frontend we do not own, and no third party receives who visited which
+  flat and when. Stated cost, not buried: on iOS this works only for an installed PWA, and FCM does
+  not fix that — a web app on iOS gets web push or nothing.
+- **§5.11, amended same session (`PO`).** *"Remember this is a web app."* HomeBandhu ships as a web
+  application with no native client planned, so browser capability is the ceiling on every delivery
+  mechanism and Web Push is the only available choice rather than the best of several. Recorded
+  because it closes the question permanently: when someone rediscovers the iOS limitation, neither a
+  native app nor a vendor SDK is the fix, and the constraint should not be relitigated.
+- **§10 — the mechanism in full.** Audience table; the `notifications` table the baseline already
+  declares and no backend code has ever used; the kind list for both portals; the push sender and the
+  single rule that separates it from the realtime hub — *the hub may drop, the sender may not
+  duplicate* — resolved with `for update skip locked` in `claim_push_batch`, plus the one-hour claim
+  window (a phone that buzzes at 3am about yesterday's visitor is worse than silence) and the
+  `404`/`410` → delete rule.
+- **§10.5 (`AUDIT`).** The three VAPID settings cannot go in `app/core/config.py` — it belongs to the
+  auth workstream and this one does not edit it. They land in a separate settings class instead, with
+  the boundary flagged rather than assumed. `pywebpush` is the first backend dependency this
+  workstream has added.
+- **§10.6 (`AUDIT`).** `frontend/public/` holds a favicon and an icon sprite: no service worker, no
+  manifest. Push therefore ships backend-complete and unverifiable end to end until the frontend team
+  adds those. Recorded so the test coverage is not later described as more than it is.
+- **§6.** Seven endpoints added — `/events`, three notification operations, three push operations —
+  taking the proposal from 19 to 26. `/dashboard/events` stays as a deprecated alias: the admin
+  frontend is wired to it and this workstream does not break a working client to tidy a path.
+- **§7.** Two migrations added, `0028_event_audience.sql` and `0029_notifications.sql`, and they are
+  sequenced *before* `0025`–`0027` even though they are numbered after. Every feature RPC calls
+  `notify_member(...)`, so the substrate must exist first or each feature gets retrofitted.
+- **§9 (`DERIVED`).** Build order re-cut. §3.5 is now step 1, displacing `GET /amenities/available` to
+  step 2 — it is the only item that is a defect in shipped code rather than a missing feature, and
+  every later step points more clients at the stream it affects.
+- **§8.** Q5 answered. Three questions added: whether a push body may carry names and flat numbers on
+  a locked screen (default: generic title, detail in-app — a privacy call, so the PO's); per-kind
+  preferences (default: all-or-nothing for v1); and who owns the VAPID keypair, which must not be
+  committed and which silently unsubscribes every browser if rotated.
+
+**`docs/design/ADMIN_DASHBOARD_DESIGN.md`** — §7 grows a third limit, recording the community-wide
+scoping as a property of the design rather than an accident of who happens to be wired up, and
+pointing at the fix.
+
+---
+
+## 2026-08-03 — Session 26: writing down why, before building the resident half
+
+Two new documents under `docs/design/`. Both answer the same question — *why is it built this way?*
+— which until now was answerable only by reading code and inferring intent. Inferred intent is how a
+deliberate constraint gets "cleaned up" by someone who assumed it was an accident.
+
+### `docs/design/ADMIN_DASHBOARD_DESIGN.md` — new — `DERIVED`
+
+Retrospective reasoning for the backend already shipped. Ten sections: the four-layer shape;
+authorization (why tenancy is re-read from Postgres on every request rather than trusted from a JWT
+claim, and why that cost must not be optimized away); reads-through-views / writes-through-RPCs and
+the specific failure each prevents; the additive-migration rule and its corollary that a baseline
+mistake cannot be fixed by editing the baseline; wire models as contracts rather than table mirrors;
+the error envelope; the SSE outbox; the generated-spec discipline including the union-not-replace and
+describe-don't-define rules learned by getting them wrong; a table of what this workstream
+deliberately did *not* do; and six rules for extending it.
+
+Nothing here is a new decision. It is the reasoning behind existing ones, recorded before the people
+holding it move on.
+
+### `docs/design/RESIDENT_BACKEND_DESIGN.md` — new — `PO` / `AUDIT`
+
+Design for the resident backend, written before the code, marked **proposed**.
+
+**Method — `AUDIT`.** The surface could not be scraped from frontend API calls, because there are
+none: all 26 wired call sites in `frontend/src` are auth, registration or admin, and **zero** belong
+to the eight resident pages. The requirement was therefore derived from store-slice *behaviour* —
+what each action writes and what it refuses to do — which is a better source anyway, being decisions
+the product team already made and expressed precisely enough to execute.
+
+**Findings — `AUDIT`.** Four, of which one is a live defect: there is **no amenity list endpoint at
+all**. The catalogue reaches a client only inside `GET /dashboard/snapshot`, which requires admin or
+manager, and every other amenity read is `_admin`-guarded — while `POST
+/amenities/{id}/bookings/request` deliberately carries no admin guard. A resident may therefore call
+a booking endpoint with an `amenity_id` they have no legitimate way to obtain: a shipped feature that
+cannot be used. It happened because the admin UI already had the snapshot, so nobody ever needed a
+list endpoint, and the resident half inherited the absence. Fixing it needs no migration and is first
+in the build order.
+
+The others: `complaints` has no column for urgency, location, SLA, rating or reopen count, all of
+which the resident form collects; the SLA rule (High 24h / Medium 48h / Low 72h) lives in a frontend
+store slice where it is both bypassable and invisible to the admin portal; and `visitor_requests`
+already models a scheduled, time-boxed, hashed credential but lacks purpose, guest count and the
+short spoken code.
+
+**Rulings — `PO`.** Seven, each with its rejected alternative recorded. The load-bearing ones: the
+resident home gets its own `/resident/snapshot` rather than a role-filtered `/dashboard/snapshot`,
+because a payload whose shape depends on a runtime role is one `if` away from leaking a
+community-wide count into a resident response; the visitor security code is hashed and its plaintext
+returned exactly once, accepting that a lost code means reissue, because a code that admits a
+stranger through a gate is a credential and `resident_invites` already sets that precedent; and
+resident self-payment is a separate endpoint from admin reconciliation, because "record a payment
+that already happened" and "initiate one" are different operations that only look alike — with the
+explicit constraint that it must never report `succeeded` while no gateway exists.
+
+**Output.** 19 proposed endpoints, three additive migrations (`0025`–`0027`), five open questions
+with defaults, a six-step build order, and a ten-point checklist of admin-backend paradigms this
+design preserves.
+
+Nothing is implemented. Recorded now so the reasoning is reviewable *before* it is expensive to
+change.
+
+---
+
 ## 2026-08-03 — Session 25: the same bug, fixed twice, and the merge that settled who owns it
 
 `cfe803c` landed on `main` while Session 24's work was still uncommitted. It fixes **the same defect
