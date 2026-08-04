@@ -267,27 +267,66 @@ grant execute on function public.save_community_settings(uuid, jsonb) to authent
 -- 'live' is claimed for nothing, because nothing is: every module below is
 -- either unwired on the frontend or unbuilt on the backend. That is the point
 -- of the column.
+--
+-- CORRECTED 2026-08-04, AND WHY IT NEEDED CORRECTING
+--
+-- This section originally guessed at the codes -- `('complaints',
+-- 'complaint_management')`, `('visitors', 'visitor_management', 'security')` and
+-- so on. The catalogue does not hold any of those. `0001` seeds exactly ten,
+-- all hyphenated, and they are the ones written below.
+--
+-- So every statement here matched zero rows. Nothing failed and nothing warned:
+-- an `update ... where` that selects nothing is a success. All ten modules would
+-- have sat at the column defaults -- `sort_order = 0` and, worse,
+-- `backend_status = 'absent'` -- and the Settings screen, whose entire purpose
+-- is to stop a toggle implying a backend that is not there, would have reported
+-- that none of this backend exists. The one screen built to be honest about
+-- what is missing would have been the one lying.
+--
+-- Edited in place rather than repaired in a later migration: this file has never
+-- been applied to any database, and a fix-up migration would leave the wrong
+-- statement here for the next reader to copy -- which is how `0032` inherited
+-- it.
+--
+-- All ten are listed now. The header has always claimed to seed the ten modules
+-- `onboardingModules.js` offers; four of them were never mentioned.
 -- ---------------------------------------------------------------------------
 update public.feature_catalog set sort_order = 1, backend_status = 'partial',
   backend_note = 'Endpoints exist; the Complaints screen still calls a local store.'
- where code in ('complaints', 'complaint_management');
+ where code = 'complaint-management';
 
 update public.feature_catalog set sort_order = 2, backend_status = 'partial',
   backend_note = 'Endpoints exist; the Amenities screens still call a local store.'
- where code in ('amenities', 'amenity_booking');
+ where code = 'amenities-booking';
 
 update public.feature_catalog set sort_order = 3, backend_status = 'partial',
   backend_note = 'POST /notices exists; the snapshot serves the reads.'
- where code in ('notices', 'notice_board');
+ where code = 'notice-board';
 
 update public.feature_catalog set sort_order = 4, backend_status = 'partial',
   backend_note = 'Invoicing and payment endpoints exist, but nothing creates a maintenance run.'
- where code in ('maintenance', 'billing', 'payments');
+ where code = 'maintenance-billing';
 
 update public.feature_catalog set sort_order = 5, backend_status = 'partial',
   backend_note = 'Department and staff endpoints exist; the snapshot stubs staff as empty.'
- where code in ('departments', 'staff');
+ where code = 'staff-management';
 
 update public.feature_catalog set sort_order = 6, backend_status = 'absent',
   backend_note = 'No visitor backend. The two visitor settings are stored but nothing reads them.'
- where code in ('visitors', 'visitor_management', 'security');
+ where code = 'visitor-management';
+
+update public.feature_catalog set sort_order = 7, backend_status = 'absent',
+  backend_note = 'No gate software. require_visitor_preapproval is stored and nothing reads it.'
+ where code = 'security-gate-management';
+
+update public.feature_catalog set sort_order = 8, backend_status = 'partial',
+  backend_note = 'GET /residents and the invitation endpoints exist; nothing edits a resident.'
+ where code = 'resident-management';
+
+update public.feature_catalog set sort_order = 9, backend_status = 'absent',
+  backend_note = 'No parking backend. The schema has no parking tables either.'
+ where code = 'parking-management';
+
+update public.feature_catalog set sort_order = 10, backend_status = 'absent',
+  backend_note = 'No marketplace backend. The schema has no marketplace tables either.'
+ where code = 'community-marketplace';

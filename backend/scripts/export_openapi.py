@@ -104,7 +104,7 @@ An operation that serves none carries `x-no-user-story` instead, which states
 with the reason. Absence of a story is therefore a recorded verdict rather than
 an omission, and says what the operation *is* instead of only what it is not.
 
-`docs/API.md` section 14 is the prose matrix, and is the only one of the two
+`docs/API.md` section 16 is the prose matrix, and is the only one of the two
 that also names the stories **nothing** serves yet -- a spec can only describe
 endpoints that exist.
 
