@@ -15,4 +15,4 @@ def create_community(
     access_token: str = Depends(get_request_token),
 ) -> CommunityOnboardingResponse:
     from app.services import auth_service
-    return onboarding_service.create_community(body, auth_service.google_identity(access_token))
+    return onboarding_service.create_community(body, auth_service.verified_identity(access_token))

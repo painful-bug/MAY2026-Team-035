@@ -46,7 +46,7 @@ def redeem_invitation(
     if not invite:
         from app.core.exceptions import ValidationError
         raise ValidationError("This invitation cannot be used.", code="invite_unavailable")
-    identity = auth_service.google_identity(access_token)
+    identity = auth_service.verified_identity(access_token)
     invitation_service.redeem_pending_invitation(invite[0], identity)
     clear_cookie(response, INVITATION_COOKIE)
     return MessageResponse(message="Invitation redeemed.")

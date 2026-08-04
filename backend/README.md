@@ -13,7 +13,7 @@ optional secondary method.
 ## Requirements
 
 - Python 3.10 or newer.
-- `uv` 0.11.32, as required by `pyproject.toml`.
+- `uv` 0.11.32 or newer, as required by `pyproject.toml`.
 - A Supabase project for running persistent or authentication-dependent API
   workflows.
 
