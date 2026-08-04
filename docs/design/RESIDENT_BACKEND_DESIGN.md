@@ -206,7 +206,11 @@ load fix as much as a privacy one.
 
 ## 4. Capability inventory
 
-Scraped from the frontend. **Support** is the *current* backend state.
+Scraped from the frontend. **Support** is the backend state **as surveyed on 2026-08-03, before any
+of this was built** — it is the input the build order in §9 was derived from, and it is deliberately
+left standing rather than updated. Every row that reads *No*, *Blocked* or *table yes, no endpoint* is
+a row §9 was written to close; for what is true now, read §9 and `API.md` §12–§14, not this table.
+The one row that stayed *No* on purpose is gate check-in, and it says why.
 
 ### Visitors — `Visitors.jsx`, `DashboardHome.jsx`
 | Capability | Support |

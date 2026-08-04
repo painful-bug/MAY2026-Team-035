@@ -2767,15 +2767,37 @@ corrected rather than obeyed.
 
 ## 15. Not yet implemented
 
-Planned in the build order (`ADMIN_DASHBOARD_BUILD_PLAN.md` §4). Listed so the frontend team can see
-what is coming and in what order — **none of these exist yet**, and calling them returns `404`.
+**Both build orders are complete.** The admin dashboard's (`ADMIN_DASHBOARD_BUILD_PLAN.md` §4,
+steps 3–9) and the resident backend's ([`design/RESIDENT_BACKEND_DESIGN.md`](design/RESIDENT_BACKEND_DESIGN.md)
+§9, steps 1–8) are all documented above. Nothing that was planned as an endpoint is outstanding.
 
-Nothing from the build order is outstanding: steps 3–9 are all documented above.
+This section is what remains anyway, and it is three different kinds of thing: wiring nobody has done,
+halves of features that live outside this repository, and stories whose missing part was never an
+endpoint. Listed so the frontend team can see what will not answer yet, and why.
 
-What remains is not endpoints but wiring, tracked in `DECISIONS_NEEDED.md` §F: the migrations
-`0010`–`0017` have not been applied to any database, the private Storage bucket
-`complaint-attachments` does not exist yet (F2), and rate limiting (F3) and optimistic concurrency
-(F4) are unowned.
+**No migration has been applied to any database — `0001` included.** Every endpoint in this document
+is code with a passing test suite and no schema underneath it. That is the whole remaining risk, and
+it is `DECISIONS_NEEDED.md` F1. `0001`'s GIST exclusion constraint on `amenity_bookings` is the only
+thing standing between two residents and the same hall, and it has never executed; nor has `0031`'s
+SLA rule, `0032`'s code hashing, or `0033`'s two settlement RPCs — the four places where the database,
+not the API, is what makes a guarantee true. The rest of §F is unchanged — the private
+Storage bucket `complaint-attachments` does not exist yet (F2), and rate limiting (F3) and optimistic
+concurrency (F4) are unowned.
+
+**`POST /notices` emits no notification, and it is the one place the `0030` substrate is not wired.**
+Every other user-visible event — complaint transitions, visitor decisions, payments — writes a
+notification row in the same statement that writes the thing it is about. Publishing a notice writes
+the notice and stops, so a resident who has not opened the app learns nothing. That is `US-2.4`
+verbatim, which is why it stays **partial** (§16.4). It is one call to `notify_community_roles` inside
+`notices_service.create_notice`, `notices` belongs to the admin workstream, and it is not being
+retrofitted here because it should land in the transaction rather than beside it.
+
+**`frontend/public/` has no service worker.** Web Push is served end to end on the backend — VAPID
+keys, the subscription table, the sender (§5.3) — and a browser cannot receive a push without a
+`sw.js` registering `push` and `notificationclick` handlers. Until it exists, every notification in
+this API is only observable inside an open tab, which is the precise thing `US-2.1`, `US-2.4` and
+`US-2.7` ask to stop requiring — so all three stay partial on a file this repository does not own.
+`RESIDENT_BACKEND_DESIGN.md` §10.5 states the shape it needs; the file itself is the frontend team's.
 
 **Visitors are now half-built, and it is worth being exact about which half.** §13 serves everything
 a *resident* does: mint a pass, list and read their own, and answer or withdraw one. Nothing serves

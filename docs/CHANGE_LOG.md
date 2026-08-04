@@ -17,6 +17,51 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-04 — Session 36 (part 5): three sections that had stopped being true
+
+**Context.** Found while answering *"are there any steps left?"*. All three are documents describing a
+state of the world that a later change had moved, and none of them was wrong when it was written —
+which is the failure mode a change log exists to catch, because nothing fails when prose rots.
+
+### `API.md` §15 — *Not yet implemented*
+
+- **Its opening said "none of these exist yet, and calling them returns `404`" and then listed
+  nothing.** `AUDIT` The sentence survived from when §15 was a forward plan; both build orders have
+  since completed, so the section's whole subject changed from *what is coming* to *what still will
+  not answer, and why*. Rewritten to say that, and to sort what remains into the three kinds it
+  actually contains: unapplied wiring, halves of features owned outside this repository, and stories
+  whose missing part was never an endpoint.
+- **It cited migrations `0010`–`0017` as the unapplied set.** `AUDIT` Those files have not existed
+  since they were quarantined and rebuilt onto the baseline as `0018`–`0023`; the resident range then
+  added `0028`–`0033`. Corrected to the true statement, which is stronger and simpler: *no migration
+  has been applied to any database, `0001` included*. The four places where the database rather than
+  the API makes a guarantee true are now named — `0001`'s GIST exclusion constraint on
+  `amenity_bookings`, `0031`'s SLA rule, `0032`'s code hashing, `0033`'s settlement RPCs — because
+  "the migrations are unapplied" understates what is unproven.
+- **Two gaps documented in §16 had no entry in §15.** `AUDIT` `POST /notices` emitting no
+  notification, and the absent `frontend/public/sw.js`. Both were correctly recorded as the reason a
+  story is partial; neither appeared in the section a reader consults to find out what does not work
+  yet. A gap recorded only in the traceability matrix is a gap recorded for whoever is auditing
+  coverage, not for whoever is about to wire a screen.
+
+### `DECISIONS_NEEDED.md` F1
+
+- **The same `0010`–`0017` numbering, in the item that tells the Supabase holder what to apply.**
+  `AUDIT` Worse here than in §15, because F1 is an instruction rather than a description, and it named
+  eight files that cannot be found. Now says *every migration, `0001` included*, and keeps the old
+  numbering visible in a parenthetical so anyone holding a printed copy can tell it is the same item.
+
+### `design/RESIDENT_BACKEND_DESIGN.md` §4 — the capability inventory
+
+- **"**Support** is the *current* backend state" — it is not, and had not been since step 1.** `AUDIT`
+  Roughly twenty rows read *No*, *Blocked* or *table yes, no endpoint*; §9 was written to close them
+  and did. The fix is deliberately **not** to update the rows. §4 is the input the build order was
+  derived from, and a design record that silently rewrites its own premises to match the outcome stops
+  being evidence of anything. The preamble now dates the survey (2026-08-03, before any of this was
+  built) and points forward to §9 and `API.md` §12–§14 for present tense.
+
+---
+
 ## 2026-08-04 — Session 36 (part 4): a traceability audit of the generated spec
 
 **Context.** A pass over `docs/openapi.yaml` asking, of every one of the 99 operations, whether it is
