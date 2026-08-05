@@ -107,6 +107,7 @@ def establish_session(response: Response, *, access_token: str, refresh_token: s
     response.set_cookie(cookie_name("access"), access_token, max_age=max_age, **common)
     response.set_cookie(cookie_name("refresh"), refresh_token, max_age=60 * 60 * 24 * settings.auth_session_idle_days, **common)
     response.set_cookie(cookie_name("csrf"), csrf_token(access_token), max_age=max_age, httponly=False, secure=settings.use_secure_cookies, samesite="strict", path="/")
+    clear_cookie(response, PREAUTH_CSRF_COOKIE, httponly=False)
 
 
 def establish_recovery_session(response: Response, *, access_token: str, refresh_token: str, expires_in: int | None) -> None:
@@ -117,6 +118,7 @@ def establish_recovery_session(response: Response, *, access_token: str, refresh
     response.set_cookie(RECOVERY_ACCESS_COOKIE, access_token, max_age=max_age, **common)
     response.set_cookie(RECOVERY_REFRESH_COOKIE, refresh_token, max_age=max_age, **common)
     response.set_cookie(RECOVERY_CSRF_COOKIE, csrf_token(access_token), max_age=max_age, httponly=False, secure=settings.use_secure_cookies, samesite="strict", path="/")
+    clear_cookie(response, PREAUTH_CSRF_COOKIE, httponly=False)
 
 
 def establish_preauth_csrf(response: Response) -> str:
