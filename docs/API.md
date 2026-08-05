@@ -19,6 +19,8 @@
 >    `community_memberships` in Postgres, not from a JWT claim — the access-token hook that produced that claim was
 >    deleted with the old baseline.
 > 2. **Every unsafe request needs `X-CSRF-Token`.** All our writes now enforce it. Reads do not send or require it.
+>    When no session CSRF cookie exists, the shared browser client first obtains the readable
+>    `hb_preauth_csrf` cookie from `GET /auth/csrf`, then echoes it in the write request.
 >    A missing or mismatched token is **403** with code `csrf_invalid`, and a wrong `Origin` is **403**
 >    `csrf_origin_invalid`.
 >

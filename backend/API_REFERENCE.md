@@ -25,4 +25,8 @@ same-origin cookies; provider credentials are never JSON responses.
 | POST | `/onboarding/community` | Atomically create the founder's community. |
 
 Unsafe methods require an exact same-origin Origin/Referer and the readable
-`__Host-hb_csrf` cookie echoed as `X-CSRF-Token`.
+CSRF cookie echoed as `X-CSRF-Token`: `hb_preauth_csrf` before authentication,
+`__Host-hb_csrf` in production sessions (`hb_csrf` over local HTTP), or
+`hb_recovery_csrf` during password recovery. The browser client obtains the
+pre-authentication cookie from `GET /auth/csrf` automatically before its first
+unsafe request.
