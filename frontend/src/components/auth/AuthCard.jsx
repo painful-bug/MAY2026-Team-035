@@ -8,7 +8,7 @@ export default function AuthCard({
   description,
   children,
   homePath = AUTH_ROUTES.HOME,
-  portalLabel = 'Admin Portal',
+  portalLabel = '',
 }) {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center py-12 px-6 font-sans">

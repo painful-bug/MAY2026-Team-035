@@ -87,3 +87,33 @@ def test_api_004_refresh_timeout_returns_service_unavailable(
 
     assert endpoint == "POST /api/v1/auth/refresh"
     assert actual_output == expected_output
+
+
+def test_api_005_email_confirmation_establishes_browser_session(
+    api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.v1.routers import auth as auth_router
+    from app.core.web_session import cookie_name
+    from app.services.auth_service import SupabaseSession
+
+    captured: dict[str, str] = {}
+
+    def verify(token_hash: str, verification_type: str) -> SupabaseSession:
+        captured.update(token_hash=token_hash, verification_type=verification_type)
+        return SupabaseSession("confirmed-access", "confirmed-refresh", 3600)
+
+    monkeypatch.setattr(auth_router.auth_service, "verify_email_token", verify)
+
+    response = api_client.post(
+        "/api/v1/auth/email/verify",
+        json={"token_hash": "confirmation-token", "verification_type": "signup"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Email verified."}
+    assert captured == {"token_hash": "confirmation-token", "verification_type": "signup"}
+    assert api_client.cookies.get(cookie_name("access")) == "confirmed-access"
+    assert api_client.cookies.get(cookie_name("refresh")) == "confirmed-refresh"

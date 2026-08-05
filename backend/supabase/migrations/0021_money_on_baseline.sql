@@ -47,6 +47,7 @@
 -- ---------------------------------------------------------------------------
 alter table public.invoices
   add column if not exists unit_id               uuid references public.units(id) on delete set null,
+  add column if not exists membership_id         uuid references public.community_memberships(id) on delete set null,
   add column if not exists invoice_number        text,
   add column if not exists invoice_type          text not null default 'maintenance',
   add column if not exists title                 text,
@@ -59,7 +60,19 @@ alter table public.invoices
   add column if not exists currency_code         char(3) not null default 'INR',
   add column if not exists notes                 text;
 
-alter table public.invoices alter column membership_id drop not null;
+-- The legacy hosted schema called this `liable_unit_id`; retain its data while
+-- adding the baseline-compatible columns used below.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'invoices'
+      and column_name = 'liable_unit_id'
+  ) then
+    update public.invoices set unit_id = liable_unit_id where unit_id is null;
+    alter table public.invoices alter column liable_unit_id drop not null;
+  end if;
+end $$;
 
 create unique index if not exists invoices_community_number_key
   on public.invoices (community_id, invoice_number)
@@ -115,6 +128,7 @@ alter table public.invoice_line_items
   add column if not exists community_id uuid references public.communities(id) on delete cascade,
   add column if not exists quantity     numeric(12, 3) not null default 1,
   add column if not exists unit_amount  numeric(12, 2) not null default 0,
+  add column if not exists amount       numeric(12, 2),
   add column if not exists sort_order   integer not null default 0;
 
 -- Stated as a plain ALTER rather than hidden inside a DO block, so that a static
@@ -150,12 +164,32 @@ create index if not exists invoice_line_items_invoice_idx
 -- is a record of when money arrived, not of when someone typed it in.
 -- ---------------------------------------------------------------------------
 alter table public.payments
+  add column if not exists community_id              uuid references public.communities(id) on delete cascade,
+  add column if not exists provider                  text,
+  add column if not exists idempotency_key           text,
   add column if not exists currency_code              char(3) not null default 'INR',
   add column if not exists payment_method             text,
   add column if not exists paid_at                    timestamptz not null default now(),
   add column if not exists notes                      text,
   add column if not exists payer_profile_id           uuid references public.profiles(id) on delete set null,
   add column if not exists received_by_membership_id  uuid references public.community_memberships(id) on delete set null;
+
+-- Older payments require legacy payer/currency/method columns.  The new RPC
+-- stores their baseline equivalents, so permit those legacy fields to be null.
+do $$
+declare
+  v_column_name text;
+begin
+  foreach v_column_name in array array['payer_membership_id', 'currency', 'method'] loop
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'payments'
+        and column_name = v_column_name
+    ) then
+      execute format('alter table public.payments alter column %I drop not null', v_column_name);
+    end if;
+  end loop;
+end $$;
 
 create index if not exists payments_invoice_idx on public.payments (invoice_id, paid_at desc);
 
@@ -428,6 +462,18 @@ begin
     );
     v_sort := v_sort + 1;
   end loop;
+
+  -- The older hosted schema has a stored total rather than the baseline's
+  -- generated column; populate it only in that shape.
+  if exists (
+    select 1 from pg_attribute
+     where attrelid = 'public.invoice_line_items'::regclass
+       and attname = 'total_amount' and attgenerated = ''
+  ) then
+    update public.invoice_line_items
+       set total_amount = round(quantity * unit_amount, 2)
+     where invoice_id = v_id;
+  end if;
 
   -- Totals come back OUT of the database rather than being trusted from the
   -- caller: the line items are the source of truth for what the invoice is worth.
