@@ -4,7 +4,7 @@ const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 function csrfToken() {
   return document.cookie
     .split('; ')
-    .find((cookie) => cookie.startsWith('hb_recovery_csrf=') || cookie.startsWith('__Host-hb_csrf=') || cookie.startsWith('hb_csrf='))
+    .find((cookie) => cookie.startsWith('hb_preauth_csrf=') || cookie.startsWith('hb_recovery_csrf=') || cookie.startsWith('__Host-hb_csrf=') || cookie.startsWith('hb_csrf='))
     ?.split('=')[1] ?? '';
 }
 
@@ -55,9 +55,13 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 }
 
 export async function api(path, options = {}, { retry = true, timeoutMs } = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !csrfToken()) {
+    await prepareAnonymousCsrf();
+  }
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  if (!['GET', 'HEAD', 'OPTIONS'].includes((options.method || 'GET').toUpperCase())) {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-CSRF-Token', csrfToken());
   }
   const response = await fetchWithTimeout(`${API_BASE}${path}`, {
