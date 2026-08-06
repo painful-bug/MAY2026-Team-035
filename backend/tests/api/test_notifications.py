@@ -183,6 +183,23 @@ def test_paging_is_translated_to_an_offset(
     assert (feed["offset"], feed["limit"]) == (20, 10)
 
 
+@pytest.mark.parametrize("query", ("page=0", "pageSize=0", "pageSize=101"))
+def test_invalid_paging_is_rejected_before_the_feed_is_queried(
+    resident_api_client: TestClient, feed: dict, query: str
+) -> None:
+    """The page bounds protect an endpoint whose backing table grows forever.
+
+    Validation has to happen before either the page query or the badge-count
+    query. Otherwise a malformed request can still spend database work even
+    though its response is a 422.
+    """
+    response = resident_api_client.get(f"{FEED}?{query}")
+
+    assert response.status_code == 422
+    assert "membership_id" not in feed
+    assert "unread_for" not in feed
+
+
 def test_the_unread_count_is_the_whole_feed_not_the_page(
     resident_api_client: TestClient, feed: dict
 ) -> None:
@@ -431,6 +448,35 @@ def test_a_subscription_without_keys_is_rejected(
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "keys",
+    (
+        {"p256dh": "", "auth": "auth-material"},
+        {"p256dh": "public-material", "auth": ""},
+    ),
+)
+def test_a_subscription_with_an_empty_encryption_key_is_rejected_before_storage(
+    resident_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    push_configured: dict,
+    keys: dict[str, str],
+) -> None:
+    """An empty browser key would create a subscription that can never decrypt.
+
+    This is deliberately a request-boundary test: the repository is never
+    called, so an invalid browser document cannot replace a known-good device
+    registration at the idempotent endpoint.
+    """
+    response = resident_api_client.post(
+        SUBSCRIPTIONS,
+        headers=csrf_headers,
+        json={"endpoint": "https://push.example.test/1", "keys": keys},
+    )
+
+    assert response.status_code == 422
+    assert push_configured == {}
 
 
 def test_unsubscribing_takes_the_endpoint_in_the_body(
