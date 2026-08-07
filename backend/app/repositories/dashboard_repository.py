@@ -11,6 +11,7 @@ also constrained by the resolved community id.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -252,16 +253,77 @@ def delete_amenity(client: Client, *, amenity_id: str, community_id: str) -> boo
     return bool(rows)
 
 
-def publish(client: Client, *, community_id: str, topic: str, payload: dict[str, Any] | None = None) -> None:
-    client.table("sse_events").insert(
-        {"community_id": community_id, "topic": topic, "payload": payload or {}}
-    ).execute()
+def publish(
+    client: Client,
+    *,
+    community_id: str,
+    topic: str,
+    payload: dict[str, Any] | None = None,
+    audience_roles: list[str] | None = None,
+) -> None:
+    """Write one outbox row.
+
+    `audience_roles` is the only audience this path offers, and omitting it
+    means community-wide. Member-addressed events are not published from Python
+    at all -- they come from the trigger on `notifications`, so that live
+    delivery is a property of writing a notification rather than a step someone
+    can forget (see the resident design 5.10).
+    """
+    row: dict[str, Any] = {
+        "community_id": community_id,
+        "topic": topic,
+        "payload": payload or {},
+    }
+    if audience_roles:
+        row["audience"] = "role"
+        row["audience_roles"] = audience_roles
+    client.table("sse_events").insert(row).execute()
 
 
-def read_events(client: Client, *, community_id: str, after_id: int) -> list[dict[str, Any]]:
+_EVENT_COLUMNS = "id,topic,payload,audience,audience_roles,recipient_membership_id"
+
+# PostgREST filter values are not parameterised, so anything interpolated into
+# one is checked against a whitelist first. Both values come from a membership
+# row the caller already resolved out of Postgres, which is why these patterns
+# can be this narrow: `membership_role` is an enum of lowercase words and the
+# id is a uuid primary key. A value that fails is not escaped, it is dropped --
+# the filter widens, and `_Subscriber.accepts` still decides.
+_ROLE_RE = re.compile(r"^[a-z_]{1,32}$")
+_UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+
+
+def _audience_filter(membership_id: str | None, role: str | None) -> str:
+    """The `or=` narrowing clause for one subscriber's audience (`0028`)."""
+    clauses = ["audience.eq.community"]
+    if role and _ROLE_RE.match(role):
+        clauses.append(f"and(audience.eq.role,audience_roles.cs.{{{role}}})")
+    if membership_id and _UUID_RE.match(membership_id):
+        clauses.append(
+            f"and(audience.eq.member,recipient_membership_id.eq.{membership_id})"
+        )
+    return ",".join(clauses)
+
+
+def read_events(
+    client: Client,
+    *,
+    community_id: str,
+    after_id: int,
+    membership_id: str | None = None,
+    role: str | None = None,
+) -> list[dict[str, Any]]:
+    """One subscriber's missed events, for the reconnect backfill.
+
+    Narrowed by audience in Postgres rather than after the fact, because the
+    100-row cap is applied by the query: a burst of `{admin,manager}` refresh
+    rows must not be able to fill the page and push a resident's own events off
+    the end of it. `app.core.realtime` re-checks every row it gets back.
+    """
     return (
-        client.table("sse_events").select("id,topic,payload,created_at")
-        .eq("community_id", community_id).gt("id", after_id).order("id").limit(100)
+        client.table("sse_events").select(_EVENT_COLUMNS)
+        .eq("community_id", community_id).gt("id", after_id)
+        .or_(_audience_filter(membership_id, role))
+        .order("id").limit(100)
         .execute().data
         or []
     )
@@ -270,12 +332,15 @@ def read_events(client: Client, *, community_id: str, after_id: int) -> list[dic
 def read_events_since(client: Client, *, after_id: int, limit: int = 500) -> list[dict[str, Any]]:
     """Every community's events past `after_id`, for the shared SSE poller.
 
-    Deliberately not community-scoped: one process-wide poller reads the outbox
-    once per tick and `app.core.realtime` routes rows to subscribers by
-    `community_id`, so the query cost stays flat as viewers are added.
+    Deliberately not community-scoped, and deliberately not audience-scoped
+    either: one process-wide poller reads the outbox once per tick and
+    `app.core.realtime` routes rows to subscribers by `community_id` and then
+    by audience, so the query cost stays flat as viewers are added. Filtering
+    here would mean one query per distinct audience, which is the per-viewer
+    cost this poller exists to remove.
     """
     return (
-        client.table("sse_events").select("id,community_id,topic,payload")
+        client.table("sse_events").select("community_id," + _EVENT_COLUMNS)
         .gt("id", after_id).order("id").limit(limit)
         .execute().data
         or []

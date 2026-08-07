@@ -13,6 +13,7 @@ from app.core.exceptions import NotFoundError
 from app.core.realtime import hub
 from app.core.supabase_client import get_service_client
 from app.domain.schemas import DashboardSnapshot, MembershipContext
+from app.domain.vocabularies import complaint_status_to_wire
 from app.repositories import dashboard_repository
 
 _ROLE_LABELS = {
@@ -24,10 +25,9 @@ _VISITOR_LABELS = {
     "denied": "Rejected", "checked_in": "Checked In", "checked_out": "Checked Out",
     "expired": "Expired", "cancelled": "Cancelled",
 }
-_COMPLAINT_LABELS = {
-    "open": "Pending", "acknowledged": "In Progress", "in_progress": "In Progress",
-    "resolved": "Resolved", "closed": "Resolved", "cancelled": "Cancelled",
-}
+# Moved into `domain/vocabularies.py` when the resident complaint surface needed
+# the same map. Two copies of one vocabulary is how the admin and resident views
+# of a complaint end up disagreeing about what `closed` is called.
 
 
 def _iso_date(value: str | None) -> str:
@@ -81,7 +81,7 @@ def _complaints(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *,
                 comments.append({"id": event["id"], "author": "Community team", "text": note, "createdAt": event.get("created_at")})
         result.append({
             "id": row["id"], "title": row["title"], "description": row.get("description") or "",
-            "category": row.get("category") or "General", "status": _COMPLAINT_LABELS.get(str(row.get("status")), "Pending"),
+            "category": row.get("category") or "General", "status": complaint_status_to_wire(row.get("status")),
             "progress": int(row.get("progress_percent") or (100 if row.get("status") in {"resolved", "closed"} else 0)),
             "urgency": str(row.get("priority") or "Medium").title(), "raisedBy": raised_by.get("name", "Resident"),
             "userId": raised_by.get("id"), "flat": raised_by.get("flat", "—"),
@@ -233,7 +233,15 @@ def save_amenity(
         saved = dashboard_repository.create_amenity(
             client, community_id=membership.community_id, payload=payload, legacy=legacy
         )
-    dashboard_repository.publish(client, community_id=membership.community_id, topic="dashboard.refresh")
+    # Same audience the `0028` triggers now give `dashboard.refresh`: the frame
+    # means "re-read the admin snapshot", which is not a thing a resident can
+    # do. Left community-wide it would be the one leak the migration missed.
+    dashboard_repository.publish(
+        client,
+        community_id=membership.community_id,
+        topic="dashboard.refresh",
+        audience_roles=["admin", "manager"],
+    )
     return saved
 
 
@@ -247,14 +255,23 @@ def remove_amenity(membership: MembershipContext, amenity_id: str) -> None:
 async def event_stream(
     membership: MembershipContext, last_event_id: int
 ) -> AsyncIterator[str]:
-    """Yield tenant-authorized SSE frames and heartbeat comments.
+    """Yield audience-scoped SSE frames and heartbeat comments.
 
     Delegates to the process-wide outbox poller in `app.core.realtime`. The
-    tenant check is here and only here: a subscriber is bound to the community
-    on its verified membership, so a client cannot widen its own stream by
-    replaying someone else's `Last-Event-ID`.
+    authorization check is here and only here: a subscriber is bound to the
+    community, the membership and the role on its verified membership, so a
+    client cannot widen its own stream by replaying someone else's
+    `Last-Event-ID`.
+
+    This is the only place the three identity values are read off the
+    membership, which is why the hub takes them as explicit arguments rather
+    than the whole `MembershipContext` -- `app.core` stays free of the domain
+    layer, and the mapping is visible on one line.
     """
     async for frame in hub.subscribe(
-        membership.community_id, last_event_id=max(last_event_id, 0)
+        membership.community_id,
+        membership_id=membership.id,
+        role=membership.role,
+        last_event_id=max(last_event_id, 0),
     ):
         yield frame
