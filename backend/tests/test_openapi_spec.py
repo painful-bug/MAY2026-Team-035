@@ -122,7 +122,13 @@ def test_every_router_is_mounted(path):
         "/api/v1/dashboard/admin",
         "/api/v1/residents",
         "/api/v1/registrations",
-        "/api/v1/complaints",
+        # `/api/v1/complaints` was on this list and came back in `0031`. The
+        # retirement was correct for what it retired: an *admin* complaint list,
+        # duplicating what `GET /dashboard/snapshot` already projects. The
+        # resident has no snapshot to read it from -- which is finding 3.1 in a
+        # second table -- so the path now serves a projection that never existed
+        # rather than the one that was removed. Deleting this line is the
+        # decision the docstring below asks for.
         "/api/v1/complaint-categories",
         "/api/v1/payments",
         "/api/v1/amenities",

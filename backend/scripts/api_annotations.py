@@ -150,7 +150,7 @@ STATUS_TO_RESPONSE = {
 }
 
 # --------------------------------------------------------------------------
-# User stories. Titles and coverage verdicts come from docs/API.md section 14,
+# User stories. Titles and coverage verdicts come from docs/API.md section 16,
 # which is the working copy; docs/product/USER_STORIES.md is the team's source.
 # --------------------------------------------------------------------------
 
@@ -161,14 +161,49 @@ STORIES: dict[str, tuple[str, str]] = {
     "US-1.4": ("Streamlined resident information update", "partial"),
     "US-1.5": ("Simplified booking management workflow", "served"),
     "US-1.6": ("Automated administrative reports", "partial"),
+    # Still partial after `0032`, and for a reason worth naming rather than
+    # rounding off. The resident's *reply* now exists -- approve and reject are
+    # real endpoints and they notify the gate. What does not exist is the thing
+    # being replied to: `visitor.approval_requested` is written by security
+    # software this repository does not contain, so no resident can be asked.
+    # The same missing service worker as US-2.7 applies on top.
     "US-2.1": ("Reliable visitor approval notifications", "partial"),
-    "US-2.2": ("Fast visitor pre-approval", "partial"),
+    # Served by `POST /visitor-passes`: the form's fields are columns, the code
+    # is a hashed credential returned once, and the validity window comes from
+    # the community's setting instead of the browser.
+    "US-2.2": ("Fast visitor pre-approval", "served"),
+    # Partial after step 7, and the missing half is not one this workstream can
+    # build. `GET /resident/snapshot` is the enabling endpoint the story's own
+    # "Backend: None" note asks for -- everything the home screen shows in one
+    # call, with the pending passes carried whole so approving is one tap and not
+    # a navigation. What it cannot supply is the *home-screen widget*: that is an
+    # operating-system surface, and HomeBandhu is a web application with no
+    # native client (`PO`, 2026-08-03). Marking this served would claim a
+    # capability the platform does not have.
+    "US-2.3": ("One-tap quick access to frequent tasks", "partial"),
     "US-2.4": ("Reliable notifications for society notices", "partial"),
-    "US-2.6": ("Complaint status tracking with history", "partial"),
+    # US-2.5 was absent from this table until `0031`, because a story no
+    # operation serves has nothing to trace to. It is here now, and served.
+    "US-2.5": ("Simple complaint submission with priority", "served"),
+    "US-2.6": ("Complaint status tracking with history", "served"),
+    # Still partial, and precisely: every lifecycle transition now writes a
+    # notification and both transports carry it, but out-of-app push cannot be
+    # observed until `frontend/public/` has a service worker. The backend half
+    # is done; the story is about a phone buzzing.
     "US-2.7": ("Complaint lifecycle notifications", "partial"),
-    "US-2.8": ("Complaint accountability", "partial"),
+    "US-2.8": ("Complaint accountability", "served"),
+    # Still partial after `0033`, and the reason has not moved. The directory is
+    # complete, maintained and -- as of `GET /directory/contacts` -- readable by
+    # the people it is for, which was the missing half. "Verified" is a process
+    # and nobody owns it; no column can close that.
     "US-2.9": ("Verified management contact directory", "partial"),
-    "US-2.12": ("Reliable booking payment confirmation", "partial"),
+    # Served by `0033`. Its recorded reason for being partial was "no payment
+    # gateway is integrated", and that was reading the story as being about
+    # payments -- it is about a payment and a booking confirmation happening
+    # TOGETHER, which is now one statement that does both or neither. The
+    # gateway driving it is the simulator the product asked for, and every row
+    # it writes says `simulator` so the two can never be confused.
+    "US-2.12": ("Reliable booking payment confirmation", "served"),
 }
 
 # Operations that trace to no story, by group, as ``(api type, rationale)``.
@@ -213,6 +248,66 @@ NO_STORY = {
         "Master data",
         "Amenity catalogue upkeep. The booking stories assume amenities already"
         " exist; something still has to create them.",
+    ),
+    "catalogue_read": (
+        "Feature",
+        "Reading the amenity catalogue. The booking stories assume a resident"
+        " already knows which amenity they are booking, so no interviewee"
+        " described finding out -- in the building that is a noticeboard. The"
+        " gap surfaced from the code instead: the resident booking write has"
+        " always been unguarded while nothing let a resident learn an amenity"
+        " id. See RESIDENT_BACKEND_DESIGN.md 3.1.",
+    ),
+    "notification_state": (
+        "Feature",
+        "Managing the notification list rather than being notified. The three"
+        " notification stories ask to be *told* -- US-2.1, US-2.4, US-2.7 are all"
+        " about delivery -- and none of them describes clearing a badge, because"
+        " an interviewee describing an unread count is describing a screen, not a"
+        " problem. Serves a resident, so Feature rather than Non-functional.",
+    ),
+    "complaint_read_state": (
+        "Feature",
+        "Clearing the seen marker on one complaint. US-2.6 asks to *track* a"
+        " complaint and US-2.8 to know who owns it; neither describes the"
+        " bookkeeping of having read an update, because nobody narrates that"
+        " when asked what is wrong with complaints. It is what makes the unread"
+        " badge those stories imply mean anything.",
+    ),
+    "push_transport": (
+        "Non-functional",
+        "Web Push plumbing: handing the browser the application server key and"
+        " storing what PushManager.subscribe hands back. A resident experiences"
+        " US-2.1 and US-2.4; nobody experiences a VAPID key. See"
+        " RESIDENT_BACKEND_DESIGN.md 10.5.",
+    ),
+    "resident_money": (
+        "Feature",
+        "Listing and paying maintenance dues. There is a whole screen for it and"
+        " no story about it: US-2.12, the only payment story anybody wrote, is"
+        " specifically about AMENITY BOOKING payment, and mapping an invoice path"
+        " onto it would claim coverage the interviews never gave. The pain point"
+        " the residents raised was money deducted for a booking that did not"
+        " confirm -- see RESIDENT_BACKEND_DESIGN.md 6 and 11.7.",
+    ),
+    "admin_money": (
+        "Feature",
+        "Recording a maintenance payment taken outside the app -- cash, a"
+        " transfer, a cheque. It carried US-2.12 until 2026-08-04, which was an"
+        " overclaim on this table's part rather than a change of mind:"
+        " docs/product/USER_STORIES.md scopes that story to AMENITY BOOKING"
+        " payment, section 16.4 of docs/API.md never listed this operation under"
+        " it, and the resident invoice path beside it was already refusing the"
+        " same mapping for the same reason. The transactional guarantee it does"
+        " share with the booking path is a property of every settlement in this"
+        " backend, not the story.",
+    ),
+    "household": (
+        "Feature",
+        "Who is registered to a flat, and adding another number to it without"
+        " waiting for an admin. Drawn from the prototype's Profile screen rather"
+        " than from an interview -- the stories are about reaching MANAGEMENT"
+        " (US-2.9, US-2.10), not about the household reaching itself.",
     ),
     "platform": (
         "Non-functional",
@@ -259,12 +354,26 @@ PARAMETER_DESCRIPTIONS: dict[str, str] = {
     "amenity_id": (
         "Amenity id. Must belong to the caller's community, or the answer is 404."
     ),
+    "booking_id": (
+        "Booking id. Scoped by `is_own_booking`, not by community: another "
+        "resident's booking is a 404, and paying for one is refused by the "
+        "settlement statement itself rather than by the handler."
+    ),
     "complaint_id": "Complaint id, scoped to the caller's community.",
     "department_id": "Department id, scoped to the caller's community.",
     "invoice_id": "Invoice id, scoped to the caller's community.",
+    "notification_id": (
+        "Notification id. Scoped to the caller's own feed, so another member's "
+        "notification is a 404 rather than a 403."
+    ),
     "occurrence_id": (
         "A single booked day. Not the booking -- see `seriesId` for the whole "
         "request."
+    ),
+    "pass_id": (
+        "Visitor pass id, scoped to the caller's own passes. Approve and reject "
+        "additionally require the pass to be awaiting a decision, or the answer "
+        "is 409."
     ),
     "provider": (
         "OAuth provider key. Must be in the deployment's enabled set, or the answer "
@@ -298,6 +407,16 @@ PARAMETER_DESCRIPTIONS: dict[str, str] = {
     ),
     "code": (
         "Authorization code returned by the provider. Absent means the user declined."
+    ),
+    # header
+    "Last-Event-ID": (
+        "Resumption cursor, set by the browser's own `EventSource` on reconnect "
+        "rather than by application code. A malformed value is read as `0` "
+        "instead of 422, because refusing the reconnect would leave the client "
+        "with no way to recover other than to stop sending a header the "
+        "specification requires it to send. It can only move the cursor forward "
+        "within a stream the caller is already authorized for; it cannot widen "
+        "the audience."
     ),
 }
 
@@ -676,14 +795,78 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    # The canonical stream and its deprecated alias. Both trace to the same
+    # story because they are the same handler; only one of them closes it.
+    ("get", "/api/v1/events"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-1.3",
+                "The one stream every portal reads. The story asks for changes to "
+                "reflect across the resident application and the admin portal, and "
+                "0028 gives each outbox row an audience so one endpoint can serve "
+                "both without a resident receiving admin traffic"
+            ),
+        ],
+    ),
     ("get", "/api/v1/dashboard/events"): op(
         errors=["401", "403", "500"],
         stories=[
             (
                 "US-1.3",
-                "Server-sent events; dashboard.refresh fires on writes to 12 tables"
+                "Deprecated alias for GET /events, kept because the admin portal is "
+                "already wired to this path; identical audience-scoped behaviour"
             ),
         ],
+    ),
+    # -- notifications and push --------------------------------------------
+    # The durable layer of the three in RESIDENT_BACKEND_DESIGN.md 10.1. Three
+    # stories are *Partial* today for exactly one reason -- the event fires and
+    # nothing delivers it -- so this one operation is the delivery half of all
+    # three.
+    ("get", "/api/v1/notifications"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.1",
+                "The durable record behind a visitor-approval push. The story's "
+                "pain point is a notification that makes a sound and shows "
+                "nothing; this is where the resident finds it either way, "
+                "including after the phone was locked"
+            ),
+            (
+                "US-2.4",
+                "Notices and application updates arrive here as rows, so learning "
+                "about one no longer depends on having the application open at "
+                "the moment it was published"
+            ),
+            (
+                "US-2.7",
+                "All four complaint transitions the story names write a "
+                "notification, so the resident stops having to follow up to find "
+                "out whether anything happened"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/notifications/{notification_id}/read"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["notification_state"],
+    ),
+    ("post", "/api/v1/notifications/read-all"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["notification_state"],
+    ),
+    ("get", "/api/v1/push/vapid-key"): op(
+        errors=["401", "403", "500", "503"],
+        no_story=NO_STORY["push_transport"],
+    ),
+    ("post", "/api/v1/push/subscriptions"): op(
+        errors=["401", "403", "422", "500", "503"],
+        no_story=NO_STORY["push_transport"],
+    ),
+    ("delete", "/api/v1/push/subscriptions"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["push_transport"],
     ),
     ("post", "/api/v1/dashboard/amenities"): op(
         errors=["401", "403", "404", "500"],
@@ -725,6 +908,78 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         ],
     ),
     # -- complaints --------------------------------------------------------
+    ("get", "/api/v1/complaints"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "The list the story's tracking starts from -- status, progress and "
+                "expected resolution on every row, so following a complaint stops "
+                "meaning calling about it"
+            ),
+            (
+                "US-2.8",
+                "assignee and expectedResolutionAt reach the resident here for the "
+                "first time. Both were already stored; the snapshot projection "
+                "dropped them, which is why the story read Partial"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-2.5",
+                "The create endpoint the story records as missing, with the "
+                "priority selector writing to a real column"
+            ),
+            (
+                "US-2.8",
+                "The expected resolution time is computed on insert from that "
+                "priority, so it exists before anyone asks for it"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/complaints/{complaint_id}"): op(
+        errors=["401", "403", "404", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "The timestamped update history, read by the resident who raised "
+                "it. Internal comments are removed by the policy rather than by "
+                "this endpoint"
+            ),
+            (
+                "US-2.8",
+                "isOverdue is computed in the database against the same clock the "
+                "admin's overdue count uses, so the two screens cannot disagree"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/reopen"): op(
+        errors=["401", "403", "404", "422", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "Reopening with a reason is the resident's half of the history; "
+                "the SLA restarts so the complaint is not overdue on arrival"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/resolution"): op(
+        errors=["401", "403", "404", "422", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "Closes the loop the story leaves open: resolved is what the "
+                "association says, closed is what the resident agrees"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/read"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["complaint_read_state"],
+    ),
     ("patch", "/api/v1/complaints/{complaint_id}"): op(
         errors=["401", "403", "404", "422", "500"],
         stories=[
@@ -755,7 +1010,151 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    # -- visitor passes ----------------------------------------------------
+    ("get", "/api/v1/visitor-passes"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.2",
+                "The list the pre-approval flow returns to, split into current "
+                "and history by a column the database computes"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/visitor-passes"): op(
+        # `409` is a code the community is already using, five draws running --
+        # a number with no practical meaning, and still an answer the caller
+        # gets rather than a loop they wait inside.
+        errors=["401", "403", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.2",
+                "Pre-approval in one call: purpose, guest count and a security "
+                "code returned exactly once, hashed at rest like an invite"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/visitor-passes/{pass_id}"): op(
+        errors=["401", "403", "404", "500"],
+        stories=[
+            (
+                "US-2.2",
+                "The QR screen's read. Carries no code and no token -- a pass "
+                "read back cannot reconstruct the credential it was minted with"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/visitor-passes/{pass_id}/approve"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.1",
+                "The resident's answer to a gate request, and the half of the "
+                "story this backend can serve. Nothing here raises the request "
+                "-- that is security software this repository does not contain"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/visitor-passes/{pass_id}/reject"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.1",
+                "The other answer. Stored as denied, shown as Rejected, and the "
+                "gate is notified either way"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/visitor-passes/{pass_id}/cancel"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.2",
+                "Withdrawing a pass that has not been used. A guest already "
+                "through the gate is a 409: cancel is a physical-world "
+                "operation and no database write performs it"
+            ),
+        ],
+    ),
+    # -- the resident's home -----------------------------------------------
+    ("get", "/api/v1/resident/snapshot"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.3",
+                "The one call the home screen needs, so a resident reaches their "
+                "dues, their visitors and their complaints without navigating "
+                "into each. The pending passes come back whole, which is what "
+                "makes approving a visitor one tap rather than a journey"
+            ),
+        ],
+    ),
+    # -- the resident's money ----------------------------------------------
+    ("get", "/api/v1/invoices/mine"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["resident_money"],
+    ),
+    ("post", "/api/v1/invoices/{invoice_id}/pay"): op(
+        # `200` covers a decline as well as a success -- see §11.5. The `409` is
+        # an invoice already settled; the `422` is a body that does not add up,
+        # which for this endpoint mostly means an amount that is not the balance.
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["resident_money"],
+    ),
+    ("get", "/api/v1/amenity-bookings/mine"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.12",
+                "What a resident has booked and what is still owed on it. The "
+                "booking ledger was admin-only until 0033, so the person being "
+                "charged had no endpoint that would tell them so"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/amenity-bookings/{booking_id}/pay"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.12",
+                "The transaction the story is about: payment and confirmation in "
+                "one statement, and on a decline the booking is left exactly as "
+                "it was rather than half-confirmed"
+            ),
+        ],
+    ),
     # -- notices -----------------------------------------------------------
+    ("get", "/api/v1/notices"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.4",
+                "The resident's read of the notice board. Drafts are excluded by "
+                "the view and by the policy; the story's other half -- a phone "
+                "buzzing when one is posted -- is the missing service worker"
+            ),
+        ],
+    ),
+    # -- the flat, and the numbers worth ringing ---------------------------
+    ("get", "/api/v1/me/household"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["household"],
+    ),
+    ("post", "/api/v1/me/household/phones"): op(
+        errors=["401", "403", "409", "422", "500"],
+        no_story=NO_STORY["household"],
+    ),
+    ("get", "/api/v1/directory/contacts"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.9",
+                "The half of the story that was missing: the directory has been "
+                "maintained since 0019 and no resident could read it. Still "
+                "partial -- 'verified' is a process, and nobody owns it"
+            ),
+        ],
+    ),
     ("post", "/api/v1/notices"): op(
         errors=["401", "403", "422", "500"],
         stories=[
@@ -845,15 +1244,13 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
     ),
     ("post", "/api/v1/invoices/{invoice_id}/payments"): op(
         errors=["401", "403", "404", "422", "500"],
-        stories=[
-            (
-                "US-2.12",
-                "Payment and confirmation are one transaction, so money cannot be "
-                "taken without the record moving with it"
-            ),
-        ],
+        no_story=NO_STORY["admin_money"],
     ),
     # -- amenities ---------------------------------------------------------
+    ("get", "/api/v1/amenities/available"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["catalogue_read"],
+    ),
     ("get", "/api/v1/amenities/{amenity_id}/bookings"): op(
         errors=["401", "403", "404", "500"],
         stories=[("US-1.1", "The individual days an administrator chooses between")],
