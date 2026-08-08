@@ -31,6 +31,7 @@ from app.services import notifications_service
 FEED = "/api/v1/notifications"
 VAPID_KEY = "/api/v1/push/vapid-key"
 SUBSCRIPTIONS = "/api/v1/push/subscriptions"
+UNSUBSCRIBE = "/api/v1/push/subscriptions/unregister"
 
 # Shaped like real ones -- unpadded base64url, 87 and 43 characters, which is a
 # 65-byte P-256 point and a 32-byte scalar. Not a keypair: nothing in these tests
@@ -486,10 +487,11 @@ def test_unsubscribing_takes_the_endpoint_in_the_body(
 ) -> None:
     """Not a query string: a push endpoint is a device identifier, and a request
     whose purpose is to stop tracking a device should not write it into every
-    access log on the way."""
-    response = resident_api_client.request(
-        "DELETE",
-        SUBSCRIPTIONS,
+    access log on the way. A `POST` to a sub-path rather than a `DELETE`, because
+    content on a `DELETE` has no defined semantics and may not survive the trip.
+    """
+    response = resident_api_client.post(
+        UNSUBSCRIBE,
         headers=csrf_headers,
         json={"endpoint": "https://push.example.test/1"},
     )
@@ -545,9 +547,8 @@ def test_unsubscribing_works_without_a_keypair(
         push_repository, "remove_subscription", lambda *a, **k: 1
     )
 
-    response = resident_api_client.request(
-        "DELETE",
-        SUBSCRIPTIONS,
+    response = resident_api_client.post(
+        UNSUBSCRIBE,
         headers=csrf_headers,
         json={"endpoint": "https://push.example.test/1"},
     )

@@ -2,8 +2,9 @@
 
 Three routes, all of them plumbing: hand the browser the public key it needs to
 subscribe, store what it gets back, and remove it when the resident turns
-notifications off. The interesting decisions are in ``push_service`` and §10.5 of
-the design.
+notifications off. Removal is a ``POST`` to ``/push/subscriptions/unregister``
+rather than a ``DELETE``, for the reason recorded on that route. The interesting
+decisions are in ``push_service`` and §10.5 of the design.
 
 **Everything here returns 503 ``push_not_configured`` in an environment with no
 VAPID keypair, and nothing else in the product notices.** Push is an
@@ -79,8 +80,8 @@ async def subscribe(
     )
 
 
-@router.delete(
-    "/push/subscriptions",
+@router.post(
+    "/push/subscriptions/unregister",
     response_model=PushSubscriptionResult,
     summary="Unregister a browser",
 )
@@ -91,14 +92,18 @@ async def unsubscribe(
 ) -> PushSubscriptionResult:
     """Stop pushing to one browser.
 
-    **The endpoint arrives in a body, not a query string**, which is unusual for
-    a `DELETE` and deliberate. A push endpoint URL is a device identifier; in a
-    query string it lands in every access log and proxy trace between here and
-    the browser, for a request whose whole purpose is to stop tracking that
-    device. A `DELETE` body is legal but not universally respected by HTTP
-    clients, so this was checked rather than assumed: `frontend/src/lib/api/
-    client.js` spreads its options straight into `fetch`, which sends it. If a
-    future client drops it, the fix is a second path, not a query parameter.
+    **The endpoint arrives in a body**, because a push endpoint URL is a device
+    identifier: in a query string or a path segment it lands in every access log
+    and proxy trace between here and the browser, for a request whose whole
+    purpose is to stop tracking that device.
+
+    **A removal that carries a body is a `POST` to a sub-path, not a `DELETE`.**
+    RFC 9110 leaves content on a `DELETE` with no defined semantics -- clients
+    may refuse to send it, intermediaries may strip it, and OpenAPI tooling
+    warns on it -- so the one method whose body is guaranteed to arrive carries
+    it instead. That is the second path this endpoint's design always named as
+    the remedy, chosen over a query parameter, which would have put the device
+    identifier back in the logs.
 
     Always a 200, even when the row had already gone, and it works whether or not
     the server has a VAPID keypair. This is a resident turning notifications off:

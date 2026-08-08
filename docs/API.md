@@ -498,7 +498,7 @@ and the count, and a badge told `0` while one is already waiting stays wrong unt
 | `401` / `403` | No session; no active membership, or a failed CSRF pair on the two writes |
 | `404` | Only on `/{notificationId}/read` — unknown, or not the caller's |
 
-### 5.3 Web Push — `GET /push/vapid-key`, `POST` / `DELETE /push/subscriptions`
+### 5.3 Web Push — `GET /push/vapid-key`, `POST /push/subscriptions`, `POST /push/subscriptions/unregister`
 
 Standards Web Push (RFC 8291/8292) over this server's own VAPID keypair. **No vendor account, no SDK in the
 frontend bundle, and no third party ever learns who visited which flat and when** — Google, Mozilla and Apple
@@ -526,18 +526,20 @@ wrongly showing two lines costs a scroll.
 |---|---|---|
 | `GET /push/vapid-key` | — | `{ publicKey }`. Public by construction, still behind a membership guard: an unauthenticated endpoint naming our key is free reconnaissance for no benefit |
 | `POST /push/subscriptions` | `PushSubscription.toJSON()` — `{ endpoint, keys: { p256dh, auth }, userAgent? }` | Idempotent on `endpoint`. A repeat is `200`, not `409`: the client is describing a state |
-| `DELETE /push/subscriptions` | `{ endpoint }` | Always `200`, even when the row had already gone |
+| `POST /push/subscriptions/unregister` | `{ endpoint }` | Always `200`, even when the row had already gone |
 
 **The browser's own document is accepted unchanged.** A transcription step between `PushSubscription.toJSON()`
 and our field names is somewhere to put `auth` into the `p256dh` field, and that failure looks like a push
 that silently never decrypts.
 
-**`DELETE` takes a body, not a query string.** Unusual, and deliberate: a push endpoint URL is a device
-identifier, and a request whose whole purpose is to stop tracking a device should not write it into every
-access log between here and the browser. A `DELETE` body is legal but not universally respected by HTTP
-clients, so this was checked rather than assumed: `frontend/src/lib/api/client.js` spreads its options
-straight into `fetch`, which sends the body. If a future client drops it, the fix is a second path, not a
-query parameter.
+**Removal takes a body, and is therefore a `POST` to a sub-path rather than a `DELETE`.** A push endpoint URL
+is a device identifier, and a request whose whole purpose is to stop tracking a device should not write it
+into every access log between here and the browser — which rules out both a query string and a path segment,
+and leaves a body. RFC 9110 then leaves content on a `DELETE` with no defined semantics: clients may decline
+to send it, intermediaries may strip it, and OpenAPI tooling warns on it. So the body travels on the one
+method that guarantees it arrives. This was the second path the original note named as the remedy; it is now
+taken, and `_check_request_bodies` in `scripts/export_openapi.py` fails the build if any operation
+reintroduces the pattern.
 
 **A client must re-read `GET /push/vapid-key` on load and compare it against the `applicationServerKey` its
 stored subscription was created with.** A subscription is bound to the key that created it, the protocol
@@ -3365,7 +3367,7 @@ about pain points in an existing product, not about the plumbing every product n
 | `/settings`, `/billing-settings` | 3 (of 4) | Configuration | Configuration behind other features |
 | `/amenities/available` | 1 | Feature | Reading the catalogue. The booking stories assume a resident already knows which amenity they are booking |
 | `/notifications/{id}/read`, `/notifications/read-all` | 2 | Feature | Managing the list rather than being notified. US-2.1, US-2.4 and US-2.7 all ask to be *told* |
-| `/push/vapid-key`, `/push/subscriptions` `POST` · `DELETE` | 3 | Non-functional | Web Push plumbing. A resident experiences US-2.1; nobody experiences a VAPID key |
+| `/push/vapid-key`, `/push/subscriptions`, `/push/subscriptions/unregister` | 3 | Non-functional | Web Push plumbing. A resident experiences US-2.1; nobody experiences a VAPID key |
 | `/complaints/{id}/read` | 1 | Feature | Bookkeeping the unread badge US-2.6 and US-2.8 imply. Nobody narrates having read an update when asked what is wrong with complaints |
 | `/invoices/mine`, `/invoices/{id}/pay` | 2 | Feature | **Listing and paying maintenance dues.** A whole screen, and no story: `US-2.12`, the only payment story anybody wrote, is specifically about *amenity booking* payment, and mapping an invoice path onto it would claim coverage the interviews never gave |
 | `/invoices/{id}/payments` | 1 | Feature | The admin's record of a maintenance payment taken outside the app. **Moved here from `US-2.12` on 2026-08-04** — see the note below |

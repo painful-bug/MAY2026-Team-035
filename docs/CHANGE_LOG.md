@@ -17,6 +17,54 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-08 — Session 37: what Swagger saw in the spec
+
+**Context.** The spec was loaded into Swagger Editor and came back with a warning nobody in this
+repository had run a tool against: *`requestBody` does not have well-defined semantics for GET, HEAD
+and DELETE operations*, on `DELETE /push/subscriptions`. Auditing the whole document for that class of
+finding turned up a second, quieter one. Both are recorded here because both were introduced by
+decisions this log already carries — the first overturns one of them.
+
+### `openapi.yaml` — removal moved off `DELETE`
+
+- **`DELETE /push/subscriptions` → `POST /push/subscriptions/unregister`.** `AUDIT` **This overturns
+  the note written with the endpoint on 2026-08-04**, which chose a `DELETE` with a body, argued
+  correctly that the endpoint URL is a device identifier and must not go in a query string, and then
+  concluded that a `DELETE` body was safe because `frontend/src/lib/api/client.js` forwards it to
+  `fetch`. The reasoning about the query string still holds and is why this is not the obvious fix; the
+  reasoning about the body does not. RFC 9110 leaves content on a `DELETE` undefined — clients may
+  decline to send it, intermediaries may strip it — so "our current client happens to send it" was
+  never the right test to have applied. That note named the remedy itself: *"the fix is a second path,
+  not a query parameter."* It is now taken. Nothing was calling the route — no frontend file
+  references `/push/subscriptions` — so the change costs nothing today and would have cost a silent
+  production failure later.
+- **`_check_request_bodies` added to `scripts/export_openapi.py`.** `DERIVED` A build error, not a
+  review note: a body that arrives in development and is stripped by a proxy in production is the
+  worst failure available, and the class is trivially detectable. The same bargain as
+  `_check_coverage` — the check is what keeps the decision from quietly reverting.
+
+### `openapi.yaml` — the fourteen unlabelled tag groups
+
+- **Six of the twenty tags in use had a description; fourteen did not.** `AUDIT` Not a validity error,
+  which is why nothing had caught it: the document is schema-valid either way, and the groups still
+  render. But a reader opening Swagger UI met `resident-money` next to `money`, and `resident-home`
+  next to `dashboard`, with no line of text saying which is which — the exact question the spec is
+  read to answer. All twenty are now described, in a deliberate order that runs outward from the
+  caller's session to the admin surface to the resident surface, and `_apply_tags` fails the build
+  when a tag is undescribed or a description outlives its tag.
+
+### What the audit cleared
+
+- **Schema validation passes** against OpenAPI 3.1 (`openapi-spec-validator`), and a checker written
+  for this pass found no dangling `$ref`, no duplicate `operationId`, no undeclared or unused path
+  parameter, no operation missing a summary, description or response, and no colliding path shape.
+- **The four OAuth routes that declare `307` and no `2xx` are correct** and were deliberately left:
+  a redirect is the success case there.
+- **Story coverage is unchanged and complete** — 99 operations, every one carrying either
+  `x-user-stories` or a classified `x-no-user-story`.
+
+---
+
 ## 2026-08-04 — Session 36 (part 5): three sections that had stopped being true
 
 **Context.** Found while answering *"are there any steps left?"*. All three are documents describing a

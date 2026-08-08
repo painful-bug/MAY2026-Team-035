@@ -136,6 +136,86 @@ def _operations(spec: dict):
                 yield (method, path), operation
 
 
+# A tag with no entry here still groups its operations in Swagger UI, but the
+# group arrives unlabelled -- a reader sees `resident-money` and has to open the
+# operations to find out what it separates from `money`. The order below is the
+# order the groups render in, so it runs outward: the caller's own session,
+# joining a community, then the admin surface, then the resident surface.
+_TAGS: tuple[tuple[str, str], ...] = (
+    ("auth", "Sign-in, token refresh and the caller's own profile."),
+    ("onboarding", "Founding a community -- once per community, by its first admin."),
+    ("communities", "Finding a community to join, and reading its unit list."),
+    (
+        "access requests",
+        "A resident asking to join a community, and the admin queue that answers.",
+    ),
+    ("invitations", "Admin-issued invites and their redemption."),
+    ("dashboard", "Admin dashboard tiles, community profile and residents."),
+    ("people", "Admins and the registration review queue."),
+    ("complaints", "Complaints, their timeline, comments and attachments."),
+    ("departments", "Departments, staff rosters and complaint categories."),
+    ("amenities", "The amenity catalogue, its bookings, approvals and ledger."),
+    ("money", "Community-side billing: invoices raised, payments recorded."),
+    ("settings", "Community and billing configuration."),
+    ("notices", "Society notices."),
+    ("resident-home", "A resident's own home screen, household and directory."),
+    ("visitors", "Visitor passes: pre-approval, approval at the gate, cancellation."),
+    ("resident-money", "A resident's own invoices and bookings, and paying them."),
+    ("notifications", "The resident's in-app notification feed and its read state."),
+    ("push", "Web Push plumbing: the application server key and its subscriptions."),
+    ("realtime", "The server-sent event stream."),
+    ("system", "Liveness."),
+)
+
+
+def _apply_tags(spec: dict) -> None:
+    """Describe every tag group, and refuse to build if one is undescribed.
+
+    Same bargain as ``_check_coverage``: the check is what keeps the list from
+    silently going stale. A new router introduces a new tag, and without this it
+    would ship as an unlabelled group that nobody notices is unlabelled.
+    """
+    in_use = {
+        tag
+        for _, operation in _operations(spec)
+        for tag in operation.get("tags", [])
+    }
+    described = {name for name, _ in _TAGS}
+    if missing := sorted(in_use - described):
+        raise SystemExit(
+            "These tags group operations but have no description in "
+            "scripts/export_openapi.py:\n  " + "\n  ".join(missing)
+        )
+    if stale := sorted(described - in_use):
+        raise SystemExit(
+            "scripts/export_openapi.py describes tags nothing uses:\n  "
+            + "\n  ".join(stale)
+        )
+    spec["tags"] = [{"name": name, "description": text} for name, text in _TAGS]
+
+
+def _check_request_bodies(spec: dict) -> None:
+    """No operation may carry content on a method that gives it no meaning.
+
+    RFC 9110 leaves content on `GET`, `HEAD` and `DELETE` undefined: clients may
+    decline to send it, intermediaries may strip it, and OpenAPI tooling warns.
+    A body that reaches the server in development and vanishes behind a proxy in
+    production is the worst failure available, so this is a build error rather
+    than a review note. The remedy is a `POST` to a sub-path, as
+    `/push/subscriptions/unregister` does.
+    """
+    offenders = [
+        f"{method.upper():6} {path}"
+        for (method, path), operation in _operations(spec)
+        if method in {"get", "head", "delete"} and "requestBody" in operation
+    ]
+    if offenders:
+        raise SystemExit(
+            "These operations put a body on a method with no defined body "
+            "semantics:\n  " + "\n  ".join(offenders)
+        )
+
+
 def _check_coverage(spec: dict) -> None:
     """Refuse to build if the annotation table and the code disagree.
 
@@ -295,6 +375,7 @@ def build_spec() -> dict:
         "identifier": "LicenseRef-coursework",
     }
     _check_coverage(spec)
+    _check_request_bodies(spec)
     _apply_annotations(spec)
 
     # Servers are a deployment fact, not a code fact, so FastAPI does not emit
@@ -307,18 +388,7 @@ def build_spec() -> dict:
         }},
     ]
 
-    spec.setdefault("tags", [])
-    known = {tag["name"] for tag in spec["tags"]}
-    for name, description in (
-        ("auth", "Sign-in, token refresh and the caller's own profile."),
-        ("invitations", "Admin-issued invites and their redemption."),
-        ("dashboard", "Admin dashboard tiles, community profile and residents."),
-        ("people", "Admins and the registration review queue."),
-        ("complaints", "Complaints, their timeline, comments and attachments."),
-        ("departments", "Departments, staff rosters and complaint categories."),
-    ):
-        if name not in known:
-            spec["tags"].append({"name": name, "description": description})
+    _apply_tags(spec)
 
     return spec
 
