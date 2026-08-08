@@ -155,7 +155,7 @@ export const createDepartmentsSlice = (set, get) => ({
       (item) => item.id === departmentId
     );
     if (!department || !['Active', 'Inactive'].includes(status)) return null;
-    
+
     set((state) => ({
       departments: state.departments.map((item) =>
         item.id === departmentId

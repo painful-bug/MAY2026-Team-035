@@ -522,7 +522,7 @@ export const createResidentAmenityBookingSeries = async (bookingData) => {
     isPrivateBooking: bookingData.isPrivateBooking ?? false,
     notes: bookingData.notes ?? '',
   };
-  
+
   try {
     const result = await api(`/amenities/${bookingData.amenityId}/bookings/request`, {
       method: 'POST',
@@ -573,7 +573,7 @@ export const createAmenityBlockedSlot = async (blockedSlotData) => {
     department: blockedSlotData.department,
     notes: blockedSlotData.notes?.trim() || null,
   };
-  
+
   try {
     const result = await api(`/amenities/${blockedSlotData.amenityId}/blocks`, {
       method: 'POST',

@@ -162,6 +162,42 @@ create trigger amenities_sync_status
 -- name beside the wire string, because the frontend compares against
 -- 'Approved' while the database holds 'approved'.
 -- ---------------------------------------------------------------------------
+-- The linked legacy project used series/occurrence tables rather than the
+-- baseline booking table.  Establish the baseline tables before extending them.
+create table if not exists public.amenity_bookings (
+  id uuid primary key default gen_random_uuid(),
+  amenity_id uuid not null references public.amenities(id) on delete cascade,
+  community_id uuid not null references public.communities(id) on delete cascade,
+  booked_by_membership_id uuid not null references public.community_memberships(id),
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,
+  status public.booking_status not null default 'requested',
+  aggregate_version integer not null default 1,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  exclude using gist (
+    amenity_id with =,
+    tstzrange(starts_at, ends_at, '[)') with &&
+  ) where (status in ('requested', 'approved'))
+);
+
+create table if not exists public.booking_charges (
+  id uuid primary key default gen_random_uuid(),
+  booking_id uuid not null references public.amenity_bookings(id) on delete cascade,
+  amount numeric(12, 2) not null,
+  kind text not null,
+  status text not null default 'pending',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.booking_refunds (
+  id uuid primary key default gen_random_uuid(),
+  booking_charge_id uuid not null references public.booking_charges(id) on delete cascade,
+  amount numeric(12, 2) not null,
+  reason text,
+  created_at timestamptz not null default now()
+);
+
 alter table public.amenity_bookings
   add column if not exists booking_group_id         uuid,
   add column if not exists unit_id                  uuid references public.units(id) on delete set null,
@@ -288,6 +324,52 @@ create table if not exists public.amenity_financial_events (
   actor_membership_id uuid references public.community_memberships(id) on delete set null,
   created_at          timestamptz not null default now()
 );
+
+-- The legacy ledger uses occurrence/currency/reference names.  Keep those
+-- historical rows readable while adding the baseline-compatible columns used
+-- by this migration's functions and views.
+alter table public.amenity_booking_charges
+  add column if not exists community_id uuid references public.communities(id) on delete cascade,
+  add column if not exists label text;
+
+alter table public.amenity_financial_events
+  add column if not exists community_id uuid references public.communities(id) on delete cascade,
+  add column if not exists booking_charge_id uuid references public.amenity_booking_charges(id) on delete cascade,
+  add column if not exists payment_reference text,
+  add column if not exists reason text,
+  add column if not exists notes text;
+
+do $$
+declare
+  v_constraint text;
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'amenity_booking_charges'
+      and column_name = 'currency'
+  ) then
+    alter table public.amenity_booking_charges alter column currency drop not null;
+    for v_constraint in
+      select conname from pg_constraint
+       where conrelid = 'public.amenity_booking_charges'::regclass
+         and contype = 'f'
+         and conkey = array[(select attnum from pg_attribute
+                              where attrelid = 'public.amenity_booking_charges'::regclass
+                                and attname = 'booking_occurrence_id')]
+    loop
+      execute format('alter table public.amenity_booking_charges drop constraint %I', v_constraint);
+    end loop;
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'amenity_financial_events'
+      and column_name = 'currency'
+  ) then
+    alter table public.amenity_financial_events alter column currency drop not null;
+    alter table public.amenity_financial_events alter column booking_occurrence_id drop not null;
+  end if;
+end $$;
 
 create index if not exists amenity_financial_events_charge_idx
   on public.amenity_financial_events (booking_charge_id, created_at);

@@ -75,6 +75,16 @@ end $$;
 alter table public.complaint_events
   add column if not exists actor_label text;
 
+-- Some hosted projects recorded an older 0001 baseline that did not include
+-- this table.  Create the baseline shape before extending it below.
+create table if not exists public.complaint_comments (
+  id uuid primary key default gen_random_uuid(),
+  complaint_id uuid not null references public.complaints(id) on delete cascade,
+  author_membership_id uuid not null references public.community_memberships(id),
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
 alter table public.complaint_comments
   add column if not exists author_label text,
   add column if not exists visibility   text not null default 'public';

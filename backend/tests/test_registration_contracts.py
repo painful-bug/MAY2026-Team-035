@@ -155,6 +155,22 @@ def test_legacy_bridge_installs_founder_rpc_only_when_missing() -> None:
     ) in bridge
 
 
+def test_founder_rpc_compatibility_migration_replaces_stale_legacy_functions() -> None:
+    bridge = (
+        Path(__file__).parents[1]
+        / "supabase"
+        / "migrations"
+        / "20260805144502_replace_legacy_founder_rpc.sql"
+    ).read_text()
+    assert "create or replace function public.create_founder_community" in bridge
+    assert "column_name='address_line2'" in bridge
+    assert "column_name='payload'" in bridge
+    assert (
+        "grant execute on function public.create_founder_community(jsonb) "
+        "to service_role"
+    ) in bridge
+
+
 def test_community_status_compatibility_migration_normalizes_legacy_values() -> None:
     migration = (
         Path(__file__).parents[1]

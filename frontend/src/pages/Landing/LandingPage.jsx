@@ -1,13 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Building, 
-  Users, 
-  CreditCard, 
-  ShieldCheck, 
-  Calendar, 
-  AlertTriangle, 
-  Megaphone, 
+import {
+  Building,
+  Users,
+  CreditCard,
+  ShieldCheck,
+  Calendar,
+  AlertTriangle,
+  Megaphone,
   HeartHandshake,
   ArrowRight,
   CheckCircle,
@@ -68,7 +68,7 @@ export default function LandingPage() {
             </div>
             <div>
               <span className="font-extrabold text-slate-900 text-sm block tracking-tight"> HomeBandhu</span>
-              <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Admin Platform</span>
+              {/* <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Admin Platform</span>*/}
             </div>
           </div>
 
@@ -88,7 +88,7 @@ export default function LandingPage() {
           </div>
 
           {/* Mobile Menu Toggle */}
-          <button 
+          <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg md:hidden transition-colors"
           >
@@ -99,29 +99,29 @@ export default function LandingPage() {
         {/* Mobile Menu Dropdown */}
         {mobileMenuOpen && (
           <div className="md:hidden bg-white border-b border-slate-100 px-6 py-4 space-y-4 animate-slide-up">
-            <a 
-              href="#home" 
+            <a
+              href="#home"
               onClick={() => setMobileMenuOpen(false)}
               className="block text-sm font-bold text-slate-600 hover:text-indigo-600"
             >
               Home
             </a>
-            <a 
-              href="#features" 
+            <a
+              href="#features"
               onClick={() => setMobileMenuOpen(false)}
               className="block text-sm font-bold text-slate-600 hover:text-indigo-600"
             >
               Features
             </a>
-            <a 
-              href="#about" 
+            <a
+              href="#about"
               onClick={() => setMobileMenuOpen(false)}
               className="block text-sm font-bold text-slate-600 hover:text-indigo-600"
             >
               About Us
             </a>
-            <a 
-              href="#contact" 
+            <a
+              href="#contact"
               onClick={() => setMobileMenuOpen(false)}
               className="block text-sm font-bold text-slate-600 hover:text-indigo-600"
             >
@@ -148,11 +148,11 @@ export default function LandingPage() {
             <ShieldCheck className="w-3.5 h-3.5" />
             Society Administration & Operations
           </div>
-          
+
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-slate-900 tracking-tight leading-[1.1]">
              Run Your Society <span className="text-indigo-600">With Clarity</span>
           </h1>
-          
+
           <p className="text-base sm:text-lg text-slate-500 max-w-xl mx-auto lg:mx-0 leading-relaxed font-medium">
             A focused administration portal for resident onboarding, complaint operations, maintenance collections, notices, amenities, and society teams.
           </p>
@@ -244,7 +244,7 @@ export default function LandingPage() {
             <p className="text-slate-500 font-medium text-sm sm:text-base leading-relaxed">
               HomeBandhu replaces fragmented registers and spreadsheets with connected workflows for administrators, department teams, and residents.
             </p>
-            
+
             <div className="space-y-3.5">
               {[
                 'Controlled resident and apartment onboarding',
@@ -309,7 +309,7 @@ export default function LandingPage() {
           </div>
 
           <div>
-            <h4 className="text-white text-xs font-bold uppercase tracking-wider mb-4">Admin Portal</h4>
+            {/* <h4 className="text-white text-xs font-bold uppercase tracking-wider mb-4">Admin Portal</h4>*/}
             <ul className="space-y-2.5 text-xs font-semibold">
               <li><Link to="/login" className="hover:text-white transition-colors">Admin Sign In</Link></li>
               <li><Link to="/register" className="hover:text-white transition-colors">Register Association</Link></li>
