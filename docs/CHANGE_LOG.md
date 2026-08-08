@@ -90,6 +90,15 @@ rule this log already carries.
 - **Header block refreshed.** `AUDIT` It advertised 59 operations across two workstreams; the surface
   is 99 across 86 paths.
 
+### `issue fixes/` — a new folder
+
+- **`issue fixes/22.md`, the full account of this fix.** `DERIVED` One file per closed issue, named
+  by its number. It carries what a commit message cannot: the two bugs and why they were unrelated,
+  the dashboard toggle the whole flow's security was resting on, the `email_verified` gate we nearly
+  wrote and the two artifacts that exist to prevent it, and the dependency between the two fixes —
+  repairing the bypass without repairing the resend endpoint would have converted a security hole
+  into a lockout. Written for a reader who was not here.
+
 ### `potential issues/` — a new folder
 
 - **Eight findings written as ready-to-raise GitHub issues.** `AUDIT` Everything turned up while
