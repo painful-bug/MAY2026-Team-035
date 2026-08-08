@@ -98,6 +98,16 @@ rule this log already carries.
   wrote and the two artifacts that exist to prevent it, and the dependency between the two fixes —
   repairing the bypass without repairing the resend endpoint would have converted a security hole
   into a lockout. Written for a reader who was not here.
+- **`issue fixes/README.md`, the convention for the folder.** `DERIVED` A folder with one file in it
+  teaches nobody anything, and the next person writing a fix document would have had to reverse it
+  out of `22.md`. The README states it directly: how to read one (a table mapping "what you want to
+  know" to the section that answers it), the section-by-section skeleton to copy, and seven rules —
+  of which two carry the real weight. **Name the bug that existed, not the bug that was reported**,
+  because #22 was filed as one bug and was two. And **write down the fix you rejected**, because a
+  wrong fix that looked obviously right to the author will look obviously right to the next reader,
+  who will then improve the code back into the bug. Also fixes the boundary against the sibling
+  folder: findings that are not this issue go to `potential issues/` and are linked, never smuggled
+  into the fix write-up.
 
 ### `potential issues/` — a new folder
 
