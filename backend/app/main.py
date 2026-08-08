@@ -18,17 +18,27 @@ from app.api.v1 import api_router
 from app.config import get_settings
 from app.core.exceptions import ErrorResponse, register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.push import sender
 from app.core.realtime import hub
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Stop the SSE outbox poller cleanly on shutdown.
+    """Run the two background workers for the life of the process.
 
-    It is started lazily by the first subscriber rather than here, so a process
-    that never serves a dashboard never polls at all.
+    They start differently, and the difference is the point. The SSE hub is
+    started lazily by its first subscriber, so a process that never serves a
+    stream never polls at all. The push sender is started here, because it
+    exists precisely to reach a resident who has *nothing* open -- a sender that
+    waited for a connection would only ever run when it was not needed.
+
+    ``sender.start()`` is a no-op without a VAPID keypair, logging one line and
+    returning. An environment with no push configured is an environment where
+    push is off, not one that is broken (design §10.5).
     """
+    await sender.start()
     yield
+    await sender.stop()
     await hub.stop()
 
 

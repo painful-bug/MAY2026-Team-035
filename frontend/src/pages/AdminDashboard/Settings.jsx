@@ -1,16 +1,54 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../store/useApp';
 import { Settings, Shield, Bell, CreditCard, Save } from 'lucide-react';
+import { api } from '../../lib/api/client';
 
 export default function SettingsPage() {
   const { showToast } = useApp();
-  const [autoBilling, setAutoBilling] = useState(true);
-  const [fineCharge, setFineCharge] = useState(true);
-  const [gateSecurity, setGateSecurity] = useState(true);
+  const [autoBilling, setAutoBilling] = useState(false);
+  const [fineCharge, setFineCharge] = useState(false);
+  const [gateSecurity, setGateSecurity] = useState(false);
   const [noticeAlert, setNoticeAlert] = useState(false);
 
-  const handleSave = () => {
-    showToast('Admin Settings Saved Successfully', 'success');
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const data = await api('/settings');
+        setNoticeAlert(data.preferences?.noticeSmsBroadcastEnabled ?? false);
+        setGateSecurity(data.preferences?.requireVisitorPreapproval ?? false);
+        setAutoBilling(data.billing?.autoBillingEnabled ?? false);
+        setFineCharge(data.billing?.lateFeeEnabled ?? false);
+      } catch (err) {
+        showToast('Failed to load current settings', 'error');
+      }
+    }
+    loadSettings();
+  }, [showToast]);
+
+  const handleSave = async () => {
+    try {
+      await Promise.all([
+        api('/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            requireVisitorPreapproval: gateSecurity,
+            noticeSmsBroadcastEnabled: noticeAlert
+          })
+        }),
+        api('/billing-settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            autoBillingEnabled: autoBilling,
+            defaultMaintenanceAmount: autoBilling ? 4250 : null,
+            lateFeeEnabled: fineCharge,
+            lateFeeAmount: fineCharge ? 100 : null,
+          })
+        })
+      ]);
+      showToast('Admin Settings Saved Successfully', 'success');
+    } catch (error) {
+      showToast(error.message || 'Failed to save settings', 'error');
+    }
   };
 
   return (

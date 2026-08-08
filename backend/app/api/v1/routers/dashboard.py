@@ -7,6 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_active_membership, require_csrf, require_membership_role
+from app.api.v1.routers import events
 from app.domain.schemas import AmenityWrite, DashboardSnapshot, MembershipContext
 from app.services import dashboard_service
 
@@ -21,35 +22,26 @@ async def get_dashboard_snapshot(
     return await run_in_threadpool(dashboard_service.snapshot, membership)
 
 
-# The generated spec would otherwise advertise `application/json` here, because
-# that is FastAPI's default for any route it cannot infer a media type from --
-# and a client generated from that would try to JSON-decode a live stream.
 @router.get(
     "/events",
     response_class=StreamingResponse,
-    responses={
-        200: {
-            "content": {"text/event-stream": {}},
-            "description": "Event stream. Frame format and topics: docs/API.md 5.1.",
-        },
-        401: {"description": "No session."},
-        403: {"description": "No active membership."},
-    },
+    responses=events.SSE_RESPONSES,
+    deprecated=True,
 )
 async def dashboard_events(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     membership: MembershipContext = Depends(get_active_membership),
 ) -> StreamingResponse:
-    """Same-origin SSE stream. No provider token is exposed to the browser."""
-    try:
-        cursor = int(last_event_id or 0)
-    except ValueError:
-        cursor = 0
-    return StreamingResponse(
-        dashboard_service.event_stream(membership, cursor),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    """Deprecated alias for `GET /events`; identical behaviour.
+
+    The stream was never dashboard-specific -- its guard has always been
+    `get_active_membership` -- and since `0028` it is audience-scoped for every
+    role, so it lives at `/events` now. This path stays because the admin
+    frontend is wired to it and a working client is not worth breaking to tidy
+    a URL. Both routes call the same handler body; there is no second
+    implementation to keep in step.
+    """
+    return events.stream(membership, last_event_id)
 
 
 @router.post("/amenities", dependencies=[Depends(require_csrf)])

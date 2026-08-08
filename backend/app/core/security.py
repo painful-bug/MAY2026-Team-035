@@ -56,9 +56,24 @@ def decode_token(token: str) -> Principal:
     if not user_id:
         raise AuthenticationError("Token is missing a subject claim.")
 
+    # Supabase carries email confirmation in `user_metadata.email_verified`; the
+    # two top-level names are read as well because other issuers use them and a
+    # test mints them directly. Reading only the top level made this field false
+    # for every real caller -- harmless while nothing consults it, and a total
+    # lockout for whoever first writes `if not principal.email_verified`.
+    #
+    # Descriptive, never a gate. Authorization comes from the active membership,
+    # and an OAuth JWT is not required to carry the claim at all
+    # (`docs/BACKEND_CHANGES.md`). Email/password sign-in is refused at the
+    # provider exchange instead, where GoTrue's own user record is authoritative.
+    metadata = claims.get("user_metadata")
     return Principal(
         user_id=user_id,
         phone=claims.get("phone") or None,
         email=claims.get("email") or None,
-        email_verified=bool(claims.get("email_confirmed_at") or claims.get("email_verified")),
+        email_verified=bool(
+            claims.get("email_confirmed_at")
+            or claims.get("email_verified")
+            or (isinstance(metadata, dict) and metadata.get("email_verified"))
+        ),
     )

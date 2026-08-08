@@ -41,7 +41,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -62,6 +62,13 @@ BATCH_SIZE = 500
 # How often to remind an idle connection that it is still alive. Proxies and
 # load balancers commonly close a silent stream at 60s.
 HEARTBEAT_SECONDS = 20.0
+
+# The audiences `0028_event_audience.sql` puts on every outbox row. The column
+# is `not null default 'community'`, so a row from before that migration reads
+# as community-wide -- which is what it was.
+AUDIENCE_COMMUNITY = "community"
+AUDIENCE_ROLE = "role"
+AUDIENCE_MEMBER = "member"
 
 
 @dataclass
@@ -86,12 +93,23 @@ class Event:
         return f"id: {self.id}\nevent: {self.topic}\ndata: {body}\n\n"
 
 
-# The frame a lagging client gets instead of the events it missed. `topic`
-# matches what the generic outbox trigger emits, so the browser's existing
-# `dashboard.refresh` listener re-snapshots and converges without needing to
-# know it ever fell behind.
-def _resync_event(event_id: int) -> Event:
-    return Event(id=event_id, topic="dashboard.refresh", payload={"resync": True})
+_ADMIN_ROLES = frozenset({"admin", "manager"})
+
+
+# The frame a lagging client gets instead of the events it missed: re-read
+# everything, you have a gap.
+#
+# The topic depends on the role because one of the two listeners already ships.
+# `dashboard.refresh` is what the admin frontend is wired to, and this
+# workstream does not get to change frontend code -- so admins keep it and
+# converge exactly as before. Every other role gets `stream.resync`, which is
+# the same instruction under a name that does not claim to be about the admin
+# dashboard. `0028` retargets the `dashboard.refresh` *topic* to
+# {admin,manager}; this frame is synthesised per subscriber and never goes
+# through the audience filter, so the two have to agree by construction.
+def _resync_event(event_id: int, role: str = "") -> Event:
+    topic = "dashboard.refresh" if role in _ADMIN_ROLES else "stream.resync"
+    return Event(id=event_id, topic=topic, payload={"resync": True})
 
 
 # `eq=False` keeps the default identity hash. Subscribers are held in a set and
@@ -101,10 +119,40 @@ def _resync_event(event_id: int) -> Event:
 @dataclass(eq=False)
 class _Subscriber:
     community_id: str
+    # No defaults on these two, deliberately. A subscriber that could be built
+    # without an identity is a subscriber that can be built by accident, and
+    # the audience filter below is only as good as the identity it filters on.
+    membership_id: str
+    role: str
     queue: asyncio.Queue[Event] = field(
         default_factory=lambda: asyncio.Queue(maxsize=QUEUE_MAXSIZE)
     )
     dropped: bool = False
+
+    def accepts(self, row: Mapping[str, Any]) -> bool:
+        """Whether this connection is in the row's audience.
+
+        The single filter, applied identically to live dispatch and to the
+        reconnect backfill. Both `membership_id` and `role` come from the
+        membership the endpoint resolved out of Postgres, so a client cannot
+        widen its own stream -- the same guarantee that already covered
+        `community_id`, one field further.
+
+        Anything it cannot classify is delivered to nobody.
+        `sse_events_audience_shape_check` means such a row cannot be written,
+        so this branch is a second lock on a door that is already bolted; it
+        exists because the failure mode of guessing would be a disclosure.
+        """
+        audience = row.get("audience") or AUDIENCE_COMMUNITY
+        if audience == AUDIENCE_COMMUNITY:
+            return True
+        if audience == AUDIENCE_ROLE:
+            roles = row.get("audience_roles") or ()
+            return self.role in {str(role).lower() for role in roles}
+        if audience == AUDIENCE_MEMBER:
+            recipient = row.get("recipient_membership_id")
+            return recipient is not None and str(recipient) == self.membership_id
+        return False
 
     def push(self, event: Event) -> None:
         """Enqueue without ever blocking the poller.
@@ -197,21 +245,30 @@ class RealtimeHub:
             group = self._subscribers.get(str(row["community_id"]))
             if not group:
                 continue
-            payload = row.get("payload")
-            event = Event(
-                id=event_id,
-                topic=str(row.get("topic") or "dashboard.refresh"),
-                payload=payload if isinstance(payload, dict) else {"raw": payload},
-            )
+            event = _event_from(row)
+            # One `Event` shared by every recipient -- it is immutable in
+            # practice and building one per subscriber would undo the point of
+            # fanning out from a single query.
             for subscriber in group:
-                subscriber.push(event)
+                if subscriber.accepts(row):
+                    subscriber.push(event)
 
     # -- subscription ------------------------------------------------------
 
     async def subscribe(
-        self, community_id: str, *, last_event_id: int = 0
+        self,
+        community_id: str,
+        *,
+        membership_id: str,
+        role: str,
+        last_event_id: int = 0,
     ) -> AsyncIterator[str]:
-        """Yield SSE frames for one community until the client disconnects.
+        """Yield SSE frames for one membership until the client disconnects.
+
+        `community_id`, `membership_id` and `role` must all come from a
+        membership the caller has already resolved out of Postgres. The hub
+        takes no identity from a header, a query parameter or a
+        `Last-Event-ID`; those it does read are used to seek, never to widen.
 
         Honours `Last-Event-ID`: a browser that reconnects mid-stream is caught
         up from the database first, then attached to the live feed, so a
@@ -219,12 +276,14 @@ class RealtimeHub:
         during it.
         """
         await self.start()
-        subscriber = _Subscriber(community_id=community_id)
+        subscriber = _Subscriber(
+            community_id=community_id, membership_id=membership_id, role=role
+        )
         async with self._lock:
             self._subscribers.setdefault(community_id, set()).add(subscriber)
 
         try:
-            for frame in await self._backfill(community_id, last_event_id):
+            for frame in await self._backfill(subscriber, last_event_id):
                 yield frame
 
             while True:
@@ -242,7 +301,7 @@ class RealtimeHub:
 
                 if subscriber.dropped and subscriber.queue.empty():
                     subscriber.dropped = False
-                    yield _resync_event(event.id).frame()
+                    yield _resync_event(event.id, subscriber.role).frame()
         finally:
             async with self._lock:
                 group = self._subscribers.get(community_id)
@@ -251,8 +310,16 @@ class RealtimeHub:
                     if not group:
                         del self._subscribers[community_id]
 
-    async def _backfill(self, community_id: str, last_event_id: int) -> list[str]:
-        """Frames the client missed while it was disconnected."""
+    async def _backfill(self, subscriber: _Subscriber, last_event_id: int) -> list[str]:
+        """Frames this subscriber missed while it was disconnected.
+
+        The audience filter is applied twice on purpose. The query narrows in
+        Postgres, because the read is capped and filtering only in Python would
+        let a burst of admin traffic fill the cap and hide a resident's own
+        events behind it. `accepts` then decides, because a mistake in a
+        hand-written PostgREST expression should be able to lose an event and
+        never to leak one.
+        """
         if last_event_id <= 0:
             return []
         from app.core.supabase_client import get_service_client
@@ -260,26 +327,31 @@ class RealtimeHub:
 
         def _read() -> list[dict[str, Any]]:
             return dashboard_repository.read_events(
-                get_service_client(), community_id=community_id, after_id=last_event_id
+                get_service_client(),
+                community_id=subscriber.community_id,
+                after_id=last_event_id,
+                membership_id=subscriber.membership_id,
+                role=subscriber.role,
             )
 
         try:
             rows = await asyncio.to_thread(_read)
         except Exception:  # noqa: BLE001 - a failed backfill must not kill the stream
-            logger.exception("SSE backfill failed for community %s", community_id)
+            logger.exception(
+                "SSE backfill failed for community %s", subscriber.community_id
+            )
             return []
 
-        frames = []
-        for row in rows:
-            payload = row.get("payload")
-            frames.append(
-                Event(
-                    id=int(row["id"]),
-                    topic=str(row.get("topic") or "dashboard.refresh"),
-                    payload=payload if isinstance(payload, dict) else {"raw": payload},
-                ).frame()
-            )
-        return frames
+        return [_event_from(row).frame() for row in rows if subscriber.accepts(row)]
+
+
+def _event_from(row: Mapping[str, Any]) -> Event:
+    payload = row.get("payload")
+    return Event(
+        id=int(row["id"]),
+        topic=str(row.get("topic") or "dashboard.refresh"),
+        payload=payload if isinstance(payload, dict) else {"raw": payload},
+    )
 
 
 hub = RealtimeHub()

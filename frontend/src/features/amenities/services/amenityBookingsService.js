@@ -10,6 +10,7 @@ import {
   createTimelineBlocks,
 } from '../utils/amenityTimeline.js';
 import { getAmenityById } from './amenitiesService.js';
+import { api } from '../../../lib/api/client.js';
 
 const cloneBooking = (booking) => ({
   ...booking,
@@ -159,93 +160,36 @@ export const getAmenityApprovalRequests = async (amenityId) =>
     .map(createApprovalRecord);
 
 export const approveAmenityBookingRequest = async (bookingId) => {
-  const bookings = getAllBookings();
-  const booking = bookings.find((record) => record.id === bookingId);
-
-  if (
-    !booking ||
-    booking.requiresApproval !== true ||
-    booking.source !== 'resident' ||
-    booking.status !== BOOKING_STATUS.PENDING
-  ) {
-    throw new Error('This booking request is no longer pending approval.');
+  try {
+    const result = await api(`/amenity-bookings/${bookingId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    await refreshBookings();
+    return result;
+  } catch (err) {
+    throw new Error(err.message || 'Failed to approve booking.');
   }
-
-  const timestamp = new Date().toISOString();
-  const approvedBooking = {
-    ...booking,
-    status: BOOKING_STATUS.APPROVED,
-    approvedAt: timestamp,
-    updatedAt: timestamp,
-  };
-
-  saveAmenityBookings(
-    bookings.map((record) =>
-      record.id === bookingId ? approvedBooking : record
-    )
-  );
-  return createApprovalRecord(approvedBooking);
 };
 
 export const rejectAmenityBookingRequest = async (
   bookingId,
   rejectionData
 ) => {
-  const bookings = getAllBookings();
-  const booking = bookings.find((record) => record.id === bookingId);
-
-  if (!booking || booking.requiresApproval !== true) {
-    throw new Error('Booking request could not be found.');
-  }
-
-  if (booking.status === BOOKING_STATUS.APPROVED) {
-    throw new Error('This booking request has already been approved.');
-  }
-
-  if (booking.status === BOOKING_STATUS.REJECTED) {
-    throw new Error('This booking request has already been rejected.');
-  }
-
-  if (booking.status !== BOOKING_STATUS.PENDING) {
-    throw new Error('This booking request is no longer pending approval.');
-  }
-
-  if (!rejectionData.reason) {
-    throw new Error('Select a rejection reason.');
-  }
-
-  if (
-    rejectionData.reason === 'other' &&
-    !rejectionData.otherReason?.trim()
-  ) {
-    throw new Error('Add the rejection reason.');
-  }
-
-  if (!rejectionData.rejectedBy) {
-    throw new Error('The rejecting administrator could not be identified.');
-  }
-
-  const timestamp = new Date().toISOString();
-  const rejectedBooking = {
-    ...booking,
-    status: BOOKING_STATUS.REJECTED,
-    rejectionReason:
-      rejectionData.reason === 'other'
-        ? rejectionData.otherReason.trim()
-        : rejectionData.reason,
-    rejectionReasonCode: rejectionData.reason,
-    rejectedBy: rejectionData.rejectedBy,
-    rejectedAt: timestamp,
-    notifyResident: Boolean(rejectionData.notifyResident),
-    updatedAt: timestamp,
+  const payload = {
+    reasonCode: rejectionData.reason,
+    reason: rejectionData.otherReason?.trim() || null,
   };
-
-  saveAmenityBookings(
-    bookings.map((record) =>
-      record.id === bookingId ? rejectedBooking : record
-    )
-  );
-  return createApprovalRecord(rejectedBooking);
+  try {
+    const result = await api(`/amenity-bookings/${bookingId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    await refreshBookings();
+    return result;
+  } catch (err) {
+    throw new Error(err.message || 'Failed to reject booking.');
+  }
 };
 
 export const validateBookingSlot = async ({
@@ -568,47 +512,27 @@ export const createResidentAmenityBookingSeries = async (bookingData) => {
     throw new Error('Select at least one booking date.');
   }
 
-  const amenity = await getAmenityById(bookingData.amenityId);
-  const bookings = getAllBookings();
-  const bookingGroupId = genId('booking-group');
-
-  for (const date of dates) {
-    const datedBooking = { ...bookingData, date };
-    assertValidBookingDetails(datedBooking);
-    assertResidentBookingRules(
-      amenity,
-      datedBooking,
-      bookings,
-      1
-    );
-    await assertSlotAvailable({
-      ...datedBooking,
-      openingTime: amenity.openingTime,
-      closingTime: amenity.closingTime,
-      cleaningBuffer: amenity.cleaningBuffer,
-      bookingMode: amenity.bookingMode,
-      capacity: amenity.capacity,
-    });
-  }
-
-  const timestamp = new Date().toISOString();
-  const groupData = {
-    bookingGroupId,
-    bookingGroupSize: dates.length,
-    seriesStartDate: dates[0],
-    seriesEndDate: dates[dates.length - 1],
+  const payload = {
+    bookingTitle: bookingData.bookingTitle,
+    dates,
+    startTime: bookingData.startTime,
+    endTime: bookingData.endTime,
+    guestCount: bookingData.guestCount ?? 0,
+    guests: Array.isArray(bookingData.guests) ? bookingData.guests : [],
+    isPrivateBooking: bookingData.isPrivateBooking ?? false,
+    notes: bookingData.notes ?? '',
   };
-  const createdBookings = dates.map((date) =>
-    createResidentBookingRecord(
-      { ...bookingData, date },
-      amenity,
-      timestamp,
-      groupData
-    )
-  );
 
-  saveAmenityBookings([...bookings, ...createdBookings]);
-  return createdBookings.map(cloneBooking);
+  try {
+    const result = await api(`/amenities/${bookingData.amenityId}/bookings/request`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    await refreshBookings();
+    return result.items || [];
+  } catch (err) {
+    throw new Error(err.message || 'Failed to create booking request.');
+  }
 };
 
 export const createResidentAmenityBooking = async (bookingData) => {
@@ -624,90 +548,42 @@ export const cancelResidentAmenityBookingDays = async ({
   residentId,
   reason,
 }) => {
-  const uniqueBookingIds = [...new Set(bookingIds)];
-  const trimmedReason = reason?.trim();
-
-  if (uniqueBookingIds.length === 0) {
-    throw new Error('Select at least one booking day to cancel.');
+  const payload = {
+    occurrenceIds: bookingIds,
+    reason: reason?.trim() || null,
+  };
+  try {
+    const result = await api('/amenity-bookings/cancel', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    await refreshBookings();
+    return bookingIds.map(id => ({ id }));
+  } catch (err) {
+    throw new Error(err.message || 'Failed to cancel bookings.');
   }
-
-  if (!trimmedReason) {
-    throw new Error('Add a cancellation reason.');
-  }
-
-  const bookings = getAllBookings();
-  const selectedBookings = uniqueBookingIds.map((bookingId) =>
-    bookings.find((booking) => booking.id === bookingId)
-  );
-  const cancellableStatuses = new Set([
-    BOOKING_STATUS.PENDING,
-    BOOKING_STATUS.APPROVED,
-    BOOKING_STATUS.CONFIRMED,
-  ]);
-
-  if (
-    selectedBookings.some(
-      (booking) =>
-        !booking ||
-        booking.residentId !== residentId ||
-        booking.source !== 'resident' ||
-        booking.date < new Date().toISOString().split('T')[0] ||
-        !cancellableStatuses.has(booking.status)
-    )
-  ) {
-    throw new Error(
-      'One or more selected booking days can no longer be cancelled.'
-    );
-  }
-
-  const cancelledAt = new Date().toISOString();
-  const selectedIds = new Set(uniqueBookingIds);
-  const updatedBookings = bookings.map((booking) =>
-    selectedIds.has(booking.id)
-      ? {
-          ...booking,
-          status: BOOKING_STATUS.CANCELLED,
-          cancellationReason: 'resident-requested',
-          cancellationDetails: trimmedReason,
-          cancelledByResident: true,
-          cancelledAt,
-          updatedAt: cancelledAt,
-        }
-      : booking
-  );
-
-  saveAmenityBookings(updatedBookings);
-  return updatedBookings
-    .filter((booking) => selectedIds.has(booking.id))
-    .map(cloneBooking);
 };
 
 export const createAmenityBlockedSlot = async (blockedSlotData) => {
-  await assertSlotAvailable(blockedSlotData);
-
-  const timestamp = new Date().toISOString();
-  const blockedSlot = {
-    id: genId('blocked'),
-    amenityId: blockedSlotData.amenityId,
-    residentId: null,
-    residentName: null,
-    bookingTitle: blockedSlotData.reason.trim(),
+  const payload = {
     date: blockedSlotData.date,
     startTime: blockedSlotData.startTime,
     endTime: blockedSlotData.endTime,
-    state: BOOKING_TIMELINE_STATE.BLOCKED,
-    bookingType: 'maintenance-reservation',
-    status: BOOKING_STATUS.BLOCKED,
     reason: blockedSlotData.reason.trim(),
     department: blockedSlotData.department,
     notes: blockedSlotData.notes?.trim() || null,
-    createdAt: timestamp,
-    updatedAt: timestamp,
   };
-  const bookings = getAllBookings();
 
-  saveAmenityBookings([...bookings, blockedSlot]);
-  return cloneBooking(blockedSlot);
+  try {
+    const result = await api(`/amenities/${blockedSlotData.amenityId}/blocks`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    await refreshBookings();
+    return result;
+  } catch (err) {
+    throw new Error(err.message || 'Failed to block slot.');
+  }
 };
 
 export const updateAmenityBooking = async (bookingId, bookingData) => {
@@ -806,44 +682,20 @@ export const forceCancelAmenityBooking = async (
   bookingId,
   cancellationData
 ) => {
-  const bookings = getAllBookings();
-  const existingBooking = bookings.find((booking) => booking.id === bookingId);
-
-  if (!existingBooking) {
-    throw new Error('The linked booking could not be found.');
-  }
-
-  if (
-    ![BOOKING_STATUS.APPROVED, BOOKING_STATUS.CONFIRMED].includes(
-      existingBooking.status
-    )
-  ) {
-    throw new Error('This booking is no longer eligible for force cancellation.');
-  }
-
-  if (!cancellationData.reason || !cancellationData.cancelledBy) {
-    throw new Error('A cancellation reason and administrator are required.');
-  }
-
-  const timestamp = new Date().toISOString();
-  const cancelledBooking = {
-    ...existingBooking,
-    status: BOOKING_STATUS.CANCELLED,
-    forceCancelled: true,
-    forceCancelReason: cancellationData.reason,
-    forceCancelledBy: cancellationData.cancelledBy,
-    forceCancelledAt: timestamp,
-    cancellationReason: cancellationData.reason,
-    cancelledAt: timestamp,
-    updatedAt: timestamp,
+  const payload = {
+    reasonCode: cancellationData.reason,
+    reason: cancellationData.otherReason?.trim() || null,
   };
-
-  saveAmenityBookings(
-    bookings.map((booking) =>
-      booking.id === bookingId ? cancelledBooking : booking
-    )
-  );
-  return cloneBooking(cancelledBooking);
+  try {
+    const result = await api(`/amenity-bookings/${bookingId}/force-cancel`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    await refreshBookings();
+    return result;
+  } catch (err) {
+    throw new Error(err.message || 'Failed to force cancel booking.');
+  }
 };
 
 export const sortAmenityBookings = (bookings) =>

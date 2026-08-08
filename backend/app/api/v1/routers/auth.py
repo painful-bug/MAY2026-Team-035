@@ -168,9 +168,23 @@ async def verify_email(body: EmailTokenRequest, response: Response) -> MessageRe
 
 
 @router.post("/email/resend", response_model=MessageResponse, dependencies=[Depends(require_csrf)])
-async def resend_email(_: PasswordResetRequest) -> MessageResponse:
-    # Supabase does not expose a safe standalone resend primitive through this BFF.
-    # Return the same response to avoid account enumeration; sign-up can be retried.
+async def resend_email(body: PasswordResetRequest) -> MessageResponse:
+    """Send the sign-up confirmation link again.
+
+    The recovery path when the first link expired, never arrived, or was spent by
+    a mail-security scanner -- without it, a user whose confirmation failed has
+    nowhere to go, since signing in is now correctly refused until they confirm.
+    The response is identical whether or not the address has an unconfirmed
+    account, so it cannot be used to discover who has registered.
+    """
+    _require_enabled("email_password")
+    if get_settings().auth_captcha_enabled and not body.captcha_token:
+        raise ValidationError("Complete the CAPTCHA challenge.", code="captcha_required")
+    await _run_provider_operation(
+        auth_service.resend_confirmation_email,
+        email=body.email.strip().casefold(),
+        captcha_token=body.captcha_token,
+    )
     return MessageResponse(message="If an unconfirmed account exists, a confirmation email will be sent.")
 
 

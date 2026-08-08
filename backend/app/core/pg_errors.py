@@ -23,19 +23,37 @@ from app.core.exceptions import (
 )
 
 # Custom codes raised by our SECURITY DEFINER functions.
+#
+# The first three spell an HTTP status because that was the whole of what they
+# had to say. `HBUSE` is the first that names a *reason* instead: a resident
+# cancelling a pass whose guest already walked through the gate is not the same
+# answer as one cancelling from a state that was never cancellable, and 8 Q2 asks
+# for a client to be able to tell them apart. The prefix is what marks a signal
+# as ours; the remaining three characters are free to mean whatever the signal
+# needs.
 _CUSTOM = {
     "HB403": (AuthorizationError, "forbidden"),
     "HB404": (NotFoundError, "not_found"),
     "HB409": (ConflictError, "conflict"),
+    "HBUSE": (ConflictError, "pass_already_used"),
 }
 
 # Postgres classes worth distinguishing from a generic failure.
+#
+# `P0002`, `22P02` and `22004` were added when the resident complaint RPCs
+# (`0031`) started raising them. They were already reachable before that --
+# `0020`'s `update_complaint` has raised `P0002` for a missing complaint since it
+# was written -- and every one of them surfaced as a 500, which is the API
+# reporting its own failure for what is squarely the caller's mistake.
 _STANDARD = {
     "23505": (ConflictError, "unique_violation"),       # duplicate key
     "23503": (ValidationError, "foreign_key_violation"),  # references a missing row
     "23514": (ValidationError, "check_violation"),        # failed a CHECK
     "23502": (ValidationError, "not_null_violation"),
     "42501": (AuthorizationError, "insufficient_privilege"),
+    "P0002": (NotFoundError, "not_found"),                # `select into` found nothing
+    "22P02": (ValidationError, "invalid_value"),          # unparseable enum or number
+    "22004": (ValidationError, "missing_value"),          # a required argument was null
 }
 
 

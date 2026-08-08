@@ -89,7 +89,97 @@ def test_api_004_refresh_timeout_returns_service_unavailable(
     assert actual_output == expected_output
 
 
-def test_api_005_email_confirmation_establishes_browser_session(
+def test_api_005_sign_in_with_an_unconfirmed_email_is_refused(
+    api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No session cookie may be set for an address nobody has proven they own."""
+    from app.api.v1.routers import auth as auth_router
+    from app.core.exceptions import AuthenticationError
+    from app.core.web_session import cookie_name
+
+    endpoint = "POST /api/v1/auth/password/sign-in"
+    input_data = {"email": "resident@example.com", "password": "a-long-enough-password"}
+    expected_output = {
+        "status_code": 401,
+        "body": {
+            "error": {
+                "code": "email_not_confirmed",
+                "message": (
+                    "Confirm your email address before signing in. "
+                    "Check your inbox for the confirmation link."
+                ),
+            }
+        },
+    }
+
+    def unconfirmed(**_: object) -> None:
+        raise AuthenticationError(
+            "Confirm your email address before signing in. "
+            "Check your inbox for the confirmation link.",
+            code="email_not_confirmed",
+        )
+
+    monkeypatch.setattr(auth_router.auth_service, "sign_in_with_password", unconfirmed)
+
+    response = api_client.post(
+        "/api/v1/auth/password/sign-in",
+        json=input_data,
+        headers=csrf_headers,
+    )
+    actual_output = {
+        "status_code": response.status_code,
+        "body": response.json(),
+    }
+
+    assert endpoint == "POST /api/v1/auth/password/sign-in"
+    assert actual_output == expected_output
+    assert api_client.cookies.get(cookie_name("access")) is None
+
+
+def test_api_006_resend_reaches_the_provider_and_reveals_nothing(
+    api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The route used to return its reassurance without sending anything."""
+    from app.api.v1.routers import auth as auth_router
+
+    endpoint = "POST /api/v1/auth/email/resend"
+    input_data = {"email": "Resident@Example.com "}
+    expected_output = {
+        "status_code": 200,
+        "body": {
+            "message": (
+                "If an unconfirmed account exists, a confirmation email will be sent."
+            )
+        },
+    }
+    asked: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        auth_router.auth_service,
+        "resend_confirmation_email",
+        lambda **kwargs: asked.append(kwargs),
+    )
+
+    response = api_client.post(
+        "/api/v1/auth/email/resend",
+        json=input_data,
+        headers=csrf_headers,
+    )
+    actual_output = {
+        "status_code": response.status_code,
+        "body": response.json(),
+    }
+
+    assert endpoint == "POST /api/v1/auth/email/resend"
+    assert actual_output == expected_output
+    assert asked == [{"email": "resident@example.com", "captcha_token": None}]
+
+
+def test_api_007_email_confirmation_establishes_browser_session(
     api_client: TestClient,
     csrf_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,

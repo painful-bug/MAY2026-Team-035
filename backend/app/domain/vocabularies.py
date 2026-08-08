@@ -47,11 +47,56 @@ _STATUS_TO_STORAGE = {
     "canceled": "cancelled",
 }
 
+# The reverse direction, added when the resident complaint surface needed to
+# render a status rather than only store one. It is the map
+# `dashboard_service._COMPLAINT_LABELS` had been carrying privately since the
+# admin snapshot was written; that module now reads this one, because a
+# vocabulary with two copies is a vocabulary that will eventually disagree with
+# itself -- which is the entire reason this module exists.
+_COMPLAINT_STATUS_TO_WIRE = {
+    "open": "Pending",
+    "acknowledged": "In Progress",
+    "in_progress": "In Progress",
+    "resolved": "Resolved",
+    "closed": "Resolved",
+    "cancelled": "Cancelled",
+}
+
+# The frontend calls it `urgency` and the column is `priority` (0031). One
+# concept, two names, and this is the seam -- the same job this module does for
+# every other pair. The values are the frontend's exactly: `Complaints.jsx`
+# renders `High`, `Medium`, `Low` and puts those strings in a `<select>`.
+_COMPLAINT_PRIORITY_TO_WIRE = {"low": "Low", "medium": "Medium", "high": "High"}
+
+_COMPLAINT_PRIORITY_TO_STORAGE = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    # The frontend's own fallback when a form arrives with no urgency set
+    # (`createComplaintsSlice.js` defaults to `Low`). Accepting the empty string
+    # here would let a blank select mean something; it is left out on purpose.
+}
+
 # A6: the frontend has exactly two department states, Active and Inactive;
 # migration 0011's CHECK allows 'active' and 'archived'. Both vocabularies have
 # two values, so the mapping is total and lossless in both directions -- unlike
 # the complaint statuses above, this one IS a round trip. Whether the column
 # should simply say 'inactive' is DECISIONS_NEEDED D5.
+# The baseline's `visitor_status` enum against the words `Visitors.jsx` renders.
+# Seven of the eight differ only in shape; the eighth is the one that matters --
+# the column says `denied` and every screen in the prototype says `Rejected`.
+# Neither side is renamed to please the other (0032).
+_VISITOR_STATUS_TO_WIRE = {
+    "expected": "Expected",
+    "pending_approval": "Pending Approval",
+    "approved": "Approved",
+    "denied": "Rejected",
+    "checked_in": "Checked In",
+    "checked_out": "Checked Out",
+    "expired": "Expired",
+    "cancelled": "Cancelled",
+}
+
 _DEPARTMENT_STATUS_TO_WIRE = {"active": "Active", "archived": "Inactive"}
 
 _DEPARTMENT_STATUS_TO_STORAGE = {
@@ -200,6 +245,73 @@ _BACKEND_STATUS_TO_WIRE = {
 def status_to_storage(value: str | None) -> str | None:
     """Frontend status -> the stored value. None when unrecognised."""
     return _STATUS_TO_STORAGE.get((value or "").strip().lower())
+
+
+def complaint_status_to_wire(value: str | None) -> str:
+    """Stored complaint status -> the string the frontend renders.
+
+    The other half of ``status_to_storage``, and the asymmetry described at the
+    top of this module lives here: ``closed`` renders as ``Resolved`` because the
+    frontend's select has three options and closed is not one of them.
+
+    Unknown reads as ``Pending`` rather than raising. A status this map has not
+    heard of means the enum grew, and a complaint list that refuses to render is
+    a worse answer than one row with an optimistic label.
+    """
+    return _COMPLAINT_STATUS_TO_WIRE.get((value or "").strip().lower(), "Pending")
+
+
+def complaint_status_filter(value: str | None) -> list[str] | None:
+    """A frontend status -> **every** stored status that renders as it.
+
+    ``status_to_storage`` answers "what do I store when the user picks this",
+    which is the right question when writing and the wrong one when filtering.
+    Two stored statuses render as ``Resolved`` and two render as ``In Progress``,
+    so a list filtered with the single value would hide rows the same list
+    displays under the word the caller typed -- a filter that is *correct* and
+    still returns the wrong answer, which is harder to notice than a typo
+    because nothing about it looks like a mistake.
+
+    Derived by inverting ``_COMPLAINT_STATUS_TO_WIRE`` rather than restating it.
+    A hand-written second map is a promise that two dictionaries will be edited
+    together, and this module exists because that promise is not kept.
+
+    ``None`` when the word is not one this surface renders, which the service
+    turns into a 422.
+    """
+    wanted = (value or "").strip().casefold()
+    if not wanted:
+        return None
+    matches = [
+        stored
+        for stored, shown in _COMPLAINT_STATUS_TO_WIRE.items()
+        if shown.casefold() == wanted
+    ]
+    return matches or None
+
+
+def complaint_priority_to_wire(value: str | None) -> str:
+    """Stored priority -> the ``High``/``Medium``/``Low`` the form shows."""
+    return _COMPLAINT_PRIORITY_TO_WIRE.get((value or "").strip().lower(), "Low")
+
+
+def complaint_priority_to_storage(value: str | None) -> str | None:
+    """Frontend urgency -> the stored priority. None when unrecognised.
+
+    ``None`` rather than a default, so a caller can tell "they sent nothing" from
+    "they sent something this backend does not understand" -- the second is a 422
+    and the first is not.
+    """
+    return _COMPLAINT_PRIORITY_TO_STORAGE.get((value or "").strip().lower())
+
+
+def visitor_status_to_wire(value: str | None) -> str:
+    """Stored visitor status -> the string the frontend renders.
+
+    Unknown reads as ``Expected`` rather than raising: a pass list that refuses
+    to render because the enum grew is a worse answer than one optimistic row.
+    """
+    return _VISITOR_STATUS_TO_WIRE.get((value or "").strip().lower(), "Expected")
 
 
 def department_status_to_wire(value: str | None) -> str:

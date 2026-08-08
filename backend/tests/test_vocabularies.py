@@ -14,6 +14,8 @@ from __future__ import annotations
 import pytest
 
 from app.domain.vocabularies import (
+    complaint_status_filter,
+    complaint_status_to_wire,
     status_to_storage,
 )
 
@@ -66,3 +68,48 @@ def test_unknown_status_is_rejected_not_guessed():
     assert status_to_storage("Escalated") is None
     assert status_to_storage("") is None
     assert status_to_storage(None) is None
+
+
+# ---------------------------------------------------------------------------
+# The filter direction
+#
+# `status_to_storage` answers "what do I store when the user picks this", which
+# is the right question when writing and the wrong one when filtering a list.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("wire", "expected"),
+    [
+        ("Pending", ["open"]),
+        # Two stored statuses render as one word. A filter carrying only one of
+        # them returns a list missing rows that same list displays under the
+        # word the caller typed.
+        ("In Progress", ["acknowledged", "in_progress"]),
+        ("Resolved", ["closed", "resolved"]),
+        ("Cancelled", ["cancelled"]),
+    ],
+)
+def test_a_filter_matches_every_status_that_renders_as_the_word_asked_for(
+    wire, expected
+):
+    assert sorted(complaint_status_filter(wire)) == expected
+
+
+def test_an_unrenderable_word_is_rejected_rather_than_matching_nothing():
+    """`Closed` is a stored value, not something this surface ever shows -- so a
+    caller asking for it is a caller guessing. An empty match list would look
+    like "you have none of those"."""
+    assert complaint_status_filter("Closed") is None
+    assert complaint_status_filter("Escalated") is None
+    assert complaint_status_filter("") is None
+    assert complaint_status_filter(None) is None
+
+
+def test_every_word_this_surface_renders_can_be_filtered_by():
+    """The two directions are derived from one map, so this cannot drift -- which
+    is the point of asserting it rather than trusting it.
+    """
+    for stored in BASELINE_COMPLAINT_STATUS:
+        shown = complaint_status_to_wire(stored)
+        assert stored in complaint_status_filter(shown)

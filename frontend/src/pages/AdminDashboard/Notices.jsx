@@ -1,24 +1,33 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
 import { Megaphone, Plus, Calendar } from 'lucide-react';
+import { api } from '../../lib/api/client';
 
 export default function Notices() {
-  const { notices, addNotice } = useApp();
+  const { notices, showToast } = useApp();
   const [modalOpen, setModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('General');
   const [urgency, setUrgency] = useState('Info');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!title || !description) return;
-    addNotice({ title, description, category, urgency });
-    setTitle('');
-    setDescription('');
-    setCategory('General');
-    setUrgency('Info');
-    setModalOpen(false);
+    try {
+      await api('/notices', {
+        method: 'POST',
+        body: JSON.stringify({ title, description, category, urgency }),
+      });
+      showToast('Notice published successfully!', 'success');
+      setTitle('');
+      setDescription('');
+      setCategory('General');
+      setUrgency('Info');
+      setModalOpen(false);
+    } catch (error) {
+      showToast(error.message || 'Failed to publish notice', 'error');
+    }
   };
 
   return (

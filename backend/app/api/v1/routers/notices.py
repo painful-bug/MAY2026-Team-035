@@ -36,6 +36,8 @@ async def create_notice(
 ) -> NoticeCreated:
     """Publish a notice to the caller's community.
 
+    Related user story: Resident 2.11 - timely notices with effective dates. The current endpoint publishes immediately; scheduled effective-date reminders are not yet complete.
+
     Published immediately: ``published_at`` is set to now. The screen has no draft
     state and no schedule control, so a nullable ``published_at`` left unset would
     create notices that no reader could ever see.

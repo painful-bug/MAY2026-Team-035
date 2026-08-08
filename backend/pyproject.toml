@@ -11,6 +11,12 @@ dependencies = [
     "pydantic-settings>=2.3",
     "pyjwt[crypto]>=2.9",
     "httpx>=0.27",
+    # Standards Web Push (RFC 8291/8292) with our own VAPID keypair, so no
+    # vendor SDK reaches the frontend and no third party sees who visited which
+    # flat. A runtime dependency, not a dev one: the push sender is part of the
+    # running service. Brings `py-vapid`, which scripts/generate_vapid_keys.py
+    # uses. See docs/design/RESIDENT_BACKEND_DESIGN.md 5.11.
+    "pywebpush>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +26,10 @@ dev = [
     # scripts/export_openapi.py, which regenerates docs/openapi.yaml. A dev
     # dependency on purpose: the running service never reads or writes YAML.
     "pyyaml>=6.0",
+    # The real PostgreSQL parser. supabase/migrations/README.md claims every
+    # migration is checked with it, so it has to be installable from this file
+    # rather than from whoever happened to run the check last.
+    "pglast>=6.0",
 ]
 
 [tool.uv]

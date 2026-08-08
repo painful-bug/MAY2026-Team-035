@@ -453,6 +453,69 @@ A number nobody chose is indistinguishable from one they did, and this product a
 
 ---
 
+## 18. *Show QR* will stop working unless the client keeps the code *(found 2026-08-04 — not a bug, a consequence)*
+
+**What the screen does now.** `Visitors.jsx` rebuilds the QR payload from the visitor in the store
+every time somebody taps *Show QR*, and `copySecurityCode` reads the six digits back off the same
+object. That works because the prototype keeps both in the browser for ever.
+
+**What the API does.** The security code and the QR token are returned by `POST /visitor-passes` and
+by nothing else, ever. They are stored as hashes — the plaintext is not even sent to the database —
+so there is no read that can return them and no support procedure that can recover them. This is
+`RESIDENT_BACKEND_DESIGN.md` §5.4, and it is the same rule the resident invite already follows.
+
+**What that means for you.** The `201` is the only time you will see either value. If you want *Show
+QR* to keep working, store what it hands you against the pass id for the life of the pass. Clearing
+storage or signing in on a second device loses the QR — **not the pass**: it is still live, and the
+six digits still open the gate for anyone who wrote them down.
+
+**What we need from you.** Whether losing the QR on a new device is acceptable. If it is not, the
+shape that keeps the rule is a `POST /visitor-passes/{passId}/code` that mints a **fresh** code and
+invalidates the old one — a reissue, not a recovery. We have not built it, because issuing a new pass
+already does the same job with one more row. Your call.
+
+**Two smaller things on the same screen**, neither of which needs an answer:
+
+- The form has no visitor **name** field, and `visitor_name` is required in the database, so
+  `createVisitorsSlice.js` composes *"Guest group"*. `visitorName` is therefore **optional** on our
+  endpoint and we compose the same label from the same rule when you omit it. Send one if you ever
+  add the field.
+- Your history tab uses `['Checked Out', 'Rejected'].includes(status) || date < today`. We return
+  `isCurrent` as a computed field so the two tabs are one server-side rule — and we matched your
+  behaviour on the case that matters: a **checked-in** guest stays on the *current* tab, whatever
+  their window says.
+
+---
+
+## 19. The home screen is one call now, and three of its numbers are not what the store computes *(found 2026-08-04 — no answer needed, but read it before wiring)*
+
+`GET /resident/snapshot` returns everything `DashboardHome.jsx` renders. Three of its figures were
+derived from your code rather than from our design, and they are worth knowing because they are the
+ones that would silently differ if you kept computing them locally.
+
+- **`visitors.expectedGuests` and `checkedInGuests` are guests, not passes.** We reduce over
+  `guestCount` exactly as you do. One pass for a party of twelve counts as twelve. `Expected` and
+  `Approved` are counted **together**, again as you do — to a resident they are one thing, somebody
+  who has not arrived yet.
+- **`dues.primaryInvoice` is the maintenance bill, or else the *oldest* payable one.** You take
+  `unpaidInvoices[0]`. Ours differs only when there is no maintenance bill, and it differs on
+  purpose: offering the newest would hide an overdue bill behind a fresh one. It is a whole invoice
+  object, so the Pay button on the home screen is drawn from the same `isPayable` as the one on the
+  Payments page.
+- **`unreadNotifications` counts the whole feed, not the five events in `activity`.** Draw the badge
+  from it. A badge counted from a page is wrong as soon as anyone scrolls.
+
+One field to handle rather than ignore: **`dues.isPartialTotal`**. It is `false` for any resident
+with a normal number of unpaid bills, and `true` means `outstandingTotal` is a floor rather than a
+total because there were more bills than one read carries. If it is ever true, send them to Payments
+rather than showing the sum as if it were everything.
+
+Finally, **`activity` is the notification feed** — the same rows `GET /notifications` pages through,
+newest five. There is no separate activity log, so a click can route straight to `url` and marking
+one read is the notifications endpoint you already have.
+
+---
+
 ## Not on this list, deliberately
 
 Things that looked like conflicts and turned out not to need you:

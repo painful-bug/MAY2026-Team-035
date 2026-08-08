@@ -1,6 +1,7 @@
 import { genId } from '../../lib/ids';
 import { todayISO } from '../../lib/dates';
 import { useAuthStore } from '../authStore';
+import { api } from '../../lib/api/client';
 
 const getExpectedResolutionAt = (urgency, createdAt) => {
   const hoursByUrgency = { High: 24, Medium: 48, Low: 72 };
@@ -39,54 +40,29 @@ const getComplaintTimeline = (complaint) => {
 export const createComplaintsSlice = (set, get) => ({
   complaints: [],
 
-  raiseComplaint: (complaintData) => {
-    const currentUser = useAuthStore.getState().currentUser;
-    const createdAt = new Date().toISOString();
-    const urgency = complaintData.urgency || 'Low';
-    const newComplaint = {
-      id: genId('c'),
-      title: complaintData.title.trim(),
-      description: complaintData.description.trim(),
-      raisedBy: currentUser?.name || 'Aakash S.',
-      userId: currentUser?.id || 'u1',
-      flat: currentUser ? `${currentUser.flat}` : 'B-1204',
-      date: todayISO(),
-      timeAgo: 'Just Now',
-      category: complaintData.category,
-      status: 'Pending',
-      assignee: 'Unassigned',
-      progress: 0,
-      urgency,
-      location: complaintData.location?.trim() || currentUser?.flat || '',
-      attachments: (complaintData.attachments ?? []).map((attachment) => ({
-        ...attachment,
-      })),
-      comments: [],
-      createdAt,
-      updatedAt: createdAt,
-      expectedResolutionAt: getExpectedResolutionAt(urgency, createdAt),
-      timeline: [
-        createTimelineEvent(
-          'raised',
-          'Complaint raised',
-          'Your complaint was submitted to the management team.',
-          currentUser?.name || 'Resident',
-          createdAt
-        ),
-      ],
-      hasUnreadUpdate: false,
-      resolutionConfirmed: false,
-      rating: null,
-      residentFeedback: '',
-      reopenedCount: 0,
-    };
-    set((s) => ({ complaints: [newComplaint, ...s.complaints] }));
-    get().showToast('Complaint Raised Successfully', 'success');
-    get().addActivity(`You raised complaint "${complaintData.title}"`, 'complaint');
-    return newComplaint;
+  raiseComplaint: async (complaintData) => {
+    try {
+      const result = await api('/complaints', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: complaintData.title.trim(),
+          description: complaintData.description.trim(),
+          category: complaintData.category,
+          urgency: complaintData.urgency || 'Low',
+          location: complaintData.location?.trim() || '',
+        })
+      });
+      set((s) => ({ complaints: [result, ...s.complaints] }));
+      get().showToast('Complaint Raised Successfully', 'success');
+      get().addActivity(`You raised complaint "${complaintData.title}"`, 'complaint');
+      return result;
+    } catch (e) {
+      get().showToast(e.message || 'Failed to raise complaint on server', 'error');
+      return null;
+    }
   },
 
-  updateComplaint: (complaintId, updatedFields) => {
+  updateComplaint: async (complaintId, updatedFields) => {
     const c = get().complaints.find((comp) => comp.id === complaintId);
     if (!c) return null;
 
@@ -149,14 +125,30 @@ export const createComplaintsSlice = (set, get) => ({
           : x
       ),
     }));
-    get().showToast('Updated complaint status', 'success');
-    if (updatedFields.status) {
-      get().addActivity(`Complaint "${c.title}" status updated to ${updatedFields.status}`, 'complaint');
+
+    try {
+      await api(`/complaints/${complaintId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: updatedFields.status,
+          progress: updatedFields.progress,
+          assignee: updatedFields.assignee,
+          expectedResolutionAt: updatedFields.expectedResolutionAt,
+          updateNote: updatedFields.updateNote,
+        })
+      });
+      get().showToast('Updated complaint status', 'success');
+      if (updatedFields.status) {
+        get().addActivity(`Complaint "${c.title}" status updated to ${updatedFields.status}`, 'complaint');
+      }
+    } catch (e) {
+      get().showToast(e.message || 'Failed to update complaint on server', 'error');
     }
+
     return { ...c, ...nextFields, timeline, updatedAt };
   },
 
-  addComplaintComment: (complaintId, message) => {
+  addComplaintComment: async (complaintId, message) => {
     const complaint = get().complaints.find((item) => item.id === complaintId);
     const currentUser = useAuthStore.getState().currentUser;
     const trimmedMessage = message.trim();
@@ -183,7 +175,17 @@ export const createComplaintsSlice = (set, get) => ({
           : item
       ),
     }));
-    get().showToast('Comment added', 'success');
+
+    try {
+      await api(`/complaints/${complaintId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ message: trimmedMessage, visibility: 'resident' })
+      });
+      get().showToast('Comment added', 'success');
+    } catch (e) {
+      get().showToast(e.message || 'Failed to add comment on server', 'error');
+    }
+
     return comment;
   },
 
