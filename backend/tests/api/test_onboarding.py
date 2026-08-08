@@ -126,3 +126,46 @@ def test_invitation_redemption_verifies_identity_before_redeeming(
     assert redeemed == [
         ({"id": "invite-id", "invitee_email": "resident@example.com"}, identity)
     ]
+
+
+def test_invitation_identity_failure_is_an_authentication_response(
+    api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InviteQuery:
+        data = [{"id": "invite-id", "invitee_email": "resident@example.com"}]
+
+        def select(self, _: str) -> InviteQuery:
+            return self
+
+        def eq(self, _: str, __: str) -> InviteQuery:
+            return self
+
+        def limit(self, _: int) -> InviteQuery:
+            return self
+
+        def execute(self) -> InviteQuery:
+            return self
+
+    class Service:
+        def table(self, _: str) -> InviteQuery:
+            return InviteQuery()
+
+    api_client.app.dependency_overrides[get_request_token] = lambda: "access-token"
+    api_client.cookies.set(
+        INVITATION_COOKIE, sign_payload({"invite_id": "invite-id"}, ttl_seconds=300)
+    )
+    monkeypatch.setattr(invitations, "get_service_client", Service)
+    monkeypatch.setattr(
+        invitations.auth_service,
+        "verified_identity",
+        lambda _: (_ for _ in ()).throw(AuthenticationError("Invalid token.")),
+    )
+
+    response = api_client.post(
+        "/api/v1/invitations/redeem", json={}, headers=csrf_headers
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "authentication_error"
