@@ -1,36 +1,30 @@
 # HomeBandhu API reference
 
-**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-07-30
+**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-08
 
-> ## The prose below now matches the generated spec
+> ## Where the numbers stand
 >
-> §5–§11 have been pruned: the **34 sections documenting removed endpoints are gone**, and every remaining
-> `###` heading corresponds to an operation that exists in [`openapi.yaml`](openapi.yaml). That is checked
-> mechanically rather than by eye — normalising path parameters and diffing headings against the spec now
-> reports zero stale and zero undocumented on our side.
+> The live surface is **99 operations across 86 paths**, all of them in
+> [`openapi.yaml`](openapi.yaml), all carrying a user-story verdict (§16). Every `###` heading below
+> corresponds to an operation that exists; that is checked mechanically rather than by eye.
 >
-> The live surface is **59 operations**: 24 from the auth/dashboard workstream, documented in
-> [`../backend/API_REFERENCE.md`](../backend/API_REFERENCE.md), and our **35** below.
+> **Two contract-wide rules that apply to every endpoint below.**
 >
-> **Two contract-wide changes that apply to every endpoint below.**
+> 1. **Authentication is cookie-first.** A signed HTTP-only session cookie is the normal credential; the
+>    bearer header still works, because `_extract_token` accepts either. Permission resolves from
+>    `community_memberships` in Postgres, **not** from a JWT claim — the access-token hook that produced
+>    that claim was deleted with the old baseline. Full detail in §1.2.
+> 2. **Every unsafe request needs `X-CSRF-Token`.** Reads neither send nor require it. When no session
+>    CSRF cookie exists, the browser client first obtains the readable `hb_preauth_csrf` cookie from
+>    `GET /auth/csrf`, then echoes it. A missing or mismatched token is **403** `csrf_invalid`; a wrong
+>    `Origin` is **403** `csrf_origin_invalid`.
 >
-> 1. **Authentication is cookie-first.** A signed HTTP-only session cookie is the normal credential; the bearer
->    header still works, because their `_extract_token` accepts either. Role checks resolve from
->    `community_memberships` in Postgres, not from a JWT claim — the access-token hook that produced that claim was
->    deleted with the old baseline.
-> 2. **Every unsafe request needs `X-CSRF-Token`.** All our writes now enforce it. Reads do not send or require it.
->    When no session CSRF cookie exists, the shared browser client first obtains the readable
->    `hb_preauth_csrf` cookie from `GET /auth/csrf`, then echoes it in the write request.
->    A missing or mismatched token is **403** with code `csrf_invalid`, and a wrong `Origin` is **403**
->    `csrf_origin_invalid`.
->
-> **The database objects these endpoints need now exist.** Migrations `0019`–`0023` rebuilt the quarantined
-> `0013`–`0017` onto the clean baseline: 10 views, 24 write RPCs, and columns on 11 baseline tables. A static
-> check confirms every RPC and every column our repositories reference is created by some migration.
->
-> **They have not been applied to any database.** No environment has run `0001` yet, so "exists in the migration"
-> is as far as the guarantee goes. Applying them is the next step and it has to happen before anyone can say
-> these endpoints work.
+> **The database objects these endpoints need exist in migrations, and in no database.** `0019`–`0023`
+> rebuilt the quarantined `0013`–`0017` onto the clean baseline, and `0024`–`0032` added realtime,
+> notifications and visitor passes. A static check confirms every RPC and column the repositories
+> reference is created by some migration. **No environment has run `0001` yet**, so "exists in the
+> migration" is as far as the guarantee goes — applying them has to happen before anyone can say these
+> endpoints work.
 
 
 This document is the contract between the backend and the React frontend. It is
@@ -58,8 +52,8 @@ protecting, the shape of the gaps in §16. Read the spec to write a client; read
 Everything a generator cannot infer — error responses, story traceability, and descriptions for the
 handlers with no docstring — is supplied by
 [`backend/scripts/api_annotations.py`](../backend/scripts/api_annotations.py), one table the
-exporter applies. It exists because roughly half these operations sit in the other workstream's
-routers, which are not ours to edit.
+exporter applies. It exists because roughly half these operations sit in another workstream's
+routers, and annotating them centrally keeps the spec complete without editing their handlers.
 
 > **Standing rule.** `openapi.yaml` is **generated, never hand-edited**, and is regenerated in the
 > same commit as any API change:
@@ -92,34 +86,61 @@ part of the product API.
 
 ### 1.2 Authentication
 
-All endpoints except `/health`, `/auth/otp/*`, `/auth/refresh` and `/auth/redeem` require a
-Supabase-issued JWT:
+The backend is a **backend-for-frontend**: no provider token is ever handed to JavaScript. Signing in
+sets HTTP-only cookies, and the browser simply sends them.
+
+| Cookie | Holds | Readable by JS |
+|---|---|---|
+| `__Host-hb_access` | Supabase access token | No |
+| `__Host-hb_refresh` | Supabase refresh token | No |
+| `__Host-hb_csrf` | CSRF token bound to the access token | Yes — it must be echoed in a header |
+
+Local HTTP development drops the `__Host-` prefix (`hb_access`, …), because browsers reject
+`__Host-` cookies without `Secure`. The names are the only difference; the contract is identical.
+
+A bearer header is also accepted and takes precedence, which is what server-to-server callers and the
+test suite use:
 
 ```
 Authorization: Bearer <access_token>
 ```
 
-The token is verified against `SUPABASE_JWT_SECRET`. Its `user_role` claim is injected by the Supabase
-access-token hook from `profiles.role`, and is what the role guards read.
+**Seventeen operations need no token at all** — `GET /health`, the whole of `/auth/*` except
+`/auth/session`, and `POST /invitations/prepare`. Everything else requires one. The generated
+`openapi.yaml` is authoritative: an operation carrying `security: [{ HTTPBearer: [] }]` needs
+credentials, and one without it does not.
 
-**Roles are implied, not just matched.** `ADMIN` satisfies a `RESIDENT` requirement
-(`app/domain/roles.py`). An endpoint documented as *Resident* therefore also admits an admin.
+**Tokens establish identity, never permission.** They are verified against the project's JWKS
+(`SUPABASE_JWT_SECRET` covers legacy HS256 tokens). No role claim is read from them. Authorization is
+resolved per request from the caller's **active `community_memberships` row** — see
+`get_active_membership` and `require_membership_role` in `app/api/deps.py`. A role written into a
+token by a compromised or stale hook therefore grants nothing.
 
-**Enforcement is layered.** The role guard is the outer check; Postgres Row-Level Security is the
-inner one, and it is scoped by community. A guard bypass still cannot read another community's rows.
+> `app/domain/roles.py` still defines an `ADMIN` ⊇ `RESIDENT` hierarchy, and older revisions of this
+> section described it as live. It is not: `role_satisfies` is referenced only by its own unit test,
+> and the request guards match membership roles exactly. Where an admin genuinely needs a resident
+> surface, `GET /auth/session` says so explicitly by returning `capabilities: ["admin", "resident"]`.
+
+**Unsafe methods also need CSRF.** `POST`, `PATCH`, `PUT` and `DELETE` on browser-facing routes require
+an `X-CSRF-Token` header matching the CSRF cookie, and an `Origin` matching the configured frontend.
+Before a session exists — sign-up, sign-in, password reset, resend — call `GET /auth/csrf` first to be
+issued a pre-authentication token. Missing or mismatched gives `403 csrf_invalid`.
+
+**Enforcement is layered.** The membership guard is the outer check; Postgres Row-Level Security is
+the inner one, and it is scoped by community. A guard bypass still cannot read another community's
+rows.
 
 ### 1.3 Field naming — a known inconsistency
 
 | Endpoint group | Case | Example |
 |---|---|---|
-| `/auth/*`, `/admin/invitations` | `snake_case` | `access_token`, `apartment_id` |
+| `/auth/*`, `/admin/invitations` | `snake_case` | `token_hash`, `invitee_email`, `intended_unit_id` |
 | Everything else | `camelCase` | `pageSize`, `timeAgo`, `unitId` |
 
 This is not a style preference, it is a seam. The React app reads camelCase throughout its seeded data
-and **cannot be changed**, so new surfaces emit camelCase. The auth DTOs predate that constraint and
-are being modified in parallel by another developer, so converting them during a schema migration
-would be a drive-by edit to someone else's in-flight work. They should adopt the same base class when
-that code is next touched deliberately.
+and **cannot be changed**, so new surfaces emit camelCase. The auth DTOs predate that constraint, and
+the frontend already reads them as `snake_case`, so converting them is a coordinated change to both
+sides rather than a rename — worth doing deliberately, not as a drive-by.
 
 One cosmetic difference between this file and `openapi.yaml`: path **placeholders** render as
 `{membership_id}` there and `{membershipId}` here. A placeholder is not part of any URL a client
@@ -238,8 +259,10 @@ formatting lets us drop `no-store` for that endpoint. See `FRONTEND_MEETING_AGEN
 
 ### 1.8 Rate limiting
 
-**Not implemented.** No endpoint is rate-limited today, including `/auth/otp/request` and
-`/auth/redeem` — both of which need it, being unauthenticated and secret-guessing surfaces. Supabase
+**Not implemented.** No endpoint is rate-limited today. The surfaces that need it most are the
+unauthenticated ones where a secret can be guessed or a cost incurred: `POST /auth/password/sign-in`,
+`POST /invitations/prepare` (a token *and* a short code, both guessable in principle),
+`POST /auth/email/resend` and `POST /auth/password/reset/request` (each one sends mail). Supabase
 applies its own limits to the underlying GoTrue calls, which is a backstop, not a design. Tracked as
 open work; when added, it returns `429` with `Retry-After`.
 
@@ -290,30 +313,116 @@ Liveness probe. No authentication.
 
 ## 3. Authentication
 
-> **These endpoints describe phone/SMS OTP, which is what the code does today.** The product ruling is
-> that OAuth replaces phone/OTP, and that migration has not been made yet. This section will change.
-> The resident invite token remains a mandatory second factor regardless.
+Two ways in, one session. **Google OAuth** is the primary method; **email and password** is the
+secondary one. Phone/SMS OTP was the original design and **no longer exists** — no OTP endpoint is
+served, and `GET /auth/methods` is the authoritative list of what a deployment actually accepts.
 
-### `POST /api/v1/auth/refresh`
+Whichever method is used, the outcome is identical: the backend holds the provider tokens and the
+browser gets cookies (§1.2). The resident invite token remains a mandatory second factor regardless of
+how the person signed in.
 
-Exchange a refresh token for a new session ("remember me"). No authentication.
+### 3.1 Discovery and CSRF
 
-**Request** — `{ "refresh_token": "v1.Mr7..." }` · **200** — same `Session` shape as above.
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/auth/methods` | Which methods this deployment enables, and which is primary. Cached 5 minutes, `ETag`-aware |
+| `GET /api/v1/auth/csrf` | Issue a pre-authentication CSRF token, required before any unauthenticated `POST` below |
+
+### 3.2 Google OAuth
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/auth/oauth/{provider}/start` | **307** to the provider. Plants a signed, HTTP-only PKCE transaction cookie (5-minute TTL) |
+| `GET /api/v1/auth/oauth/{provider}/callback` | **307** back to the frontend, with session cookies set |
+| `GET /api/v1/auth/google/start`, `GET /api/v1/auth/google/callback` | Compatibility aliases, so existing bookmarks and registered Google callbacks keep working |
+
+**A redirect is the success case here**, which is why these four declare `307` and no `2xx`.
+
+GoTrue generates the provider `state` itself; supplying our own makes it reject the callback as
+`bad_oauth_state`. The transaction cookie binds the browser to its PKCE verifier instead.
+
+### 3.3 Email and password
+
+| Endpoint | Request | Notes |
+|---|---|---|
+| `POST /api/v1/auth/password/sign-up` | `{ full_name, email, password, captcha_token? }` | Password minimum is **15 characters**. Always answers the same, so it cannot reveal who has registered |
+| `POST /api/v1/auth/password/sign-in` | `{ email, password, captcha_token? }` | Sets the session cookies |
+| `POST /api/v1/auth/email/verify` | `{ token_hash, verification_type }` | Spends the one-time hash from the confirmation email and signs the user in |
+| `POST /api/v1/auth/email/resend` | `{ email, captcha_token? }` | Sends the confirmation link again. **200 is not a delivery receipt** — provider errors are swallowed so the response cannot enumerate accounts |
+
+**An unconfirmed address cannot sign in.** `POST /auth/password/sign-in` answers `401`
+`email_not_confirmed` both when the provider refuses the grant and when it returns a session for an
+address nobody has proven they own — so the behaviour does not depend on the Supabase **Confirm email**
+setting. That error names its reason rather than hiding behind the generic message: reaching it
+requires the correct password, so it discloses nothing the caller did not already know. Recovery is
+`POST /auth/email/resend`.
+
+Confirmation links must carry the token hash to the frontend
+(`…/auth/confirm-email?token_hash={{ .TokenHash }}&type=signup`). A template left on GoTrue's default
+`{{ .ConfirmationURL }}` lands on that page with nothing to spend — see `docs/SUPABASE_AUTH_SETUP.md`
+step 3.
 
 | Status | Code | Cause |
 |---|---|---|
-| `401` | `authentication_error` | Refresh token invalid, expired or revoked |
+| `401` | `invalid_credentials` | Wrong password, or no such address — deliberately indistinguishable |
+| `401` | `email_not_confirmed` | Correct password, unconfirmed address |
+| `401` | `password_signup_failed` | Sign-up could not be started |
+| `403` | `csrf_invalid` | Missing/mismatched `X-CSRF-Token`, or wrong `Origin` |
+| `422` | `captcha_required` | CAPTCHA enabled and no token supplied |
+| `422` | `provider_disabled` | Method not in `AUTH_ENABLED_METHODS` |
+| `503` | `auth_provider_timeout` | Supabase did not answer within the configured timeout |
+
+### 3.4 Password recovery
+
+Three steps, because the new password is set against a **separate, short-lived recovery session** that
+is never usable as an ordinary login.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/auth/password/reset/request` | Email a recovery link. Always the same answer |
+| `POST /api/v1/auth/password/reset/verify` | Spend the hash; sets recovery-only cookies |
+| `POST /api/v1/auth/password/reset/complete` | `{ password }`; updates it, then clears every cookie so the user signs in afresh |
+
+`401 recovery_required` means the recovery cookies are absent or expired — request a new link.
+
+### 3.5 Session lifecycle
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/auth/session` | The caller's identity, active membership, portal and capabilities. **Requires a token** |
+| `POST /api/v1/auth/refresh` | Rotate the session from the refresh **cookie** — no body |
+| `POST /api/v1/auth/logout` | Revoke at the provider (best effort) and clear the cookies (authoritative) |
+
+`GET /auth/session` is what the frontend routes on: it returns `onboarding_eligible: true` for a
+signed-in identity with no membership yet, and otherwise the membership that decides which portal
+loads.
+
+| Status | Code | Cause |
+|---|---|---|
+| `401` | `authentication_error` | No refresh cookie, or it is invalid, expired or revoked |
+| `401` | `token_expired` | Access token past its expiry — refresh and retry |
 
 ## 4. Invitations
 
+An invite is **bound to an email address and a unit**, and redeeming it needs both halves: the link
+*and* the short code. The code is the second factor, and is not optional.
+
 ### `POST /api/v1/admin/invitations`
 
-Mint a resident invite. **Requires `ADMIN`.**
+Mint a resident invite. **Requires an active `admin` membership.**
 
 **Request**
 ```json
-{ "phone": "+919812345678", "apartment_id": "B-1204", "full_name": "Rohan Sharma", "role": "RESIDENT" }
+{
+  "intended_unit_id": "0f1e2d3c-...",
+  "invitee_email": "rohan@example.com",
+  "phone": "+919812345678",
+  "full_name": "Rohan Sharma"
+}
 ```
+
+`phone` and `full_name` are optional labels for the admin's own list. `intended_unit_id` is a unit
+**id**, not a display code like `B-1204`.
 
 **200**
 ```json
@@ -321,9 +430,9 @@ Mint a resident invite. **Requires `ADMIN`.**
   "invitation_id": "b2f1c9d4-...",
   "link": "http://localhost:5173/join/9f2a...",
   "code": "4KJ7-2M",
-  "phone": "+919812345678",
-  "apartment_id": "B-1204",
-  "role": "RESIDENT",
+  "invitee_email": "rohan@example.com",
+  "community_id": "7a8b9c0d-...",
+  "intended_unit_id": "0f1e2d3c-...",
   "expires_at": "2026-08-01T09:00:00+00:00"
 }
 ```
@@ -334,8 +443,29 @@ Mint a resident invite. **Requires `ADMIN`.**
 | Status | Code | Cause |
 |---|---|---|
 | `401` | `authentication_error` | Not authenticated |
-| `403` | `insufficient_role` | Caller is not an admin |
+| `403` | `community_role_required` | Caller has no active admin membership |
 | `422` | `request_validation_error` | Malformed body |
+
+### `POST /api/v1/invitations/prepare`
+
+Stage an invite before the recipient has signed in — the only invitation endpoint needing no token.
+
+**Request** — `{ "token": "9f2a...", "code": "4KJ7-2M" }`
+
+Both must resolve to the same live invitation. On success the invite id is placed in a signed,
+HTTP-only cookie with a **5-minute TTL**; the response body deliberately says nothing about who was
+invited. The caller then signs in by whichever method they like and calls redeem.
+
+### `POST /api/v1/invitations/redeem`
+
+Claim the staged invitation for the signed-in identity. **Requires a token.** The body is empty: the
+invitation comes from the cookie, never from the request, so a signed-in user cannot redeem an
+invitation they did not open.
+
+| Status | Code | Cause |
+|---|---|---|
+| `401` | `authentication_error` | Not signed in, or the staging cookie is missing or expired |
+| `422` | `invite_unavailable` | The staged invitation no longer exists or has been used |
 
 ## 5. Live updates, notifications and the admin dashboard
 
@@ -1990,8 +2120,11 @@ said out loud rather than discovered.**
 - **Nothing charges a late fee.** There is no fine engine, no `late_fee` charge row, and no job.
   `lateFeeEnabled`, `lateFeeAmount`, `lateFeeGraceDays` and `lateFeePeriod` are a stored policy
   waiting for one.
-- **There is no visitor backend**, so `requireVisitorPreapproval` is read by nothing. Visitors are
-  frontend dummy data — no table, no endpoint, not in any migration.
+- **`requireVisitorPreapproval` is read by nothing, and correctly so.** The visitor backend now
+  exists — `visitor_passes` and the resident endpoints in §14 arrived with migration `0032`, which
+  also became the first reader of `visitorCodeTtlMinutes`. This toggle is different: it governs
+  whether the *gate* may admit someone arriving with no pass at all, and no gate software exists in
+  this repository. Storing it is honest; inventing a reader for it would not be.
 - **There is no SMS provider in this repository**, so `noticeSmsBroadcastEnabled` is read by nothing.
   It defaults to `false` — it is the only toggle that would spend money every time it fired, and a
   setting like that defaults off.

@@ -51,16 +51,51 @@ rule this log already carries.
   Provider errors stay swallowed, so **200 is still not a delivery receipt**, and the neutral response
   is unchanged.
 
-### Not changed, and why
+### The disabled button — configuration, plus a frontend that hid it
 
-- **The disabled button is configuration, not code.** `AUDIT` `EmailConfirmationPage.jsx` reads
+- **The root cause is a Supabase email template, not code.** `AUDIT` `EmailConfirmationPage.jsx` reads
   `token_hash` from the query string and disables the button when it is absent. It is absent because
-  the Supabase **Confirm signup** template is still GoTrue's default `{{ .ConfirmationURL }}`, which
-  routes through `/auth/v1/verify` and lands on the page with nothing to spend.
+  the **Confirm signup** template is still GoTrue's default `{{ .ConfirmationURL }}`, which routes
+  through `/auth/v1/verify` and lands on the page with nothing to spend.
   `docs/SUPABASE_AUTH_SETUP.md` step 3 already specifies the correct template
-  (`?token_hash={{ .TokenHash }}&type=signup`); the project simply does not match its own document, so
-  the document needs no change. The page's silence when the token is missing is a real frontend
-  weakness and is flagged rather than fixed, under the standing rule not to touch `frontend/src`.
+  (`?token_hash={{ .TokenHash }}&type=signup`); the project does not match its own document, so the
+  document needs no change. Raised as item 5 of `potential issues/`.
+- **The page no longer fails silently.** `DERIVED` A greyed-out button with no explanation is the
+  worst possible presentation of this: nothing to read, nothing to click, no way to tell a
+  misconfigured template from an already-used link. With no hash to spend the page now says so and
+  offers a resend, which is also the first caller of the endpoint fixed above. `AuthEntryPage` does
+  the same for a sign-in refused with `email_not_confirmed`. Under the standing rule this would have
+  been flagged and left; the **product owner's ruling that issue-fixing may cross into anyone's code**
+  is what makes it part of the fix.
+
+### `API.md` — the authentication chapter was describing a design that no longer exists
+
+- **§3 rewritten from phone/SMS OTP to what is actually served.** `AUDIT` The section carried a
+  warning admitting it documented OTP "which is what the code does today" — untrue for some time: no
+  OTP endpoint exists, and the one route it documented (`POST /auth/refresh`) took a `refresh_token`
+  body it has not accepted since the cookie session landed. Replaced with the real sixteen operations
+  in five groups: discovery and CSRF, OAuth, email/password, recovery, session lifecycle.
+- **§1.2 rewritten.** `AUDIT` It described bearer-only auth against `SUPABASE_JWT_SECRET`, a
+  `user_role` claim from an access-token hook, and an `ADMIN ⊇ RESIDENT` hierarchy enforced by the
+  guards. All three are gone: authentication is cookie-first, no role claim is read, and
+  `require_membership_role` matches exactly. The dead hierarchy in `app/domain/roles.py` is now
+  called out in the section rather than left to mislead — raised as item 2 of `potential issues/`.
+- **§4 corrected.** `AUDIT` It documented an invite keyed on `phone` and `apartment_id` with a
+  `role`; the endpoint takes `intended_unit_id` and `invitee_email`. The two endpoints that actually
+  redeem an invite were missing entirely.
+- **§1.8 and the settings note corrected.** `AUDIT` Rate limiting named `/auth/otp/request` and
+  `/auth/redeem`, neither of which exists; it now names the four real unauthenticated surfaces. The
+  claim that "there is no visitor backend" predates migration `0032` — `requireVisitorPreapproval`
+  still has no reader, but for a different and narrower reason, which is now the one given.
+- **Header block refreshed.** `AUDIT` It advertised 59 operations across two workstreams; the surface
+  is 99 across 86 paths.
+
+### `potential issues/` — a new folder
+
+- **Eight findings written as ready-to-raise GitHub issues.** `AUDIT` Everything turned up while
+  fixing #22 that is not #22, ordered by cost of leaving it, each naming file and line and a command
+  the reader can run to confirm it. Kept out of `DECISIONS_NEEDED.md` because these are not decisions
+  waiting on the product owner — they are defects and debts waiting on someone's time.
 
 ---
 

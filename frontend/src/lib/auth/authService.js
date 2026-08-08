@@ -35,6 +35,11 @@ export async function verifyEmailToken(token_hash, verification_type = 'email') 
   return api('/auth/email/verify', { method: 'POST', body: JSON.stringify({ token_hash, verification_type }) }, { retry: false });
 }
 
+export async function resendEmailConfirmation(email) {
+  await prepareAnonymousCsrf();
+  return api('/auth/email/resend', { method: 'POST', body: JSON.stringify({ email }) }, { retry: false });
+}
+
 export async function requestPasswordReset(email) {
   await prepareAnonymousCsrf();
   return api('/auth/password/reset/request', { method: 'POST', body: JSON.stringify({ email }) }, { retry: false });
