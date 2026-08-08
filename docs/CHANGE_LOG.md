@@ -17,6 +17,139 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-08 — Session 40: the matrix was current, its index was four days behind
+
+**Context.** A sweep of the user stories in `docs/product/` against the API surface, asking whether
+every relevant endpoint and every story is accounted for. The answer on the code side was yes and
+had been checked before: all 99 operations carry a story tag or a written reason for having none
+(51 / 48), the type breakdown reconciles exactly, all 24 stories have a section in `API.md` §16, and
+its 8 served / 9 partial / 7 none is self-consistent. The drift was entirely in the documents that
+restate that answer.
+
+### `docs/product/USER_STORIES.md`
+
+- **Six `Backend:` verdicts corrected.** `AUDIT` US-2.2, US-2.5, US-2.6, US-2.8 and US-2.12 read
+  *partial* or *none* after they closed; US-2.3 read *none* after it moved to partial. The file's own
+  header calls this line an index of `API.md` §16 and says not to maintain the two independently —
+  and the two were maintained independently, because `§16` and `api_annotations.py` are edited by the
+  work that changes a verdict and this file is not. **Every error was in the same direction: the
+  backend under-reported what it had built.** That is the direction nobody notices, because nobody
+  audits a claim that work is unfinished.
+- **Four stale *reasons* rewritten under unchanged verdicts.** `AUDIT` US-2.1 said "there is no push
+  transport" (built), US-2.4 said "nothing carries it to a resident" (the transport carries it; the
+  emitter is missing), US-2.9 said the directory was unreadable by residents (`GET
+  /directory/contacts` serves it), US-3.1 said "nothing issues one" (`POST /visitor-passes` does). A
+  correct verdict resting on a false reason is worse than a wrong verdict, because it survives review.
+- **Three links to `API.md#14-user-stories--endpoints` repointed at §16.** `AUDIT` The section moved
+  twice, in `README.md`, `USER_IDENTIFICATION.md` and `USER_STORIES.md`. Every reader following the
+  traceability trail from the requirements landed nowhere.
+
+### `docs/API.md`
+
+- **Eight tagged operations added to their story's own section.** `AUDIT` The spec said they serve the
+  story and §16 never named them: `POST /amenity-bookings/{id}/damage` and `/charges` (US-1.2),
+  `POST /invoices` (US-1.6), `GET /notifications` (US-2.1, US-2.4, US-2.7), `PATCH /complaints/{id}`
+  (US-2.7 — which had no endpoint table at all, only prose) and `POST /admins` (US-2.9). §16 is the
+  human-readable evidence for a verdict; a verdict whose evidence is incomplete is an assertion.
+- **§16.5 gains an endpoint table for US-3.1.** `AUDIT` See below.
+
+### `backend/scripts/api_annotations.py` → `docs/openapi.yaml`
+
+- **`US-3.1` added to `STORIES`, and tagged on `POST /visitor-passes` and `/cancel`.** `AUDIT` This was
+  the one genuine traceability defect the sweep found. §16.5 has credited those two operations with
+  issuing and revoking a scheduled, time-boxed access code since `0032`, and argued the case in
+  prose — but the story had no entry in the annotation table, so the generated spec recorded **no
+  operation at all** as serving a story the matrix calls *partial*. The verdict does not move: the
+  requirement US-3.1 is actually about is *scan*, and nothing verifies a code at the gate. Neither do
+  the counts — both operations already carried US-2.2, so it stays 51 served / 48 none.
+- **The root cause, stated once.** `AUDIT` The export guard is directional. It refuses to build unless
+  every **operation** declares which stories it serves, which is why the operation side has never
+  drifted. Nothing checked that every **story** a verdict credits has an operation declaring it, or
+  that the three places recording a verdict agree. Both gaps produced exactly one class of error each,
+  and both were invisible to `--check`, to the test suite, and to `api_map_scan.py` as it stood.
+
+### `backend/scripts/api_map_scan.py`
+
+- **A fifth question: do the three records of each story's verdict agree?** `DERIVED` Reports
+  `STORY VERDICT` when `USER_STORIES.md`, `API.md` §16 and `api_annotations.py` disagree, and
+  `STORY UNBACKED` when a story credited as served or partial has no operation declaring it. Run
+  against the pre-fix state it produces seven findings — the six stale lines and US-3.1 — so it
+  catches precisely what a human sweep took an afternoon to find. Verified by injection: flipping one
+  verdict in memory fires the check.
+- **Why in the scan rather than in the exporter.** `DERIVED` The exporter must stay able to build; a
+  prose document being behind is not a reason to fail a code build. The scan is the pull-time artifact
+  and already carries the other four questions, so this is one more line in the same output.
+
+### `docs/api_yaml_mapper.md`
+
+- **§6.1 step 5 and §6.2's fifth question.** `PO` The standing rule now says explicitly that a commit
+  changing a story's verdict changes it in all three places. Recorded because the rule as written
+  ("all four artifacts move together") was followed and still permitted this drift — `USER_STORIES.md`
+  was not one of the four.
+
+**Verified after the change.** `export_openapi.py --check` up to date · `686 passed` ·
+`ruff check scripts/` clean · `api_map_scan.py` reports 20 findings, unchanged, all in §5, with all
+24 stories agreeing across all three records.
+
+---
+
+## 2026-08-08 — Session 39: the spec was not stale, and now we can prove it every time
+
+**Context.** The testing team reported that part of `openapi.yaml` looked out of sync with `main`. It
+was not. On `main` @ `98d557a` the spec regenerates byte-identical (`export_openapi.py --check`
+passes), all **99** live API operations are documented, the spec documents nothing that does not
+exist, and the suite is green at 686 tests. But the complaint pointed at something real, and the
+audit that disproved the stated cause found it.
+
+### `docs/api_yaml_mapper.md` — new
+
+- **A per-source-file index from backend code to the spec and to `API.md`.** `AUDIT` A generated spec
+  can be perfectly in sync and still wrong: `--check` proves the yaml matches what FastAPI
+  *declares*, never that the declaration matches what the handler *does*. Nothing in the repository
+  watched that gap, so nothing caught the eleven operations whose success body the spec describes as
+  `{}` or `additionalProperties: true`. The mapper makes the gap visible per file, and its §5 records
+  each one with a verdict — because an undocumented endpoint nobody wrote down is indistinguishable
+  next month from one deliberately left free-form.
+- **`operationId` is the anchor, not the path.** `DERIVED` It is unique across the spec, greppable
+  from all three files, and derivable from the handler name in both directions. Paths repeat across
+  methods and change spelling between `{amenity_id}` and `{amenityId}`; the id does neither.
+- **The standing rule is written into the file itself (§6).** `PO` Code, spec, `API.md` and the
+  mapper move in one commit; every pull from the repository is followed by the scan in §6.2. Others'
+  endpoints arrive without our documentation, and the pull is the only moment anyone reliably looks.
+- **The rule ships with a tool, `backend/scripts/api_map_scan.py`.** `DERIVED` A rule that depends on
+  somebody remembering to diff two tables by eye is a rule that lasts one sprint. The script asks the
+  four questions §6.2 asks, prints one line per finding with file and line, and `--strict` exits
+  non-zero for CI. It reports 20 findings today — precisely the eleven untyped bodies and nine
+  undocumented operations of §5, so the scan's output and the mapper's verdict list agree exactly.
+  Anything it reports that §5 does not carry is new by definition.
+
+### `API.md` — one direction of its coverage claim was never checked
+
+- **Nine operations have no reference section.** `AUDIT` The header promises every `###` heading
+  corresponds to a real operation, which is true and is enforced. The reverse was never checked, and
+  it hides the whole access-requests family (7), both `communities` reads, and `PUT`/`DELETE
+  /dashboard/amenities/{id}` — present in the spec, present in §16.6's traceability table, absent
+  from the reference. Recorded in the mapper §5.2 rather than fixed here: three of those files belong
+  to the other workstream and this was an audit, not an issue fix.
+
+### Findings recorded, not fixed
+
+- **`GET /auth/methods` is the one outright defect.** `AUDIT` It documents its 200 body as `{}` and
+  never mentions the **304** it answers to a matching `If-None-Match`; `AuthMethodsResponse` and
+  `AuthMethod` are absent from `components.schemas` entirely. Proved against a live `TestClient`, not
+  inferred. It is the first endpoint a tester meets, because the sign-in screen calls it before
+  rendering — the likeliest thing behind the original report.
+- **The amenity CRUD trio cannot be documented yet.** `AUDIT` `dashboard_repository` returns a
+  different row shape when `schema_generation() == "legacy"`, so the response shape is
+  deployment-dependent and there is no single true schema to write down until that branch resolves.
+- **Three things that look like defects and are not**, recorded so they are not "fixed" later: the
+  two SSE routes declare `text/event-stream` deliberately; the 14 apparent error-status over-claims
+  are reachable through `pg_errors.py`'s SQLSTATE mapping, which no static walker crosses; and
+  `edec5df`'s "missing amenityId" was a **frontend** bug calling paths that never existed, against a
+  spec that was correct.
+
+---
+
 ## 2026-08-08 — Session 38: issue #22, an email nobody had to prove
 
 **Context.** GitHub issue #22, assigned to this workstream: the confirmation link's **Confirm email**

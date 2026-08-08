@@ -204,6 +204,15 @@ STORIES: dict[str, tuple[str, str]] = {
     # gateway driving it is the simulator the product asked for, and every row
     # it writes says `simulator` so the two can never be confused.
     "US-2.12": ("Reliable booking payment confirmation", "served"),
+    # Added 2026-08-08, and it is a correction rather than new coverage. API.md
+    # section 16.5 has credited `POST /visitor-passes` and `/cancel` with two of
+    # this story's five requirements since `0032` -- issue and revoke -- while
+    # this table had no entry for it, so the prose said "partial" and the
+    # generated spec said no operation serves it at all. Tagging costs nothing
+    # in the counts: both operations already carry US-2.2, so the traced total
+    # is unchanged at 51. The verdict stays `partial` because the requirement
+    # the story is actually about is *scan*, and nothing verifies a code.
+    "US-3.1": ("Event-specific access codes for functions", "partial"),
 }
 
 # Operations that trace to no story, by group, as ``(api type, rationale)``.
@@ -1043,6 +1052,13 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
                 "Pre-approval in one call: purpose, guest count and a security "
                 "code returned exactly once, hashed at rest like an invite"
             ),
+            (
+                "US-3.1",
+                "Issues the scheduled, time-boxed code the security manager's "
+                "story asks for -- `valid_from`/`valid_until` can be set days "
+                "ahead. It does not close the story: one code still admits one "
+                "request, and nothing verifies a code at the gate"
+            ),
         ],
     ),
     ("get", "/api/v1/visitor-passes/{pass_id}"): op(
@@ -1084,6 +1100,12 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
                 "Withdrawing a pass that has not been used. A guest already "
                 "through the gate is a 409: cancel is a physical-world "
                 "operation and no database write performs it"
+            ),
+            (
+                "US-3.1",
+                "Revocation, the other half of issuing a code. A function "
+                "cancelled the night before should not leave a working code "
+                "scheduled to activate"
             ),
         ],
     ),

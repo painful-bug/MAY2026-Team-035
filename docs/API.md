@@ -55,6 +55,13 @@ handlers with no docstring — is supplied by
 exporter applies. It exists because roughly half these operations sit in another workstream's
 routers, and annotating them centrally keeps the spec complete without editing their handlers.
 
+**Which source file serves which endpoint** is indexed in
+**[`api_yaml_mapper.md`](api_yaml_mapper.md)** — every operation, the handler and line that
+implements it, its `operationId` anchor in the spec, and the section of this file that documents it.
+Start there when a spec diff is larger than the route diff, or when you need to know what a change to
+one repository can break. Its §5 carries the operations whose spec entry is imprecise, and §6 the
+scan to run after every pull.
+
 > **Standing rule.** `openapi.yaml` is **generated, never hand-edited**, and is regenerated in the
 > same commit as any API change:
 >
@@ -3084,6 +3091,8 @@ not be told "success" when day 3 was the one that failed.
 | [`GET /amenities/{amenityId}/ledger`](#get-apiv1amenitiesamenityidledger) | `cancellationHistory`, `refundHistory`, `auditTrail`, `paymentStatus` |
 | [`GET /amenities/{amenityId}/ledger/summary`](#get-apiv1amenitiesamenityidledgersummary) | The money totals |
 | [`POST /amenity-bookings/{occurrenceId}/refund`](#post-apiv1amenity-bookingsoccurrenceidrefund) | Returns the deposit |
+| [`POST /amenity-bookings/{occurrenceId}/damage`](#post-apiv1amenity-bookingsoccurrenceiddamage) | Withholds against the deposit, so the refund figure moves with the finding |
+| [`POST /amenity-bookings/{occurrenceId}/charges`](#post-apiv1amenity-bookingsoccurrenceidcharges) | Any other adjustment, recorded as an event rather than a corrected balance |
 
 **There is no sync, which is why it cannot fall out of sync.** Every figure the ledger reports is
 derived from the same append-only event stream the cancellation writes to; no balance is stored, so
@@ -3155,6 +3164,7 @@ reject — a class of redundant step the interviewee would have experienced as a
 | [`GET /amenity-reports`](#get-apiv1amenity-reports) | Rows + six KPIs, filtered by date, amenity and status |
 | [`GET /amenities/{amenityId}/ledger`](#get-apiv1amenitiesamenityidledger) | Amenity billing, per booking |
 | [`GET /billing-settings`](#get-apiv1billing-settings) | The rates the numbers come from |
+| [`POST /invoices`](#post-apiv1invoices) | Raises the bill a report later counts; the maintenance run is the automated half |
 
 "Generated automatically" is met — `kpis` aggregates **every matching row**, not the current page,
 which is the whole reason that endpoint exists. Two shortfalls:
@@ -3185,6 +3195,7 @@ and a much cheaper one.
 > | [`GET /visitor-passes/{passId}`](#get-apiv1visitor-passespassid) | The QR screen |
 > | [`POST /visitor-passes/{passId}/approve`](#post-apiv1visitor-passespassidapprove--reject) · `/reject` | The resident's answer to a gate request |
 > | [`POST /visitor-passes/{passId}/cancel`](#post-apiv1visitor-passespassidcancel) | Withdraw an unused pass |
+> | [`GET /notifications`](#get-apiv1notifications) | Where a visitor notification would arrive. The feed is real; nothing writes a visitor entry into it yet |
 >
 > **US-2.1 stays partial for a reason that is not a missing feature.** Its answer exists — approve
 > and reject are real, and they notify the gate. What does not exist is the *question*:
@@ -3238,6 +3249,7 @@ this served would be a claim about the platform rather than about the API.
 |---|---|
 | [`GET /notices`](#get-apiv1notices) | The resident's read of the board — published notices only |
 | [`POST /notices`](#121-post-notices--post-a-notice) | Publishes immediately; fires the `notices` SSE trigger |
+| [`GET /notifications`](#get-apiv1notifications) | The feed a notice notification would land in, once `POST /notices` writes one |
 
 **Shortfall, as it was:** the same missing push transport as US-2.1. The event reaches connected
 admin browsers. A resident who has not opened the app learns nothing — which is the story verbatim.
@@ -3313,6 +3325,11 @@ can report progress without faking a status change.
 
 #### US-2.7 — Complaint lifecycle notifications — **partial**
 
+| Endpoint | Role |
+|---|---|
+| [`PATCH /complaints/{complaintId}`](#patch-apiv1complaintscomplaintid) | The transition itself. Acknowledged, updated and resolved all pass through here, and each writes its notification inside the same transaction |
+| [`GET /notifications`](#get-apiv1notifications) | Where the resident reads it in-app — the half of this story that works end to end today |
+
 Every transition the story names — acknowledged, updated, reassigned, resolved — writes a
 `complaint_events` row (`0020`), and `complaints` is one of the 12 tables on the `dashboard.refresh`
 trigger. **The events existed and nothing delivered them.** That was one gap across US-2.1, US-2.4
@@ -3387,6 +3404,7 @@ therefore **recorded**.
 | [`GET /departments`](#get-apiv1departments) · [`GET /departments/{departmentId}`](#get-apiv1departmentsdepartmentid) | The directory, with `contactEmail`, `contactPhone`, hours and the head |
 | [`POST`](#post-apiv1departments) · [`PATCH`](#patch-apiv1departmentsdepartmentid) · [`DELETE /departments/{departmentId}`](#delete-apiv1departmentsdepartmentid) | Keeping it current |
 | [`PUT`](#put-apiv1departmentsdepartmentidstaff) · [`POST`](#post-apiv1departmentsdepartmentidstaff) · [`PATCH`](#patch-apiv1departmentsdepartmentidstaffstaffid) · [`DELETE …/staff`](#delete-apiv1departmentsdepartmentidstaffstaffid) | Roster and roles |
+| [`POST /admins`](#122-post-admins--promote-a-member-to-administrator) | Who the directory can name as a head; the office and the contact entry stay one thing |
 
 *"Outdated, unclear, or insufficiently maintained"* is met on two of three counts. **Clear** —
 every entry has a role and a department. **Maintained** — deactivation rather than deletion means a
@@ -3471,6 +3489,20 @@ express, since a pass belongs to one request.
 >
 > The paragraph above is left as compiled. Two of its five requirements moved; the verdict did not,
 > because the missing one is the point of the story.
+
+| Endpoint | Role |
+|---|---|
+| [`POST /visitor-passes`](#post-apiv1visitor-passes) | Issues the scheduled, time-boxed code. `validFrom` / `validUntil` can be set days ahead |
+| [`POST /visitor-passes/{passId}/cancel`](#post-apiv1visitor-passespassidcancel) | Revokes it, so a cancelled function does not leave a working code scheduled to activate |
+
+> **That table is new on 2026-08-08 and is a correction, not new coverage.** The two operations above
+> have served this story since `0032` and this section has said so in prose — but `US-3.1` was absent
+> from [`api_annotations.py`](../backend/scripts/api_annotations.py)'s story table, so
+> [`openapi.yaml`](openapi.yaml) recorded *no operation at all* as serving it. A story marked partial
+> whose evidence is prose only is exactly the state the `x-user-stories` guard exists to prevent, and
+> the guard could not catch it: it checks that every **operation** declares its stories, never that
+> every **story** a verdict credits has an operation declaring it. The totals do not move — both
+> operations already carried `US-2.2`, so the traced count stays 51.
 
 **US-3.2's blocker has moved, not cleared.** `POST /amenities/{amenityId}/bookings` and the approve
 route are where "prepare guest access on booking" would hook in, `0007`'s outbox already fires on
@@ -3617,6 +3649,7 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-08 | **User-story sweep: the matrix was right and its index was not.** §16's verdicts, `api_annotations.py` and the spec agreed on all 24 stories; [`product/USER_STORIES.md`](product/USER_STORIES.md) — the one-line index of the same matrix — did not, on **six**. US-2.2, US-2.5, US-2.6, US-2.8 and US-2.12 still read *partial* or *none* after they closed, and US-2.3 read *none* after moving to partial. Every one erred toward under-reporting, which is the direction nobody checks. Fixed there, with the stale *reasons* on US-2.1, US-2.4, US-2.9 and US-3.1 rewritten too, and the three `#14-user-stories--endpoints` links under `product/` repointed at §16. Eight operations that carry a story tag were named nowhere in that story's own section — the amenity damage and charges writes (US-1.2), `POST /invoices` (US-1.6), `GET /notifications` (US-2.1, US-2.4, US-2.7), `PATCH /complaints/{id}` (US-2.7, which had no endpoint table at all) and `POST /admins` (US-2.9) — now listed. **US-3.1 was the one real traceability defect**: §16.5 has credited `POST /visitor-passes` and `/cancel` with issuing and revoking a scheduled code since `0032`, while the story was absent from the annotation table, so the spec recorded nothing as serving it. Tagged; counts unmoved at 51 served / 48 none, because both operations already carried US-2.2. Root cause recorded plainly: the export guard checks that every **operation** declares its stories, never that every **story** a verdict credits has an operation — `api_map_scan.py` now asks that too. |
 | 2026-08-04 | **Traceability audit of the generated spec, and §16.6 recounted.** Every route the application registers is in [`openapi.yaml`](openapi.yaml) and every operation carries errors, a description and a story verdict — the export guard had held. Two things it cannot check did not: eight parameters were undescribed (`booking_id`, `pass_id`, `notification_id`, the `Last-Event-ID` header), and **`POST /invoices/{id}/payments` was claiming `US-2.12`**, a story [`USER_STORIES.md`](product/USER_STORIES.md) scopes to *amenity-booking* payment — an overclaim three other documents here already contradicted, including the resident invoice path's written refusal of the same mapping. Now `Feature`, untraced, with the reason recorded. Coverage of operations by story is **51 served / 48 none**; §16.6's header also still said *"47 of the 98"* after the surface grew to 99. |
 | 2026-08-04 | **§14.5 added — `GET /resident/snapshot`, and the resident backend is complete.** The last endpoint of the build order, and the only one that needed no schema change: it is a projection of the endpoints around it, so a bill on the home screen and the same bill on the Payments page are the same model and cannot disagree. **US-2.3 moves from none to partial** — the enabling backend its own *"Backend: None"* note asks for now exists, and the home-screen widget it also asks for is an OS surface a web application does not have. Coverage is 8 served / 9 partial / 7 none across 99 operations. Records one correction to the design document: `activity` is the notification feed, not `member_activity`, because nothing in this project writes that table and §5.8 had already made notifications the durable record of every user-visible event. Also fixes four defects in step 6 — the invoice list was filtered by a *narrower* ownership rule than the settlement path enforces, so a bill raised against the flat was payable and invisible; the Paid tab was defined as "not payable" and so contained cancelled bills; drafts were reaching residents as amounts owed on unissued bills; and a replayed `idempotencyKey` called the gateway before checking for the duplicate and then reported the new verdict over the stored one. |
 | 2026-08-04 | **§14 added — the resident's money and home.** Eight operations backed by `0033`: their own invoices and bookings, a simulated gateway that pays either, the notice board, the flat's roster, and a contact directory served from `departments` instead of five numbers hard-coded in `Profile.jsx`. Adding the section shifted the three meta-sections again — Not yet implemented is now §15, the matrix §16, this changelog §17. **US-2.12 closes**, on the transaction rather than on the gateway; coverage is 8 served / 8 partial / 8 none. Two things worth reading before wiring anything: a declined payment is a `200` with `status: "failed"`, and `idempotencyKey` is required with a rule the API cannot enforce (§14.4). Also records that **every one of `0022`'s module-catalogue updates had matched zero rows** since it was written, so `GET /settings` would have reported that none of this backend exists. |

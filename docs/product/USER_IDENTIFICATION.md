@@ -67,8 +67,8 @@ one, and `POST /departments/{id}/staff` deliberately leaves `membership_id` null
 Two consequences that follow from that table and are easy to miss:
 
 1. **A staff member cannot log in.** Every story written for a Facility Manager or Security Manager
-   is therefore a story about an *admin acting on their behalf*, or a story with no home. §14 of
-   [`../API.md`](../API.md#14-user-stories--endpoints) marks which.
+   is therefore a story about an *admin acting on their behalf*, or a story with no home. §16 of
+   [`../API.md`](../API.md#16-user-stories--endpoints) marks which.
 2. **Committee offices are indistinguishable at the API.** A Treasurer and a Secretary present
    identical credentials, so nothing can be restricted to one of them. If the product needs
    "only the Treasurer may record a payment", that is a schema change, not a guard.

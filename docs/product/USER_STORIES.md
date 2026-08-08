@@ -5,8 +5,15 @@
 >
 > The **Backend** line is a one-word verdict plus a pointer. The evidence — which endpoint, which
 > status code, what is missing — is in the traceability matrix at
-> [`../API.md` §14](../API.md#14-user-stories--endpoints). Do not maintain the two independently:
-> §14 is the working copy, this line is the index.
+> [`../API.md` §16](../API.md#16-user-stories--endpoints). Do not maintain the two independently:
+> §16 is the working copy, this line is the index.
+>
+> **It was maintained independently, and it drifted.** Between 2026-08-04 and 2026-08-08 six of these
+> lines reported a story as less complete than it was, because §16 and
+> [`api_annotations.py`](../../backend/scripts/api_annotations.py) moved together and this file did
+> not. Corrected on 2026-08-08, and now checked by
+> `cd backend && python scripts/api_map_scan.py`, which reads the verdict from all three places and
+> refuses to agree that they agree.
 
 | Verdict | Meaning |
 |---|---|
@@ -51,7 +58,8 @@ status.
 
 - Booking and cancellation records occasionally fail to update correctly.
 
-**Backend:** **Partial** — `GET /dashboard/events` reaches the admin portal only.
+**Backend:** **Partial** — `GET /events` is audience-scoped and reaches every role; no resident
+client subscribes to it, and reports are still computed per request rather than pushed.
 
 ### US-1.4 — Streamlined resident information update
 
@@ -104,8 +112,9 @@ request, so that I never have to open the application to find pending entries.
   actual notification.
 - Residents must manually open the application to identify pending visitor approvals.
 
-**Backend:** **Partial** — the visitor table and the admin read exist; no endpoint creates an
-approval request, and there is no push transport.
+**Backend:** **Partial** — the resident's *answer* exists (`POST /visitor-passes/{passId}/approve`
+· `/reject`) and push is built; nothing writes the *question*, because that is gate software this
+repository does not contain.
 
 ### US-2.2 — Fast visitor pre-approval
 
@@ -116,7 +125,7 @@ can authorize guests quickly before they arrive.
 
 - Residents must manually open the application to identify pending visitor approvals.
 
-**Backend:** **Partial** — `visitor_requests` already models a pre-approval; nothing writes one.
+**Backend:** **Served** — `POST /visitor-passes`, in one call, with the code returned exactly once.
 
 ### US-2.3 — One-tap quick access to frequent tasks
 
@@ -131,7 +140,9 @@ most-used actions, so that common tasks do not require deep navigation.
 - Having many features makes applications harder to navigate when core workflows are not simple or
   reliable.
 
-**Backend:** **None** — a client concern, but it needs endpoints that do not exist.
+**Backend:** **Partial** — `GET /resident/snapshot` is the enabling call, and pending passes are
+carried whole so answering one is a tap. The home-screen widget is an OS surface a web application
+does not have.
 
 ### US-2.4 — Reliable notifications for society notices and application updates
 
@@ -142,7 +153,8 @@ important application updates, so that I learn about them without having to open
 
 - Important application updates are sometimes available only after opening the application.
 
-**Backend:** **Partial** — `POST /notices` fires an event; nothing carries it to a resident.
+**Backend:** **Partial** — `GET /notices` is the resident's read and the push transport exists;
+`POST /notices` does not yet call `notify_member`, so nobody is told.
 
 ### US-2.5 — Simple complaint submission with priority
 
@@ -153,7 +165,8 @@ selector, so that reporting an issue is fast and correctly categorized.
 
 - The complaint submission process contains too many options and feels unnecessarily complicated.
 
-**Backend:** **None** — no create endpoint, and no priority column for the selector to write to.
+**Backend:** **Served** — `POST /complaints`, with `urgency` writing to a real `priority` column
+(`0031`).
 
 ### US-2.6 — Complaint status tracking with history
 
@@ -166,8 +179,9 @@ history, so that I can track resolution without calling management.
 - Residents cannot see meaningful progress, expected resolution time, or ownership of a complaint.
 - Repeated calls and follow-ups are often necessary.
 
-**Backend:** **Partial** — status and history reach the raising resident; `progress_percent` is
-written and then never read back.
+**Backend:** **Served** — `GET /complaints/{complaintId}` returns the timestamped history, and
+`GET /complaints` returns `progress`. The dashboard snapshot still drops that column; no story
+depends on it now.
 
 ### US-2.7 — Complaint lifecycle notifications
 
@@ -179,7 +193,8 @@ reassigned, or resolved, so that I stay informed without following up.
 - Push notifications for complaint updates are occasionally delayed or not delivered.
 - Repeated calls and follow-ups are often necessary.
 
-**Backend:** **Partial** — every one of those four transitions emits an event; nothing delivers it.
+**Backend:** **Partial** — backend-complete: every transition writes a notification and both
+transports carry it. `frontend/public/` has no service worker, so no phone can buzz.
 
 ### US-2.8 — Complaint accountability
 
@@ -192,8 +207,8 @@ without repeated follow-ups.
 - Residents cannot see meaningful progress, expected resolution time, or ownership of a complaint.
 - Repeated calls and follow-ups are often necessary.
 
-**Backend:** **Partial** — ownership and due time are stored, then dropped by the snapshot
-projection before a resident sees them.
+**Backend:** **Served** — `assignee`, `expectedResolutionAt` and `isOverdue` reach the raising
+resident through `GET /complaints`. The snapshot still drops them; it is no longer the only path.
 
 ### US-2.9 — Verified management contact directory
 
@@ -204,7 +219,8 @@ roles, so that I can reach the right person quickly.
 
 - Management contact details are outdated, unclear, or insufficiently maintained.
 
-**Backend:** **Partial** — the directory is complete and maintained; "verified" is nobody's job yet.
+**Backend:** **Partial** — the directory is complete, maintained, and readable by residents through
+`GET /directory/contacts`; "verified" is nobody's job yet.
 
 ### US-2.10 — Designated building representative
 
@@ -239,7 +255,8 @@ confirmed booking.
 
 - Amenity booking payments can fail even after money has been deducted.
 
-**Backend:** **Partial** — payment and confirmation are one transaction; no gateway is integrated.
+**Backend:** **Served** — `POST /amenity-bookings/{bookingId}/pay` does both or neither. The gateway
+is the simulator the product asked for, labelled as one on every row it writes.
 
 ---
 
@@ -271,7 +288,9 @@ without per-visitor approval and without weakening day-to-day security.
 
 **Backend:** **Partial** — `visitor_requests.pass_hash` plus `valid_from` / `valid_until` is a
 scheduled, time-boxed code, and `community_settings.visitor_code_ttl_minutes` already configures its
-life. Nothing issues one, and nothing admits a second guest on the same code.
+life. `POST /visitor-passes` issues one and `/cancel` revokes it, but **nothing verifies a code at
+the gate**, which is the requirement the story is about, and nothing admits a second guest on one
+code.
 
 ### US-3.2 — Auto guest access workflow on amenity booking
 

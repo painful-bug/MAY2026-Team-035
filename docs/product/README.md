@@ -14,14 +14,19 @@ revises the originals, replace these rather than editing them in place, so a rea
 looking at a version the team does not recognise.
 
 **Why they are here.** A user story that lives in a document nobody opens cannot be checked against
-the code. Kept alongside the design docs, they are checkable: [`../API.md` §14](../API.md#14-user-stories--endpoints)
+the code. Kept alongside the design docs, they are checkable: [`../API.md` §16](../API.md#16-user-stories--endpoints)
 maps every endpoint we have built to the story it serves, and names the stories nothing serves yet.
 That second half is the useful half — it is the difference between "we built a backend" and "we
 built the backend these users asked for, minus these seven things, on purpose".
 
 **Standing rule.** When an endpoint is added, changed or removed, update the traceability matrix in
-`API.md` §14 in the same commit. A matrix that is 80% current is worse than none, because it is
-believed.
+`API.md` §16 in the same commit — **and the per-story `Backend:` line in
+[`USER_STORIES.md`](USER_STORIES.md), which is an index of that matrix and drifts silently when it is
+not.** A matrix that is 80% current is worse than none, because it is believed.
+
+The drift is now checked rather than remembered:
+`cd backend && python scripts/api_map_scan.py` compares the verdict in three places — this document,
+`API.md` §16, and `x-user-stories` in the generated spec — and reports any disagreement.
 
 ## Scope caveat, stated once so it is not restated in every row
 

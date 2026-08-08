@@ -10987,6 +10987,12 @@ paths:
         role: 'Pre-approval in one call: purpose, guest count and a security code returned exactly once,
           hashed at rest like an invite'
         title: Fast visitor pre-approval
+      - coverage: partial
+        id: US-3.1
+        role: 'Issues the scheduled, time-boxed code the security manager''s story asks for -- `valid_from`/`valid_until`
+          can be set days ahead. It does not close the story: one code still admits one request, and nothing
+          verifies a code at the gate'
+        title: Event-specific access codes for functions
   /api/v1/visitor-passes/{pass_id}:
     get:
       description: 'One pass — the QR screen''s read.
@@ -11157,6 +11163,11 @@ paths:
         role: 'Withdrawing a pass that has not been used. A guest already through the gate is a 409: cancel
           is a physical-world operation and no database write performs it'
         title: Fast visitor pre-approval
+      - coverage: partial
+        id: US-3.1
+        role: Revocation, the other half of issuing a code. A function cancelled the night before should
+          not leave a working code scheduled to activate
+        title: Event-specific access codes for functions
   /api/v1/visitor-passes/{pass_id}/reject:
     post:
       description: Turn away a visitor who arrived unannounced. Same states as `/approve`.
