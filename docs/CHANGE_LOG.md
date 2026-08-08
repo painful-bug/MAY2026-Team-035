@@ -17,6 +17,53 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-08 — Session 38: issue #22, an email nobody had to prove
+
+**Context.** GitHub issue #22, assigned to this workstream: the confirmation link's **Confirm email**
+button arrives disabled, and an account that never confirmed can sign in anyway. Two defects that
+read as one bug, with two different owners — one is a Supabase dashboard setting, the other is a hole
+in this repository. Recorded here because the spec changed and because the second defect turns on a
+rule this log already carries.
+
+### `openapi.yaml` — sign-in now refuses an unconfirmed address
+
+- **`POST /auth/password/sign-in` gains a `401 email_not_confirmed`.** `AUDIT` The backend took
+  whatever GoTrue returned. With Supabase's **Confirm email** setting on, GoTrue refuses the grant
+  itself and the hole is invisible; with it off — the reported state — GoTrue returns a perfectly
+  valid session for an address nobody has proven they own, and nothing downstream looked. Both cases
+  now end at the same error code, so the answer stops depending on a dashboard toggle that no file in
+  this repository can see. The check reads GoTrue's own user record at the provider exchange, **not
+  the JWT claim**: `docs/BACKEND_CHANGES.md` rules that an OAuth JWT need not carry
+  `email_confirmed_at`, and `test_registration_contracts.py` pins that join and invitation flows must
+  not gate on it. Google identities are untouched — the provider already verified the address.
+- **The error names its reason instead of hiding behind "invalid email or password".** `DERIVED` The
+  anti-enumeration rule that governs the rest of this flow does not apply here: the branch is only
+  reachable by someone who supplied the correct password, so they already know the account exists.
+  Staying vague would buy nothing and strand a real user with no idea what to do.
+
+### `openapi.yaml` — `POST /auth/email/resend` stops being a placebo
+
+- **The route now actually sends.** `AUDIT` It returned *"a confirmation email will be sent"* and sent
+  nothing; the previous description said so plainly, on the reasoning that Supabase exposed no resend
+  primitive safe to call through this BFF. It does — `auth.resend({"type": "signup", ...})`, the same
+  shape as the recovery call already in use. That was worth revisiting the moment sign-in started
+  refusing unconfirmed accounts: a user whose confirmation link is dead now has nowhere else to go.
+  Provider errors stay swallowed, so **200 is still not a delivery receipt**, and the neutral response
+  is unchanged.
+
+### Not changed, and why
+
+- **The disabled button is configuration, not code.** `AUDIT` `EmailConfirmationPage.jsx` reads
+  `token_hash` from the query string and disables the button when it is absent. It is absent because
+  the Supabase **Confirm signup** template is still GoTrue's default `{{ .ConfirmationURL }}`, which
+  routes through `/auth/v1/verify` and lands on the page with nothing to spend.
+  `docs/SUPABASE_AUTH_SETUP.md` step 3 already specifies the correct template
+  (`?token_hash={{ .TokenHash }}&type=signup`); the project simply does not match its own document, so
+  the document needs no change. The page's silence when the token is missing is a real frontend
+  weakness and is flagged rather than fixed, under the standing rule not to touch `frontend/src`.
+
+---
+
 ## 2026-08-08 — Session 37: what Swagger saw in the spec
 
 **Context.** The spec was loaded into Swagger Editor and came back with a warning nobody in this

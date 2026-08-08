@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -86,13 +87,49 @@ def refresh_session(refresh_token: str) -> SupabaseSession:
     return _session_from_result(result.session)
 
 
-def sign_up_with_password(*, email: str, password: str, full_name: str, captcha_token: str | None) -> None:
-    """Create an email identity. The caller intentionally gets no existence signal."""
+def confirmation_redirect_url() -> str:
+    """Where a confirmation link must land: the page that spends the token hash.
+
+    The Supabase email template has to point here *carrying* ``token_hash``; see
+    ``docs/SUPABASE_AUTH_SETUP.md``.  A template left on GoTrue's default
+    ``{{ .ConfirmationURL }}`` redirects to this page with no hash to spend,
+    which is what leaves the confirm button with nothing to do.
+    """
     from app.config import get_settings
 
+    return f"{get_settings().frontend_base_url.rstrip('/')}/auth/confirm-email"
+
+
+def _unconfirmed_email() -> AuthenticationError:
+    """The one refusal for an address nobody has proven they own.
+
+    Naming the reason does not enumerate accounts.  This branch is only reachable
+    by someone who already supplied the correct password, so it tells them
+    nothing about the account that they did not already know -- and staying vague
+    here would strand a real user with no idea what to do next.
+    """
+    return AuthenticationError(
+        "Confirm your email address before signing in. "
+        "Check your inbox for the confirmation link.",
+        code="email_not_confirmed",
+    )
+
+
+def _discard_session(client: Client) -> None:
+    """Revoke whatever session ``client`` is holding, best effort.
+
+    Used when a sign-in is refused *after* GoTrue has already minted tokens.
+    A failure to clean up must never mask the refusal that prompted it.
+    """
+    with suppress(Exception):
+        client.auth.sign_out({"scope": "local"})
+
+
+def sign_up_with_password(*, email: str, password: str, full_name: str, captcha_token: str | None) -> None:
+    """Create an email identity. The caller intentionally gets no existence signal."""
     options: dict[str, object] = {
         "data": {"full_name": full_name},
-        "email_redirect_to": f"{get_settings().frontend_base_url.rstrip('/')}/auth/confirm-email",
+        "email_redirect_to": confirmation_redirect_url(),
     }
     if captcha_token:
         options["captcha_token"] = captcha_token
@@ -102,18 +139,55 @@ def sign_up_with_password(*, email: str, password: str, full_name: str, captcha_
         raise AuthenticationError("Account creation could not be started.", code="password_signup_failed") from exc
 
 
+def resend_confirmation_email(*, email: str, captcha_token: str | None) -> None:
+    """Send the sign-up confirmation link again, revealing nothing about the address.
+
+    The recovery path for a confirmation link that expired, never arrived, or was
+    spent by a mail scanner.  Errors are swallowed for the same reason
+    :func:`send_password_recovery` swallows them: the caller gets one fixed
+    answer either way, so this cannot be used to discover who has registered.
+    """
+    options: dict[str, object] = {"email_redirect_to": confirmation_redirect_url()}
+    if captcha_token:
+        options["captcha_token"] = captcha_token
+    with suppress(Exception):
+        get_auth_client().auth.resend(
+            {"type": "signup", "email": email, "options": options}
+        )
+
+
 def sign_in_with_password(*, email: str, password: str, captcha_token: str | None) -> SupabaseSession:
+    """Exchange credentials for a session, but only for a confirmed email address.
+
+    Two different things stand between a password and a session, and both end up
+    as ``email_not_confirmed`` here.  With Supabase's **Confirm email** setting
+    on, GoTrue refuses the grant itself.  With it off, GoTrue returns a perfectly
+    valid session for an address nobody has ever proven they own, and this
+    function is the last thing that can say no -- which is the state that
+    produced the reported bypass.  Checking both means the answer stops depending
+    on a dashboard toggle nobody in the codebase can see.
+    """
     options: dict[str, object] = {}
     if captcha_token:
         options["captcha_token"] = captcha_token
+    client = get_auth_client()
     try:
-        result = get_auth_client().auth.sign_in_with_password(
+        result = client.auth.sign_in_with_password(
             {"email": email, "password": password, "options": options}
         )
     except Exception as exc:
+        if getattr(exc, "code", None) == "email_not_confirmed":
+            raise _unconfirmed_email() from exc
         raise AuthenticationError("Invalid email or password.", code="invalid_credentials") from exc
     if result.session is None:
         raise AuthenticationError("Invalid email or password.", code="invalid_credentials")
+    if not getattr(result.user, "email_confirmed_at", None):
+        # Tokens exist by the time we get to object to them, so spend them here:
+        # refusing a sign-in must not leave a live refresh token behind for an
+        # account that was never verified. A missing user object fails closed --
+        # unproven is unproven.
+        _discard_session(client)
+        raise _unconfirmed_email()
     return _session_from_result(result.session)
 
 

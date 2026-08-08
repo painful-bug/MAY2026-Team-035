@@ -7504,13 +7504,18 @@ paths:
       x-user-stories: []
   /api/v1/auth/email/resend:
     post:
-      description: 'Accepted, and always answered identically.
+      description: 'Send the sign-up confirmation link again.
 
 
-        **This endpoint does not currently send anything.** Supabase exposes no standalone resend primitive
-        that is safe to call through this backend-for-frontend, so rather than leak whether an unconfirmed
-        account exists, it returns the neutral message unconditionally. Retrying sign-up re-sends the
-        confirmation. Documented as-is because a client that believes this delivers mail will wait forever.'
+        The recovery path when the first link expired, never arrived, or was spent by
+
+        a mail-security scanner -- without it, a user whose confirmation failed has
+
+        nowhere to go, since signing in is now correctly refused until they confirm.
+
+        The response is identical whether or not the address has an unconfirmed
+
+        account, so it cannot be used to discover who has registered.'
       operationId: resend_email_api_v1_auth_email_resend_post
       requestBody:
         content:
@@ -7531,6 +7536,8 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Resend Email
       tags:
       - auth
@@ -7951,7 +7958,13 @@ paths:
 
         Wrong password and unknown address both answer **401** with the same message, for the same anti-enumeration
         reason as sign-up. The access and refresh tokens are set as `HttpOnly` cookies and are never returned
-        in the body.'
+        in the body.
+
+
+        **An unconfirmed address is refused** with **401** `email_not_confirmed`, whether the provider
+        rejected the grant or returned a session for an address nobody has proven they own. That one code
+        names the reason rather than hiding behind the generic message: reaching it requires the correct
+        password, so it discloses nothing the caller did not already know. Recover with `POST /auth/email/resend`.'
       operationId: password_sign_in_api_v1_auth_password_sign_in_post
       requestBody:
         content:

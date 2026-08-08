@@ -535,7 +535,14 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "Wrong password and unknown address both answer **401** with the same "
             "message, for the same anti-enumeration reason as sign-up. The access "
             "and refresh tokens are set as `HttpOnly` cookies and are never "
-            "returned in the body."
+            "returned in the body.\n\n"
+            "**An unconfirmed address is refused** with **401** "
+            "`email_not_confirmed`, whether the provider rejected the grant or "
+            "returned a session for an address nobody has proven they own. That "
+            "one code names the reason rather than hiding behind the generic "
+            "message: reaching it requires the correct password, so it discloses "
+            "nothing the caller did not already know. Recover with "
+            "`POST /auth/email/resend`."
         ),
     ),
     ("post", "/api/v1/auth/email/verify"): op(
@@ -550,16 +557,18 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         ),
     ),
     ("post", "/api/v1/auth/email/resend"): op(
-        errors=["403", "500"],
+        errors=["403", "422", "500", "503"],
         no_story=NO_STORY["auth"],
         description=(
-            "Accepted, and always answered identically.\n\n"
-            "**This endpoint does not currently send anything.** Supabase exposes "
-            "no standalone resend primitive that is safe to call through this "
-            "backend-for-frontend, so rather than leak whether an unconfirmed "
-            "account exists, it returns the neutral message unconditionally. "
-            "Retrying sign-up re-sends the confirmation. Documented as-is because "
-            "a client that believes this delivers mail will wait forever."
+            "Send the sign-up confirmation link again, for one that expired, never "
+            "arrived, or was spent by a mail-security scanner.\n\n"
+            "Always answered identically, whether or not the address has an "
+            "unconfirmed account, so it cannot be used to discover who has "
+            "registered. Provider failures -- including the send rate limit -- are "
+            "swallowed for that same reason, which means **200 is not a delivery "
+            "receipt.**\n\n"
+            "The link lands on the frontend confirmation page carrying the token "
+            "hash, which the browser then spends against `/auth/email/verify`."
         ),
     ),
     ("post", "/api/v1/auth/password/reset/request"): op(
