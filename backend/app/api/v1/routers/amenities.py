@@ -285,6 +285,8 @@ async def cancel_bookings(
 ) -> MessageResult:
     """Cancel one or more days of a request.
 
+    Related user story: Administrator 1.1 - partial cancellation of a multi-day booking. The same API permits residents to withdraw their own eligible future dates; authorization is decided from the authenticated membership.
+
     Serves residents and admins from one route. A resident may withdraw their own
     **future** days; an admin may cancel any. Which of the two you are is read
     from your token, so there is nothing in the body to lie about.

@@ -41,6 +41,8 @@ async def update_complaint(
 ) -> MessageResult:
     """Change status, assignee, progress or the expected resolution date.
 
+    Related user stories: Resident 2.6 - complaint status tracking with history; Resident 2.8 - complaint accountability.
+
     The edit and its timeline entries are written in **one transaction**, so a
     status can never change without leaving a trace. `updateNote` writes a
     resident-visible timeline entry even when nothing else changes.
