@@ -524,7 +524,7 @@ export const createResidentAmenityBookingSeries = async (bookingData) => {
   };
   
   try {
-    const result = await api('/amenities/bookings/request', {
+    const result = await api(`/amenities/${bookingData.amenityId}/bookings/request`, {
       method: 'POST',
       body: JSON.stringify(payload)
     });
@@ -575,7 +575,7 @@ export const createAmenityBlockedSlot = async (blockedSlotData) => {
   };
   
   try {
-    const result = await api('/amenities/blocks', {
+    const result = await api(`/amenities/${blockedSlotData.amenityId}/blocks`, {
       method: 'POST',
       body: JSON.stringify(payload)
     });
