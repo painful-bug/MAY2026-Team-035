@@ -17,6 +17,155 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-08 — Session 38: issue #22, an email nobody had to prove
+
+**Context.** GitHub issue #22, assigned to this workstream: the confirmation link's **Confirm email**
+button arrives disabled, and an account that never confirmed can sign in anyway. Two defects that
+read as one bug, with two different owners — one is a Supabase dashboard setting, the other is a hole
+in this repository. Recorded here because the spec changed and because the second defect turns on a
+rule this log already carries.
+
+### `openapi.yaml` — sign-in now refuses an unconfirmed address
+
+- **`POST /auth/password/sign-in` gains a `401 email_not_confirmed`.** `AUDIT` The backend took
+  whatever GoTrue returned. With Supabase's **Confirm email** setting on, GoTrue refuses the grant
+  itself and the hole is invisible; with it off — the reported state — GoTrue returns a perfectly
+  valid session for an address nobody has proven they own, and nothing downstream looked. Both cases
+  now end at the same error code, so the answer stops depending on a dashboard toggle that no file in
+  this repository can see. The check reads GoTrue's own user record at the provider exchange, **not
+  the JWT claim**: `docs/BACKEND_CHANGES.md` rules that an OAuth JWT need not carry
+  `email_confirmed_at`, and `test_registration_contracts.py` pins that join and invitation flows must
+  not gate on it. Google identities are untouched — the provider already verified the address.
+- **The error names its reason instead of hiding behind "invalid email or password".** `DERIVED` The
+  anti-enumeration rule that governs the rest of this flow does not apply here: the branch is only
+  reachable by someone who supplied the correct password, so they already know the account exists.
+  Staying vague would buy nothing and strand a real user with no idea what to do.
+
+### `openapi.yaml` — `POST /auth/email/resend` stops being a placebo
+
+- **The route now actually sends.** `AUDIT` It returned *"a confirmation email will be sent"* and sent
+  nothing; the previous description said so plainly, on the reasoning that Supabase exposed no resend
+  primitive safe to call through this BFF. It does — `auth.resend({"type": "signup", ...})`, the same
+  shape as the recovery call already in use. That was worth revisiting the moment sign-in started
+  refusing unconfirmed accounts: a user whose confirmation link is dead now has nowhere else to go.
+  Provider errors stay swallowed, so **200 is still not a delivery receipt**, and the neutral response
+  is unchanged.
+
+### The disabled button — configuration, plus a frontend that hid it
+
+- **The root cause is a Supabase email template, not code.** `AUDIT` `EmailConfirmationPage.jsx` reads
+  `token_hash` from the query string and disables the button when it is absent. It is absent because
+  the **Confirm signup** template is still GoTrue's default `{{ .ConfirmationURL }}`, which routes
+  through `/auth/v1/verify` and lands on the page with nothing to spend.
+  `docs/SUPABASE_AUTH_SETUP.md` step 3 already specifies the correct template
+  (`?token_hash={{ .TokenHash }}&type=signup`); the project does not match its own document, so the
+  document needs no change. Raised as item 5 of `potential issues/`.
+- **The page no longer fails silently.** `DERIVED` A greyed-out button with no explanation is the
+  worst possible presentation of this: nothing to read, nothing to click, no way to tell a
+  misconfigured template from an already-used link. With no hash to spend the page now says so and
+  offers a resend, which is also the first caller of the endpoint fixed above. `AuthEntryPage` does
+  the same for a sign-in refused with `email_not_confirmed`. Under the standing rule this would have
+  been flagged and left; the **product owner's ruling that issue-fixing may cross into anyone's code**
+  is what makes it part of the fix.
+
+### `API.md` — the authentication chapter was describing a design that no longer exists
+
+- **§3 rewritten from phone/SMS OTP to what is actually served.** `AUDIT` The section carried a
+  warning admitting it documented OTP "which is what the code does today" — untrue for some time: no
+  OTP endpoint exists, and the one route it documented (`POST /auth/refresh`) took a `refresh_token`
+  body it has not accepted since the cookie session landed. Replaced with the real sixteen operations
+  in five groups: discovery and CSRF, OAuth, email/password, recovery, session lifecycle.
+- **§1.2 rewritten.** `AUDIT` It described bearer-only auth against `SUPABASE_JWT_SECRET`, a
+  `user_role` claim from an access-token hook, and an `ADMIN ⊇ RESIDENT` hierarchy enforced by the
+  guards. All three are gone: authentication is cookie-first, no role claim is read, and
+  `require_membership_role` matches exactly. The dead hierarchy in `app/domain/roles.py` is now
+  called out in the section rather than left to mislead — raised as item 2 of `potential issues/`.
+- **§4 corrected.** `AUDIT` It documented an invite keyed on `phone` and `apartment_id` with a
+  `role`; the endpoint takes `intended_unit_id` and `invitee_email`. The two endpoints that actually
+  redeem an invite were missing entirely.
+- **§1.8 and the settings note corrected.** `AUDIT` Rate limiting named `/auth/otp/request` and
+  `/auth/redeem`, neither of which exists; it now names the four real unauthenticated surfaces. The
+  claim that "there is no visitor backend" predates migration `0032` — `requireVisitorPreapproval`
+  still has no reader, but for a different and narrower reason, which is now the one given.
+- **Header block refreshed.** `AUDIT` It advertised 59 operations across two workstreams; the surface
+  is 99 across 86 paths.
+
+### `issue fixes/` — a new folder
+
+- **`issue fixes/22.md`, the full account of this fix.** `DERIVED` One file per closed issue, named
+  by its number. It carries what a commit message cannot: the two bugs and why they were unrelated,
+  the dashboard toggle the whole flow's security was resting on, the `email_verified` gate we nearly
+  wrote and the two artifacts that exist to prevent it, and the dependency between the two fixes —
+  repairing the bypass without repairing the resend endpoint would have converted a security hole
+  into a lockout. Written for a reader who was not here.
+- **`issue fixes/README.md`, the convention for the folder.** `DERIVED` A folder with one file in it
+  teaches nobody anything, and the next person writing a fix document would have had to reverse it
+  out of `22.md`. The README states it directly: how to read one (a table mapping "what you want to
+  know" to the section that answers it), the section-by-section skeleton to copy, and seven rules —
+  of which two carry the real weight. **Name the bug that existed, not the bug that was reported**,
+  because #22 was filed as one bug and was two. And **write down the fix you rejected**, because a
+  wrong fix that looked obviously right to the author will look obviously right to the next reader,
+  who will then improve the code back into the bug. Also fixes the boundary against the sibling
+  folder: findings that are not this issue go to `potential issues/` and are linked, never smuggled
+  into the fix write-up.
+
+### `potential issues/` — a new folder
+
+- **Eight findings written as ready-to-raise GitHub issues.** `AUDIT` Everything turned up while
+  fixing #22 that is not #22, ordered by cost of leaving it, each naming file and line and a command
+  the reader can run to confirm it. Kept out of `DECISIONS_NEEDED.md` because these are not decisions
+  waiting on the product owner — they are defects and debts waiting on someone's time.
+
+---
+
+## 2026-08-08 — Session 37: what Swagger saw in the spec
+
+**Context.** The spec was loaded into Swagger Editor and came back with a warning nobody in this
+repository had run a tool against: *`requestBody` does not have well-defined semantics for GET, HEAD
+and DELETE operations*, on `DELETE /push/subscriptions`. Auditing the whole document for that class of
+finding turned up a second, quieter one. Both are recorded here because both were introduced by
+decisions this log already carries — the first overturns one of them.
+
+### `openapi.yaml` — removal moved off `DELETE`
+
+- **`DELETE /push/subscriptions` → `POST /push/subscriptions/unregister`.** `AUDIT` **This overturns
+  the note written with the endpoint on 2026-08-04**, which chose a `DELETE` with a body, argued
+  correctly that the endpoint URL is a device identifier and must not go in a query string, and then
+  concluded that a `DELETE` body was safe because `frontend/src/lib/api/client.js` forwards it to
+  `fetch`. The reasoning about the query string still holds and is why this is not the obvious fix; the
+  reasoning about the body does not. RFC 9110 leaves content on a `DELETE` undefined — clients may
+  decline to send it, intermediaries may strip it — so "our current client happens to send it" was
+  never the right test to have applied. That note named the remedy itself: *"the fix is a second path,
+  not a query parameter."* It is now taken. Nothing was calling the route — no frontend file
+  references `/push/subscriptions` — so the change costs nothing today and would have cost a silent
+  production failure later.
+- **`_check_request_bodies` added to `scripts/export_openapi.py`.** `DERIVED` A build error, not a
+  review note: a body that arrives in development and is stripped by a proxy in production is the
+  worst failure available, and the class is trivially detectable. The same bargain as
+  `_check_coverage` — the check is what keeps the decision from quietly reverting.
+
+### `openapi.yaml` — the fourteen unlabelled tag groups
+
+- **Six of the twenty tags in use had a description; fourteen did not.** `AUDIT` Not a validity error,
+  which is why nothing had caught it: the document is schema-valid either way, and the groups still
+  render. But a reader opening Swagger UI met `resident-money` next to `money`, and `resident-home`
+  next to `dashboard`, with no line of text saying which is which — the exact question the spec is
+  read to answer. All twenty are now described, in a deliberate order that runs outward from the
+  caller's session to the admin surface to the resident surface, and `_apply_tags` fails the build
+  when a tag is undescribed or a description outlives its tag.
+
+### What the audit cleared
+
+- **Schema validation passes** against OpenAPI 3.1 (`openapi-spec-validator`), and a checker written
+  for this pass found no dangling `$ref`, no duplicate `operationId`, no undeclared or unused path
+  parameter, no operation missing a summary, description or response, and no colliding path shape.
+- **The four OAuth routes that declare `307` and no `2xx` are correct** and were deliberately left:
+  a redirect is the success case there.
+- **Story coverage is unchanged and complete** — 99 operations, every one carrying either
+  `x-user-stories` or a classified `x-no-user-story`.
+
+---
+
 ## 2026-08-04 — Session 36 (part 5): three sections that had stopped being true
 
 **Context.** Found while answering *"are there any steps left?"*. All three are documents describing a

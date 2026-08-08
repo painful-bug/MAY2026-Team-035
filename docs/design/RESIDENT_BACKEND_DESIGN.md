@@ -522,7 +522,7 @@ second system.
 | POST | `/notifications/read-all` | M | Clear the badge |
 | GET | `/push/vapid-key` | M | Public key for `PushManager.subscribe` |
 | POST | `/push/subscriptions` | M | Register a browser; idempotent on endpoint |
-| DELETE | `/push/subscriptions` | M | Unregister |
+| POST | `/push/subscriptions/unregister` | M | Unregister. A `POST`, not a `DELETE`: it carries the endpoint in a body, and content on a `DELETE` has no defined semantics |
 
 `GET /dashboard/events` stays, unchanged in shape and now audience-scoped, as a
 deprecated alias — the admin frontend is already wired to it and this workstream

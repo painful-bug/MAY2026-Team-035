@@ -18,6 +18,9 @@ export default function AuthEntryPage() {
   const isAuthReady = useAuthStore((state) => state.isAuthReady);
   const [methods, setMethods] = useState(null);
   const [error, setError] = useState('');
+  // Set when sign-in was refused for an unconfirmed address, so the error can
+  // carry the way out of it instead of just naming the problem.
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [mode, setMode] = useState('sign-in');
   const [form, setForm] = useState({ full_name: '', email: '', password: '', confirm: '', captcha_token: '' });
   const [submitting, setSubmitting] = useState(false);
@@ -54,7 +57,7 @@ export default function AuthEntryPage() {
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
   const submit = async (event) => {
     event.preventDefault();
-    setError(''); setNotice('');
+    setError(''); setNotice(''); setNeedsConfirmation(false);
     if (mode === 'sign-up' && form.password !== form.confirm) {
       setError('Passwords do not match.'); return;
     }
@@ -71,6 +74,7 @@ export default function AuthEntryPage() {
       }
     } catch (requestError) {
       setError(requestError.message || 'Unable to continue. Please try again.');
+      setNeedsConfirmation(requestError.code === 'email_not_confirmed');
     } finally { setSubmitting(false); }
   };
 
@@ -102,6 +106,11 @@ export default function AuthEntryPage() {
         ) : null}
         {notice ? <p className="text-center text-xs font-semibold text-emerald-700">{notice}</p> : null}
         {error ? <p role="alert" className="text-center text-xs font-semibold text-rose-600">{error}</p> : null}
+        {needsConfirmation ? (
+          <button type="button" onClick={() => navigate(AUTH_ROUTES.CONFIRM_EMAIL)} className="w-full text-xs font-bold text-indigo-600">
+            Send me a new confirmation link
+          </button>
+        ) : null}
       </div>
     </AuthCard>
   );

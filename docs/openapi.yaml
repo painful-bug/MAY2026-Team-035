@@ -6125,8 +6125,9 @@ paths:
       description: 'Issue a resident invitation, returning its code and link.
 
 
-        The invite is bound to the email address given here. Redemption later checks that the Google identity
-        signing in matches it, which is why the address is required rather than optional.'
+        The invite is bound to the email address given here. Redemption later checks that the verified
+        identity signing in matches it, whichever provider it arrived through, which is why the address
+        is required rather than optional.'
       operationId: create_invitation_api_v1_admin_invitations_post
       requestBody:
         content:
@@ -7508,13 +7509,18 @@ paths:
       x-user-stories: []
   /api/v1/auth/email/resend:
     post:
-      description: 'Accepted, and always answered identically.
+      description: 'Send the sign-up confirmation link again.
 
 
-        **This endpoint does not currently send anything.** Supabase exposes no standalone resend primitive
-        that is safe to call through this backend-for-frontend, so rather than leak whether an unconfirmed
-        account exists, it returns the neutral message unconditionally. Retrying sign-up re-sends the
-        confirmation. Documented as-is because a client that believes this delivers mail will wait forever.'
+        The recovery path when the first link expired, never arrived, or was spent by
+
+        a mail-security scanner -- without it, a user whose confirmation failed has
+
+        nowhere to go, since signing in is now correctly refused until they confirm.
+
+        The response is identical whether or not the address has an unconfirmed
+
+        account, so it cannot be used to discover who has registered.'
       operationId: resend_email_api_v1_auth_email_resend_post
       requestBody:
         content:
@@ -7535,6 +7541,8 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       summary: Resend Email
       tags:
       - auth
@@ -7955,7 +7963,13 @@ paths:
 
         Wrong password and unknown address both answer **401** with the same message, for the same anti-enumeration
         reason as sign-up. The access and refresh tokens are set as `HttpOnly` cookies and are never returned
-        in the body.'
+        in the body.
+
+
+        **An unconfirmed address is refused** with **401** `email_not_confirmed`, whether the provider
+        rejected the grant or returned a session for an address nobody has proven they own. That one code
+        names the reason rather than hiding behind the generic message: reaching it requires the correct
+        password, so it discloses nothing the caller did not already know. Recover with `POST /auth/email/resend`.'
       operationId: password_sign_in_api_v1_auth_password_sign_in_post
       requestBody:
         content:
@@ -9699,7 +9713,7 @@ paths:
       x-user-stories: []
   /api/v1/invitations/redeem:
     post:
-      description: 'Redeem the staged invitation for the signed-in Google identity.
+      description: 'Redeem the staged invitation for the signed-in identity.
 
 
         Requires **both** factors: the signed cookie from `prepare` and a verified access token. The invitation
@@ -10486,8 +10500,9 @@ paths:
 
 
         The bootstrap case: the only write that does not require an existing membership, because it creates
-        one. Requires a verified Google identity. **409** if the community could not be created -- almost
-        always a name collision; **503** if the registration path itself has not been provisioned.'
+        one. Requires a verified identity, from any enabled provider. **409** if the community could not
+        be created -- almost always a name collision; **503** if the registration path itself has not
+        been provisioned.'
       operationId: create_community_api_v1_onboarding_community_post
       requestBody:
         content:
@@ -10526,68 +10541,6 @@ paths:
         status: Not covered by user story
       x-user-stories: []
   /api/v1/push/subscriptions:
-    delete:
-      description: 'Stop pushing to one browser.
-
-
-        **The endpoint arrives in a body, not a query string**, which is unusual for
-
-        a `DELETE` and deliberate. A push endpoint URL is a device identifier; in a
-
-        query string it lands in every access log and proxy trace between here and
-
-        the browser, for a request whose whole purpose is to stop tracking that
-
-        device. A `DELETE` body is legal but not universally respected by HTTP
-
-        clients, so this was checked rather than assumed: `frontend/src/lib/api/
-
-        client.js` spreads its options straight into `fetch`, which sends it. If a
-
-        future client drops it, the fix is a second path, not a query parameter.
-
-
-        Always a 200, even when the row had already gone, and it works whether or not
-
-        the server has a VAPID keypair. This is a resident turning notifications off:
-
-        an error because the state was already reached, or because an operator lost a
-
-        key, would leave them unable to do the one thing they asked for.'
-      operationId: unsubscribe_api_v1_push_subscriptions_delete
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UnregisterPushSubscription'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PushSubscriptionResult'
-          description: Successful Response
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      security:
-      - HTTPBearer: []
-      summary: Unregister a browser
-      tags:
-      - push
-      x-no-user-story:
-        api-type: Non-functional
-        rationale: 'Web Push plumbing: handing the browser the application server key and storing what
-          PushManager.subscribe hands back. A resident experiences US-2.1 and US-2.4; nobody experiences
-          a VAPID key. See RESIDENT_BACKEND_DESIGN.md 10.5.'
-        status: Not covered by user story
-      x-user-stories: []
     post:
       description: 'Register the calling browser against the caller''s membership.
 
@@ -10635,6 +10588,76 @@ paths:
       security:
       - HTTPBearer: []
       summary: Register a browser for push
+      tags:
+      - push
+      x-no-user-story:
+        api-type: Non-functional
+        rationale: 'Web Push plumbing: handing the browser the application server key and storing what
+          PushManager.subscribe hands back. A resident experiences US-2.1 and US-2.4; nobody experiences
+          a VAPID key. See RESIDENT_BACKEND_DESIGN.md 10.5.'
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/push/subscriptions/unregister:
+    post:
+      description: 'Stop pushing to one browser.
+
+
+        **The endpoint arrives in a body**, because a push endpoint URL is a device
+
+        identifier: in a query string or a path segment it lands in every access log
+
+        and proxy trace between here and the browser, for a request whose whole
+
+        purpose is to stop tracking that device.
+
+
+        **A removal that carries a body is a `POST` to a sub-path, not a `DELETE`.**
+
+        RFC 9110 leaves content on a `DELETE` with no defined semantics -- clients
+
+        may refuse to send it, intermediaries may strip it, and OpenAPI tooling
+
+        warns on it -- so the one method whose body is guaranteed to arrive carries
+
+        it instead. That is the second path this endpoint''s design always named as
+
+        the remedy, chosen over a query parameter, which would have put the device
+
+        identifier back in the logs.
+
+
+        Always a 200, even when the row had already gone, and it works whether or not
+
+        the server has a VAPID keypair. This is a resident turning notifications off:
+
+        an error because the state was already reached, or because an operator lost a
+
+        key, would leave them unable to do the one thing they asked for.'
+      operationId: unsubscribe_api_v1_push_subscriptions_unregister_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnregisterPushSubscription'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushSubscriptionResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Unregister a browser
       tags:
       - push
       x-no-user-story:
@@ -11212,6 +11235,12 @@ servers:
 tags:
 - description: Sign-in, token refresh and the caller's own profile.
   name: auth
+- description: Founding a community -- once per community, by its first admin.
+  name: onboarding
+- description: Finding a community to join, and reading its unit list.
+  name: communities
+- description: A resident asking to join a community, and the admin queue that answers.
+  name: access requests
 - description: Admin-issued invites and their redemption.
   name: invitations
 - description: Admin dashboard tiles, community profile and residents.
@@ -11222,3 +11251,25 @@ tags:
   name: complaints
 - description: Departments, staff rosters and complaint categories.
   name: departments
+- description: The amenity catalogue, its bookings, approvals and ledger.
+  name: amenities
+- description: 'Community-side billing: invoices raised, payments recorded.'
+  name: money
+- description: Community and billing configuration.
+  name: settings
+- description: Society notices.
+  name: notices
+- description: A resident's own home screen, household and directory.
+  name: resident-home
+- description: 'Visitor passes: pre-approval, approval at the gate, cancellation.'
+  name: visitors
+- description: A resident's own invoices and bookings, and paying them.
+  name: resident-money
+- description: The resident's in-app notification feed and its read state.
+  name: notifications
+- description: 'Web Push plumbing: the application server key and its subscriptions.'
+  name: push
+- description: The server-sent event stream.
+  name: realtime
+- description: Liveness.
+  name: system
