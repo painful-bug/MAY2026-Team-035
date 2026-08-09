@@ -498,5 +498,6 @@ cd backend && python scripts/export_openapi.py --check && python scripts/api_map
 
 | Date | Change |
 |---|---|
+| 2026-08-09 | Rescanned at `main` @ `1138f2e`, four commits ahead of where the last scan ran. Operation-side findings unchanged at 20, story findings zero, 694 tests passing. One real catch: `7d830e1` routed `POST /onboarding/community` through `pg_errors.translate` and widened its error surface to include 422 without moving a route or a response model — invisible to `--check`, and the case §6.2 step 1 cannot see. Declared in [`api_annotations.py`](../backend/scripts/api_annotations.py) and regenerated |
 | 2026-08-08 | §6.1 gains step 5 and §6.2 a fifth question, after a user-story sweep found the verdict for six stories stale in [`product/USER_STORIES.md`](product/USER_STORIES.md) and one story (`US-3.1`) credited as partial by prose that no operation declared. The operation-side findings are unchanged at 20 |
 | 2026-08-08 | Created at `main` @ `98d557a`, after a full backend↔spec audit prompted by a testing-team report that the yaml looked out of sync. It was not: the spec regenerates byte-identical and all 99 operations match in both directions. The real gaps are the eleven imprecise success bodies and nine undocumented operations in §5 |

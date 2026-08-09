@@ -775,16 +775,16 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         ),
     ),
     ("post", "/api/v1/onboarding/community"): op(
-        errors=["401", "403", "409", "500", "503"],
+        errors=["401", "403", "409", "422", "500", "503"],
         no_story=NO_STORY["found"],
         description=(
             "Found a community and make the caller its first administrator.\n\n"
             "The bootstrap case: the only write that does not require an existing "
             "membership, because it creates one. Requires a verified identity, "
-            "from any enabled provider. **409** if the community could not be "
-            "created -- almost "
-            "always a name collision; **503** if the registration path itself has "
-            "not been provisioned."
+            "from any enabled provider. **409** if the name collides or the RPC "
+            "returns a row this API cannot read; **422** if the RPC rejects an "
+            "argument; **503** if the registration path has not been provisioned, "
+            "or failed in a way this API cannot attribute to the caller."
         ),
     ),
     # -- dashboard ---------------------------------------------------------
