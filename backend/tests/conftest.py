@@ -25,3 +25,68 @@ for _key, _value in {
     "COOKIE_SIGNING_SECRET": "placeholder-cookie-signing-secret-0123456789",
 }.items():
     os.environ.setdefault(_key, _value)
+
+import textwrap
+from pathlib import Path
+
+def pytest_collection_modifyitems(session, config, items):
+    """Auto-generate README files based on test collection."""
+    api_tests = {}
+    core_tests = {}
+    
+    for item in items:
+        # Avoid issues with non-function items
+        if not hasattr(item, "module") or not hasattr(item, "obj"):
+            continue
+            
+        path_str = str(item.path) if hasattr(item, "path") else str(item.fspath)
+        is_api = "tests\\api" in path_str or "tests/api" in path_str
+        target_dict = api_tests if is_api else core_tests
+        
+        mod_name = Path(path_str).name
+        
+        if mod_name not in target_dict:
+            mod_doc = getattr(item.module, "__doc__", None) or "No description provided."
+            target_dict[mod_name] = {
+                "doc": textwrap.dedent(mod_doc).strip(),
+                "tests": []
+            }
+            
+        test_doc = getattr(item.obj, "__doc__", None) or "No description provided."
+        target_dict[mod_name]["tests"].append({
+            "name": item.name,
+            "doc": textwrap.dedent(test_doc).strip()
+        })
+        
+    def write_readme(out_path, title, test_dict):
+        lines = [
+            f"# {title}",
+            "",
+            "> **Note:** This file is auto-generated dynamically by a pytest hook in `conftest.py`. It extracts descriptions directly from the python code docstrings during test collection.",
+            ""
+        ]
+        
+        for mod_name, data in sorted(test_dict.items()):
+            lines.append(f"## `{mod_name}`")
+            if data["doc"]:
+                lines.append(f"{data['doc']}")
+            lines.append(f"\n*Total tests in this file: {len(data['tests'])}*\n")
+            
+            lines.append("| Test Function | Description |")
+            lines.append("|---------------|-------------|")
+            for t in data["tests"]:
+                # Clean doc for table formatting
+                doc_clean = " ".join(t["doc"].split("\n")).strip()
+                doc_clean = doc_clean.replace("|", "\\|")
+                lines.append(f"| `{t['name']}` | {doc_clean} |")
+            lines.append("\n")
+            
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+            
+    base_dir = Path(__file__).parent
+    try:
+        write_readme(base_dir / "api" / "README.md", "API Tests Documentation", api_tests)
+        write_readme(base_dir / "README.md", "Core Tests Documentation", core_tests)
+    except Exception as e:
+        print(f"Failed to generate READMEs: {e}")
