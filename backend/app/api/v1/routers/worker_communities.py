@@ -21,6 +21,8 @@ from app.api.deps import get_current_user, get_request_client
 from app.domain.common_schemas import MessageResult
 from app.domain.hiring_schemas import (
     ApplyRequest,
+    DecideApplicationRequest,
+    ProviderDecisionRequest,
     RequestDepartureRequest,
     ServiceableCommunity,
     ServiceApplication,
@@ -73,7 +75,7 @@ async def search_communities(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     query: str | None = Query(None, alias="q", max_length=120),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=20),
     offset: int = Query(0, ge=0),
 ) -> list[ServiceableCommunity]:
     """Where the caller could apply, nearest first.
@@ -82,13 +84,9 @@ async def search_communities(
     categories need one of the caller's skills, it has not blacklisted them, and
     they are not already a member of it.
 
-    **A community with no coordinates sorts last rather than being hidden**, and
-    so does a provider with none. Somebody who has not filled in where they work
-    is still somebody who can work.
-
-    An empty result usually means the caller has no skills saved yet, not that
-    no community needs them -- `PUT /service-providers/me/skills` is the fix, and
-    a client showing this screen should say so.
+    Results are limited to the caller's service radius. Communities without
+    coordinates are excluded, and an incomplete legacy provider receives the
+    typed location error so the dashboard can show the repair form.
     """
     return service.search_communities(
         client, query=query, limit=limit, offset=offset
@@ -170,6 +168,25 @@ async def withdraw(
     """
     return service.withdraw(
         client, profile_id=principal.user_id, application_id=application_id
+    )
+
+
+@router.post(
+    "/applications/{application_id}/decision",
+    response_model=ServiceApplication,
+    summary="Accept or decline an invitation",
+)
+async def decide_invitation(
+    body: ProviderDecisionRequest,
+    application_id: str = Path(...),
+    _: Principal = Depends(get_current_user),
+    client: Client = Depends(get_request_client),
+) -> ServiceApplication:
+    """Answer an invitation without allowing the professional to alter its terms."""
+    return service.decide(
+        client,
+        application_id=application_id,
+        body=DecideApplicationRequest(decision=body.decision, note=body.note),
     )
 
 

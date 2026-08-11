@@ -328,15 +328,17 @@ def test_api_148_removal_carries_the_reason_in_the_body_not_the_url(
     assert actual_output == expected_output, endpoint
 
 
-def test_api_149_a_resident_cannot_reach_the_hiring_surface(
-    resident_api_client: TestClient, hiring: dict
+def test_api_149_hiring_authorization_reaches_the_scoped_database_check(
+    worker_api_client: TestClient, hiring: dict
 ) -> None:
-    """The coarse guard doing its one job: a signed-in resident poking at
-    department ids is refused before any query runs."""
+    """Roster-ranked managers carry worker/security memberships, so the former
+    membership-role guard could not distinguish them from ordinary members.
+    The request reaches the request-scoped adapter; RLS/can_hire_for_department
+    remains the authoritative same-department check."""
     endpoint = "GET /api/v1/departments/department-id/applications"
-    expected_output = {"status_code": 403, "reached_repository": False}
+    expected_output = {"status_code": 200, "reached_repository": True}
 
-    response = resident_api_client.get(APPLICATIONS)
+    response = worker_api_client.get(APPLICATIONS)
     actual_output = {
         "status_code": response.status_code,
         "reached_repository": "listed" in hiring,

@@ -1,27 +1,35 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import AuthCard from './AuthCard';
 import {
   getAuthMethods, signInWithPassword, signUpWithPassword,
 } from '../../lib/auth/authService';
 import { AUTH_FLOW_STATE, useAuthStore } from '../../store/authStore';
-import { AUTH_ROUTES, homeRouteFor } from '../../routes/authRoutes';
+import {
+  AUTH_ROUTES,
+  authIntentFromSearch,
+  destinationAfterAuth,
+  serviceIntentConflictsWithMembership,
+} from '../../routes/authRoutes';
 import TurnstileChallenge from './TurnstileChallenge';
+import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
 
-export default function AuthEntryPage() {
+export default function AuthEntryPage({ initialMode = 'sign-in' }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const beginOAuth = useAuthStore((state) => state.beginOAuth);
   const completeExternalLogin = useAuthStore((state) => state.completeExternalLogin);
   const authFlowState = useAuthStore((state) => state.authFlowState);
   const sessionContext = useAuthStore((state) => state.sessionContext);
   const isAuthReady = useAuthStore((state) => state.isAuthReady);
+  const logout = useAuthStore((state) => state.logout);
   const [methods, setMethods] = useState(null);
   const [error, setError] = useState('');
   // Set when sign-in was refused for an unconfirmed address, so the error can
   // carry the way out of it instead of just naming the problem.
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
-  const [mode, setMode] = useState('sign-in');
+  const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState({ full_name: '', email: '', password: '', confirm: '', captcha_token: '' });
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
@@ -51,7 +59,21 @@ export default function AuthEntryPage() {
     };
   }, []);
 
-  if (isAuthReady && sessionContext?.identity) return <Navigate to={homeRouteFor(sessionContext)} replace />;
+  const intent = authIntentFromSearch(location.search);
+  if (isAuthReady && sessionContext?.identity) {
+    if (serviceIntentConflictsWithMembership(sessionContext, intent)) {
+      return (
+        <AuthCard title="Use a separate professional account" description="Resident, admin, and manager access cannot be converted into a service-professional account.">
+          <div className="space-y-3 text-center">
+            <p className="text-sm text-slate-600">Sign out, then create or use a different account for professional work.</p>
+            <button type="button" onClick={logout} className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white">Sign out</button>
+            <button type="button" onClick={() => navigate(destinationAfterAuth(sessionContext))} className="w-full text-xs font-bold text-indigo-600">Return to my dashboard</button>
+          </div>
+        </AuthCard>
+      );
+    }
+    return <Navigate to={destinationAfterAuth(sessionContext, intent)} replace />;
+  }
 
   const redirecting = authFlowState === AUTH_FLOW_STATE.REDIRECTING;
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -64,13 +86,14 @@ export default function AuthEntryPage() {
     setSubmitting(true);
     try {
       if (mode === 'sign-up') {
-        await signUpWithPassword({ full_name: form.full_name, email: form.email, password: form.password, captcha_token: form.captcha_token || null });
-        setNotice('Check your email to confirm your account before continuing.');
+        const result = await signUpWithPassword({ full_name: form.full_name, email: form.email, password: form.password, captcha_token: form.captcha_token || null, intent });
+        setNotice(result.message);
       } else {
         await signInWithPassword({ email: form.email, password: form.password, captcha_token: form.captcha_token || null });
         const result = await completeExternalLogin();
         if (!result.success) throw new Error(result.message);
-        navigate(homeRouteFor(result.context), { replace: true });
+        if (intent) void recordServiceSignupEvent('auth_completed');
+        navigate(destinationAfterAuth(result.context, intent), { replace: true });
       }
     } catch (requestError) {
       setError(requestError.message || 'Unable to continue. Please try again.');
@@ -85,7 +108,7 @@ export default function AuthEntryPage() {
       <div className="space-y-4">
         {methods === null && !error ? <div className="flex justify-center py-3"><Loader2 className="h-5 w-5 animate-spin text-indigo-600" /></div> : null}
         {ordered.map((method) => method.id === 'google' ? (
-          <button key={method.id} type="button" onClick={() => beginOAuth(method.id, AUTH_ROUTES.AUTH_CALLBACK)} disabled={redirecting} className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 font-bold shadow-sm transition-all disabled:cursor-wait disabled:opacity-60 ${primary === method.id ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+          <button key={method.id} type="button" onClick={() => beginOAuth(method.id, `${AUTH_ROUTES.AUTH_CALLBACK}${intent ? `?intent=${intent}` : ''}`)} disabled={redirecting} className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 font-bold shadow-sm transition-all disabled:cursor-wait disabled:opacity-60 ${primary === method.id ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
             {redirecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className={primary === method.id ? 'text-white' : 'text-[#4285F4]'}>G</span>}
             {redirecting ? 'Redirecting…' : method.label}
           </button>
@@ -107,7 +130,7 @@ export default function AuthEntryPage() {
         {notice ? <p className="text-center text-xs font-semibold text-emerald-700">{notice}</p> : null}
         {error ? <p role="alert" className="text-center text-xs font-semibold text-rose-600">{error}</p> : null}
         {needsConfirmation ? (
-          <button type="button" onClick={() => navigate(AUTH_ROUTES.CONFIRM_EMAIL)} className="w-full text-xs font-bold text-indigo-600">
+          <button type="button" onClick={() => navigate(`${AUTH_ROUTES.CONFIRM_EMAIL}${intent ? `?intent=${intent}` : ''}`)} className="w-full text-xs font-bold text-indigo-600">
             Send me a new confirmation link
           </button>
         ) : null}

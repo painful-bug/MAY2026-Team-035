@@ -59,6 +59,9 @@ _PUBLIC_PATHS = {
     "/api/v1/auth/email/resend",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
+    # Anonymous launch-funnel events are bound to a random HTTP-only visitor
+    # cookie and still require the pre-auth CSRF pair; no account is required.
+    "/api/v1/telemetry/service-signup",
     # Exchanges an invite token+code for a short-lived signed cookie. Called
     # before the user has signed in -- that is the point of it.
     "/api/v1/invitations/prepare",

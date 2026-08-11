@@ -1,23 +1,11 @@
 """Hiring, leaving and employee management, from the department's side.
 
-Fourteen routes, all of them naming a department in the path -- which is
-exactly the thing that makes the guard interesting.
-
-``require_admin_or_manager`` at router level is a **coarse** filter: it asks
-whether the caller is an admin or a manager *somewhere*, resolved from their
-default membership. It cannot ask whether they manage the department in the URL,
-because the department's community is not known until something reads it.
-
-The real check is ``can_manage_department(uuid)`` inside the database, applied by
-every RPC here and by the RLS policy behind every read. A manager of one
-community calling these routes against another community's department passes the
-router guard and is refused by Postgres -- which is the posture
-``docs/design/ADMIN_DASHBOARD_DESIGN.md`` 10 asks for: an id arriving in a URL is
-never an authorization decision.
-
-The router guard is not thereby pointless. It turns "signed-in stranger pokes at
-department ids" into a 403 before any query runs, and it keeps the OpenAPI
-description of who these routes are for honest.
+Every route names a department in the path, so authentication alone cannot
+authorize it. The HTTP layer establishes identity and CSRF; SQL/RLS applies the
+department-specific predicate. Hiring uses ``can_hire_for_department`` so an
+active roster-ranked manager works and admins are fallback only when no manager
+exists. Departures and other roster operations retain their broader existing
+``can_manage_department`` semantics.
 """
 
 from __future__ import annotations
@@ -26,7 +14,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.api.admin_deps import require_admin_or_manager, require_csrf_unsafe
+from app.api.admin_deps import (
+    require_admin_or_manager,
+    require_csrf_unsafe,
+    require_hiring_actor,
+)
 from app.api.deps import get_request_client
 from app.core.exceptions import ValidationError
 from app.core.supabase_client import get_service_client
@@ -56,14 +48,18 @@ from supabase import Client
 router = APIRouter(
     prefix="/departments",
     tags=["department-hiring"],
-    dependencies=[Depends(require_csrf_unsafe), Depends(require_admin_or_manager)],
+    dependencies=[Depends(require_csrf_unsafe)],
 )
+
+_HIRING_DEPENDENCIES = [Depends(require_hiring_actor)]
+_MANAGEMENT_DEPENDENCIES = [Depends(require_admin_or_manager)]
 
 
 @router.get(
     "/{department_id}/applications",
     response_model=list[ServiceApplication],
     summary="This department's applications and invitations",
+    dependencies=_HIRING_DEPENDENCIES,
 )
 async def list_applications(
     department_id: str = Path(...),
@@ -90,12 +86,13 @@ async def list_applications(
     "/{department_id}/candidates",
     response_model=list[HireableProvider],
     summary="Service people this department could hire",
+    dependencies=_HIRING_DEPENDENCIES,
 )
 async def list_candidates(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
     query: str | None = Query(None, alias="q", max_length=120),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=20),
     offset: int = Query(0, ge=0),
 ) -> list[HireableProvider]:
     """The candidate search, nearest first.
@@ -127,6 +124,7 @@ async def list_candidates(
     response_model=ServiceApplication,
     status_code=status.HTTP_201_CREATED,
     summary="Invite a service person to this department",
+    dependencies=_HIRING_DEPENDENCIES,
 )
 async def invite(
     body: InviteRequest,
@@ -161,6 +159,7 @@ async def invite(
     "/{department_id}/applications/{application_id}/decide",
     response_model=ServiceApplication,
     summary="Accept or reject an application",
+    dependencies=_HIRING_DEPENDENCIES,
 )
 async def decide(
     body: DecideApplicationRequest,
@@ -198,6 +197,7 @@ async def decide(
     "/{department_id}/members/{staff_id}/remove",
     response_model=MessageResult,
     summary="Remove someone from this department",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def remove_member(
     body: RemoveMemberRequest,
@@ -231,6 +231,7 @@ async def remove_member(
     response_model=MessageResult,
     status_code=status.HTTP_201_CREATED,
     summary="Bar a service person from this community",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def blacklist(
     body: BlacklistRequest,
@@ -275,6 +276,7 @@ async def blacklist(
     "/{department_id}/departures",
     response_model=list[StaffDeparture],
     summary="Departures from this department",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def list_departures(
     department_id: str = Path(...),
@@ -301,6 +303,7 @@ async def list_departures(
     "/{department_id}/departures/{departure_id}",
     response_model=StaffDepartureDetail,
     summary="One departure and its handover list",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def get_departure(
     department_id: str = Path(...),
@@ -328,6 +331,7 @@ async def get_departure(
     response_model=StaffDeparture,
     status_code=status.HTTP_201_CREATED,
     summary="Start a handover for someone on this roster",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def open_departure(
     body: RequestDepartureRequest,
@@ -365,6 +369,7 @@ async def open_departure(
     "/{department_id}/departures/{departure_id}/reassign",
     response_model=MessageResult,
     summary="Hand one job or shift to somebody else",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def reassign_item(
     body: ReassignItemRequest,
@@ -402,6 +407,7 @@ async def reassign_item(
     "/{department_id}/departures/{departure_id}/decide",
     response_model=StaffDeparture,
     summary="Approve or reject a departure",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def decide_departure(
     body: DecideDepartureRequest,
@@ -437,6 +443,7 @@ async def decide_departure(
     "/{department_id}/staff/{staff_id}",
     response_model=StaffMemberDetail,
     summary="One employee, with any departure heading their way",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def get_staff_member(
     department_id: str = Path(...),
@@ -463,6 +470,7 @@ async def get_staff_member(
     "/{department_id}/staff/{staff_id}/schedule",
     response_model=list[ScheduleItem],
     summary="One employee's jobs and shifts in a window",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def get_staff_schedule(
     department_id: str = Path(...),
@@ -498,6 +506,7 @@ async def get_staff_schedule(
     "/{department_id}/departures/{departure_id}/coverage",
     response_model=list[CoverageItem],
     summary="Who could take each item this departure would strand",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def get_departure_coverage(
     department_id: str = Path(...),
@@ -543,6 +552,7 @@ async def get_departure_coverage(
     "/{department_id}/staff-invitations",
     response_model=list[StaffInvitation],
     summary="Leadership created for this department",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def list_staff_invitations(
     department_id: str = Path(...),
@@ -572,6 +582,7 @@ async def list_staff_invitations(
     response_model=StaffInvitation,
     status_code=status.HTTP_201_CREATED,
     summary="Create a manager or supervisor",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def invite_staff_member(
     body: InviteStaffRequest,
@@ -607,6 +618,7 @@ async def invite_staff_member(
     "/{department_id}/staff-invitations/{invitation_id}",
     response_model=StaffInvitation,
     summary="Correct an unclaimed invitation",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def update_staff_invitation(
     body: UpdateStaffInvitationRequest,
@@ -650,6 +662,7 @@ async def update_staff_invitation(
     "/{department_id}/staff-invitations/{invitation_id}",
     response_model=MessageResult,
     summary="Withdraw an unclaimed invitation",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
 )
 async def revoke_staff_invitation(
     department_id: str = Path(...),

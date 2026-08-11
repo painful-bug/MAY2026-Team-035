@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from app.domain.common_schemas import CamelModel
 
@@ -127,22 +127,45 @@ class UpdateServiceProviderRequest(CamelModel):
     phone: str | None = Field(default=None, max_length=20)
     #: Where they are based. Together with ``serviceRadiusKm`` this decides
     #: which communities they are shown, so it is worth the client asking for
-    #: browser geolocation rather than leaving both null -- a provider with no
-    #: coordinates still appears in every search, but sorts last.
+    #: browser geolocation rather than leaving both null. An incomplete legacy
+    #: provider must repair the pair before proximity search is available.
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     service_radius_km: float | None = Field(default=None, gt=0, le=500)
 
+    @model_validator(mode="after")
+    def coordinates_are_a_pair(self) -> "UpdateServiceProviderRequest":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be supplied together")
+        return self
+
 
 class SaveServiceProviderRequest(UpdateServiceProviderRequest):
-    """Register: the update shape plus the one field registration must have.
-
-    One RPC serves both (``upsert_service_provider``); the two models exist
-    because the *name* requirement differs. Registration names you;
-    settings never rename you.
-    """
+    """Atomically register identity details, location, radius and skills."""
 
     display_name: str = Field(min_length=2, max_length=120)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    service_radius_km: float = Field(default=15, ge=1, le=500)
+    skill_ids: list[str] = Field(min_length=1, max_length=40)
+
+    @field_validator("display_name")
+    @classmethod
+    def trim_display_name(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("display name must contain at least two characters")
+        return value
+
+    @field_validator("skill_ids")
+    @classmethod
+    def require_unique_skill_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [skill_id.strip() for skill_id in value]
+        if any(not skill_id for skill_id in cleaned):
+            raise ValueError("skill ids must not be blank")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("skill ids must be unique")
+        return cleaned
 
 
 class SetSkillsRequest(CamelModel):
@@ -153,12 +176,11 @@ class SetSkillsRequest(CamelModel):
     delta API is a lost update that nobody notices until a plumber stops being
     offered plumbing.
 
-    An unknown or retired skill id is **ignored, not rejected.** The RPC selects
-    against the catalogue rather than trusting the argument, so a client holding
-    a stale list saves the trades that still exist instead of failing whole.
+    Unknown or retired skills reject the replacement, and the set may not be
+    empty, so an active professional is never silently left undiscoverable.
     """
 
-    skill_ids: list[str] = Field(default_factory=list, max_length=40)
+    skill_ids: list[str] = Field(min_length=1, max_length=40)
 
 
 class SetAvailabilityRequest(CamelModel):

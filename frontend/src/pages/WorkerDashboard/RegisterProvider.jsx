@@ -1,22 +1,33 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, LocateFixed, Wrench } from 'lucide-react';
+import { Wrench } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import LocationCoordinatesInput from '../../components/common/LocationCoordinatesInput';
 import { workerApi } from '../../features/worker/workerApi';
+import { useAuthStore } from '../../store/authStore';
+import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
 
 // The first screen a service person ever sees. Shown by the dashboard whenever
 // `snapshot.provider` is null, which is the whole "has never registered" case.
 //
-// Skills are saved by a second call because they are a second endpoint
-// (`PUT /service-providers/me/skills`), and they are asked for here rather than
-// later because `GET /worker/communities/search` matches on them: a provider
-// with no skills gets an empty search and no explanation of why.
+// The first write is atomic because community search is meaningful only when
+// the profile has both coordinates and at least one active skill.
 
-export default function RegisterProvider() {
+export default function RegisterProvider({ provider = null }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ displayName: '', headline: '', phone: '', serviceRadiusKm: 15 });
-  const [skillIds, setSkillIds] = useState([]);
-  const [coords, setCoords] = useState(null);
-  const [locating, setLocating] = useState(false);
+  const navigate = useNavigate();
+  const identity = useAuthStore((state) => state.sessionContext?.identity);
+  const refreshSession = useAuthStore((state) => state.refreshSession);
+  const [form, setForm] = useState({
+    displayName: provider?.displayName || identity?.full_name || '',
+    headline: provider?.headline || '',
+    phone: provider?.phone || '',
+    serviceRadiusKm: provider?.serviceRadiusKm || 15,
+  });
+  const [skillIds, setSkillIds] = useState(provider?.skillIds || []);
+  const [coords, setCoords] = useState({
+    latitude: provider?.latitude ?? '', longitude: provider?.longitude ?? '',
+  });
   const skills = useQuery({ queryKey: ['skills'], queryFn: workerApi.skills });
 
   const byCategory = useMemo(() => {
@@ -31,33 +42,24 @@ export default function RegisterProvider() {
 
   const register = useMutation({
     mutationFn: async () => {
-      await workerApi.register({
+      return workerApi.register({
         displayName: form.displayName.trim(),
         headline: form.headline.trim() || null,
         phone: form.phone.trim() || null,
         serviceRadiusKm: Number(form.serviceRadiusKm) || 15,
-        latitude: coords?.latitude ?? null,
-        longitude: coords?.longitude ?? null,
+        latitude: Number(coords.latitude),
+        longitude: Number(coords.longitude),
+        skillIds,
       });
-      if (skillIds.length) await workerApi.setSkills(skillIds);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['worker-snapshot'] }),
+    onSuccess: async () => {
+      void recordServiceSignupEvent('provider_profile_completed');
+      await refreshSession();
+      await queryClient.invalidateQueries({ queryKey: ['worker-snapshot'] });
+      await queryClient.invalidateQueries({ queryKey: ['worker-profile'] });
+      navigate('/worker/communities?tab=find', { replace: true });
+    },
   });
-
-  const locate = () => {
-    if (!navigator.geolocation) return;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoords({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-        setLocating(false);
-      },
-      // A refused prompt is not an error worth a banner. Distance ordering just
-      // sorts this provider last, which the search says it does on purpose.
-      () => setLocating(false),
-      { timeout: 10_000 }
-    );
-  };
 
   const toggleSkill = (id) =>
     setSkillIds((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
@@ -144,29 +146,17 @@ export default function RegisterProvider() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-          <div className="min-w-0">
-            <p className="text-xs font-extrabold text-slate-700">Where you are based</p>
-            <p className="text-[11px] font-medium text-slate-500">
-              {coords
-                ? `Saved · ${coords.latitude.toFixed(3)}, ${coords.longitude.toFixed(3)}`
-                : 'Optional. Without it you still appear, sorted last.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={locate}
-            disabled={locating}
-            className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {locating ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
-            Use my location
-          </button>
-        </div>
+        <LocationCoordinatesInput value={coords} onChange={setCoords} idPrefix="provider" required />
 
         <div>
           <p className="mb-2 text-xs font-extrabold uppercase tracking-wider text-slate-500">Your trades</p>
           {skills.isPending && <p className="text-sm font-semibold text-slate-400">Loading trades…</p>}
+          {skills.isError && (
+            <div className="flex items-center justify-between gap-3 rounded-xl bg-rose-50 px-3 py-2">
+              <p role="alert" className="text-sm font-semibold text-rose-600">{skills.error?.message || 'Could not load trades.'}</p>
+              <button type="button" onClick={() => skills.refetch()} className="shrink-0 text-xs font-extrabold text-rose-700 underline">Try again</button>
+            </div>
+          )}
           <div className="space-y-3">
             {byCategory.map(([category, items]) => (
               <div key={category}>
@@ -176,6 +166,7 @@ export default function RegisterProvider() {
                     <button
                       key={skill.id}
                       type="button"
+                      aria-pressed={skillIds.includes(skill.id)}
                       onClick={() => toggleSkill(skill.id)}
                       className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
                         skillIds.includes(skill.id)
@@ -193,17 +184,17 @@ export default function RegisterProvider() {
         </div>
 
         {register.isError && (
-          <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          <p role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
             {register.error?.message || 'Could not create your profile.'}
           </p>
         )}
 
         <button
           type="submit"
-          disabled={register.isPending || form.displayName.trim().length < 2}
+          disabled={register.isPending || skills.isPending || form.displayName.trim().length < 2 || skillIds.length === 0 || coords.latitude === '' || coords.longitude === ''}
           className="w-full rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
         >
-          {register.isPending ? 'Creating your profile…' : 'Create my profile'}
+          {register.isPending ? 'Saving…' : 'Next'}
         </button>
       </form>
     </div>

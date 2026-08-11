@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.domain.common_schemas import CamelModel
 from app.domain.department_schemas import StaffMember
@@ -49,8 +49,8 @@ class ServiceApplication(CamelModel):
     shift: str | None = None
     decision_note: str | None = None
     decided_at: datetime | None = None
-    #: Straight-line kilometres between the provider and the community. Null
-    #: when either has no coordinates, which sorts last rather than hiding them.
+    #: Straight-line kilometres between the provider and the community.
+    #: Proximity search excludes rows without the coordinates needed to compute it.
     distance_km: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -124,6 +124,14 @@ class DecideApplicationRequest(CamelModel):
     #: ``accepted`` or ``rejected``.
     decision: str
     job_title: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ProviderDecisionRequest(CamelModel):
+    """A professional accepting or declining an invitation; terms are read-only."""
+
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["accepted", "rejected"]
     note: str | None = Field(default=None, max_length=500)
 
 

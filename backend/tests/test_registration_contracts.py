@@ -13,6 +13,7 @@ from postgrest.exceptions import APIError
 
 from app.config import Settings
 from app.core.exceptions import ServiceUnavailableError
+from app.repositories import service_providers_repository
 from app.domain.schemas import (
     CommunityOnboardingRequest,
     CreateAccessRequest,
@@ -55,6 +56,13 @@ def test_auth_methods_can_swap_primary_without_changing_enabled_order() -> None:
     assert settings.enabled_auth_methods == ["email_password", "google"]
 
 
+def test_production_refuses_disabled_email_confirmation() -> None:
+    with pytest.raises(ValueError, match="Email confirmation must be enabled"):
+        _settings(
+            ENV="production", AUTH_EMAIL_CONFIRMATION_REQUIRED="false"
+        ).validate_auth_configuration()
+
+
 def test_password_signup_requires_a_long_password() -> None:
     with pytest.raises(ValidationError):
         PasswordSignUpRequest(full_name="Test User", email="test@example.com", password="short")
@@ -88,6 +96,40 @@ def test_community_search_reports_an_unapplied_blacklist_schema_migration(
         community_directory_service.search("Palm", 10, "profile-id")
 
     assert raised.value.code == "community_search_schema_unavailable"
+    assert raised.value.status_code == 503
+
+
+def test_service_provider_registration_reports_an_unapplied_schema_migration() -> None:
+    """Never fall back to separate profile and skill writes during rollout."""
+
+    class MissingRegistrationRpc:
+        def execute(self) -> None:
+            raise APIError(
+                {
+                    "message": "Could not find the function public.register_service_provider in the schema cache",
+                    "code": "PGRST202",
+                    "hint": None,
+                    "details": None,
+                }
+            )
+
+    class MissingRegistrationClient:
+        def rpc(self, *_: object, **__: object) -> MissingRegistrationRpc:
+            return MissingRegistrationRpc()
+
+    with pytest.raises(ServiceUnavailableError) as raised:
+        service_providers_repository.register_profile(
+            MissingRegistrationClient(),  # type: ignore[arg-type]
+            display_name="Ravi Kumar",
+            headline=None,
+            phone=None,
+            latitude=22.572645,
+            longitude=88.363892,
+            service_radius_km=15,
+            skill_ids=["00000000-0000-0000-0000-000000000001"],
+        )
+
+    assert raised.value.code == "service_provider_registration_not_deployed"
     assert raised.value.status_code == 503
 
 

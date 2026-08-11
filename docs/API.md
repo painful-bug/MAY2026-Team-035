@@ -358,16 +358,16 @@ GoTrue generates the provider `state` itself; supplying our own makes it reject 
 
 | Endpoint | Request | Notes |
 |---|---|---|
-| `POST /api/v1/auth/password/sign-up` | `{ full_name, email, password, captcha_token? }` | Password minimum is **15 characters**. Always answers the same, so it cannot reveal who has registered |
+| `POST /api/v1/auth/password/sign-up` | `{ full_name, email, password, captcha_token?, intent? }` | Password minimum is **15 characters**. `intent` accepts only `service-provider` and is a navigation hint, never a role grant |
 | `POST /api/v1/auth/password/sign-in` | `{ email, password, captcha_token? }` | Sets the session cookies |
 | `POST /api/v1/auth/email/verify` | `{ token_hash, verification_type }` | Spends the one-time hash from the confirmation email and signs the user in |
-| `POST /api/v1/auth/email/resend` | `{ email, captcha_token? }` | Sends the confirmation link again. **200 is not a delivery receipt** — provider errors are swallowed so the response cannot enumerate accounts |
+| `POST /api/v1/auth/email/resend` | `{ email, captcha_token?, intent? }` | Sends the confirmation link again and preserves the allowlisted intent. **200 is not a delivery receipt** — provider errors are swallowed so the response cannot enumerate accounts |
 
-**An unconfirmed address cannot sign in.** `POST /auth/password/sign-in` answers `401`
+With `AUTH_EMAIL_CONFIRMATION_REQUIRED=true` (the default and mandatory in production), an
+unconfirmed address cannot sign in. `POST /auth/password/sign-in` answers `401`
 `email_not_confirmed` both when the provider refuses the grant and when it returns a session for an
-address nobody has proven they own — so the behaviour does not depend on the Supabase **Confirm email**
-setting. That error names its reason rather than hiding behind the generic message: reaching it
-requires the correct password, so it discloses nothing the caller did not already know. Recovery is
+address nobody has proven they own; that session is revoked. An explicit local/test value of `false`
+allows direct sign-in and must agree with local Supabase's confirmation setting. Recovery is
 `POST /auth/email/resend`.
 
 Confirmation links must carry the token hash to the frontend
@@ -4359,18 +4359,17 @@ Register as a service person. **Requires authentication only.**
 
 ```json
 { "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
-  "bio": null, "phone": "+919876543210",
-  "latitude": 12.9716, "longitude": 77.5946, "serviceRadiusKm": 15 }
+  "phone": "+919876543210", "latitude": 12.9716, "longitude": 77.5946,
+  "serviceRadiusKm": 15, "skillIds": ["…"] }
 ```
 
-**Idempotent on the caller.** A second registration edits the first rather than colliding with it —
-the RPC is an upsert on `profileId` — so a half-finished form resumed on another device is not a 409
-the person cannot act on. The status is still `201`: from the client's side the resource now exists
-either way.
+**One atomic, idempotent registration.** Profile upsert and full skill replacement share one
+PostgreSQL transaction. Invalid or inactive skills roll the whole write back; retrying for the same
+identity repairs the existing provider rather than creating another one.
 
-**Coordinates are optional and worth sending.** They decide which communities the person is shown and
-in what order. A provider with none still appears in every search; they sort last, because there is
-no distance to order them by.
+Coordinates and at least one active skill are mandatory. The radius defaults to 15 km and must be
+between 1 and 500 km. A first registration is refused when the identity already holds an active
+resident, admin or manager membership: professional accounts are separate accounts.
 
 The response is the full profile read back from the database, not the request echoed with an id
 attached — see `GET /service-providers/me` for the three fields that could not be echoed.
@@ -4379,7 +4378,8 @@ attached — see `GET /service-providers/me` for the three fields that could not
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
 | 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
-| 422 | `request_validation_error`, `missing_value`, `check_violation` | A name under 2 characters, a latitude outside ±90, a radius over 500 km |
+| 409 | `conflict` | The identity already has an active non-professional membership |
+| 422 | `request_validation_error`, `missing_value`, `check_violation` | Invalid name, location, radius, duplicate/empty skills, or an unknown/inactive skill |
 | 500 | `internal_error` | Unhandled |
 
 ### `GET /api/v1/service-providers/me`
@@ -4455,10 +4455,8 @@ Set which trades this person offers. **Requires authentication only.**
 toggling different boxes against a delta API is a lost update that nobody notices until a plumber
 stops being offered plumbing.
 
-**An unknown or retired skill id is ignored, not rejected.** The RPC selects against the catalogue
-rather than trusting the argument, so a client holding a stale list saves the trades that still exist
-instead of failing whole. That is what `skillCount` is for: sending eight and being told six is the
-client learning something true.
+The set must contain at least one unique active skill. An unknown or retired id rejects the whole
+replacement, leaving the current set untouched. `skillCount` confirms the committed set size.
 
 | Status | Code | Cause |
 |---|---|---|
@@ -4543,7 +4541,7 @@ rules.
 
 ### Hiring — one negotiation, two directions
 
-Backed by migration `0035`. Eleven operations, and the thing to understand before reading any of them
+Backed by migration `0035` and the forward-only professional-onboarding migration. The thing to understand before reading any of them
 is that **an application and an invitation are one row**. `service_applications` carries a
 `direction`: `applied` when the provider opened it, `invited` when the department did. Acceptance
 does exactly the same three writes either way, so two tables would have meant two inboxes, two decide
@@ -4569,33 +4567,20 @@ Which role is issued comes from `departments.kind`: a `security` department hire
 everything else hires `worker`. Both values have been in the `membership_role` enum since the
 baseline and **nothing has ever issued either one**.
 
-#### Two guards, and only one of them is real
+#### Hiring authority is department-specific
 
-Every department-side route names a department in its path. `require_admin_or_manager` at router
-level is a **coarse** filter — it asks whether the caller is an admin or manager *somewhere*,
-resolved from their default membership. It cannot ask about the department in the URL, because that
-department's community is not known until something reads it.
+The HTTP layer establishes identity; `can_hire_for_department(uuid)` in PostgreSQL decides whether
+that identity can read or mutate this department's hiring data. An active department manager may
+decide, whether represented by a scoped manager membership or an active roster row ranked
+`manager`. Supervisors never qualify. Active community admins qualify only when the department has
+no active manager. Cross-department and cross-community ids are refused by SQL/RLS.
 
-The real check is `can_manage_department(uuid)` in the database, applied by every RPC here and by the
-policy behind every read: an admin of the department's community, or a manager whose own membership
-names that department. A manager of one community calling these routes against another community's
-department passes the router guard and is refused by Postgres. That is the posture
-`design/ADMIN_DASHBOARD_DESIGN.md` §10 asks for — **an id arriving in a URL is never an
-authorization decision.**
+#### Notifications follow the same decision audience
 
-The coarse guard is not thereby pointless: it turns "signed-in stranger walks department ids" into a
-403 before any query runs.
-
-#### One side of this notifies nobody, by construction
-
-`notifications.recipient_membership_id` is `not null` and cannot be otherwise — a notification
-belongs to somebody in a community. A service person who has been **invited** or **rejected** holds
-no membership in that community by definition, so there is no row to address.
-
-So an invitation sends nothing, and a rejection sends nothing. `GET /worker/applications` is the
-delivery mechanism for both, which is why it exists as a list rather than as a feed. An
-**acceptance** *is* notified, because the membership the accept just created is the address it goes
-to — the first notification a service person can receive is the one telling them they were hired.
+Person-addressed notifications allow an unhired professional to receive invitations and rejection
+results. New applications notify only the selected department's active manager(s), with community
+admins as the fallback only when no active manager exists. Recipient queries deduplicate membership
+and roster representations of the same manager.
 
 ### `GET /api/v1/worker/communities`
 
@@ -4627,7 +4612,7 @@ which is the employment history.
 
 Where the caller could apply, nearest first. **Requires authentication only.**
 
-`?q=` filters by name, `?limit=` and `?offset=` page (clamped to 100).
+`?q=` filters by name, `?limit=` and `?offset=` page (default and maximum 20).
 
 ```json
 [{ "id": "…", "name": "Green Meadows", "city": "Bengaluru", "state": "Karnataka",
@@ -4650,17 +4635,15 @@ caller's skills, it has not blacklisted them, and they are not already a member 
 is why a resident cannot apply to work in their own society — one person holds one live membership
 per community, so the hire would be refused and offering it would be offering a dead end.
 
-**A community with no coordinates sorts last rather than being hidden**, and so does a provider with
-none. Somebody who has not filled in where they work is still somebody who can work.
-
-**No 404 and no 403.** The search resolves the caller inside the RPC, so an unregistered caller gets
-an empty list rather than an error — which is the honest answer to "which communities need trades you
-have not told us about". A client showing this screen empty should suggest
-`PUT /service-providers/me/skills`, because that is usually the reason.
+Only active matching departments in communities inside the provider-controlled service radius are
+returned. Missing community coordinates are excluded; a provider with missing coordinates receives
+the typed `provider_location_required` error and repairs the registration form. Ordering is distance,
+case-folded community name, then id, so offset paging is stable.
 
 | Status | Code | Cause |
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
+| 404 | `not_found`, `provider_location_required` | The professional profile or its coordinates are missing |
 | 500 | `internal_error` | Unhandled |
 
 ### `GET /api/v1/worker/applications`
@@ -4725,6 +4708,41 @@ it.
 | 404 | `not_found` | No such application |
 | 409 | `conflict` | Already decided |
 | 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/worker/applications/{applicationId}/decision`
+
+Accept or decline an invitation. **Requires authentication only.**
+
+```json
+{ "decision": "accepted", "note": "Available from Monday." }
+```
+
+Only `accepted` and `rejected` plus an optional note are accepted. Rank, job title, shift,
+membership role and department are not fields in this request; PostgreSQL also ignores any
+caller-supplied employment terms for an invitation and commits the stored offer. Acceptance uses the
+same atomic membership + staff assignment + decision transaction as the manager-side route.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed or the invitation belongs to another professional |
+| 404 | `not_found` | No such application |
+| 409 | `conflict` | Already decided, blacklisted, already a member, or mixed worker/security mode |
+| 422 | `request_validation_error` | Unknown decision or caller-supplied terms |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/telemetry/service-signup`
+
+Best-effort launch-funnel telemetry. The same-origin client first prepares anonymous CSRF and sends
+one allowlisted `eventName`. The server assigns a random HTTP-only, SameSite visitor cookie for 30
+days. Storage has only visitor id, event name and occurrence time; duplicate visitor/event pairs are
+ignored and failures never block the product flow.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
+| 422 | `request_validation_error` | Event name is outside the five-value allowlist |
+| 500 | `internal_error` | Unhandled before the non-blocking storage boundary |
 
 ### `GET /api/v1/departments/{departmentId}/applications`
 

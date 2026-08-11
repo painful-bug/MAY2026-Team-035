@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
 import { resendEmailConfirmation, verifyEmailToken } from '../../lib/auth/authService';
-import { homeRouteFor } from '../../routes/authRoutes';
+import { authIntentFromSearch, destinationAfterAuth } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
+import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
 
 const BUTTON = 'w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-60';
 
@@ -30,15 +31,26 @@ export default function EmailConfirmationPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [intent, setIntent] = useState(null);
 
   useEffect(() => {
+    const saved = window.history.state?.emailConfirmation;
     const params = new URLSearchParams(window.location.search);
-    const value = params.get('token_hash') || '';
+    const value = saved?.token || params.get('token_hash') || '';
+    const nextIntent = saved?.intent || authIntentFromSearch(window.location.search);
+    const nextType = saved?.type || (params.get('type') === 'signup' ? 'signup' : 'email');
     setToken(value);
-    setType(params.get('type') === 'signup' ? 'signup' : 'email');
+    setType(nextType);
+    setIntent(nextIntent);
     setReady(true);
     // Keep the hash out of history and out of anything that reads the URL bar.
-    if (value) window.history.replaceState({}, '', '/auth/confirm-email');
+    if (value) {
+      window.history.replaceState(
+        { ...window.history.state, emailConfirmation: { token: value, type: nextType, intent: nextIntent } },
+        '',
+        `/auth/confirm-email${nextIntent ? `?intent=${nextIntent}` : ''}`,
+      );
+    }
   }, []);
 
   const confirm = async () => {
@@ -48,7 +60,8 @@ export default function EmailConfirmationPage() {
       await verifyEmailToken(token, type);
       const result = await completeExternalLogin();
       if (!result.success) throw new Error(result.message);
-      navigate(homeRouteFor(result.context), { replace: true });
+      if (intent) void recordServiceSignupEvent('auth_completed');
+      navigate(destinationAfterAuth(result.context, intent), { replace: true });
     } catch (reason) {
       setError(reason.message || 'This verification link is invalid or expired.');
     } finally {
@@ -62,7 +75,7 @@ export default function EmailConfirmationPage() {
     setError('');
     setNotice('');
     try {
-      await resendEmailConfirmation(email);
+      await resendEmailConfirmation(email, intent);
       // Deliberately the same answer whether or not that address has an
       // unconfirmed account, so this cannot be used to discover who registered.
       setNotice('If an unconfirmed account exists for that address, a new link is on its way.');
@@ -74,6 +87,7 @@ export default function EmailConfirmationPage() {
   };
 
   if (!ready) return null;
+  const loginPath = `/login${intent ? `?intent=${intent}` : ''}`;
 
   if (token) {
     return (
@@ -87,7 +101,7 @@ export default function EmailConfirmationPage() {
           <button type="button" disabled={busy} onClick={confirm} className={BUTTON}>
             {busy ? 'Confirming…' : 'Confirm email'}
           </button>
-          <Link to="/login" className="text-xs font-bold text-indigo-600">Back to sign in</Link>
+          <Link to={loginPath} className="text-xs font-bold text-indigo-600">Back to sign in</Link>
         </div>
       </AuthCard>
     );
@@ -117,7 +131,7 @@ export default function EmailConfirmationPage() {
           {busy ? 'Sending…' : 'Send a new link'}
         </button>
         <div className="text-center">
-          <Link to="/login" className="text-xs font-bold text-indigo-600">Back to sign in</Link>
+          <Link to={loginPath} className="text-xs font-bold text-indigo-600">Back to sign in</Link>
         </div>
       </form>
     </AuthCard>

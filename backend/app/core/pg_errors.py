@@ -35,6 +35,7 @@ _CUSTOM = {
     "HB403": (AuthorizationError, "forbidden"),
     "HB404": (NotFoundError, "not_found"),
     "HB409": (ConflictError, "conflict"),
+    "HBLOC": (ValidationError, "provider_location_required"),
     "HBUSE": (ConflictError, "pass_already_used"),
 }
 

@@ -17,6 +17,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from postgrest.exceptions import APIError
+
+from app.core.exceptions import ServiceUnavailableError
 from app.core.pg_errors import translate
 from supabase import Client
 
@@ -134,6 +137,50 @@ def save_profile(
     except Exception as exc:  # noqa: BLE001
         raise translate(
             exc, default_message="Could not save the service provider profile."
+        ) from exc
+    return str(response.data or "")
+
+
+def register_profile(
+    client: Client,
+    *,
+    display_name: str,
+    headline: str | None,
+    phone: str | None,
+    latitude: float,
+    longitude: float,
+    service_radius_km: float,
+    skill_ids: list[str],
+) -> str:
+    """Atomically create/repair the caller's profile and complete skill set."""
+    try:
+        response = client.rpc(
+            "register_service_provider",
+            {
+                "p_display_name": display_name,
+                "p_headline": headline,
+                "p_phone_e164": phone,
+                "p_latitude": latitude,
+                "p_longitude": longitude,
+                "p_service_radius_km": service_radius_km,
+                "p_skill_ids": skill_ids,
+            },
+        ).execute()
+    except APIError as exc:
+        # The atomic registration RPC is introduced by the forward-only
+        # service-professional migration. Retrying with the old two-write path
+        # would permit a partial profile, so report the rollout mismatch.
+        if exc.code == "PGRST202" and "register_service_provider" in exc.message:
+            raise ServiceUnavailableError(
+                "Service-professional registration is being set up. Please try again shortly.",
+                code="service_provider_registration_not_deployed",
+            ) from exc
+        raise translate(
+            exc, default_message="Could not register the service provider."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not register the service provider."
         ) from exc
     return str(response.data or "")
 

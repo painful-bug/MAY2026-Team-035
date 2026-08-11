@@ -1688,6 +1688,16 @@ components:
           maxItems: 10
           title: Enabled Features
           type: array
+        latitude:
+          maximum: 90.0
+          minimum: -90.0
+          title: Latitude
+          type: number
+        longitude:
+          maximum: 180.0
+          minimum: -180.0
+          title: Longitude
+          type: number
         name:
           maxLength: 100
           minLength: 3
@@ -1721,6 +1731,8 @@ components:
       - city
       - state
       - postal_code
+      - latitude
+      - longitude
       - admin_profile
       title: CommunityOnboardingRequest
       type: object
@@ -1766,6 +1778,16 @@ components:
         id:
           title: Id
           type: string
+        latitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Latitude
+        longitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Longitude
         name:
           title: Name
           type: string
@@ -3621,6 +3643,30 @@ components:
           title: Unpaidcount
           type: integer
       title: DuesDigest
+      type: object
+    EmailConfirmationResendRequest:
+      additionalProperties: false
+      properties:
+        captcha_token:
+          anyOf:
+          - maxLength: 4096
+            type: string
+          - type: 'null'
+          title: Captcha Token
+        email:
+          maxLength: 320
+          minLength: 3
+          title: Email
+          type: string
+        intent:
+          anyOf:
+          - const: service-provider
+            type: string
+          - type: 'null'
+          title: Intent
+      required:
+      - email
+      title: EmailConfirmationResendRequest
       type: object
     EmailTokenRequest:
       additionalProperties: false
@@ -5635,6 +5681,12 @@ components:
           minLength: 2
           title: Full Name
           type: string
+        intent:
+          anyOf:
+          - const: service-provider
+            type: string
+          - type: 'null'
+          title: Intent
         password:
           maxLength: 256
           minLength: 15
@@ -6028,6 +6080,26 @@ components:
       required:
       - email
       title: PromoteAdminRequest
+      type: object
+    ProviderDecisionRequest:
+      additionalProperties: false
+      description: A professional accepting or declining an invitation; terms are read-only.
+      properties:
+        decision:
+          enum:
+          - accepted
+          - rejected
+          title: Decision
+          type: string
+        note:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Note
+      required:
+      - decision
+      title: ProviderDecisionRequest
       type: object
     PushSubscriptionKeys:
       description: 'The browser''s encryption material.
@@ -7147,14 +7219,7 @@ components:
       title: RosterEntry
       type: object
     SaveServiceProviderRequest:
-      description: 'Register: the update shape plus the one field registration must have.
-
-
-        One RPC serves both (``upsert_service_provider``); the two models exist
-
-        because the *name* requirement differs. Registration names you;
-
-        settings never rename you.'
+      description: Atomically register identity details, location, radius and skills.
       properties:
         bio:
           anyOf:
@@ -7174,19 +7239,15 @@ components:
           - type: 'null'
           title: Headline
         latitude:
-          anyOf:
-          - maximum: 90.0
-            minimum: -90.0
-            type: number
-          - type: 'null'
+          maximum: 90.0
+          minimum: -90.0
           title: Latitude
+          type: number
         longitude:
-          anyOf:
-          - maximum: 180.0
-            minimum: -180.0
-            type: number
-          - type: 'null'
+          maximum: 180.0
+          minimum: -180.0
           title: Longitude
+          type: number
         phone:
           anyOf:
           - maxLength: 20
@@ -7194,14 +7255,23 @@ components:
           - type: 'null'
           title: Phone
         serviceRadiusKm:
-          anyOf:
-          - exclusiveMinimum: 0.0
-            maximum: 500.0
-            type: number
-          - type: 'null'
+          default: 15
+          maximum: 500.0
+          minimum: 1.0
           title: Serviceradiuskm
+          type: number
+        skillIds:
+          items:
+            type: string
+          maxItems: 40
+          minItems: 1
+          title: Skillids
+          type: array
       required:
+      - latitude
+      - longitude
       - displayName
+      - skillIds
       title: SaveServiceProviderRequest
       type: object
     ScheduleItem:
@@ -7820,6 +7890,22 @@ components:
       - updatedAt
       title: ServiceProviderProfile
       type: object
+    ServiceSignupTelemetryRequest:
+      additionalProperties: false
+      properties:
+        eventName:
+          enum:
+          - cta_impression
+          - cta_clicked
+          - auth_completed
+          - provider_profile_completed
+          - first_application_submitted
+          title: Eventname
+          type: string
+      required:
+      - eventName
+      title: ServiceSignupTelemetryRequest
+      type: object
     ServiceableCommunity:
       description: A community that needs one of the caller's trades and has not barred them.
       properties:
@@ -7958,18 +8044,19 @@ components:
         offered plumbing.
 
 
-        An unknown or retired skill id is **ignored, not rejected.** The RPC selects
+        Unknown or retired skills reject the replacement, and the set may not be
 
-        against the catalogue rather than trusting the argument, so a client holding
-
-        a stale list saves the trades that still exist instead of failing whole.'
+        empty, so an active professional is never silently left undiscoverable.'
       properties:
         skillIds:
           items:
             type: string
           maxItems: 40
+          minItems: 1
           title: Skillids
           type: array
+      required:
+      - skillIds
       title: SetSkillsRequest
       type: object
     SettingsSnapshot:
@@ -9004,6 +9091,20 @@ components:
             type: integer
           - type: 'null'
           title: Invitettlhours
+        latitude:
+          anyOf:
+          - maximum: 90.0
+            minimum: -90.0
+            type: number
+          - type: 'null'
+          title: Latitude
+        longitude:
+          anyOf:
+          - maximum: 180.0
+            minimum: -180.0
+            type: number
+          - type: 'null'
+          title: Longitude
         noticeSmsBroadcastEnabled:
           anyOf:
           - type: boolean
@@ -12070,7 +12171,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PasswordResetRequest'
+              $ref: '#/components/schemas/EmailConfirmationResendRequest'
         required: true
       responses:
         '200':
@@ -15106,7 +15207,7 @@ paths:
         required: false
         schema:
           default: 20
-          maximum: 100
+          maximum: 20
           minimum: 1
           title: Limit
           type: integer
@@ -19846,11 +19947,11 @@ paths:
         client''s side the resource now exists either way.
 
 
-        Coordinates are optional and worth sending. A provider with none still
+        Coordinates, a service radius, and at least one active skill are required.
 
-        appears in every community search; they simply sort last, since there is no
+        The database writes the profile and complete skill set atomically, so an
 
-        distance to order them by.'
+        invalid skill cannot leave a partially registered professional behind.'
       operationId: register_api_v1_service_providers_post
       requestBody:
         content:
@@ -20430,6 +20531,39 @@ paths:
           somebody competent turns up; something still has to say what competent means. Global rather
           than per-community on purpose -- see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which
           communities need my skills' search has to run before the person holds a membership anywhere.
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/telemetry/service-signup:
+    post:
+      description: Record one allowlisted event; storage failure never blocks the funnel.
+      operationId: record_service_signup_event_api_v1_telemetry_service_signup_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceSignupTelemetryRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+          description: Successful Response
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Record Service Signup Event
+      tags:
+      - telemetry
+      x-no-user-story:
+        api-type: Non-functional
+        rationale: Privacy-minimal launch-funnel measurement for operators. It records one allowlisted
+          event name against a random first-party visitor id; no interviewed user experiences this write
+          as a feature.
         status: Not covered by user story
       x-user-stories: []
   /api/v1/unassigned-complaints:
@@ -21410,6 +21544,57 @@ paths:
           endpoint notifies a resident about their complaint, and it does not.'
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/worker/applications/{application_id}/decision:
+    post:
+      description: Answer an invitation without allowing the professional to alter its terms.
+      operationId: decide_invitation_api_v1_worker_applications__application_id__decision_post
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          title: Application Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderDecisionRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceApplication'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Accept or decline an invitation
+      tags:
+      - worker-communities
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'Applying, inviting, hiring, removing and barring a service person. Downstream of registration
+          and upstream of everything that closes a story: US-2.7 and US-2.8 are about a complaint being
+          worked, and US-3.3 to US-3.6 are about a gate being staffed, and neither can begin until somebody
+          has been hired. Hiring ENABLES those stories without serving any of them, which is the honest
+          verdict and not a modest one -- claiming a share of US-2.7 here would make the matrix say this
+          endpoint notifies a resident about their complaint, and it does not.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/worker/availability-rules:
     get:
       description: 'The caller''s declared working hours, weekday order.
@@ -21674,18 +21859,11 @@ paths:
         they are not already a member of it.
 
 
-        **A community with no coordinates sorts last rather than being hidden**, and
+        Results are limited to the caller''s service radius. Communities without
 
-        so does a provider with none. Somebody who has not filled in where they work
+        coordinates are excluded, and an incomplete legacy provider receives the
 
-        is still somebody who can work.
-
-
-        An empty result usually means the caller has no skills saved yet, not that
-
-        no community needs them -- `PUT /service-providers/me/skills` is the fix, and
-
-        a client showing this screen should say so.'
+        typed location error so the dashboard can show the repair form.'
       operationId: search_communities_api_v1_worker_communities_search_get
       parameters:
       - description: Free-text search. Matching is case-insensitive and substring-based.
@@ -21703,7 +21881,7 @@ paths:
         required: false
         schema:
           default: 20
-          maximum: 100
+          maximum: 20
           minimum: 1
           title: Limit
           type: integer
@@ -22682,6 +22860,8 @@ servers:
 tags:
 - description: Sign-in, token refresh and the caller's own profile.
   name: auth
+- description: Privacy-minimal, best-effort service-signup funnel events.
+  name: telemetry
 - description: Founding a community -- once per community, by its first admin.
   name: onboarding
 - description: Finding a community to join, and reading its unit list.
@@ -22719,8 +22899,7 @@ tags:
 - description: The server-sent event stream.
   name: realtime
 - description: Applications, invitations, candidate search, removal and blacklisting, from the department's
-    side. The router guard asks whether the caller manages anything; the database asks whether they manage
-    this.
+    side. HTTP establishes identity; the database decides whether the caller may hire for this department.
   name: department-hiring
 - description: A service person's own registration and the global catalogue of trades. The only surface
     here whose callers hold no community membership.

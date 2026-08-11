@@ -2,10 +2,12 @@ const API_BASE = '/api/v1';
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 
 function csrfToken() {
-  return document.cookie
-    .split('; ')
-    .find((cookie) => cookie.startsWith('hb_preauth_csrf=') || cookie.startsWith('hb_recovery_csrf=') || cookie.startsWith('__Host-hb_csrf=') || cookie.startsWith('hb_csrf='))
-    ?.split('=')[1] ?? '';
+  const cookies = document.cookie.split('; ');
+  for (const name of ['__Host-hb_csrf=', 'hb_csrf=', 'hb_recovery_csrf=', 'hb_preauth_csrf=']) {
+    const match = cookies.find((cookie) => cookie.startsWith(name));
+    if (match) return match.slice(name.length);
+  }
+  return '';
 }
 
 let refreshPromise;

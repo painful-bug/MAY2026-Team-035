@@ -16,3 +16,7 @@ await api('/onboarding/community', { method: 'POST', body: '{}' });
 
 assert.equal(calls[0].url, '/api/v1/auth/csrf');
 assert.equal(calls[1].options.headers.get('X-CSRF-Token'), 'preauth-token');
+
+document.cookie = 'hb_csrf=session-token; hb_recovery_csrf=recovery-token; hb_preauth_csrf=preauth-token';
+await api('/telemetry/service-signup', { method: 'POST', body: '{}' });
+assert.equal(calls[2].options.headers.get('X-CSRF-Token'), 'session-token');

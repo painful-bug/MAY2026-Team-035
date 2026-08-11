@@ -26,6 +26,11 @@ additional_redirect_urls = ["http://localhost:8000/api/v1/auth/google/callback"]
 enable_signup = true
 enable_anonymous_sign_ins = false
 
+[auth.email]
+# Explicit local/test override. Hosted production must keep confirmations on and
+# match AUTH_EMAIL_CONFIRMATION_REQUIRED=true in the FastAPI deployment.
+enable_confirmations = false
+
 [auth.external.google]
 enabled = true
 client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"

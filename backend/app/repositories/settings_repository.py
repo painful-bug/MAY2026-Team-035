@@ -27,7 +27,7 @@ _MODULES = "community_module_overview"
 
 _SETTINGS_SELECT = (
     "community_id, community_name, community_type, community_status,"
-    "community_created_at, timezone, unit_label_singular, unit_label_is_derived,"
+    "community_created_at, latitude, longitude, timezone, unit_label_singular, unit_label_is_derived,"
     "invite_ttl_hours, visitor_code_ttl_minutes, require_visitor_preapproval,"
     "notice_sms_broadcast_enabled, has_saved_settings, version,"
     "settings_updated_at, settings_updated_by_name, auto_billing_enabled,"
@@ -92,3 +92,18 @@ def save_settings(client: Client, community_id: str, payload: dict) -> None:
         raise translate(exc, default_message="Could not save the settings.") from exc
 
 
+def save_location(
+    client: Client, community_id: str, latitude: float, longitude: float
+) -> None:
+    """Update the caller's administered community coordinates."""
+    try:
+        client.rpc(
+            "set_my_community_location",
+            {
+                "p_community_id": community_id,
+                "p_latitude": latitude,
+                "p_longitude": longitude,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not save the community location.") from exc

@@ -1237,6 +1237,10 @@ grant execute on function public.add_unit_contact(uuid, jsonb) to authenticated;
 -- `departments`, and that table belongs to the admin workstream.
 -- ---------------------------------------------------------------------------
 
+alter table public.departments
+  add column if not exists category text,
+  add column if not exists hours text;
+
 drop view if exists public.management_contact_overview;
 create view public.management_contact_overview
 with (security_invoker = true) as

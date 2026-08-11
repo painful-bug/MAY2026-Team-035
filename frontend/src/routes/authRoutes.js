@@ -23,6 +23,14 @@ export const AUTH_ROUTES = Object.freeze({
   ACCOUNT: '/account',
 });
 
+export const SERVICE_PROVIDER_INTENT = 'service-provider';
+
+export const authIntentFromSearch = (search = '') => (
+  new URLSearchParams(search).get('intent') === SERVICE_PROVIDER_INTENT
+    ? SERVICE_PROVIDER_INTENT
+    : null
+);
+
 // Which portal a person lands in, keyed on the one value that already answers
 // it: `portal`, which `GET /auth/session` computes and `applicationUser` copies
 // onto the user object unchanged.
@@ -72,3 +80,15 @@ export const homeRouteFor = (subject) => {
   }
   return PORTAL_ROUTES[subject.portal] || AUTH_ROUTES.ACCOUNT;
 };
+
+export const destinationAfterAuth = (context, intent) => (
+  intent === SERVICE_PROVIDER_INTENT && context?.identity && !context.membership
+    ? AUTH_ROUTES.WORKER_DASHBOARD
+    : homeRouteFor(context)
+);
+
+export const serviceIntentConflictsWithMembership = (context, intent) => (
+  intent === SERVICE_PROVIDER_INTENT
+  && Boolean(context?.membership)
+  && !['worker', 'security'].includes(context?.portal)
+);

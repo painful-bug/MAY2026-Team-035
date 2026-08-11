@@ -146,6 +146,7 @@ class PasswordSignUpRequest(StrictModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=15, max_length=256)
     captcha_token: str | None = Field(default=None, max_length=4096)
+    intent: Literal["service-provider"] | None = None
 
     @field_validator("email")
     @classmethod
@@ -172,8 +173,22 @@ class PasswordResetRequest(StrictModel):
     captcha_token: str | None = Field(default=None, max_length=4096)
 
 
+class EmailConfirmationResendRequest(PasswordResetRequest):
+    intent: Literal["service-provider"] | None = None
+
+
 class PasswordResetCompleteRequest(StrictModel):
     password: str = Field(min_length=15, max_length=256)
+
+
+class ServiceSignupTelemetryRequest(StrictModel):
+    event_name: Literal[
+        "cta_impression",
+        "cta_clicked",
+        "auth_completed",
+        "provider_profile_completed",
+        "first_application_submitted",
+    ] = Field(alias="eventName")
 
 
 # --- Invitations --------------------------------------------------------------
@@ -329,6 +344,8 @@ class CommunityOnboardingRequest(StrictModel):
     state: str = Field(min_length=2, max_length=100)
     postal_code: str = Field(min_length=3, max_length=20)
     country_code: str = Field(default="IN", min_length=2, max_length=2)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
     blocks: list[CommunityStructure] = Field(default_factory=list, max_length=10)
     villas: list[CommunityStructure] = Field(default_factory=list, max_length=50)
     block_locations: dict[str, MapPoint] = Field(default_factory=dict)

@@ -56,6 +56,8 @@ export const workerApi = {
   myApplications: () => api('/worker/applications'),
   apply: (payload) => post('/worker/applications', payload),
   withdrawApplication: (applicationId) => api(`/worker/applications/${applicationId}`, { method: 'DELETE' }),
+  decideInvitation: (applicationId, decision, note = null) =>
+    post(`/worker/applications/${applicationId}/decision`, { decision, note }),
 
   // --- leaving ---------------------------------------------------------------
   // Keyed on the roster row and not on the community, because somebody hired by

@@ -7,12 +7,11 @@ constantly and records what actually exists in the branch.
 **Branch:** `services-and-security` — local only, no upstream, nothing committed
 yet (the whole feature is in the working tree).
 **Last updated:** 2026-08-11
-**Current step:** **Phase 3 complete** — all six steps done, verified and
-documented (§5.31–§5.33). The security-gate frontend (task #93, funded by the
-PO on 2026-08-11: *"build it"*) shipped, closing `US-3.5` and with it the whole
-`US-3.x` set. Phases 1 and 2 completed earlier (§5.2–§5.30). All three approved
-plans lived in `~/.claude/plans/cozy-stirring-sparrow.md` in turn; Phase 3's
-contract is restated in §6.24.
+**Current step:** service-professional signup/onboarding implementation is in the
+working tree. Migrations through `0047` are verified as deployed; the two new
+`20260811…` migrations are forward-only and pending deployment. Implementation
+and rollout evidence is in
+[`SERVICE_PROFESSIONAL_AUTH_IMPLEMENTATION.md`](SERVICE_PROFESSIONAL_AUTH_IMPLEMENTATION.md).
 
 ---
 
@@ -49,9 +48,9 @@ for the rest. §5.38. Baselines all unmoved.)*
 
 What remains is not build work:
 
-* **Applying the migrations.** `0001`–`0047`, thirty-four files, **none has ever
-  run against any database** (§7.4). That is the product owner's to do; I do not
-  touch Supabase credentials.
+* **Applying the new migrations.** The linked project already records the chain
+  through `0047`; only the timestamped professional-flow migrations are pending.
+  Apply them after staging dry-run and hosted data backfill evidence.
 * **The first real end-to-end pass**, which only becomes possible afterwards.
   Two things explicitly owe it a look: the notification click-through (§5.25)
   and every gate response shape — Phase 3 verified those against *fixtures I
