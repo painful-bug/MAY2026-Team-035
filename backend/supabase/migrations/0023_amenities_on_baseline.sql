@@ -47,6 +47,7 @@
 -- column stays and is left alone, so their readers are unaffected.
 -- ---------------------------------------------------------------------------
 alter table public.amenities
+  add column if not exists description                     text,
   add column if not exists category                        text,
   add column if not exists location                        text,
   add column if not exists image_url                       text,
@@ -54,6 +55,7 @@ alter table public.amenities
   add column if not exists booking_mode                    text not null default 'shared',
   add column if not exists approval_required                boolean not null default true,
   add column if not exists status                          text not null default 'active',
+  add column if not exists is_active                       boolean not null default true,
   add column if not exists version                         integer not null default 1,
   add column if not exists opening_time                    time,
   add column if not exists closing_time                    time,
@@ -85,6 +87,10 @@ alter table public.amenities
   add column if not exists default_maintenance_duration_minutes integer,
   add column if not exists auto_block_maintenance_slots     boolean not null default false,
   add column if not exists maintenance_notes                text;
+
+update public.amenities
+   set is_active = (status = 'active')
+ where is_active is distinct from (status = 'active');
 
 do $$
 begin
@@ -162,8 +168,61 @@ create trigger amenities_sync_status
 -- name beside the wire string, because the frontend compares against
 -- 'Approved' while the database holds 'approved'.
 -- ---------------------------------------------------------------------------
--- The linked legacy project used series/occurrence tables rather than the
--- baseline booking table.  Establish the baseline tables before extending them.
+-- A legacy project used four series/occurrence-era tables with the names this
+-- migration needs. Preserve that schema intact under explicit legacy names, but
+-- only when it is empty. A populated legacy project needs a reviewed data
+-- migration; weakening its foreign keys would hide data loss rather than solve it.
+do $$
+declare
+  v_table text;
+  v_rows bigint;
+  v_legacy_table_count integer;
+begin
+  select count(*) into v_legacy_table_count
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relkind = 'r'
+     and c.relname in (
+       'amenity_booking_series',
+       'amenity_booking_occurrences',
+       'amenity_booking_charges',
+       'amenity_financial_events'
+     );
+
+  if v_legacy_table_count = 0 then
+    return;
+  end if;
+
+  if v_legacy_table_count <> 4 or to_regclass('public.amenity_bookings') is not null then
+    raise exception 'Cannot safely reconcile a partial or hybrid legacy amenity schema.';
+  end if;
+
+  if to_regclass('public.legacy_amenity_booking_series') is not null
+     or to_regclass('public.legacy_amenity_booking_occurrences') is not null
+     or to_regclass('public.legacy_amenity_booking_charges') is not null
+     or to_regclass('public.legacy_amenity_financial_events') is not null then
+    raise exception 'Legacy amenity archive tables already exist.';
+  end if;
+
+  foreach v_table in array array[
+    'amenity_booking_series',
+    'amenity_booking_occurrences',
+    'amenity_booking_charges',
+    'amenity_financial_events'
+  ] loop
+    execute format('select count(*) from public.%I', v_table) into v_rows;
+    if v_rows <> 0 then
+      raise exception 'Cannot reconcile populated legacy table public.% without an explicit data migration.', v_table;
+    end if;
+  end loop;
+
+  alter table public.amenity_financial_events rename to legacy_amenity_financial_events;
+  alter table public.amenity_booking_charges rename to legacy_amenity_booking_charges;
+  alter table public.amenity_booking_occurrences rename to legacy_amenity_booking_occurrences;
+  alter table public.amenity_booking_series rename to legacy_amenity_booking_series;
+end $$;
+
 create table if not exists public.amenity_bookings (
   id uuid primary key default gen_random_uuid(),
   amenity_id uuid not null references public.amenities(id) on delete cascade,
@@ -324,52 +383,6 @@ create table if not exists public.amenity_financial_events (
   actor_membership_id uuid references public.community_memberships(id) on delete set null,
   created_at          timestamptz not null default now()
 );
-
--- The legacy ledger uses occurrence/currency/reference names.  Keep those
--- historical rows readable while adding the baseline-compatible columns used
--- by this migration's functions and views.
-alter table public.amenity_booking_charges
-  add column if not exists community_id uuid references public.communities(id) on delete cascade,
-  add column if not exists label text;
-
-alter table public.amenity_financial_events
-  add column if not exists community_id uuid references public.communities(id) on delete cascade,
-  add column if not exists booking_charge_id uuid references public.amenity_booking_charges(id) on delete cascade,
-  add column if not exists payment_reference text,
-  add column if not exists reason text,
-  add column if not exists notes text;
-
-do $$
-declare
-  v_constraint text;
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'amenity_booking_charges'
-      and column_name = 'currency'
-  ) then
-    alter table public.amenity_booking_charges alter column currency drop not null;
-    for v_constraint in
-      select conname from pg_constraint
-       where conrelid = 'public.amenity_booking_charges'::regclass
-         and contype = 'f'
-         and conkey = array[(select attnum from pg_attribute
-                              where attrelid = 'public.amenity_booking_charges'::regclass
-                                and attname = 'booking_occurrence_id')]
-    loop
-      execute format('alter table public.amenity_booking_charges drop constraint %I', v_constraint);
-    end loop;
-  end if;
-
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'amenity_financial_events'
-      and column_name = 'currency'
-  ) then
-    alter table public.amenity_financial_events alter column currency drop not null;
-    alter table public.amenity_financial_events alter column booking_occurrence_id drop not null;
-  end if;
-end $$;
 
 create index if not exists amenity_financial_events_charge_idx
   on public.amenity_financial_events (booking_charge_id, created_at);

@@ -111,6 +111,7 @@
 -- constraints over one column would fire two referential actions on one
 -- department delete, and there is no ordering between them worth relying on.
 alter table public.work_orders
+  add column if not exists priority                 text not null default 'medium',
   add column if not exists department_id            uuid,
   add column if not exists supervisor_membership_id uuid
     references public.community_memberships(id) on delete set null,
@@ -267,7 +268,8 @@ alter table public.work_order_assignments
   add column if not exists decline_reason     text,
   add column if not exists is_auto_assigned   boolean not null default false,
   add column if not exists scheduled_start_at timestamptz,
-  add column if not exists scheduled_end_at   timestamptz;
+  add column if not exists scheduled_end_at   timestamptz,
+  add column if not exists ended_at           timestamptz;
 
 do $$
 begin

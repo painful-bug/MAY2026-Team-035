@@ -94,6 +94,60 @@
 -- rather than a constraint.
 -- ---------------------------------------------------------------------------
 
+-- Older hosted projects can lack these baseline tables despite sharing the
+-- baseline migration history. Establish their original shape before extending it.
+create table if not exists public.visitor_requests (
+  id uuid primary key default gen_random_uuid(),
+  community_id uuid not null references public.communities(id) on delete cascade,
+  requested_by_membership_id uuid not null references public.community_memberships(id),
+  visitor_name text not null,
+  visitor_phone_e164 varchar(20),
+  status public.visitor_status not null default 'expected',
+  pass_hash text unique,
+  valid_from timestamptz,
+  valid_until timestamptz,
+  approved_by_membership_id uuid references public.community_memberships(id),
+  checked_in_at timestamptz,
+  checked_out_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- The legacy event log belongs to visitor_access_requests, not the baseline's
+-- visitor_requests. Keep it intact under a distinct name when it is empty; a
+-- populated log needs an explicit mapping to preserve its historical links.
+do $$
+declare
+  v_rows bigint;
+begin
+  if to_regclass('public.visitor_events') is not null
+     and not exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'visitor_events'
+          and column_name = 'visitor_request_id'
+     ) then
+    if to_regclass('public.legacy_visitor_events') is not null then
+      raise exception 'Legacy visitor-events archive table already exists.';
+    end if;
+
+    select count(*) into v_rows from public.visitor_events;
+    if v_rows <> 0 then
+      raise exception 'Cannot reconcile populated legacy visitor events without an explicit data migration.';
+    end if;
+
+    alter table public.visitor_events rename to legacy_visitor_events;
+  end if;
+end $$;
+
+create table if not exists public.visitor_events (
+  id uuid primary key default gen_random_uuid(),
+  visitor_request_id uuid not null references public.visitor_requests(id) on delete cascade,
+  actor_membership_id uuid references public.community_memberships(id),
+  event_type text not null,
+  created_at timestamptz not null default now()
+);
+
 alter table public.visitor_requests
   add column if not exists purpose         text,
   add column if not exists purpose_details text,

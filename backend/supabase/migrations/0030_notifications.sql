@@ -47,6 +47,43 @@
 -- ---------------------------------------------------------------------------
 -- 1. Ownership, as a predicate
 --
+-- The hosted legacy table has title/body/notification_type instead of the
+-- baseline's durable kind/payload contract. It is empty, so archive it intact
+-- and establish the baseline shape. A populated legacy feed must be mapped in
+-- its own reviewed data migration rather than silently rewritten or weakened.
+do $$
+declare
+  v_rows bigint;
+begin
+  if to_regclass('public.notifications') is not null
+     and not exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'notifications'
+          and column_name = 'kind'
+     ) then
+    if to_regclass('public.legacy_notifications') is not null then
+      raise exception 'Legacy notifications archive table already exists.';
+    end if;
+
+    select count(*) into v_rows from public.notifications;
+    if v_rows <> 0 then
+      raise exception 'Cannot reconcile populated legacy notifications without an explicit data migration.';
+    end if;
+
+    alter table public.notifications rename to legacy_notifications;
+  end if;
+end $$;
+
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_membership_id uuid not null references public.community_memberships(id) on delete cascade,
+  kind text not null,
+  payload jsonb not null default '{}'::jsonb,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 -- The third of the shared RLS predicates, alongside `is_community_member` and
 -- `is_community_admin` from 0019. Ownership belongs in SQL rather than in a
 -- Python `where` clause: a predicate the database applies cannot be forgotten by

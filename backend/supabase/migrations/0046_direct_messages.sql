@@ -206,7 +206,7 @@ as $$
   candidates as (
     -- The office: admins and managers, reachable by every member.
     select m.profile_id,
-           initcap(m.role) as label
+           initcap(m.role::text) as label
       from public.community_memberships m, me
      where m.community_id = p_community_id
        and m.status = 'active' and m.ended_at is null
