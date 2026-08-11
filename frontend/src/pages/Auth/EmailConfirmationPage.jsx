@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
-import { resendEmailConfirmation, verifyEmailToken, homeRouteFor } from '../../lib/auth/authService';
+import { resendEmailConfirmation, verifyEmailToken } from '../../lib/auth/authService';
+import { homeRouteFor } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 
 const BUTTON = 'w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-60';

@@ -6,6 +6,15 @@ Supabase project"*; everything after it is additive.
 **None of them has been applied to any database yet** — including
 `0001_baseline.sql`.
 
+That is also why a handful of rows below say **corrected `<date>`** rather than
+naming a follow-up migration. The additive rule protects databases that have
+already run a file; where no database has, and the correction is a string literal
+inside a function body, a fix migration would have to re-declare the entire
+function to change it — and the copy would then be free to drift from the
+original. `0022` set the precedent on 2026-08-04 and `0032`, `0036`, `0037` and
+`0043` follow it. **Once anything here has been applied anywhere, this stops
+being available and corrections become new numbered files.**
+
 ## Number ranges
 
 Numbers are reserved **by workstream as a range**, and allocated to a file only
@@ -14,7 +23,8 @@ when that file is written:
 | Range | Workstream |
 |---|---|
 | `0018`–`0024` | admin dashboard |
-| `0025`–`0039` | resident backend |
+| `0025`–`0033` | resident backend |
+| `0034`–`0049` | service operations and security |
 
 Two rules make this work. A workstream takes the lowest free number **in its own
 range** at the moment it writes a file, so two people writing at once cannot
@@ -27,6 +37,14 @@ is not yet decided, so reordering or dropping a step silently makes this file
 wrong. The resident build order lives in
 [`docs/design/RESIDENT_BACKEND_DESIGN.md`](../../../docs/design/RESIDENT_BACKEND_DESIGN.md) §9,
 which is allowed to change; the numbers here follow it rather than binding it.
+
+The third range was split off the resident one on 2026-08-10, when this table
+still read `0025`–`0039` for a workstream that had stopped at `0033` and a
+service-operations build that was already six files into it. The split is
+bookkeeping catching up with what the directory says. The same rule caught its
+own worked example immediately: the service plan had reserved `0039` for security
+operations, the worker portal needed a migration nobody had planned for, and
+`0039` went to whoever wrote first — security operations is `0040`.
 
 | File | Serves |
 |---|---|
@@ -41,8 +59,22 @@ which is allowed to change; the numbers here follow it rather than binding it.
 | `0029_bookable_amenity_view.sql` | `GET /amenities/available` — the resident's projection of the amenity catalogue |
 | `0030_notifications.sql` | the notification record every user-visible event writes, its feed, and the Web Push subscription table |
 | `0031_resident_complaints.sql` | the six resident complaint endpoints, the SLA rule, and the notifications every complaint write emits |
-| `0032_visitor_passes.sql` | the six resident visitor-pass endpoints, the hashed security code, and the first reader `visitor_code_ttl_minutes` has ever had |
+| `0032_visitor_passes.sql` | the six resident visitor-pass endpoints, the hashed security code, and the first reader `visitor_code_ttl_minutes` has ever had — **corrected 2026-08-11**: `decide_visitor_pass` linked the gate to `/security/visitors`, a route that has never existed |
 | `0033_resident_money_and_home.sql` | the eight resident money and home endpoints, the settlement RPCs the simulated gateway feeds, and RLS on `notices`, `unit_residencies` and `departments`, which had none |
+| `0034_service_providers.sql` | who a service person is, and the search that finds them work before anybody has hired them |
+| `0035_department_roles_and_hiring.sql` | three ranks, `service_applications`, and the one RPC that creates a membership and a roster row in the same transaction |
+| `0036_work_orders.sql` | the job, and the exclusion constraint that stops one person being in two places at once — **corrected 2026-08-11**: three worker notifications linked to `/worker/jobs/<id>`, and the worker portal has no `jobs` route |
+| `0037_dispatch_engine.sql` | `dispatch_tasks`, the sweep and the four firing RPCs — no endpoints at all. **Corrected 2026-08-11**: the same broken worker link as `0036`, in a second spelling |
+| `0038_conversations.sql` | the hiring thread between a department and a provider |
+| `0039_worker_actions.sql` | the worker's own side: three views, five verbs, and their working week |
+| `0040_security_operations.sql` | the gate — posts, shifts, two registers, incidents, credential verification and the offline reconcile log |
+| `0041_person_notifications.sql` | the notification substrate re-addressed from a membership to a person, so a service provider who has not been hired can be told anything at all — plus the conversation's first notification and the notice board's |
+| `0042_roster_provider_link.sql` | one column on `department_staff_overview`, so a roster row can say which service provider it is — the write path has filled `staff_assignments.service_provider_id` since `0035` and no read returned it |
+| `0043_staff_departures.sql` | leaving a community becomes a process a manager approves: a departure freezes the dispatch engine against that person, every job and shift in their name is handed over through the same ranking auto-assignment uses, and only an empty list lets the approval through — `remove_department_member` gains the refusal, and a bar releases the work instead of queueing behind it. **Corrected 2026-08-11**: `reassign_departure_item` sent the guard receiving a handed-over shift to `/security-manager/shifts`, which is neither a route nor their portal |
+| `0044_retire_dead_tables.sql` | drops `staff_skills` (superseded by `service_provider_skills`, D2) and `vendors` plus its `staff_assignments.vendor_id` column (superseded by `service_providers`, D1) — the deletion R16's amendment promised |
+| `0045_departure_scheduling.sql` | a departure gets a date and the manager gets the decision: the time-aware freeze (`departure_bars_work`), the queue-priority column on `dispatch_tasks` with the `departure_removal` timekeeper as the fifth kind, windowed release, decide-with-date — **overturns 0043's zero-commitment refusal on Approve** (PO, 2026-08-10; the gate survives on direct Remove) — plus `departure_coverage`, `staff_schedule_items`, and a name that settings can no longer rewrite |
+| `0046_direct_messages.sql` | person-to-person chat for the dock on every portal: one thread per pair per community, the worker↔resident job thread that locks when the work order ends, `dm_pair_allowed`/`dm_recipients` ("the committee" is the admin role), and names as snapshots because `profiles` is self-read-only |
+| `0047_security_roster.sql` | one read function, `security_roster` — the shift form's guard picker, authorized by `gate_admin_community_for`, because a security-rank manager cannot reach the hiring surface's roster reads. No table, no view; the ERD is untouched |
 
 `0028` is the resident range's first file rather than `0025` because §9 puts it
 first: it closes a disclosure in code that already ships instead of adding a
@@ -63,6 +95,17 @@ may take one only if it depends on nothing above it.
 `0032` and `0033` are the same constraint applied without incident: both call
 `notify_member`, so both go above `0030` and the free numbers below stay free.
 Once a rule has a worked example, following it stops being a decision.
+
+**`0018`–`0033` and `0034`–`0040` are counted separately below, because the
+second range's figures are new and the first's have been checked repeatedly.**
+The service-operations range adds **14 views and 62 functions** across its seven
+files — nearly as many functions as the thirteen before it, which is what a
+posture of *no write policy anywhere* costs: every write is a function, so a
+surface with nineteen write endpoints has at least nineteen of them. That is the
+trade `0031` made and every file since has kept, and it is worth being able to
+see the price of.
+
+The paragraph that follows describes `0018`–`0033` and is left as counted.
 
 Between them these create **20 views and 69 functions**. Of the functions, **43
 are called by name from `app/repositories` or `app/services`**; the other 26 are

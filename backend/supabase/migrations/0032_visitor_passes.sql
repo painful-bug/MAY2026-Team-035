@@ -210,7 +210,14 @@ $$;
 comment on function public.expire_visitor_passes(uuid) is
   'Settle this community''s lapsed passes into `expired`, releasing their codes. Run before each issue; nothing else writes that status.';
 
-grant execute on function public.expire_visitor_passes(uuid) to authenticated;
+-- Its one caller is `create_visitor_pass` in section 6, which is SECURITY
+-- DEFINER, so the grant to `authenticated` was never reached. What it did allow
+-- was any signed-in user to settle *any* community's lapsed passes on demand --
+-- harmless in effect, since it only writes the status a pass has already earned,
+-- but it takes a community id from the caller and checks nothing, which is the
+-- shape of the next bug rather than this one.
+revoke all on function public.expire_visitor_passes(uuid)
+  from public, anon, authenticated;
 grant execute on function public.expire_visitor_passes(uuid) to service_role;
 
 -- ---------------------------------------------------------------------------
@@ -306,7 +313,11 @@ $$;
 comment on function public.notify_community_roles(uuid, text[], text, jsonb, uuid) is
   'Notify every active member of a community holding one of these roles.';
 
-grant execute on function public.notify_community_roles(uuid, text[], text, jsonb, uuid) to authenticated;
+-- See the note on `notify_member` in 0030. This one is the widest of the three:
+-- it takes the role list as an argument, so a caller who could reach it directly
+-- chose both the audience and the words.
+revoke all on function public.notify_community_roles(uuid, text[], text, jsonb, uuid)
+  from public, anon, authenticated;
 grant execute on function public.notify_community_roles(uuid, text[], text, jsonb, uuid) to service_role;
 
 -- 0031's function, now a named audience over the general one. The name is what
@@ -617,6 +628,18 @@ begin
   -- all.
   --
   -- The visitor's name travels; the code never does. 10.8's one hard rule.
+  --
+  -- **Corrected 2026-08-11.** The url read `/security/visitors?pass=<id>`, and
+  -- no such route has ever existed: the gate portal built in the security step
+  -- is `/security` (the barrier), `/security/registers`, `/security/incidents`,
+  -- `/security/shifts` and `/security/emergency`. `App.jsx`'s catch-all sends
+  -- anything else to `/`, so every guard who tapped this notification landed on
+  -- the marketing page. `/security` is the gate screen, and its expected-visitor
+  -- panel is what an approved pass is *for*. An admin -- included in this
+  -- audience only so that a community with nobody holding `security` is still
+  -- told -- gets redirected to their own portal instead, which is a downgrade
+  -- from a wrong page to a merely unhelpful one; the visitor's name is in the
+  -- body either way.
   perform public.notify_community_roles(
     v_row.community_id,
     array['security', 'admin'],
@@ -627,7 +650,7 @@ begin
                  when 'reject'  then 'A visitor was rejected'
                  else 'A visitor pass was cancelled' end,
       'body',  v_row.visitor_name,
-      'url',   '/security/visitors?pass=' || p_pass_id::text,
+      'url',   '/security',
       'pass_id', p_pass_id
     ),
     v_actor

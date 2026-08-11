@@ -1,6 +1,15 @@
 // HomeBandhu — current clean-baseline ERD
 // Source of truth: backend/supabase/migrations/0001_baseline.sql
 // Paste into https://dbdiagram.io. Database: PostgreSQL.
+//
+// Renders (2026-08-11): erd.svg + erd.png beside this file, generated OFFLINE with
+//   npx @softwaretechnik/dbml-renderer -i homebandhu_submission_erd.dbml -o erd.svg
+//   (PNG via its -f dot output through Graphviz dot -Tpng -Gdpi=65).
+// The previous erd.png was a dbdiagram.io export and had fallen far behind the source
+// (it still showed vendors, pre-0034); it is preserved in docs/archives/. dbdiagram.io
+// still accepts this file for a hand-arranged export if that style is preferred.
+// NOTE: DBML single-quoted strings cannot contain a bare apostrophe — three notes
+// were reworded on 2026-08-11 because ' inside 'note: ...' is a parse error.
 
 Project homebandhu_submission_erd {
   database_type: 'PostgreSQL'
@@ -176,7 +185,18 @@ Table departments [headercolor: #B7791F] {
   is_active boolean [not null, default: true]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
-  indexes { (community_id, name) [unique] }
+  contact_email citext [note: '0019']
+  contact_phone_e164 varchar(20) [note: '0019']
+  opens_at time [note: '0019 - hours jsonb is the baseline column; these two are what the form writes']
+  closes_at time [note: '0019']
+  sla_hours integer [note: '0019 - 1..8760']
+  kind text [note: '0035 - service | security. 0019 said internal|vendor|hybrid, which nothing ever wrote']
+  status text [not null, default: 'active', note: '0019 - active | archived; a trigger keeps it and is_active in step']
+  indexes {
+    (community_id, name) [unique]
+    (id, community_id) [unique, note: '0019 - the composite target child rows point at to prove tenancy without a join']
+  }
+  Note: 'The 0019 columns above were missing from this diagram until 2026-08-09. status and is_active say the same thing to two readers; sync_department_status() writes each from the other, so neither can drift.'
 }
 
 Table community_memberships [headercolor: #B7791F] {
@@ -309,31 +329,35 @@ Table blacklisted_residents [headercolor: #102A43] {
   Note: 'A reversible community-specific join blacklist. At most one active row per community and profile.'
 }
 
-Table vendors [headercolor: #B7791F] {
-  id uuid [pk]
-  community_id uuid [not null, ref: > communities.id]
-  name text [not null]
-  contact_name text
-  phone_e164 varchar(20)
-  email citext
-  service_category text
-  status text [not null, default: 'active']
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
-}
+// vendors was dropped by 0044 (superseded by service_providers, D1) along with
+// staff_assignments.vendor_id, the only column that ever referenced it.
 
 Table staff_assignments [headercolor: #B7791F] {
   id uuid [pk]
-  membership_id uuid [not null, ref: > community_memberships.id]
+  membership_id uuid [ref: > community_memberships.id, note: '0019 dropped NOT NULL - a roster entry may be a typed name with no account']
   department_id uuid [ref: > departments.id]
-  vendor_id uuid [ref: > vendors.id]
-  employment_type text [not null]
+  employment_type text [not null, default: 'staff', note: '0019 added the default; nothing on the form supplies one']
   designation text
   started_at date [not null]
   ended_at date
   is_active boolean [not null, default: true]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+  community_id uuid [note: '0019 - denormalised so the composite FK below can pin tenancy']
+  display_name text [note: '0019 - carries the unlinked case']
+  phone_e164 varchar(20) [note: '0019']
+  job_title text [note: '0019 - the trade; separate from rank on purpose']
+  rank text [not null, default: 'member', note: '0035 - manager | supervisor | member. Was head|member; `head` stays the WIRE word for the manager']
+  shift text [note: '0035 - Day | Evening | Night | Full Day | Rotating']
+  status text [not null, default: 'active', note: '0019 - active | inactive; removal deactivates, never deletes (A7)']
+  service_provider_id uuid [ref: > service_providers.id, note: '0035 set it, 0042 made it readable - department_staff_overview predated the column by sixteen migrations and projected fourteen fields that did not include it, so every read returned a hired plumber and a typed-in name as the same shape. Only the write path used it, which is why it looked complete in every test']
+  indexes {
+    department_id [unique, note: '0035 - partial: rank = manager and status = active']
+    (department_id, service_provider_id) [unique, note: '0035 - partial: status = active. A rehire is a second row, so the first keeps its history']
+    (department_id, status)
+    community_id
+  }
+  Note: 'The 0019 columns above were missing from this diagram until 2026-08-09. staff_assignments_identity_check requires membership_id or display_name, so a row is always nameable on screen. (department_id, community_id) is a composite FK onto departments(id, community_id), which makes a cross-tenant row unrepresentable rather than merely forbidden.'
 }
 
 Table skills [headercolor: #B7791F] {
@@ -341,30 +365,36 @@ Table skills [headercolor: #B7791F] {
   name text [not null, unique]
   category text
   description text
+  is_active boolean [not null, default: true, note: '0034 - a retired trade is filtered, never deleted; a provider who has held it keeps the row that says so']
+  created_at timestamptz [note: '0034']
+  Note: 'GLOBAL, unlike complaint_categories which is per-community. That asymmetry is what complaint_categories.skill_id exists to bridge, and it is why service_provider_skills can be written before anyone has been hired. 12 trades seeded by 0034.'
 }
 
-Table staff_skills [headercolor: #B7791F] {
-  staff_assignment_id uuid [pk, ref: > staff_assignments.id]
-  skill_id uuid [pk, ref: > skills.id]
-  proficiency_level smallint
-}
+// staff_skills was dropped by 0044 (superseded by service_provider_skills, D2:
+// skills belong to the person, because the search that matters runs before
+// anybody has hired them).
 
 Table worker_availability_rules [headercolor: #B7791F] {
   id uuid [pk]
-  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  staff_assignment_id uuid [ref: > staff_assignments.id, note: '0036 dropped NOT NULL - see the note below']
+  service_provider_id uuid [ref: > service_providers.id, note: '0036 - the global side; exactly one of the two is set']
   weekday smallint [not null]
   start_time time [not null]
   end_time time [not null]
   effective_from date [not null]
   effective_to date
+  Note: '0036 - num_nonnulls(staff_assignment_id, service_provider_id) = 1. A roster name with no account keeps per-department hours; a registered service person keeps ONE set across every community that has hired them, because their week is not a fact about one of their four societies. Both set has no defined meaning, which is the case the num_nonnulls spelling catches and the naive one misses. 0039 gave it endpoints: PUT /worker/availability-rules replaces the provider-keyed half whole, and the roster-keyed half stays writable by nobody, because the person it describes has no account.'
 }
 
 Table worker_unavailability [headercolor: #B7791F] {
   id uuid [pk]
-  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  staff_assignment_id uuid [ref: > staff_assignments.id, note: '0036 dropped NOT NULL']
+  service_provider_id uuid [ref: > service_providers.id, note: '0036 - leave is global across every community they serve']
   starts_at timestamptz [not null]
   ends_at timestamptz [not null]
   reason text
+  created_at timestamptz [not null, note: '0036']
+  Note: '0036 - same one-subject rule as worker_availability_rules above. 0039 writes the provider-keyed half through POST /worker/unavailability. Overlapping rows are allowed on purpose: the dispatch sweep reads them with NOT EXISTS, so two blocks saying "away" say the same thing, and a uniqueness rule here would refuse "away all week, especially Tuesday".'
 }
 
 // Complaints and work
@@ -459,10 +489,28 @@ Table work_orders [headercolor: #C53030] {
   id uuid [pk]
   community_id uuid [not null, ref: > communities.id]
   complaint_id uuid [ref: > complaints.id]
-  status text [not null, default: 'open']
-  priority text [not null, default: 'normal']
+  status text [not null, default: 'draft', note: '0036 - draft | awaiting_resident | offered | scheduled | in_progress | completed | failed | cancelled. Was default `open`, which is not in the set. The last three are declared and not yet reachable: they are the worker transitions and arrive with the worker portal']
+  priority text [not null, default: 'medium', note: '0036 - low | medium | high, inherited from the complaint. Was default `normal` and unconstrained, while complaints.priority was already checked against these three -- two value sets for one name']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+  department_id uuid [ref: > departments.id, note: '0036 - composite FK onto departments(id, community_id) ON DELETE CASCADE, so a cross-tenant job is unrepresentable. No second FK on this column: SET NULL would have nulled community_id too, which is NOT NULL']
+  supervisor_membership_id uuid [ref: > community_memberships.id, note: '0036 - who triaged it; the address the resident answer is delivered to']
+  skill_id uuid [ref: > skills.id, note: '0036 - derived from complaint_categories.skill_id when the caller omits it']
+  scheduled_start_at timestamptz [note: '0036 - both ends or neither (work_orders_slot_check)']
+  scheduled_end_at timestamptz
+  subject_kind text [not null, default: 'resident', note: '0036 - resident | facility. Decides whether anybody is asked to confirm the time']
+  location_text text
+  latitude numeric(9,6) [note: '0036 - unused until the dispatcher measures against it']
+  longitude numeric(9,6)
+  failed_attempt_count smallint [not null, default: 0, note: '0036 - written by the worker portal, not by this migration']
+  resident_deadline_at timestamptz [note: '0036 - when an unanswered proposal stops being worth waiting for']
+  cancelled_reason text
+  indexes {
+    (department_id, status, scheduled_start_at) [note: '0036 - the supervisor queue']
+    complaint_id
+    resident_deadline_at [note: '0036 - partial: status = awaiting_resident. What 0037 will sweep']
+  }
+  Note: 'Un-parked from CONFLICT_RESOLUTIONS R16, which said to build nothing against this table. Extended additively rather than replaced, exactly as 0019 extended departments. ONE COMPLAINT MAY CARRY MANY: a failed visit is rescheduled and a reopened complaint goes to a different supervisor, and both are a second work order -- which is why the assignment is not columns on complaints, the smaller change that would have allowed only one scheduled visit per complaint. The lifecycle is written to complaint_events (job_created, job_scheduled, job_declined, job_assigned, job_cancelled) rather than to a parallel work_order_events table, and needed no migration because complaint_events.event_type is text with no CHECK.'
 }
 
 Table work_order_assignments [headercolor: #C53030] {
@@ -471,6 +519,18 @@ Table work_order_assignments [headercolor: #C53030] {
   staff_assignment_id uuid [ref: > staff_assignments.id]
   assigned_at timestamptz [not null]
   ended_at timestamptz
+  status text [not null, default: 'offered', note: '0036 - offered | accepted | declined | withdrawn | completed | failed. A supervisor assigning writes `accepted` directly; `offered` comes from 0037']
+  offered_at timestamptz [not null]
+  responded_at timestamptz
+  decline_reason text
+  is_auto_assigned boolean [not null, default: false, note: '0036 - always false until the dispatcher exists']
+  scheduled_start_at timestamptz
+  scheduled_end_at timestamptz
+  indexes {
+    (work_order_id, status)
+    (staff_assignment_id, scheduled_start_at) [note: '0036 - partial: status = accepted. The worker calendar, in one index']
+  }
+  Note: 'CARRIES work_order_assignments_no_overlap: exclude using gist (staff_assignment_id with =, tstzrange(scheduled_start_at, scheduled_end_at, `[)`) with &&) where (status = accepted and scheduled_start_at is not null). A person cannot be in two places at once, and the schema is where that is said. Same construct amenity_bookings has carried since 0001, and it needs btree_gist -- which is not a new requirement, since 0001 both installs the extension and declares an exclusion constraint that cannot exist without it. THE PARTIAL PREDICATE IS THE INTERESTING HALF: only accepted rows are constrained, so 0037 may offer one slot to several workers and let exactly one take it.'
 }
 
 // Visitors, amenities, and finance
@@ -664,7 +724,8 @@ Table notices [headercolor: #2B6CB0] {
 
 Table notifications [headercolor: #2B6CB0] {
   id uuid [pk]
-  recipient_membership_id uuid [not null, ref: > community_memberships.id]
+  recipient_profile_id uuid [not null, ref: > profiles.id, note: '0041 — WHO it is for']
+  recipient_membership_id uuid [ref: > community_memberships.id, note: '0041 made this nullable — it now says which community it was ABOUT']
   kind text [not null]
   payload jsonb [not null]
   read_at timestamptz
@@ -672,15 +733,16 @@ Table notifications [headercolor: #2B6CB0] {
   push_sent_at timestamptz [note: '0030 — set when a sender CLAIMS the row, not when the push succeeds']
   push_attempts smallint [not null, default: 0, note: '0030']
   indexes {
-    (recipient_membership_id, created_at) [note: 'desc — the feed read and the unread count']
+    (recipient_profile_id, created_at) [note: '0041, desc — the feed read and the unread count']
+    (recipient_membership_id, created_at) [note: '0030, desc — kept for the SSE trigger lookup']
     (created_at) [note: 'partial, where push_sent_at is null — the sender claim']
   }
-  Note: 'The durable record. Every user-visible event writes a row here first; SSE and Web Push are two deliveries of it, never the record of it. Written only by notify_member(), in the same transaction as the change it describes. RLS enabled by 0030 with a read policy (is_own_membership) and no write policy, so marking read is mark_notification_read().'
+  Note: 'The durable record. Every user-visible event writes a row here first; SSE and Web Push are two deliveries of it, never the record of it. Written only by notify_member() or notify_profile(), in the same transaction as the change it describes. 0041 re-addressed it from a membership to a PERSON: a service provider who has registered and not yet been hired holds no membership anywhere, so under the 0030 shape there was no row that could tell them the answer to their own application. recipient_profile_id is always populated, including for the membership case, so ownership has one predicate everywhere. RLS: read policy recipient_profile_id = auth.uid(), no write policy, so marking read is mark_notification_read(). A row with no membership gets no SSE frame -- sse_events.community_id is not null.'
 }
 
 Table push_subscriptions [headercolor: #718096] {
   id uuid [pk]
-  membership_id uuid [not null, ref: > community_memberships.id]
+  profile_id uuid [not null, ref: > profiles.id, note: '0041 — was membership_id, which is dropped']
   endpoint text [not null, unique]
   p256dh_key text [not null]
   auth_key text [not null]
@@ -688,7 +750,7 @@ Table push_subscriptions [headercolor: #718096] {
   created_at timestamptz [not null]
   last_success_at timestamptz
   failure_count smallint [not null, default: 0]
-  Note: 'One row per BROWSER, not per resident: a phone and a laptop are two. endpoint is unique across the table because the endpoint URL is the browser identity to the push service, so a shared device re-subscribing moves the row instead of duplicating it. RLS enabled with no policy (service_role only) — p256dh_key and auth_key are encryption material, and a readable table is one from which an attacker collects the ability to push as us. Added by 0030.'
+  Note: 'One row per BROWSER, not per person: a phone and a laptop are two. endpoint is unique across the table because the endpoint URL is the browser identity to the push service, so a shared device re-subscribing moves the row instead of duplicating it. 0041 changed the owner from a membership to a profile, which fixed a defect the uniqueness had been hiding: a person in two societies subscribing the same browser from the second one MOVED the row and silently stopped the first society pushes. RLS enabled with no policy (service_role only) -- p256dh_key and auth_key are encryption material. register_push_subscription() takes no owner argument at all; it reads auth.uid().'
 }
 
 Table member_activity [headercolor: #2B6CB0] {
@@ -771,10 +833,8 @@ TableGroup joining_and_people {
   resident_invites
   access_requests
   departments
-  vendors
   staff_assignments
   skills
-  staff_skills
   worker_availability_rules
   worker_unavailability
 }
@@ -1026,4 +1086,404 @@ TableGroup admin_dashboard {
 // community_module_overview reads feature_catalog + community_features, NOT
 // module tables of ours. That is conflict C-11 closed: there is exactly one
 // place a module's enabled state lives, and onboarding owns the writer.
+// ---------------------------------------------------------------------------
+
+// ===========================================================================
+// SERVICE OPERATIONS (0034, 0035)
+//
+// The first entity in this model that exists BEFORE and INDEPENDENTLY of any
+// community. Everything above describes somebody already inside one -- a
+// resident with a unit, an admin with a term, a staff member whose whole
+// existence is a row on one department's roster. A service person registers
+// themselves, is hired by communities afterwards, and goes on existing when
+// every one of them drops them.
+//
+// That overturns docs/product/USER_IDENTIFICATION.md's rule that a staff
+// member is "a name on a roster, not an account". It stays true for a roster
+// name typed into the departments form; it stops being the only case.
+// ===========================================================================
+
+Table service_providers [headercolor: #2C7A7B] {
+  id uuid [pk]
+  profile_id uuid [not null, unique, ref: > profiles.id]
+  display_name text [not null]
+  headline text
+  bio text
+  phone_e164 varchar(20)
+  latitude "numeric(9,6)"
+  longitude "numeric(9,6)"
+  location geography [note: '0034 - generated from lat/lng, GiST indexed; lat/lng are the stored truth']
+  service_radius_km "numeric(6,2)" [not null, default: 15]
+  status text [not null, default: 'active', note: '0034 - active | paused | suspended']
+  is_available boolean [not null, default: true, note: '0034 - the dashboard offline toggle; distinct from status']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  Note: 'A service person, global. Created by the holder of the profile, never by an administrator.'
+}
+
+Table service_provider_skills [headercolor: #2C7A7B] {
+  service_provider_id uuid [pk, ref: > service_providers.id]
+  skill_id uuid [pk, ref: > skills.id]
+  proficiency_level smallint
+  created_at timestamptz [not null]
+  Note: 'Skills belong to the PERSON, not to a roster row. The "which communities need my trades" search has to run before anyone has hired them, which is exactly when they have no staff_assignment to hang a skill on. Supersedes staff_skills.'
+}
+
+Table blacklisted_service_providers [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  service_provider_id uuid [not null, ref: > service_providers.id]
+  blacklisted_by_membership_id uuid [not null, ref: > community_memberships.id]
+  reason text [not null]
+  created_at timestamptz [not null]
+  revoked_at timestamptz
+  revoked_by_membership_id uuid [ref: > community_memberships.id]
+  indexes { (community_id, service_provider_id) [unique, note: 'Partial: revoked_at is null'] }
+  Note: 'Deliberately NOT blacklisted_residents. That table is keyed on a profile and enforced inside search_joinable_communities, so reusing it would bar this person from LIVING here as a side effect of refusing to hire them.'
+}
+
+Table staff_departures [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [not null, ref: > departments.id]
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  service_provider_id uuid [ref: > service_providers.id]
+  initiated_by text [not null, default: 'worker', note: '0043 - worker | manager. Their OWN roster row makes it a resignation even when that person also manages the department']
+  requested_by_membership_id uuid [ref: > community_memberships.id]
+  reason text
+  status text [not null, default: 'pending', note: '0043 - pending | approved | rejected | cancelled. There is deliberately no handover state: that is pending with a non-zero outstanding count, and a status derived from a count is a status that can disagree with it']
+  requested_effective_at timestamptz [note: '0045 - when the worker wants to stop. Null means immediately']
+  effective_at timestamptz [note: '0045 - when the manager decided they stop. Stamped at approval; the departure_removal timekeeper fires on it. Approval releases booked work from this moment to the pool at queue priority 1 - the 2026-08-10 ruling that overturned 0043 zero-commitment gate on Approve']
+  decided_by_membership_id uuid [ref: > community_memberships.id]
+  decided_at timestamptz
+  decision_note text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (staff_assignment_id) [unique, note: 'Partial: status = pending. One open departure per roster row']
+    (department_id, status, created_at)
+  }
+  Note: 'A request to leave, and the handover the approval is gated on. Before 0043 removal was one statement that said nothing about the work the person was holding -- an accepted work_order_assignments row survived a removal untouched, still pointing at tomorrow, addressed to a membership that had just ended. A pending row here freezes the dispatch sweep against that staff row and two triggers refuse any new booking against it, so the outstanding list can only get shorter. Approval is refused while it is non-empty; a BAR is the exception and releases the work to the engine instead.'
+}
+
+Table service_applications [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [not null, ref: > departments.id]
+  service_provider_id uuid [not null, ref: > service_providers.id]
+  direction text [not null, note: '0035 - applied | invited. Who opened it, and therefore who may NOT decide it']
+  status text [not null, default: 'pending', note: '0035 - pending | accepted | rejected | withdrawn | expired']
+  message text
+  rank text [note: '0035 - the terms on offer: manager | supervisor | member']
+  job_title text
+  shift text
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  decided_by_membership_id uuid [ref: > community_memberships.id]
+  decided_at timestamptz
+  decision_note text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (department_id, service_provider_id) [unique, note: 'Partial: status = pending. One open negotiation per pair']
+    (department_id, status, created_at)
+    (service_provider_id, status, created_at)
+  }
+  Note: 'An application and an invitation are one negotiation started from opposite ends, so they are one table. Accepting does the same three writes either way -- membership, staff_assignments row, decision -- in ONE transaction. Two tables would mean two inboxes and two chances for a hire to be half-done.'
+}
+
+// ---------------------------------------------------------------------------
+// WHAT 0035 CHANGED ON THE TABLES ABOVE
+//
+//   staff_assignments.rank      head|member -> manager|supervisor|member.
+//     Four vocabularies disagreed; this is the ERD's, minus the part that
+//     duplicated departments.kind. `head` remains the WIRE word for the person
+//     holding rank = manager, so the admin screen is untouched.
+//     staff_assignments_one_active_head is renamed to ..._one_active_manager,
+//     and apply_department_head -- the only function in this schema that ever
+//     sets a rank -- is rewritten with it.
+//
+//   staff_assignments.shift     Morning|Evening|Night|Full Day
+//                            -> Day|Evening|Night|Full Day|Rotating.
+//     Python validated Day|Evening|Night, so three of five words failed on one
+//     side or the other and only Evening and Night could be saved at all.
+//
+//   departments.kind            internal|vendor|hybrid -> service|security.
+//     Nothing wrote the old set; Python and API.md both said the new one. The
+//     two did not intersect, so every department write naming a kind was a
+//     23514. `kind` is now load-bearing: it decides whether an accepted
+//     application issues a `worker` membership or a `security` one.
+//
+//   staff_assignments.service_provider_id -> service_providers.id.
+//     Three populations now share the roster, told apart by which columns are
+//     null: a typed name (both null), a hired service person (both set), and
+//     an existing member given a department role (membership only).
+//
+//   complaint_categories.skill_id -> skills.id, filled by a name-matching
+//     trigger. The ONLY join between what a person can do and what a community
+//     needs done. A community whose category matches no catalogue trade simply
+//     matches no service person, which is not an error.
+//
+//   communities.latitude / longitude / location, mirroring service_providers.
+//
+//   skills.is_active -- a retired trade is filtered, never deleted, so a
+//     provider who has held it for two years keeps the row that says so.
+//
+// VIEWS: service_provider_overview, service_application_overview,
+//   service_engagement_overview. FUNCTIONS: search_serviceable_communities
+//   (the provider's side) and search_hireable_service_providers (the
+//   department's), which are the same three rules seen from opposite ends.
+//
+// staff_skills and vendors were superseded and are now dropped by 0044
+// (2026-08-10). See docs/CONFLICT_RESOLUTIONS.md R16's amendment.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 0038 - THE HIRING CONVERSATION
+// ---------------------------------------------------------------------------
+
+Table conversations [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id, note: '0038 - denormalised from the department so the read policy can call is_community_admin without a join']
+  department_id uuid [not null, ref: > departments.id, note: '0038 - also half of a composite FK onto departments(id, community_id), added 2026-08-10. The denormalised community_id above is only trustworthy if something enforces the pair']
+  service_provider_id uuid [not null, ref: > service_providers.id]
+  created_at timestamptz [not null]
+  last_message_at timestamptz [note: '0038 - stamped by post_conversation_message, not by a trigger. Read policies only, so there is no second writer to defend against']
+  indexes {
+    (department_id, service_provider_id) [unique, name: 'conversations_one_per_pair', note: 'ONE thread per pair, forever. This is what lets open_conversation be an upsert rather than a read-then-write']
+    (service_provider_id, last_message_at)
+    (department_id, last_message_at)
+  }
+  Note: 'One thread per (department, provider) pair. The thread outlives every application in it -- somebody who applied, was rejected, and applied again a year later is talking to the same department about the same work -- so it is keyed to the pair and has no foreign key to service_applications. There is deliberately NO conversation_participants table: participation is derivable (an admin or manager of the department, or that provider) and deriving it is exactly what the RLS policy computes.'
+}
+
+Table conversation_messages [headercolor: #2C7A7B] {
+  id uuid [pk]
+  conversation_id uuid [not null, ref: > conversations.id]
+  author_membership_id uuid [ref: > community_memberships.id, note: '0038 - the department side']
+  author_provider_id uuid [ref: > service_providers.id, note: '0038 - the provider side']
+  body text [not null, note: '0038 - length(btrim(body)) between 1 and 4000']
+  created_at timestamptz [not null]
+  indexes {
+    (conversation_id, created_at)
+  }
+  Note: 'TWO author columns, exactly one set (num_nonnulls = 1). Not one column, because the provider a manager most needs to reach is one who has NOT been hired yet and therefore holds no membership in this community at all -- the same fact that makes an invitation unnotifiable. Which column is written is decided by the THREAD rather than by the caller, so author_provider_id is not null reads as "the worker said this" even after they are hired and hold a membership too.'
+}
+
+// VIEWS: conversation_overview (thread list, both counterparts named, last line
+//   and message count) and conversation_message_overview (author resolved to a
+//   name and a side). FUNCTIONS: is_conversation_participant -- ONE definition,
+//   called by both read policies and both write RPCs -- plus open_conversation
+//   (upsert) and post_conversation_message.
+//
+// No read receipts and no unread counts: nothing in the requirement asks for
+// them, and adding one later is a lateral join on created_at.
+
+// ---------------------------------------------------------------------------
+// 0046 - direct messages. Person-to-person chat for the dock on every portal.
+// NOT an extension of conversations: that schema is structurally a
+// department<->provider channel (NOT NULL provider, one-of-two author check).
+// ---------------------------------------------------------------------------
+
+Table dm_threads [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  kind text [not null, default: 'direct', note: '0046 - direct | work_order. (kind = work_order) = (work_order_id is not null)']
+  work_order_id uuid [ref: > work_orders.id, note: '0046 - the job a worker<->resident thread is about']
+  participant_a_profile_id uuid [not null, ref: > profiles.id]
+  participant_b_profile_id uuid [not null, ref: > profiles.id, note: '0046 - CHECK a < b: canonical order makes the pair a value, so (a,b) and (b,a) cannot be two threads']
+  participant_a_name text [not null, note: '0046 - a SNAPSHOT, refreshed on re-open. profiles is readable only by its owner (profiles_self, 0001), so a view joining it would show every counterpart as null. Same trade as staff_assignments.display_name, same known cost']
+  participant_b_name text [not null]
+  locked_at timestamptz [note: '0046 - stamped by a trigger when the work order goes terminal. A locked thread stays READABLE and refuses writes with HB409: the PO protection against a serviceman keeping a private line to a resident after the work is done, and the documented-history half of the same ruling']
+  last_message_at timestamptz
+  created_at timestamptz [not null]
+  indexes {
+    (community_id, participant_a_profile_id, participant_b_profile_id) [unique, note: '0046 - partial: kind = direct. One thread per pair per community; opening is an upsert']
+    (work_order_id) [unique, note: '0046 - partial: kind = work_order and locked_at is null. One LIVE thread per job; a locked one is history and does not block the next accepted worker']
+  }
+  Note: 'Who may reach whom is dm_pair_allowed, one predicate behind both the recipients directory and the open: both active members, and either one is an admin or manager -- THE COMMITTEE IS THE ADMIN ROLE (USER_IDENTIFICATION.md) -- or they share a department. Residents reach the office, not each other; their worker contact is the job thread.'
+}
+
+Table dm_messages [headercolor: #2C7A7B] {
+  id uuid [pk]
+  thread_id uuid [not null, ref: > dm_threads.id]
+  author_profile_id uuid [ref: > profiles.id, note: '0046 - NULL is a system line ("the job ended, this conversation is closed"), written only by definer functions. The receipt-only case the PO named']
+  body text [not null, note: '0046 - length(btrim(body)) between 1 and 4000']
+  created_at timestamptz [not null]
+  indexes {
+    (thread_id, created_at)
+  }
+}
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 0037 — THE DISPATCH ENGINE
+//
+// One table. Everything else in 0037 is functions and a trigger, which a
+// diagram of tables cannot show and which is where the whole design lives --
+// see docs/API.md 18 and docs/plans/SERVICE_OPERATIONS_PROGRESS.md 6.6.
+// ---------------------------------------------------------------------------
+
+Table dispatch_tasks [headercolor: #B7791F] {
+  id uuid [pk]
+  work_order_id uuid [ref: > work_orders.id, note: '0037 - on delete cascade. 0045 dropped NOT NULL: a timer now belongs to a work order XOR a departure (num_nonnulls check)']
+  departure_id uuid [ref: > staff_departures.id, note: '0045 - the timekeeper subject. An approved dated departure carries one departure_removal timer that releases whatever is still booked and removes the person at the effective date']
+  kind text [not null, note: '0037 - ping | auto_assign | resident_timeout | failed_visit_escalation; 0045 added departure_removal as the fifth, collecting on the 0037 promise that a new kind touches no Python']
+  priority smallint [not null, default: 0, note: '0045 - claim order: 2 = urgent auto-assign, 1 = departure-released work ("just below urgent", the PO phrase implemented literally), 0 = everything else']
+  due_at timestamptz [not null, note: '0037 - when the dispatcher should act. The engine holds no timers in memory; this column IS the schedule']
+  attempts smallint [not null, note: '0037 - incremented on claim, not on failure. Five and the task retires itself']
+  claimed_at timestamptz [note: '0037 - LEASE START, not a completion mark. Open five minutes after this and it is claimable again']
+  completed_at timestamptz
+  last_error text [note: '0037 - why it did not fire, for a human. Cleared on a successful run']
+  created_at timestamptz [not null]
+  indexes {
+    (work_order_id, kind) [unique, name: 'dispatch_tasks_one_open_per_kind', note: '0037 - partial: completed_at is null. This is the index the enqueue upserts onto, so a job rescheduled three times carries ONE live timer pointing at the newest deadline']
+    (departure_id, kind) [unique, name: 'dispatch_tasks_one_open_per_departure_kind', note: '0045 - the same rule for the timekeeper: a re-approval with a new date moves the one timer']
+    (priority, due_at) [note: '0045 - partial: completed_at is null. The claim query orders priority desc, due_at']
+  }
+  Note: 'The engine at-LEAST-once, which is the opposite of what the push sender chose. push.py claims by marking a notification sent before it sends, so a crash loses a buzz rather than repeating one -- right for something that vibrates a phone at 3am, wrong here, because a dropped resident_timeout is a complaint left waiting forever with nobody coming. So claim_dispatch_batch takes a lease and every firing function is idempotent: each re-reads the work order and returns without writing if the world has already moved on. RLS is ENABLED WITH NO POLICY, following push_subscriptions (0030): machine bookkeeping, no client has a reason to read it, and the dispatcher runs on the service client which bypasses RLS. Rows are written by exactly one thing -- an after-insert-or-update trigger on work_orders that keeps this table in agreement with the job status -- so no future write path has to remember to arm a timer, and cancelling a job stops its timers without cancel_work_order knowing this table exists.'
+}
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 0040 - security operations. The gate: where a guard stands, who is standing
+// there, the two registers that replace paper, incidents, and the audit trail
+// that makes an unsigned offline bundle safe.
+//
+// This is the third department kind finally getting its own work. Hiring,
+// skills, availability, the calendar, blacklisting and messaging are all reused
+// from 0034-0039 verbatim -- a guard is hired by exactly the RPC that hires a
+// plumber -- because the only thing that differs is what the work IS. A shift
+// is a post occupied for a window, not a job dispatched to an address.
+//
+// Closes US-3.3, US-3.4 and US-3.6, and finishes US-3.1 by finally reading
+// visitor_requests.guest_count, a column 0032 added and nothing ever used.
+// See docs/API.md 19 and docs/plans/SERVICE_OPERATIONS_PROGRESS.md 6.8.
+// ---------------------------------------------------------------------------
+
+Table security_posts [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [ref: > departments.id, note: '0040 - composite FK on (department_id, community_id) ON DELETE CASCADE, the house cross-tenant guard. Cascade rather than set null for the reason 4.14 had to learn on work_orders: a composite SET NULL nulls EVERY column in the pair, and community_id is not null']
+  name text [not null]
+  location_text text
+  latitude "numeric(9,6)"
+  longitude "numeric(9,6)"
+  is_active boolean [not null, note: '0040 - deactivated, never deleted. A post that is gone still names the place a register entry was recorded two years ago, and US-3.6 is a story about reading records that old']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (community_id, name) [unique, name: 'security_posts_live_name_idx', note: '0040 - partial: is_active, on lower(btrim(name)). Main Gate and main gate are one place']
+  }
+  Note: 'Where a guard stands. Written only by upsert_security_post, which requires gate_admin_community_for -- an admin, a manager, or a security membership whose roster row is ranked manager or supervisor. That last clause is the first place D3s rank-and-role split has to be honoured in code rather than described.'
+}
+
+Table security_shifts [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [ref: > departments.id, note: '0040 - composite FK on (department_id, community_id) ON DELETE CASCADE. Derived from the roster row rather than accepted from the caller']
+  post_id uuid [ref: > security_posts.id, note: '0040 - on delete set null. A deleted post does not erase the record that somebody worked that night']
+  staff_assignment_id uuid [not null, ref: > staff_assignments.id]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  status text [not null, note: '0040 - scheduled | active | completed | cancelled | missed']
+  notes text
+  created_by_membership_id uuid [ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (staff_assignment_id, starts_at) [name: 'security_shifts_no_overlap', note: '0040 - really an EXCLUDE USING gist over staff_assignment_id WITH = and tstzrange(starts_at, ends_at) WITH overlap, WHERE status is not cancelled. Rendered as an index here because dbml has no exclusion-constraint syntax']
+    (community_id, starts_at) [name: 'security_shifts_community_window_idx']
+  }
+  Note: 'work_order_assignments with the nouns changed -- same GiST exclusion constraint, same btree_gist dependency, same reason: a person cannot be in two places at once, and the schema is where that is said. THE PARTIAL PREDICATE IS WHERE THE TWO DIFFER AND IT HAS TO. Assignments constrain only accepted rows, because the dispatcher offers one slot to five workers and exactly one takes it -- constrain the offers and it can only ever ask one person. Nobody offers a shift to five guards, so there is no equivalent state and the predicate is everything except cancelled: a COMPLETED shift still occupied that evening, and a new one written over it is a rota error rather than a historical curiosity. Overlap is refused BY NAME in schedule_security_shift before the constraint refuses it by number, the pairing 4.13 arrived at.'
+}
+
+Table material_movements [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  direction text [not null, note: '0040 - inward | outward']
+  description text [not null]
+  quantity "numeric(12,2)"
+  unit text
+  is_returnable boolean [not null]
+  expected_return_at timestamptz [note: '0040 - CHECK: null unless is_returnable. A return date on a non-returnable item is a contradiction that would produce a still-out report quietly disagreeing with itself']
+  returned_at timestamptz [note: '0040 - same CHECK. Set by mark_material_returned, which is idempotent: the second guard to press returned is telling the truth and the row already says so']
+  carrier_name text
+  vehicle_number text
+  unit_id uuid [ref: > units.id, note: '0040 - on delete set null. Which flat the material was for, when anybody knows']
+  post_id uuid [ref: > security_posts.id]
+  notes text
+  recorded_by_membership_id uuid [ref: > community_memberships.id]
+  recorded_at timestamptz [not null]
+  source_client_id text [note: '0040 - the id the GATE DEVICE generated, unique per community. A queued offline entry replayed twice is one row, and the RPC returns the original id rather than raising -- a device coming back online wants the id it would have had, not a conflict']
+  created_at timestamptz [not null]
+  indexes {
+    (community_id, source_client_id) [unique, name: 'material_movements_source_client_idx', note: '0040 - partial: source_client_id is not null']
+    (community_id, expected_return_at) [name: 'material_movements_outstanding_idx', note: '0040 - partial: is_returnable and returned_at is null. The still-out report the returnable column exists for']
+    (community_id, recorded_at) [name: 'material_movements_community_recorded_idx']
+  }
+  Note: 'US-3.3, replacing the paper register. A SEPARATE TABLE from water_tanker_logs rather than one typed table with a kind and a details jsonb (plan D12) -- and the reading confirms it: the two share not one column past the bookkeeping. is_returnable, expected_return_at and returned_at against tanker_number, volume_litres and supplier_name. One table would be null-heavy in both halves and would move validation out of the schema and into Python.'
+}
+
+Table water_tanker_logs [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  supplier_name text
+  tanker_number text [not null, note: '0040 - stored UPPER-cased by the RPC. A plate written down by two guards on two shifts is one vehicle, and a report that splits it into two is the report nobody trusts']
+  volume_litres integer
+  driver_name text
+  driver_phone_e164 "varchar(20)"
+  arrived_at timestamptz [not null]
+  departed_at timestamptz [note: '0040 - CHECK: null, or at or after arrived_at. Recorded by a later PATCH; an auditable record needs both ends of the visit']
+  post_id uuid [ref: > security_posts.id]
+  notes text
+  recorded_by_membership_id uuid [ref: > community_memberships.id]
+  source_client_id text [note: '0040 - same idempotency key as the material register']
+  created_at timestamptz [not null]
+  indexes {
+    (community_id, source_client_id) [unique, name: 'water_tanker_logs_source_client_idx', note: '0040 - partial: source_client_id is not null']
+    (community_id, arrived_at) [name: 'water_tanker_logs_community_arrived_idx']
+  }
+  Note: 'US-3.4, and the first thing in this product that touches water management at all.'
+}
+
+Table security_incidents [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  category text [not null, note: '0040 - security_concern, medical_emergency, fire_alarm, unauthorised_access, property_damage or other. Snake case stored, the frontends five display strings on the wire, mapped in app/domain/vocabularies.py -- the seam 5.8 and 4.6 both used. other is in the set on purpose: a closed vocabulary with no escape hatch is a form people work around by picking the nearest wrong option']
+  severity text [not null, note: '0040 - low, medium, high or critical. THE ONLY FIELD IN THIS SCHEMA WHOSE VALUE DECIDES WHETHER SOMETHING NOTIFIES: high and critical reach the communitys admins and managers, low and medium are a record. Everywhere else that decision is made by the operations identity']
+  status text [not null, note: '0040 - open, acknowledged or resolved']
+  summary text [not null]
+  details text
+  location_text text
+  post_id uuid [ref: > security_posts.id]
+  occurred_at timestamptz [not null]
+  resolved_at timestamptz [note: '0040 - cleared when the status moves back off resolved, so the timestamp never outlives the status that justified it']
+  reported_by_membership_id uuid [ref: > community_memberships.id]
+  source_client_id text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (community_id, source_client_id) [unique, name: 'security_incidents_source_client_idx', note: '0040 - partial: source_client_id is not null']
+    (community_id, occurred_at) [name: 'security_incidents_community_occurred_idx']
+  }
+  Note: 'The form already exists and already writes to nothing. SecurityDashboard.jsx:166 collects a type, a location and details, and logIncident appends an interpolated STRING to an in-memory activity feed -- the same defect DECISIONS_NEEDED B2 names on the complaint assignee, one surface over. This is the table that string should always have gone into.'
+}
+
+Table offline_reconcile_log [headercolor: #2C7A7B] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  source_client_id text [not null, note: '0040 - unique per community. THE IDEMPOTENCY KEY, and the reason this table exists at all']
+  credential_hash text
+  claimed_at timestamptz [not null, note: '0040 - when the DEVICE says the credential was presented. verify_gate_credential is re-run against this instant, not against now()']
+  claimed_verdict text [note: '0040 - what the device decided at the time']
+  server_verdict text [not null, note: '0040 - what the server decides on replay. The pair is the point: an entry the server would have refused is neither silently dropped nor silently accepted -- it is a row somebody can be asked about']
+  visitor_request_id uuid [ref: > visitor_requests.id]
+  detail text
+  submitted_by_membership_id uuid [ref: > community_memberships.id]
+  submitted_at timestamptz [not null]
+  indexes {
+    (community_id, source_client_id) [unique, name: 'offline_reconcile_log_source_client_idx']
+    (community_id, submitted_at) [name: 'offline_reconcile_log_community_idx']
+  }
+  Note: 'WHY THE OFFLINE BUNDLE IS NOT SIGNED, WHICH PLAN D13 SAID IT WOULD BE. A signature the device verifies against a key the device holds is theatre -- the same person who can edit localStorage can delete the check beside it, because both are JavaScript on their machine. What is actually load-bearing is that an offline admission is PROVISIONAL UNTIL RECONCILED: reconcile_offline_entry re-runs the real verification and records the servers own verdict beside the devices claim, so a fabricated entry becomes a flagged row in an audit log rather than an admitted guest. This table is also why the replay branch cannot just re-verify: a second scan of one credential is a DEPARTURE, so replaying an admission twice would check the visitor out. The recorded verdict is returned untouched instead. Read policy is is_community_admin ALONE, not gate staff: the person whose entries are being checked is not the person the check is for.'
+}
 // ---------------------------------------------------------------------------

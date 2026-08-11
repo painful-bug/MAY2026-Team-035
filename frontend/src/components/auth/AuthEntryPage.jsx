@@ -3,10 +3,10 @@ import { Loader2 } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import AuthCard from './AuthCard';
 import {
-  getAuthMethods, homeRouteFor, signInWithPassword, signUpWithPassword,
+  getAuthMethods, signInWithPassword, signUpWithPassword,
 } from '../../lib/auth/authService';
 import { AUTH_FLOW_STATE, useAuthStore } from '../../store/authStore';
-import { AUTH_ROUTES } from '../../routes/authRoutes';
+import { AUTH_ROUTES, homeRouteFor } from '../../routes/authRoutes';
 import TurnstileChallenge from './TurnstileChallenge';
 
 export default function AuthEntryPage() {

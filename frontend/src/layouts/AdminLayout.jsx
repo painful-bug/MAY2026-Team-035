@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   X,
   Calendar,
-  Building2
+  Building2,
+  MessageSquare
 } from 'lucide-react';
 
 export default function AdminLayout() {
@@ -35,6 +36,7 @@ export default function AdminLayout() {
     { name: 'Admins', path: '/admin/admins', icon: ShieldCheck },
     { name: 'Departments', path: '/admin/departments', icon: Building2 },
     { name: 'Amenities Management', path: '/admin/amenities', icon: Calendar },
+    { name: 'Messages', path: '/admin/messages', icon: MessageSquare },
     { name: 'Notices Board', path: '/admin/notices', icon: Megaphone },
     { name: 'Complaints Management', path: '/admin/complaints', icon: AlertOctagon },
     { name: 'Maintenance Payments', path: '/admin/maintenance', icon: Wrench },

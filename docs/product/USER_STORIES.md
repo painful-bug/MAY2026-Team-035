@@ -153,8 +153,10 @@ important application updates, so that I learn about them without having to open
 
 - Important application updates are sometimes available only after opening the application.
 
-**Backend:** **Partial** — `GET /notices` is the resident's read and the push transport exists;
-`POST /notices` does not yet call `notify_member`, so nobody is told.
+**Backend:** **Served** — `GET /notices` is the resident's read, the push transport exists, and
+since `0041` a published notice fans out to every active resident through an `after insert` trigger,
+excluding its author. A trigger rather than a service call because `insert_notice` is a plain
+single-statement write with no RPC to hang one off, and delivery belongs to the system.
 
 ### US-2.5 — Simple complaint submission with priority
 
@@ -193,8 +195,14 @@ reassigned, or resolved, so that I stay informed without following up.
 - Push notifications for complaint updates are occasionally delayed or not delivered.
 - Repeated calls and follow-ups are often necessary.
 
-**Backend:** **Partial** — backend-complete: every transition writes a notification and both
-transports carry it. `frontend/public/` has no service worker, so no phone can buzz.
+**Backend:** **Served** — every transition writes a notification and both transports carry it.
+**Closed 2026-08-10:** `frontend/public/sw.js` now exists and `lib/push/pushClient.js` subscribes
+against `GET /push/vapid-key`, so a phone can buzz. This entry read *Partial — no service worker*
+until then; the whole gap was one missing file.
+
+The subscribe control currently lives on the service partner's profile screen, because that portal
+shipped with the file. Any portal enables push with the same one-line helper; wiring it into the
+resident dashboard is a placement decision, not a capability gap.
 
 ### US-2.8 — Complaint accountability
 
@@ -286,11 +294,11 @@ without per-visitor approval and without weakening day-to-day security.
 - Security personnel must perform manual verification when residents cannot provide approvals during
   functions.
 
-**Backend:** **Partial** — `visitor_requests.pass_hash` plus `valid_from` / `valid_until` is a
-scheduled, time-boxed code, and `community_settings.visitor_code_ttl_minutes` already configures its
-life. `POST /visitor-passes` issues one and `/cancel` revokes it, but **nothing verifies a code at
-the gate**, which is the requirement the story is about, and nothing admits a second guest on one
-code.
+**Backend:** **Served** — as of `0040`. `POST /visitor-passes` issues the scheduled, time-boxed
+code and `/cancel` revokes it; `POST /security/gate/verify` is the scan that was missing, and it
+admits the whole party rather than one guest. The multi-guest requirement needed no schema change
+after all: `guest_count` has been a column since `0032` and nothing had ever read it. See `API.md`
+§19.
 
 ### US-3.2 — Auto guest access workflow on amenity booking
 
@@ -302,7 +310,7 @@ resident books a community hall or amenity, so that event entry is prepared with
 - Security personnel must perform manual verification when residents cannot provide approvals during
   functions.
 
-**Backend:** **None** — but the trigger point exists; see §14.
+**Backend:** **None** — but the trigger point exists; see `API.md` §16.5. *(Corrected 2026-08-10: this said §14, which has been the resident's money and home since the resident backend landed and renumbered the sections behind it.)*
 
 ### US-3.3 — Digital registers
 
@@ -314,7 +322,10 @@ that I no longer need to keep manual registers.
 
 - Several operational activities require manual register maintenance.
 
-**Backend:** **None.**
+**Backend:** **Served** — `material_movements` records inward and outward material with the
+returnable trio, and `security_incidents` covers *other operational activities* — replacing a form
+that until now appended a string to an in-memory activity feed. Six operations under
+`/api/v1/security`, `API.md` §19.
 
 ### US-3.4 — Digital water tanker log
 
@@ -325,7 +336,8 @@ that tanker records are digital and auditable.
 
 - Water tanker management is not integrated into the application.
 
-**Backend:** **None.**
+**Backend:** **Served** — `water_tanker_logs`, with both ends of the visit: `POST
+/security/water-tankers` on arrival and `PATCH` on departure. `API.md` §19.
 
 ### US-3.5 — Offline fallback verification
 
@@ -336,7 +348,29 @@ that gate operations continue with minimal disruption.
 
 - Network interruptions require temporary manual visitor verification.
 
-**Backend:** **None.**
+**Backend:** **Served** — the server side is `GET /security/offline-bundle`, a time-boxed cache of
+live pass hashes, and `POST /security/offline-reconcile`, which replays the queue, re-verifies each
+admission server-side and records its own verdict beside the device's claim.
+
+~~What is missing is the gate screen that holds the bundle and verifies against it; it lands with
+the security screens.~~ **Closed 2026-08-11** — the gate screen shipped with the security portal. It
+caches the bundle in `localStorage`, hashes a scanned code with Web Crypto and compares it against
+the cached hashes, queues every offline scan under its own client-generated id, and reconciles
+automatically when the browser reports a connection again.
+
+Three things about it matter to this story rather than to the code. **Every offline verdict is
+labelled provisional on screen** — the device can check a hash and a validity window, but it cannot
+know how many of a party are already inside or that a resident cancelled the pass after the bundle
+was cut. **Entries the server rejects stay on the guard's screen** until dismissed one at a time,
+because an admission the server refuses is the most important thing this mechanism can report. And
+the safety of an unsigned cached bundle comes from reconcile, not from the cache: signing a file the
+device also validates would be theatre.
+
+**The service-worker half closed 2026-08-10** — `frontend/public/sw.js` caches every successful
+same-origin GET and serves it when the network fails, so a guard who reloads during an outage still
+gets the application. This entry previously said the missing service worker was what blocked the
+story, which overstated it: `localStorage` can hold a bundle without one, and what the worker
+actually buys is surviving a reload.
 
 ### US-3.6 — Long-term data retention and downloadable operational reports
 
@@ -349,5 +383,7 @@ reviews.
 - Historical records older than approximately three months are unavailable.
 - Downloading and reviewing older operational reports is not supported.
 
-**Backend:** **None** for gate operations. Retention itself is not a gap — nothing we write is ever
-deleted or aged out.
+**Backend:** **Served** for gate operations. Retention was never the gap — nothing we write is ever
+deleted or aged out — so the two real gaps were data to retain and a way to download it. `0040`
+supplies the first and `GET /security/exports/{dataset}` the second: four datasets, one route, CSV,
+bounded by `from` and `to` rather than by a retention policy.

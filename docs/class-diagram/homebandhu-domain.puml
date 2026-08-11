@@ -552,6 +552,298 @@ package "Complaints & Work Orders  (red)" #FFEBEE {
 }
 
 ' ============================================================================
+'  AMBER — Service personnel: hiring, dispatch and departure  (0034–0043)
+'
+'  The people in this package are the only ones in the model who exist BEFORE
+'  any community has heard of them. A ServiceProvider is global — one row per
+'  person, not per society — and becomes a StaffAssignment in each community
+'  that hires them. That is the whole reason it is a separate class from
+'  StaffAssignment rather than a flag on it: skills, availability, coordinates
+'  and the "taking work" switch belong to the person and are asked about by
+'  somebody who is on no roster at all.
+' ============================================================================
+package "Service Personnel  (amber)" #FFF3E0 {
+
+  class ServiceProvider <<aggregate root>> {
+    ' global scope — one per profile, across every community
+    - id : UUID {PK}
+    - profileId : UUID {unique, FK}
+    - displayName : String {required}
+    - headline : String [0..1]
+    - bio : Text [0..1]
+    - phoneE164 : String [0..1]
+    - latitude : Decimal(9,6) [0..1]
+    - longitude : Decimal(9,6) [0..1]
+    - location : Geography(Point,4326) {derived}
+    - serviceRadiusKm : Decimal(6,2)
+    - status : String
+    - isAvailable : Boolean
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + serviceableCommunities() : List<Community>
+    + applyTo(d : Department, message : String) : ServiceApplication
+    + goOffline() : void
+  }
+  note right of ServiceProvider
+    <b>{location is generated}</b> latitude/longitude are the
+    source of truth; the geography column is derived and
+    GiST-indexed. Dropping PostGIS costs one column and one
+    index — every API shape is unchanged (D7).
+  end note
+
+  class ServiceProviderSkill <<association class>> {
+    - proficiencyLevel : SmallInt [0..1]
+  }
+  note bottom of ServiceProviderSkill
+    <b>{skills belong to the PERSON, not the posting}</b> (D2).
+    The search that matters — "which communities need my
+    trades" — runs before anybody has hired them. Keyed to a
+    roster row it returns nothing for exactly the people who
+    need it. Supersedes StaffSkill.
+  end note
+
+  class SkillCategory <<entity>> {
+    - skillId : UUID {PK, FK}
+    - complaintCategoryId : UUID {PK, FK}
+  }
+  note bottom of SkillCategory
+    <b>{there is no department_skills table}</b> A department
+    declares complaint categories; a skill maps to categories;
+    so "this department needs this skill" is DERIVABLE by a
+    join rather than stored. One table not written.
+    Note: this model carries a complaint's category as a String
+    on Complaint, so the far end of this link is the
+    complaint_categories table rather than a class here.
+  end note
+
+  class ServiceApplication <<entity>> {
+    - id : UUID {PK}
+    - direction : ApplicationDirection
+    - status : ApplicationStatus
+    - message : Text [0..1]
+    - rank : StaffRank [0..1]
+    - jobTitle : String [0..1]
+    - shift : Shift [0..1]
+    - decisionNote : Text [0..1]
+    - decidedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + accept(terms : HiringTerms) : StaffAssignment
+    + reject(note : String) : void
+    + withdraw() : void
+  }
+  note bottom of ServiceApplication
+    <b>{one negotiation, two ends}</b> An application and an
+    invitation are one table because accepting does the same
+    three writes either way — membership, roster row, decision
+    — in ONE transaction. `direction` decides who may answer,
+    which is why it is a column and not a comment.
+    {invariant} one open negotiation per (department, provider)
+  end note
+
+  class BlacklistedServiceProvider <<entity>> {
+    - id : UUID {PK}
+    - reason : Text {required}
+    - blacklistedAt : DateTime
+    - revokedAt : DateTime [0..1]
+  }
+  note right of BlacklistedServiceProvider
+    <b>{not BlacklistedResident}</b> (D10). That table is keyed
+    on a profile and is enforced inside community search, so
+    reusing it would bar this person from LIVING here. A plumber
+    a community will not hire has not been refused a flat.
+  end note
+
+  class StaffDeparture <<entity>> {
+    - id : UUID {PK}
+    - initiatedBy : DepartureInitiator
+    - reason : Text [0..1]
+    - status : DepartureStatus
+    - requestedEffectiveAt : DateTime [0..1]
+    - effectiveAt : DateTime [0..1]
+    - decisionNote : Text [0..1]
+    - decidedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + conflicts() : List<Commitment>
+    + coverage() : List<CoverageAnswer>
+    + reassign(item : Commitment, to : StaffAssignment [0..1]) : void
+    + approve(effectiveAt : DateTime [0..1]) : void
+    + reject(note : String) : void
+  }
+  note bottom of StaffDeparture
+    <b>{leaving is a dated state the manager decides}</b> (0043,
+    reworked 0045). A pending row bars the dispatch sweep for
+    work the leave would strand — everything when undated, the
+    date onward (plus unscheduled work) when dated — and two
+    triggers stand behind the sweep. approve() picks the leave
+    date (requested or later) and RELEASES conflicting work to
+    the pool at queue priority just below urgent; a timekeeper
+    task removes the person at the date. <i>Until 2026-08-10
+    approve() raised while anything was outstanding — the PO
+    overturned that; the gate survives only on the direct
+    remove, which has no release step.</i> There is deliberately
+    NO handover status: that is pending with a non-zero count.
+    {invariant} one open departure per roster row
+  end note
+
+  class DirectMessageThread <<aggregate root>> {
+    - id : UUID {PK}
+    - kind : DmThreadKind
+    - participantANameSnapshot : String
+    - participantBNameSnapshot : String
+    - lockedAt : DateTime [0..1]
+    - lastMessageAt : DateTime [0..1]
+    - createdAt : DateTime
+    + post(author : Profile, body : String) : DirectMessage
+    + lock() : void
+  }
+  note right of DirectMessageThread
+    <b>{two people, one thread}</b> (0046). Pair stored in
+    canonical order (a &lt; b), one row per pair per community.
+    dm_pair_allowed is the single reach rule: both active
+    members, and either runs the place (admin/manager — the
+    committee IS the admin role) or they share a department.
+    A work_order thread joins the accepted worker to the
+    complainant and LOCKS when the job ends: readable history,
+    closed channel — the PO's protection, verbatim. Names are
+    snapshots because profiles is self-read-only.
+  end note
+
+  class DirectMessage <<entity>> {
+    - id : UUID {PK}
+    - body : Text {required, 1..4000}
+    - createdAt : DateTime
+    ' null author = a system line ("this conversation is
+    ' closed"), written only by the database.
+  }
+
+  class Conversation <<aggregate root>> {
+    - id : UUID {PK}
+    - lastMessageAt : DateTime [0..1]
+    - createdAt : DateTime
+    + post(author : Party, body : String) : ConversationMessage
+  }
+  note right of Conversation
+    <b>{no participants table}</b> One thread per (department,
+    provider), so there is no thread-creation step and no
+    duplicate threads — the unique constraint is the whole
+    concurrency story. Participation is DERIVABLE: the
+    department's managers and supervisors, plus that provider,
+    which is exactly what the RLS policy computes.
+  end note
+
+  class ConversationMessage <<entity>> {
+    - id : UUID {PK}
+    - body : Text {required, 1..4000}
+    - createdAt : DateTime
+    + authorSide() : String
+  }
+
+  class DispatchTask <<entity>> {
+    - id : UUID {PK}
+    - kind : DispatchTaskKind
+    - dueAt : DateTime
+    - attempts : SmallInt
+    - claimedAt : DateTime [0..1]
+    - completedAt : DateTime [0..1]
+    - lastError : Text [0..1]
+    - createdAt : DateTime
+  }
+  note bottom of DispatchTask
+    <b>{a lease, not a tombstone}</b> Claimed with FOR UPDATE
+    SKIP LOCKED so two app processes cannot double-fire, and
+    re-armed rather than duplicated when a job is rescheduled.
+    Python owns only WHEN; every decision is a SECURITY DEFINER
+    function, so the notification is written inside the same
+    transaction as the assignment it announces.
+  end note
+
+  class SecurityPost <<entity>> {
+    - id : UUID {PK}
+    - name : String {required}
+    - locationText : String [0..1]
+    - latitude : Decimal(9,6) [0..1]
+    - longitude : Decimal(9,6) [0..1]
+    - isActive : Boolean
+  }
+
+  class SecurityShift <<entity>> {
+    - id : UUID {PK}
+    - startsAt : DateTime
+    - endsAt : DateTime
+    - status : ShiftStatus
+    - notes : Text [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+  }
+  note right of SecurityShift
+    <b>{same exclusion constraint as WorkOrderAssignment}</b>
+    A guard cannot be at two posts at once for exactly the
+    reason a plumber cannot be at two addresses. The PREDICATE
+    differs and has to: assignments constrain only 'accepted'
+    rows, because one slot is offered to five workers; nobody
+    offers a shift to five guards, so this covers everything
+    except 'cancelled'.
+  end note
+
+  class MaterialMovement <<entity>> {
+    - id : UUID {PK}
+    - direction : MovementDirection
+    - description : Text {required}
+    - quantity : Decimal [0..1]
+    - unit : String [0..1]
+    - isReturnable : Boolean
+    - expectedReturnAt : DateTime [0..1]
+    - returnedAt : DateTime [0..1]
+    - carrierName : String [0..1]
+    - vehicleNumber : String [0..1]
+    - recordedAt : DateTime
+    - sourceClientId : String [0..1]
+  }
+
+  class WaterTankerLog <<entity>> {
+    - id : UUID {PK}
+    - supplierName : String [0..1]
+    - tankerNumber : String [0..1]
+    - volumeLitres : Decimal [0..1]
+    - driverName : String [0..1]
+    - driverPhoneE164 : String [0..1]
+    - arrivedAt : DateTime
+    - departedAt : DateTime [0..1]
+    - sourceClientId : String [0..1]
+  }
+  note bottom of WaterTankerLog
+    <b>{two tables, not one typed table}</b> (D12). These two
+    share almost no columns, are named by two separate user
+    stories, and produce two separate reports. One table with a
+    kind and a details jsonb would be null-heavy on both halves
+    and would push validation out of the schema into Python.
+  end note
+
+  class SecurityIncident <<entity>> {
+    - id : UUID {PK}
+    - category : String
+    - severity : String
+    - summary : String {required}
+    - details : Text [0..1]
+    - occurredAt : DateTime
+    - status : String
+  }
+
+  class OfflineReconcileLog <<entity>> {
+    - id : UUID {PK}
+    - sourceClientId : String {unique}
+    - recordedAt : DateTime
+  }
+  note right of OfflineReconcileLog
+    <b>{the idempotency key}</b> A gate that was offline replays
+    what it recorded; a replay must not double-write. Every
+    register table carries sourceClientId for the same reason.
+  end note
+}
+
+' ============================================================================
 '  PURPLE — Visitor management
 ' ============================================================================
 package "Visitor Management  (purple)" #F3E5F5 {
@@ -962,6 +1254,63 @@ package "Enumerations" #FAFAFA {
     ACTIVE
     DISABLED
   }
+  ' -- Service personnel (0034-0043) ---------------------------------------
+  enum ApplicationDirection {
+    APPLIED
+    INVITED
+  }
+  enum ApplicationStatus {
+    PENDING
+    ACCEPTED
+    REJECTED
+    WITHDRAWN
+    EXPIRED
+  }
+  enum StaffRank {
+    MANAGER
+    SUPERVISOR
+    MEMBER
+  }
+  enum Shift {
+    DAY
+    EVENING
+    NIGHT
+    FULL_DAY
+    ROTATING
+  }
+  enum DepartureInitiator {
+    WORKER
+    MANAGER
+  }
+  enum DepartureStatus {
+    PENDING
+    APPROVED
+    REJECTED
+    CANCELLED
+  }
+  enum DispatchTaskKind {
+    PING
+    AUTO_ASSIGN
+    RESIDENT_TIMEOUT
+    FAILED_VISIT_ESCALATION
+    DEPARTURE_REMOVAL
+  }
+  enum DmThreadKind {
+    DIRECT
+    WORK_ORDER
+  }
+  enum ShiftStatus {
+    SCHEDULED
+    ACTIVE
+    COMPLETED
+    CANCELLED
+    MISSED
+  }
+  enum MovementDirection {
+    INWARD
+    OUTWARD
+  }
+
   enum EmploymentType {
     IN_HOUSE
     VENDOR_CONTRACT
@@ -1264,6 +1613,48 @@ Skill "1" - "0..*" StaffSkill
 CommunityMembership "0..1" -- "0..*" StaffSkill : verifiedBy
 StaffAssignment "1" *-- "0..*" WorkerAvailabilityRule : availability
 StaffAssignment "1" *-- "0..*" WorkerUnavailability : timeOff
+
+' -- Service personnel: hiring, dispatch, departure (0034-0043)
+Profile "1" -- "0..1" ServiceProvider : registersAs
+ServiceProvider "1" -- "0..*" ServiceProviderSkill
+Skill "1" -- "0..*" ServiceProviderSkill
+(ServiceProvider, Skill) .. ServiceProviderSkill
+Skill "1" -- "0..*" SkillCategory
+ServiceProvider "0..1" -- "0..*" StaffAssignment : hiredAs
+ServiceProvider "1" -- "0..*" ServiceApplication : negotiations
+Department "1" -- "0..*" ServiceApplication : inbox
+ServiceApplication "0..1" ..> "0..1" StaffAssignment : accepting creates
+Community "1" -- "0..*" BlacklistedServiceProvider : bars
+ServiceProvider "1" -- "0..*" BlacklistedServiceProvider
+StaffAssignment "1" -- "0..*" StaffDeparture : departures
+Department "1" -- "0..*" StaffDeparture
+ServiceProvider "0..1" -- "0..*" StaffDeparture
+Department "1" -- "0..*" Conversation : threads
+ServiceProvider "1" -- "0..*" Conversation
+Conversation "1" *-- "0..*" ConversationMessage : messages
+WorkOrder "1" *-- "0..*" DispatchTask : timers
+StaffDeparture "0..1" -- "0..*" DispatchTask : timekeeper (0045)
+
+' -- Direct messages (0046)
+Community "1" -- "0..*" DirectMessageThread : scopes
+Profile "2" -- "0..*" DirectMessageThread : participants
+WorkOrder "0..1" -- "0..*" DirectMessageThread : jobChannel
+DirectMessageThread "1" *-- "0..*" DirectMessage : messages
+ServiceProvider "1" *-- "0..*" WorkerAvailabilityRule : globalAvailability
+ServiceProvider "1" *-- "0..*" WorkerUnavailability : globalTimeOff
+
+' -- The gate (0040)
+Community "1" *-- "0..*" SecurityPost : posts
+Department "0..1" -- "0..*" SecurityPost
+SecurityPost "0..1" -- "0..*" SecurityShift : rota
+StaffAssignment "1" -- "0..*" SecurityShift : shifts
+Community "1" *-- "0..*" MaterialMovement : inwardOutwardRegister
+Community "1" *-- "0..*" WaterTankerLog : tankerRegister
+Community "1" *-- "0..*" SecurityIncident : incidents
+Community "1" *-- "0..*" OfflineReconcileLog : replayGuard
+CommunityMembership "0..1" -- "0..*" MaterialMovement : recordedBy
+CommunityMembership "0..1" -- "0..*" WaterTankerLog : recordedBy
+CommunityMembership "0..1" -- "0..*" SecurityIncident : reportedBy
 
 ' -- Onboarding
 Community "1" -- "0..*" ResidentInvite : invites

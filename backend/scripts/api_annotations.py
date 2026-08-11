@@ -181,16 +181,27 @@ STORIES: dict[str, tuple[str, str]] = {
     # native client (`PO`, 2026-08-03). Marking this served would claim a
     # capability the platform does not have.
     "US-2.3": ("One-tap quick access to frequent tasks", "partial"),
-    "US-2.4": ("Reliable notifications for society notices", "partial"),
+    # Served since 2026-08-10. This entry read `partial` on one missing writer:
+    # `notice.published` had a rendered title in `notifications_service` from the
+    # day the substrate landed, and nothing ever emitted it. `0041` closes it as
+    # a trigger rather than as a line inside a service, because
+    # `notices_repository.insert_notice` is a plain PostgREST insert with no RPC
+    # to hang a call off -- and `0030` had already made the argument that
+    # delivery belongs to the system rather than to each writer. The service
+    # worker that lets the push arrive shipped with step 8.
+    "US-2.4": ("Reliable notifications for society notices", "served"),
     # US-2.5 was absent from this table until `0031`, because a story no
     # operation serves has nothing to trace to. It is here now, and served.
     "US-2.5": ("Simple complaint submission with priority", "served"),
     "US-2.6": ("Complaint status tracking with history", "served"),
-    # Still partial, and precisely: every lifecycle transition now writes a
-    # notification and both transports carry it, but out-of-app push cannot be
-    # observed until `frontend/public/` has a service worker. The backend half
-    # is done; the story is about a phone buzzing.
-    "US-2.7": ("Complaint lifecycle notifications", "partial"),
+    # Served since 2026-08-10. Every lifecycle transition writes a notification
+    # and both transports carry it; what was missing was a browser able to
+    # receive one. This entry read `partial` with the note "cannot be observed
+    # until `frontend/public/` has a service worker" -- and that file now
+    # exists, registered from `main.jsx`, with `lib/push/pushClient.js`
+    # subscribing against `GET /push/vapid-key`. The story is about a phone
+    # buzzing, and a phone can now buzz.
+    "US-2.7": ("Complaint lifecycle notifications", "served"),
     "US-2.8": ("Complaint accountability", "served"),
     # Still partial after `0033`, and the reason has not moved. The directory is
     # complete, maintained and -- as of `GET /directory/contacts` -- readable by
@@ -212,7 +223,27 @@ STORIES: dict[str, tuple[str, str]] = {
     # in the counts: both operations already carry US-2.2, so the traced total
     # is unchanged at 51. The verdict stays `partial` because the requirement
     # the story is actually about is *scan*, and nothing verifies a code.
-    "US-3.1": ("Event-specific access codes for functions", "partial"),
+    # Was `partial` until 2026-08-10, on the stated grounds that "the requirement
+    # the story is actually about is *scan*, and nothing verifies a code."
+    # `POST /security/gate/verify` is that scan. The second half of the same
+    # sentence -- "nothing admits a second guest on one code" -- is answered in
+    # `0040` 11, which counts admissions against `guest_count` rather than
+    # toggling one visitor in and out: a two-hundred-guest function on one code
+    # admits two hundred people, which is what the story asks for and what a
+    # first-in-second-out gate would have got wrong for a hundred and
+    # ninety-nine of them.
+    "US-3.1": ("Event-specific access codes for functions", "served"),
+    "US-3.3": ("Digital registers", "served"),
+    "US-3.4": ("Digital water tanker log", "served"),
+    # `served` since 2026-08-11. Was `partial` while the server side existed
+    # alone; the browser side now does too -- `GateHome.jsx` over
+    # `features/security/offline/`, which caches the bundle, hashes a scanned
+    # code with Web Crypto and compares locally, queues each offline scan under
+    # its own `sourceClientId`, and reconciles on the `online` event. Every
+    # locally decided verdict is labelled provisional on screen, because the
+    # device cannot know guest counts or a post-bundle cancellation.
+    "US-3.5": ("Offline fallback verification", "served"),
+    "US-3.6": ("Long-term data retention and downloadable reports", "served"),
 }
 
 # Operations that trace to no story, by group, as ``(api type, rationale)``.
@@ -322,6 +353,118 @@ NO_STORY = {
         "Non-functional",
         "Platform liveness for operators and orchestrators, deliberately outside"
         " /api/v1.",
+    ),
+    "service_provider": (
+        "Feature",
+        "A service person registering themselves, and keeping that registration"
+        " current. Asked for by the product owner and absent from every written"
+        " story for a structural reason worth naming: the interviews were with"
+        " residents and with committee members, and a plumber was never in the"
+        " room. The stories that will eventually be served by what this unlocks"
+        " -- US-2.7 lifecycle notifications, US-2.8 accountability, US-3.3 to"
+        " US-3.6 gate operations -- are all downstream of somebody being HIRED,"
+        " which is step 2. Registration itself serves nobody's story and claiming"
+        " otherwise would inflate the matrix.",
+    ),
+    "hiring": (
+        "Feature",
+        "Applying, inviting, hiring, removing and barring a service person."
+        " Downstream of registration and upstream of everything that closes a"
+        " story: US-2.7 and US-2.8 are about a complaint being worked, and"
+        " US-3.3 to US-3.6 are about a gate being staffed, and neither can"
+        " begin until somebody has been hired. Hiring ENABLES those stories"
+        " without serving any of them, which is the honest verdict and not a"
+        " modest one -- claiming a share of US-2.7 here would make the matrix"
+        " say this endpoint notifies a resident about their complaint, and it"
+        " does not.",
+    ),
+    "departure": (
+        "Feature",
+        "Leaving a community: a dated request the manager decides, releasing"
+        " the leaver's booked work back to the dispatch pool from the leave"
+        " date onward (the 2026-08-10 ruling; before it, approval was gated on"
+        " a completed handover). Named by the product owner rather than by an"
+        " interviewee, and the reason is visible in the interviews themselves:"
+        " everybody described being hired and nobody described quitting,"
+        " because the person who quits is not in the room when the society is"
+        " interviewed. It touches US-2.7 without serving it -- a reassignment"
+        " does notify the resident that somebody else is coming, but that"
+        " notification is written by `assign_work_order`, which US-2.7 already"
+        " credits.",
+    ),
+    "dm": (
+        "Feature",
+        "Person-to-person messaging: the chat dock on every portal, from the"
+        " PO's 2026-08-10 instruction. Department colleagues, the office, and"
+        " the committee -- which is the admin role -- reach each other"
+        " directly; a resident and a serviceman share only the job thread,"
+        " which locks when the work order ends so the channel cannot outlive"
+        " the work. No interviewee asked for chat; the PO did, and the lock"
+        " clause is theirs verbatim.",
+    ),
+    "conversations": (
+        "Feature",
+        "The chat between a department and a service person, before and after"
+        " hiring. No interviewee described it, because the question they were"
+        " asked was what goes wrong with their society and not how they reach a"
+        " plumber -- but every hiring decision in US-3.3 to US-3.6 is made after"
+        " somebody asked a question, and today that happens on a phone nobody"
+        " logs. Same honest verdict as `hiring`: it enables those stories"
+        " without serving any of them.",
+    ),
+    "work_dispatch": (
+        "Feature",
+        "The supervisor's machinery for turning a triaged complaint into a"
+        " scheduled visit: the queue, the job record, the edit and the"
+        " assignment history. Three operations on this surface DO serve"
+        " stories -- proposing a time, assigning a person and moving or"
+        " cancelling a visit all reach the resident -- and these do not, which"
+        " is the distinction worth keeping. The interviews produced 'nobody"
+        " tells me what is happening'; they did not produce a work queue. What"
+        " a resident learns from this machinery arrives through"
+        " `GET /complaints`, the timeline and the schedule request, and"
+        " claiming US-2.8 for a screen only the department can open would make"
+        " the matrix say a resident sees something they cannot.",
+    ),
+    "worker_portal": (
+        "Feature",
+        "The service person's own screens: their job list, the detail they need"
+        " in order to turn up, and the dashboard aggregate behind all of it."
+        " Four operations on this surface DO serve stories -- accepting,"
+        " starting, completing and reporting a failed visit all reach the"
+        " resident -- and these do not, which is the distinction worth keeping."
+        " A worker reading their own queue is nobody's user story: the"
+        " interviews were with residents and committee members, and the"
+        " plumber was never in the room. See `service_provider` for the same"
+        " structural gap stated at registration.",
+    ),
+    "worker_schedule": (
+        "Feature",
+        "A service person's own calendar, leave and working week. Upstream of"
+        " US-2.7 and US-2.8 in the same way hiring is: the dispatch sweep reads"
+        " these three tables to decide who can be offered a job, so a wrong"
+        " answer here is a resident told nobody is available. But nobody"
+        " described their own availability as a problem with their society,"
+        " and claiming a share of a complaint story for a leave form would"
+        " make the matrix say a resident sees something they cannot.",
+    ),
+    "gate_roster": (
+        "Master data",
+        "Where a guard stands, and who is standing there. Upstream of US-3.3 to"
+        " US-3.6 the way hiring is upstream of everything: a register entry is"
+        " recorded *at* a post by somebody *on* a shift, so all four gate"
+        " stories assume this exists and none of them describes creating it."
+        " Nobody interviewed described their own roster as a problem -- the"
+        " security manager was not in the room either.",
+    ),
+    "skill_catalogue": (
+        "Master data",
+        "The global list of trades a service person can offer. The complaint"
+        " stories assume somebody competent turns up; something still has to say"
+        " what competent means. Global rather than per-community on purpose --"
+        " see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which"
+        " communities need my skills' search has to run before the person holds a"
+        " membership anywhere.",
     ),
 }
 
@@ -1021,7 +1164,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         ],
     ),
     ("post", "/api/v1/complaints/{complaint_id}/comments"): op(
-        errors=["401", "403", "404", "500"],
+        # `422` replaced a `409` here. An unrecognised `visibility` used to reach
+        # `complaint_comments_visibility_check` and come back as a 23514; it is
+        # now refused in the service, where the error can name the field.
+        errors=["401", "403", "404", "422", "500"],
         stories=[
             (
                 "US-2.6",
@@ -1432,5 +1578,609 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
     ("put", "/api/v1/settings"): op(
         errors=["401", "403", "404", "500"],
         no_story=NO_STORY["config"],
+    ),
+    # -- service providers -------------------------------------------------
+    # No 403 on the two GETs, and that is not an oversight. These routes carry
+    # no membership guard at all -- a registered-but-unhired provider holds no
+    # membership, so requiring one would 403 them out of the screens that let
+    # them apply -- and `require_csrf_unsafe` returns early on GET. The 403 on
+    # the four writes is the CSRF pair, plus the RPCs' own `42501`.
+    ("get", "/api/v1/skills"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["skill_catalogue"],
+    ),
+    ("post", "/api/v1/service-providers"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["service_provider"],
+    ),
+    ("get", "/api/v1/service-providers/me"): op(
+        errors=["401", "404", "500"],
+        no_story=NO_STORY["service_provider"],
+    ),
+    # No 404: `upsert_service_provider` is an upsert, so a PATCH from someone who
+    # never registered creates the row rather than failing to find it. The two
+    # skill and availability RPCs below are `select into` and do raise `P0002`.
+    ("patch", "/api/v1/service-providers/me"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["service_provider"],
+    ),
+    ("put", "/api/v1/service-providers/me/skills"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["service_provider"],
+    ),
+    ("patch", "/api/v1/service-providers/me/availability"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["service_provider"],
+    ),
+    # -- hiring, the provider's side ---------------------------------------
+    # Same guard as the registration routes above: identity only, no membership.
+    # The `404` on all five is `service_provider_not_found` -- these are the
+    # screens a registered person uses, and someone who has not registered is
+    # sent to the form rather than shown an empty list they might trust.
+    ("get", "/api/v1/worker/communities"): op(
+        errors=["401", "404", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # No 404: the search resolves the caller's provider row inside the RPC and
+    # returns nothing when there is none, which is also what an unregistered
+    # caller should see -- an empty list of places that need trades they have
+    # not told us about.
+    ("get", "/api/v1/worker/communities/search"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    ("get", "/api/v1/worker/applications"): op(
+        errors=["401", "404", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # `409` is the partial unique index: one open negotiation per department at
+    # a time. `403` covers both the CSRF pair and a blacklisted applicant, who
+    # is deliberately given the same wording as an ordinary refusal.
+    ("post", "/api/v1/worker/applications"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # `403` here is mostly the rule that only the side which OPENED a
+    # negotiation may withdraw it -- a manager cannot erase a rejection by
+    # calling it a withdrawal.
+    ("delete", "/api/v1/worker/applications/{application_id}"): op(
+        errors=["401", "403", "404", "409", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # -- hiring, the department's side -------------------------------------
+    # Every one of these carries a department id in the path, and on every one
+    # the router guard is the coarse check while `can_manage_department` in the
+    # database is the real one. That is why `403` is on the two GETs as well:
+    # a manager of another community reaches the handler and is refused by
+    # Postgres.
+    ("get", "/api/v1/departments/{department_id}/applications"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    ("get", "/api/v1/departments/{department_id}/candidates"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    ("post", "/api/v1/departments/{department_id}/invitations"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # The hire. `409` is three distinct refusals wearing one code: already
+    # decided, blacklisted, or already a member of this community.
+    (
+        "post",
+        "/api/v1/departments/{department_id}/applications/{application_id}/decide",
+    ): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # A POST rather than a DELETE: nothing is deleted, and `reason` is a note
+    # about a person that must not travel in a query string.
+    ("post", "/api/v1/departments/{department_id}/members/{staff_id}/remove"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    ("post", "/api/v1/departments/{department_id}/blacklist"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
+    # -- departures and employee management ---------------------------------
+    # `409` is on four of these ten and means different things, all of them
+    # the same shape: the request was well formed and the state was not ready.
+    # A second open departure, a reassignment with nobody free, a departure
+    # already decided. (Until 2026-08-10 an approval with items outstanding
+    # was the fourth; that refusal is overturned -- approval now releases.)
+    # None of them is a 422 -- nothing the caller sent was wrong.
+    ("get", "/api/v1/departments/{department_id}/departures"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    ("get", "/api/v1/departments/{department_id}/departures/{departure_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    ("post", "/api/v1/departments/{department_id}/departures"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    (
+        "post",
+        "/api/v1/departments/{department_id}/departures/{departure_id}/reassign",
+    ): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    (
+        "post",
+        "/api/v1/departments/{department_id}/departures/{departure_id}/decide",
+    ): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    ("get", "/api/v1/departments/{department_id}/staff/{staff_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    (
+        "get",
+        "/api/v1/departments/{department_id}/staff/{staff_id}/schedule",
+    ): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    (
+        "get",
+        "/api/v1/departments/{department_id}/departures/{departure_id}/coverage",
+    ): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    ("post", "/api/v1/worker/communities/{staff_id}/departure"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    ("delete", "/api/v1/worker/communities/{staff_id}/departure"): op(
+        errors=["401", "403", "404", "409", "500"],
+        no_story=NO_STORY["departure"],
+    ),
+    # Conversations. No `403` on the two reads and no `404` on the list, and
+    # both absences are the design: the RLS policy hides a thread the caller is
+    # not part of rather than refusing it, so the list simply omits it and the
+    # read is a 404. A department's conversations with other providers are not
+    # enumerable by walking ids and reading which refusals come back.
+    # -- direct messages (0046) ---------------------------------------------
+    # `404` on the thread routes covers missing and not-yours alike -- a
+    # stranger walking thread ids learns nothing from the difference. `409`
+    # on the post is the work-order lock: the job ended, the channel ended.
+    ("get", "/api/v1/messages/recipients"): op(
+        errors=["401", "422", "500"],
+        no_story=NO_STORY["dm"],
+    ),
+    ("get", "/api/v1/messages/threads"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["dm"],
+    ),
+    ("post", "/api/v1/messages/threads"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["dm"],
+    ),
+    ("get", "/api/v1/messages/threads/{thread_id}"): op(
+        errors=["401", "404", "500"],
+        no_story=NO_STORY["dm"],
+    ),
+    ("post", "/api/v1/messages/threads/{thread_id}/messages"): op(
+        errors=["401", "404", "409", "422", "500"],
+        no_story=NO_STORY["dm"],
+    ),
+    ("get", "/api/v1/conversations"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["conversations"],
+    ),
+    # `403` here is real, and it is the only place in this router it is: opening
+    # a thread is the one act a non-participant could use to become one, so the
+    # RPC refuses it by name rather than hiding it. `404` is a department or a
+    # provider that does not exist.
+    ("post", "/api/v1/conversations"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["conversations"],
+    ),
+    ("get", "/api/v1/conversations/{conversation_id}"): op(
+        errors=["401", "404", "500"],
+        no_story=NO_STORY["conversations"],
+    ),
+    # `403` for a non-participant, `404` for a thread the policy hides, `422`
+    # for an empty or over-long body -- the length matches the CHECK, so the
+    # refusal names the field rather than the constraint.
+    ("post", "/api/v1/conversations/{conversation_id}/messages"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["conversations"],
+    ),
+    # Work orders. `409` recurs across this surface and always means the same
+    # kind of thing -- the job is in a state that cannot accept this -- while
+    # `403` always means the caller does not supervise the department. Neither
+    # is ever a hint about a row that exists: `can_read_work_order` hides what
+    # a caller may not see, so a stranger walking work-order ids gets 404s.
+    ("post", "/api/v1/complaints/{complaint_id}/work-orders"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "The first operation that answers 'who is responsible' with a "
+                "record rather than a label: a department, a supervisor and a "
+                "proposed time, all of them rows the resident can be shown"
+            ),
+            (
+                "US-2.7",
+                "Proposing a visit notifies the resident and asks them to "
+                "confirm -- the one lifecycle notification that wants an answer "
+                "rather than announcing something already decided"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/complaints/{complaint_id}/work-orders"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("get", "/api/v1/departments/{department_id}/work-orders"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("get", "/api/v1/work-orders/{work_order_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("patch", "/api/v1/work-orders/{work_order_id}"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    # The `409` here is the one this whole step exists to produce: a worker
+    # already booked across the slot. Raised by name in the RPC and enforced
+    # again by `work_order_assignments_no_overlap`, whose `23P01` maps to the
+    # same status -- so a race and a mistake are indistinguishable to a client,
+    # which is correct.
+    ("post", "/api/v1/work-orders/{work_order_id}/assign"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "Closes DECISIONS_NEEDED B2: the assignee stops being a "
+                "formatted string and becomes a roster row, so 'who is handling "
+                "it' survives being read back"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/work-orders/{work_order_id}/reschedule"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.7",
+                "A moved visit notifies the resident and the booked worker, so "
+                "the change reaches the two people whose day it alters"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/work-orders/{work_order_id}/cancel"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.7",
+                "A cancelled visit notifies both sides with its reason -- the "
+                "transition a resident is most likely to discover by waiting in "
+                "for nobody"
+            ),
+        ],
+    ),
+    # Resident scheduling. No `403` on the read: the policy hides a job the
+    # caller may not see rather than refusing it, so a resident holding a
+    # neighbour's complaint id gets the same 404 as one holding a made-up one.
+    # The write does carry a `403`, because by then they have named a job the
+    # policy already showed them and the refusal cannot leak anything new.
+    ("get", "/api/v1/complaints/{complaint_id}/schedule-request"): op(
+        errors=["401", "403", "404", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "'When to expect action', answered with an hour and a name "
+                "instead of an SLA estimate -- and `respondBy` says when the "
+                "association will stop waiting for the resident"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/schedule"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    # -- the worker's own portal -------------------------------------------
+    # Authenticated only, with no membership guard, and the `404` rather than
+    # `403` on every one of these is the same decision stated eight times: the
+    # views resolve "mine" from auth.uid(), so a job the caller holds no
+    # assignment on does not exist as far as this surface is concerned. A 403
+    # would confirm the id.
+    ("get", "/api/v1/worker/snapshot"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["worker_portal"],
+    ),
+    ("get", "/api/v1/worker/jobs"): op(
+        errors=["401", "422", "500"],
+        no_story=NO_STORY["worker_portal"],
+    ),
+    ("get", "/api/v1/worker/jobs/{work_order_id}"): op(
+        errors=["401", "404", "500"],
+        no_story=NO_STORY["worker_portal"],
+    ),
+    # The `409` here is the race the dispatch engine creates on purpose: one job
+    # is offered to five people, and the four who lose are told somebody has
+    # already taken it rather than shown an exclusion-constraint violation.
+    ("post", "/api/v1/worker/jobs/{work_order_id}/accept"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "The moment 'who is responsible' acquires an answer that came "
+                "from the responsible person rather than from a supervisor "
+                "guessing who was free"
+            ),
+            (
+                "US-2.7",
+                "The resident is told who is coming, by name, without asking"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/worker/jobs/{work_order_id}/decline"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["worker_portal"],
+    ),
+    ("post", "/api/v1/worker/jobs/{work_order_id}/start"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-2.7",
+                "'Acknowledged, updated' -- the update a resident most wants is "
+                "that somebody is at the door now, and this is the only "
+                "operation that can honestly send it"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/worker/jobs/{work_order_id}/complete"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.7",
+                "The resolution notification, sent by the person who did the "
+                "work -- and deliberately not the same act as resolving the "
+                "complaint, which stays the resident's to confirm"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/worker/jobs/{work_order_id}/unable"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.7",
+                "The transition a resident otherwise discovers by waiting in "
+                "for nobody, reaching them with the reason attached"
+            ),
+            (
+                "US-2.8",
+                "Accountability in the direction nobody designs for: the visit "
+                "that failed is counted, and two hours later somebody senior is "
+                "told it has not been rebooked"
+            ),
+        ],
+    ),
+    # -- the worker's own week ---------------------------------------------
+    ("get", "/api/v1/worker/calendar"): op(
+        errors=["401", "422", "500"],
+        no_story=NO_STORY["worker_schedule"],
+    ),
+    ("get", "/api/v1/worker/unavailability"): op(
+        errors=["401", "422", "500"],
+        no_story=NO_STORY["worker_schedule"],
+    ),
+    # The `404` is `service_provider_not_found`: leave is written against the
+    # provider record, so a caller who never registered has nothing to write it
+    # against.
+    ("post", "/api/v1/worker/unavailability"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["worker_schedule"],
+    ),
+    ("delete", "/api/v1/worker/unavailability/{block_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["worker_schedule"],
+    ),
+    ("get", "/api/v1/worker/availability-rules"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["worker_schedule"],
+    ),
+    ("put", "/api/v1/worker/availability-rules"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["worker_schedule"],
+    ),
+
+    # ----------------------------------------------------------------------
+    # Gate operations -- 0040. The first surface in this feature scoped to ONE
+    # community: a register entry, a shift and an incident are each a fact about
+    # one society, which is why these carry a role guard and the worker portal
+    # deliberately does not.
+    # ----------------------------------------------------------------------
+    ("get", "/api/v1/security/posts"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    ("post", "/api/v1/security/posts"): op(
+        errors=["401", "403", "409", "422", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    ("patch", "/api/v1/security/posts/{post_id}"): op(
+        errors=["401", "403", "404", "409", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    ("get", "/api/v1/security/shifts"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    # The `409` is the GiST exclusion constraint refusing a double-booked guard,
+    # reached by name first -- the same pairing `POST /work-orders/{id}/assign`
+    # uses, because the constraint is the guarantee and the sentence is the
+    # answer.
+    ("post", "/api/v1/security/shifts"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    ("patch", "/api/v1/security/shifts/{shift_id}"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    # 0047. Exists because the person who creates shifts -- a security-rank
+    # manager -- cannot reach the hiring surface's roster reads, which guard on
+    # the membership role. Same predicate as the shift write, so the picker and
+    # the form agree about who may use them.
+    ("get", "/api/v1/security/roster"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["gate_roster"],
+    ),
+    ("get", "/api/v1/security/material-movements"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.3",
+                "The register read back, including the one query the returnable"
+                " column exists for: what went out and has not come back"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/security/material-movements"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.3",
+                "Inward and outward material recorded digitally, returnable or"
+                " not, replacing the paper register the interviewee described"
+                " keeping by hand"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/security/material-movements/{movement_id}/return"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-3.3",
+                "The half of *returnable* that makes the word mean anything --"
+                " without it the register records what left and never what came"
+                " back"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/security/water-tankers"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            ("US-3.4", "The tanker log read back, with what is still on site"),
+        ],
+    ),
+    ("post", "/api/v1/security/water-tankers"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.4",
+                "Tanker entries in the application rather than in a notebook --"
+                " the whole of the story, and the first thing in this product"
+                " that touches water management at all"
+            ),
+        ],
+    ),
+    ("patch", "/api/v1/security/water-tankers/{log_id}"): op(
+        errors=["401", "403", "404", "422", "500"],
+        stories=[
+            (
+                "US-3.4",
+                "The departure, recorded when it happens rather than guessed"
+                " later -- an auditable record needs both ends of the visit"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/security/incidents"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.3",
+                "*Other operational activities*, which is the clause of this"
+                " story the two registers do not cover"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/security/incidents"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.3",
+                "The form already on the security dashboard, which until now"
+                " appended an interpolated string to an activity feed and"
+                " stored nothing"
+            ),
+        ],
+    ),
+    ("patch", "/api/v1/security/incidents/{incident_id}"): op(
+        errors=["401", "403", "404", "422", "500"],
+        stories=[
+            (
+                "US-3.3",
+                "An incident list nobody can close is a list that only grows"
+            ),
+        ],
+    ),
+    # A refusal is a 200 with a verdict, which is why `404` is absent from the
+    # one route whose commonest answer is *no such code*. The 4xx here are about
+    # the guard, not the visitor.
+    ("post", "/api/v1/security/gate/verify"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.1",
+                "The scan. `0032` has minted and stored pass hashes since the"
+                " visitor passes shipped and nothing ever read one back, so a"
+                " resident could issue a pass that no gate could check"
+            ),
+            (
+                "US-3.5",
+                "The thing an offline fallback falls back FROM -- one function"
+                " serves the online scan and the reconcile, so the two cannot"
+                " drift into two different answers"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/security/offline-bundle"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.5",
+                "What the gate caches so it keeps working through an outage."
+                " Hashes only, time-boxed, and deliberately unsigned -- see the"
+                " endpoint description"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/security/offline-reconcile"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.5",
+                "What makes an unsigned bundle safe: every offline admission is"
+                " provisional until the server re-verifies it, and a"
+                " disagreement becomes an auditable row rather than an admitted"
+                " guest"
+            ),
+        ],
+    ),
+    ("get", "/api/v1/security/exports/{dataset}"): op(
+        errors=["401", "403", "422", "500"],
+        stories=[
+            (
+                "US-3.6",
+                "The download. Retention needed no implementation -- nothing"
+                " this product writes is ever aged out -- so *six months, one"
+                " year, or longer* is answered by the range parameters, and the"
+                " gap the story names was only ever the export"
+            ),
+        ],
     ),
 }

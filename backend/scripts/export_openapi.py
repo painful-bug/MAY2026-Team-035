@@ -164,6 +164,67 @@ _TAGS: tuple[tuple[str, str], ...] = (
     ("notifications", "The resident's in-app notification feed and its read state."),
     ("push", "Web Push plumbing: the application server key and its subscriptions."),
     ("realtime", "The server-sent event stream."),
+    (
+        "department-hiring",
+        "Applications, invitations, candidate search, removal and blacklisting, "
+        "from the department's side. The router guard asks whether the caller "
+        "manages anything; the database asks whether they manage this.",
+    ),
+    (
+        "service-providers",
+        "A service person's own registration and the global catalogue of trades. "
+        "The only surface here whose callers hold no community membership.",
+    ),
+    (
+        "worker-communities",
+        "Finding work and tracking applications, from the service person's side. "
+        "Scoped to the caller's own provider row, never to a community id they "
+        "supply.",
+    ),
+    (
+        "worker-jobs",
+        "A service person's own jobs and the five things they can do to one. "
+        "Authenticated only and cross-community by design: a role guard here "
+        "would read the wrong one of a worker's four memberships.",
+    ),
+    (
+        "worker-schedule",
+        "A service person's calendar, leave and working week -- all of it "
+        "global across every community that employs them, which is what the "
+        "dispatch sweep reads before offering anybody a job.",
+    ),
+    (
+        "conversations",
+        "The chat between a department and a service person. One thread per "
+        "pair, and the only surface here with no role guard at all -- "
+        "participation is a property of the thread, so the database decides it.",
+    ),
+    (
+        "messages",
+        "Direct messages between people (0046): the chat dock on every "
+        "portal. One thread per pair per community; a resident and a "
+        "serviceman share only the work-order thread, which locks when the "
+        "job ends. Identity-only guard for the conversations reason -- "
+        "participation is a property of the thread.",
+    ),
+    (
+        "work-orders",
+        "Turning a triaged complaint into a scheduled visit by a named person. "
+        "The role guard is coarse because a supervisor is a rank on a roster "
+        "and not a membership role; the department check is in the database.",
+    ),
+    (
+        "resident-scheduling",
+        "The resident's answer to a proposed visit. Two routes, neither of "
+        "which takes a work-order id -- the job is resolved from the complaint, "
+        "so naming somebody else's is not expressible.",
+    ),
+    (
+        "security-operations",
+        "The gate: posts, shifts, the two registers, incidents, credential "
+        "verification and the CSV exports. The one surface in this feature "
+        "scoped to a single community, because a gate belongs to one society.",
+    ),
     ("system", "Liveness."),
 )
 

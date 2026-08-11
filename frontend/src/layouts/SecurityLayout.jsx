@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Building2,
-  ClipboardClock,
-  History,
+  CalendarClock,
+  ClipboardList,
+  Download,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
+  ScanLine,
+  ShieldAlert,
   ShieldCheck,
-  Users,
   X,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
@@ -23,38 +25,28 @@ export default function SecurityLayout() {
   const basePath = isManager
     ? AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD
     : AUTH_ROUTES.SECURITY_DASHBOARD;
-  const navItems = [
-    {
-      name: isManager ? 'Operations Overview' : 'Gate Overview',
-      path: basePath,
-      icon: LayoutDashboard,
-      end: true,
-    },
-    ...(isManager
-      ? [
-          {
-            name: 'Manage Staff',
-            path: `${basePath}/staff`,
-            icon: Users,
-          },
-        ]
-      : []),
-    {
-      name: 'Visitor Access',
-      path: `${basePath}/visitors`,
-      icon: ClipboardClock,
-    },
-    {
-      name: 'Gate History',
-      path: `${basePath}/history`,
-      icon: History,
-    },
-    {
-      name: 'Emergency Desk',
-      path: `${basePath}/emergency`,
-      icon: LifeBuoy,
-    },
-  ];
+  // Two navs over one layout. The guard's starts at the barrier because that is
+  // where they stand; the manager's starts at the overview because they do not.
+  const navItems = isManager
+    ? [
+        { name: 'Overview', path: basePath, icon: LayoutDashboard, end: true },
+        { name: 'Roster', path: `${basePath}/roster`, icon: CalendarClock },
+        { name: 'Gate', path: `${basePath}/gate`, icon: ScanLine },
+        { name: 'Registers', path: `${basePath}/registers`, icon: ClipboardList },
+        { name: 'Incidents', path: `${basePath}/incidents`, icon: ShieldAlert },
+        { name: 'Exports', path: `${basePath}/exports`, icon: Download },
+        // No "Manage Staff" entry: hiring, ranks and departures live in the
+        // admin portal's department screens, which are the real roster. The
+        // demo's local staff array here was a second, disagreeing copy.
+        { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },
+      ]
+    : [
+        { name: 'Gate', path: basePath, icon: ScanLine, end: true },
+        { name: 'Registers', path: `${basePath}/registers`, icon: ClipboardList },
+        { name: 'Incidents', path: `${basePath}/incidents`, icon: ShieldAlert },
+        { name: 'Shifts', path: `${basePath}/shifts`, icon: CalendarClock },
+        { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },
+      ];
 
   const handleLogout = () => {
     void logout();
@@ -108,9 +100,13 @@ export default function SecurityLayout() {
                 <p className="truncate text-xs font-extrabold">
                   {currentUser?.name}
                 </p>
+                {/* `staffRole` used to be printed here and `applicationUser()`
+                    has never set it, so this line read " · Main Gate" for every
+                    guard who ever saw it. The post a guard is on is a property
+                    of their shift, not of their session — it is on the Shifts
+                    screen, which reads it from the API. */}
                 <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-400">
-                  {currentUser?.staffRole} ·{' '}
-                  {isManager ? 'Operations Centre' : 'Main Gate'}
+                  {isManager ? 'Security management' : 'Gate operations'}
                 </p>
               </div>
             </div>
@@ -149,7 +145,9 @@ export default function SecurityLayout() {
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-slate-300 hover:border-rose-400/30 hover:bg-rose-500/10 hover:text-rose-300"
           >
             <LogOut className="h-4 w-4" />
-            {isManager ? 'Logout' : 'End Shift & Logout'}
+            {/* Was "End Shift & Logout", which ended no shift. Ending a shift
+                is now a real PATCH on the Shifts screen; this only logs out. */}
+            Logout
           </button>
         </div>
       </aside>

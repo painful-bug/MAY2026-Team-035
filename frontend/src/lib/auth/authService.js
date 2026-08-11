@@ -66,7 +66,14 @@ export function applicationUser(context) {
   const { identity, membership } = context;
   if (!membership) return null;
   const accessRole = String(membership.role || '').toUpperCase();
-  const role = ROLE_LABELS[accessRole] || 'Resident';
+  // The portal wins over the membership role, and only ever narrows it. A
+  // security department's manager holds `role = 'manager'`, and four screens
+  // (Header, SecurityLayout, SecurityDashboard and the /security-manager route
+  // guard) branch on the label `SecurityManager` — a value nothing had ever
+  // produced, which is why that whole portal was unreachable.
+  const role = context.portal === 'security-manager'
+    ? 'SecurityManager'
+    : ROLE_LABELS[accessRole] || 'Resident';
   return {
     id: identity.id, name: identity.full_name || identity.email || 'HomeBandhu member',
     email: identity.email || '', phone: identity.phone || '', role, accessRole,
@@ -75,20 +82,6 @@ export function applicationUser(context) {
   };
 }
 
-export function homeRouteFor(contextOrUser) {
-  const context = contextOrUser?.identity ? contextOrUser : null;
-  if (context) {
-    if (!context.membership && context.onboarding_eligible) return '/get-started';
-    const role = String(context.membership?.role || '').toLowerCase();
-    if (role === 'admin') return '/admin';
-    if (context.portal === 'security-manager') return '/security-manager';
-    if (role === 'security') return '/security';
-    if (role === 'resident') return '/resident';
-    return '/account';
-  }
-  if (contextOrUser?.accessRole === 'ADMIN') return '/admin';
-  if (contextOrUser?.portal === 'security-manager') return '/security-manager';
-  if (contextOrUser?.accessRole === 'SECURITY') return '/security';
-  if (contextOrUser?.accessRole === 'RESIDENT') return '/resident';
-  return '/account';
-}
+// `homeRouteFor` used to live here and is now the single resolver in
+// `routes/authRoutes.js`, next to the constants it returns. See the comment
+// there for what the two functions were and why one of them was always wrong.

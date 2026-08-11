@@ -1,0 +1,157 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bell, CheckCheck, Inbox } from 'lucide-react';
+import { notificationsApi } from '../../features/notifications/notificationsApi';
+
+// The real bell. Until Phase 2 Step 5 the only bell in the app was a hard-coded
+// red dot over demo data; this one reads GET /notifications and, on click,
+// marks the row read and navigates wherever its `url` points — which is how a
+// "termination application" notification lands on the employee page.
+//
+// Mounted in Header.jsx (admin + resident) and WorkerLayout (which has no
+// header, so it grew a slim top strip for exactly this).
+
+function when(iso) {
+  const then = new Date(iso);
+  const minutes = Math.round((Date.now() - then.getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return then.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+export default function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const feed = useQuery({
+    queryKey: ['notifications'],
+    queryFn: () => notificationsApi.list({ pageSize: 20 }),
+    // The badge is the one thing on screen that should notice the world
+    // changed while the tab sat idle.
+    refetchInterval: 60_000,
+  });
+
+  const markRead = useMutation({
+    mutationFn: (id) => notificationsApi.markRead(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+  const markAll = useMutation({
+    mutationFn: () => notificationsApi.markAllRead(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+
+  // Click-away and Escape both close; a dropdown that only closes on its own
+  // button is a dropdown that covers the page.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event) => {
+      if (panelRef.current && !panelRef.current.contains(event.target)) setOpen(false);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const unread = feed.data?.unread ?? 0;
+  const items = feed.data?.items ?? [];
+
+  const openItem = (item) => {
+    if (item.isUnread) markRead.mutate(item.id);
+    setOpen(false);
+    if (item.url) navigate(item.url);
+  };
+
+  return (
+    <div className="relative" ref={panelRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="relative rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-50"
+        aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+      >
+        <Bell className="h-5 w-5" />
+        {unread > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+            {unread > 99 ? '99+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 z-[70] mt-2 w-80 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+              Notifications
+            </p>
+            {unread > 0 && (
+              <button
+                type="button"
+                onClick={() => markAll.mutate()}
+                className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700"
+              >
+                <CheckCheck className="h-3.5 w-3.5" />
+                Mark all read
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-96 overflow-y-auto">
+            {feed.isLoading ? (
+              <p className="px-4 py-6 text-center text-xs font-semibold text-slate-400">Loading…</p>
+            ) : feed.error ? (
+              <p role="alert" className="px-4 py-6 text-center text-xs font-semibold text-rose-600">
+                {feed.error.message}
+              </p>
+            ) : items.length === 0 ? (
+              <div className="px-4 py-8 text-center">
+                <Inbox className="mx-auto h-5 w-5 text-slate-300" />
+                <p className="mt-2 text-xs font-semibold text-slate-400">Nothing yet.</p>
+              </div>
+            ) : (
+              items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => openItem(item)}
+                  className={`block w-full border-b border-slate-50 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${
+                    item.isUnread ? 'bg-indigo-50/40' : ''
+                  }`}
+                >
+                  <span className="flex items-start gap-2">
+                    {item.isUnread && (
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-indigo-500" />
+                    )}
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-bold text-slate-800">
+                        {item.title}
+                      </span>
+                      {item.body && (
+                        <span className="mt-0.5 block text-[11px] font-medium leading-relaxed text-slate-500 line-clamp-2">
+                          {item.body}
+                        </span>
+                      )}
+                      <span className="mt-1 block text-[10px] font-semibold text-slate-400">
+                        {when(item.createdAt)}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

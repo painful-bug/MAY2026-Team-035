@@ -65,6 +65,31 @@ database.
   operating hours, complaint categories, and service-level targets.
 - Prevent a department from being deleted while it is responsible for
   unresolved complaints.
+- Allow a department to hire service people who exist independently of the
+  society, by reviewing applications, searching candidates whose trades match
+  the department's complaint categories, and inviting somebody with the rank,
+  job title and shift being offered.
+- Keep removal and barring as separate decisions with separate consequences: a
+  removed person may apply again, a barred one may not, and only a bar demands a
+  written reason, because a bar nobody explained cannot be reviewed later.
+- Distinguish, on the roster itself, between a person with an account and a name
+  somebody typed into the department form, since only the first can be barred.
+- Record a staff member's place in the department and their trade as two
+  separate facts, because one is a fixed set the association chooses from and
+  the other is whatever work the society actually needs done.
+- Carry the hiring conversation with a service person from the department's
+  side, reachable from a notification about a specific thread.
+- Treat leaving as a process rather than an event: a departure is opened by
+  either side, freezes the department's dispatch against that person from the
+  moment it is opened, and is approved only once every job and shift booked in
+  their name has been handed to somebody else.
+- Reassign that work by the same rule the department uses to assign it in the
+  first place, so a handover does not become a second, quieter scheduling policy.
+- Keep the department's supervisors informed of a departure as well as its
+  managers, because the supervisors are the people who will do the reassigning.
+- Distinguish an orderly departure from a bar in what happens to the work: one
+  hands it over, the other releases it back for the department to schedule
+  afresh, because a bar that waits for a handover is not a bar.
 
 
 4. Resident Portal Component
@@ -203,6 +228,42 @@ database.
 - Preserve service boundaries that can later be connected to backend APIs and
   a database without redesigning the frontend pages.
 
+
+11. Service Partner Portal Component
+    (The Worker's Own Screens, Across Every Society That Employs Them)
+
+Added 2026-08-10. This is the first component in this document that is not a
+prototype over mock data: every screen calls the live API through react-query,
+and none of it touches the Zustand slices described in component 10. The two
+halves coexist deliberately — the slices are the demo, and this is not.
+
+- Let a service person register once, independently of any society, and keep
+  one profile that every society they work for reads.
+- Guard the portal on a signed-in identity rather than on a role, because a
+  person who has registered and not yet been hired holds no membership at all,
+  and a membership-based guard would exclude exactly the people the
+  registration and community-search screens exist for.
+- Decide between the registration form, the community-search prompt and the
+  dashboard from a single snapshot request, so that the two empty states are
+  answered by the same call that draws the populated screen.
+- Show today's work, the offers waiting on an answer, and the next booking, and
+  let the worker accept, decline, start, complete, or report an inability to
+  complete from one detail view.
+- Present a colour-coded calendar spanning every society, in a month view for
+  which days are occupied and a week view for what exactly is on and when, with
+  the colour derived from the society's identifier so that no colour has to be
+  stored, transmitted, or kept in agreement between devices.
+- Let the worker describe a normal working week as a set of weekday windows,
+  saved whole rather than row by row, and record one-off periods of leave
+  separately.
+- Let the worker search societies whose departments need their trades, apply to
+  a named department, withdraw a pending application, and read the manager's
+  answer.
+- Carry the hiring conversation between a department and the worker, with no
+  unread count, because the underlying design records no read receipts and a
+  badge would require inventing them.
+- Offer out-of-app job alerts through a browser service worker, which is also
+  what allows the application to be reloaded during a loss of connectivity.
 
 COMPONENT INTERACTION
 

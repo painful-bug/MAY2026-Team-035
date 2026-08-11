@@ -241,6 +241,61 @@ def revoke_session(*, access_token: str, refresh_token: str) -> None:
     client.auth.sign_out({"scope": "local"})
 
 
+def _portal_for(membership: dict, role: str) -> str:
+    """Which portal this membership lands in.
+
+    Two of the five portals are the membership role spelled straight through.
+    `security-manager` is the one that is not, and it has two spellings because
+    **rank and role are separate axes** (D3):
+
+    * a `manager` membership whose department is a security department. Nothing
+      writes a `manager` membership today -- `hire_service_applicant`
+      (`0035:918`) mints `security` or `worker` and there is no other minter --
+      so this branch is currently unreachable. It stays because `manager` is a
+      real `membership_role` value and an admin surface may yet write one, and
+      because a *plumbing* manager must keep landing in their own portal: the
+      `departments.kind` question is the whole point of the branch.
+    * a `security` membership whose active roster row ranks `manager` or
+      `supervisor`. This is the spelling real people have, and it is not a new
+      policy -- it is `gate_admin_community_for` (`0040:589`), the live guard on
+      posts CRUD and shift scheduling, asked from the other side. A portal that
+      disagreed with that predicate could only be wrong in one of two ways:
+      unreachable, which is what it was, or full of screens whose writes 403.
+
+    `supervisor` is included for the same reason: `gate_admin_community_for`
+    grants supervisors the manager's writes, so routing them to the guard portal
+    would hand somebody permissions with no screen to spend them on.
+
+    One extra read, and only on the path that needs it.
+    """
+    if role == "manager" and membership.get("department_id"):
+        kind = (
+            get_service_client().table("departments")
+            .select("kind")
+            .eq("id", membership["department_id"])
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if kind and str(kind[0].get("kind") or "") == "security":
+            return "security-manager"
+        return role
+    if role == "security":
+        senior = (
+            get_service_client().table("staff_assignments")
+            .select("id")
+            .eq("membership_id", membership["id"])
+            .eq("status", "active")
+            .in_("rank", ["manager", "supervisor"])
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if senior:
+            return "security-manager"
+    return role
+
+
 def get_session_context(
     client: Client,
     principal: Principal,
@@ -267,6 +322,26 @@ def get_session_context(
         or []
     )
     if not rows:
+        # A member of nothing is usually somebody about to register a society --
+        # but it is also a service person who has registered and not yet been
+        # hired anywhere, and they have a portal of their own. Without this the
+        # second sign-in lands them on the account page with no route back to
+        # /worker, which is the screen holding their applications.
+        #
+        # One extra read, and only on the path that already has no membership to
+        # read anything else from.
+        provider = (
+            get_service_client().table("service_providers")
+            .select("id")
+            .eq("profile_id", principal.user_id)
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if provider:
+            return SessionContext(
+                identity=profile, portal="worker", capabilities=["worker"]
+            )
         return SessionContext(identity=profile, onboarding_eligible=True)
     membership = rows[0]
     residency = (
@@ -279,11 +354,7 @@ def get_session_context(
         or []
     )
     role = str(membership["role"]).lower()
-    portal = (
-        "security-manager"
-        if role == "manager" and membership.get("department_id")
-        else role
-    )
+    portal = _portal_for(membership, role)
     capabilities = [role]
     if role == "admin":
         capabilities.append("resident")

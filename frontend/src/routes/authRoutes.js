@@ -18,15 +18,48 @@ export const AUTH_ROUTES = Object.freeze({
   RESIDENT_DASHBOARD: '/resident',
   SECURITY_DASHBOARD: '/security',
   SECURITY_MANAGER_DASHBOARD: '/security-manager',
+  WORKER_DASHBOARD: '/worker',
   ACCOUNT: '/account',
 });
 
-export const getDashboardRouteForRole = (role) => {
-  if (role === 'Admin') return AUTH_ROUTES.ADMIN_DASHBOARD;
-  if (role === 'SecurityManager') {
-    return AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD;
+// Which portal a person lands in, keyed on the one value that already answers
+// it: `portal`, which `GET /auth/session` computes and `applicationUser` copies
+// onto the user object unchanged.
+//
+// This replaced two exported functions that answered the same question in two
+// vocabularies -- `homeRouteFor`, which read the lowercase membership role off a
+// session context, and `getDashboardRouteForRole`, which read a display label
+// off a user object. Every new portal had to be added to both, and one of them
+// was always the one somebody forgot: `SecurityManager` existed only in the
+// label vocabulary, so `/security-manager` was guarded by a role no session
+// could ever hold and bounced its own users back to `/security`.
+//
+// `portal` is the right key because the backend already derives it from facts
+// the frontend does not hold -- whether a manager's department is a security
+// department, and whether a person with no membership is a registered service
+// provider.
+const PORTAL_ROUTES = Object.freeze({
+  admin: AUTH_ROUTES.ADMIN_DASHBOARD,
+  'security-manager': AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD,
+  security: AUTH_ROUTES.SECURITY_DASHBOARD,
+  worker: AUTH_ROUTES.WORKER_DASHBOARD,
+  resident: AUTH_ROUTES.RESIDENT_DASHBOARD,
+});
+
+/**
+ * Where a signed-in person belongs.
+ *
+ * Takes either a session context from `GET /auth/session` or the user object
+ * `applicationUser` builds from one; both carry `portal`, so there is one
+ * lookup rather than two mappings that can drift.
+ */
+export const homeRouteFor = (subject) => {
+  if (!subject) return AUTH_ROUTES.ACCOUNT;
+  // A session context with an identity and no membership: either somebody about
+  // to register a society, or a service person whose portal the backend has
+  // already named for them.
+  if (subject.identity && !subject.membership && !subject.portal) {
+    return subject.onboarding_eligible ? AUTH_ROUTES.GET_STARTED : AUTH_ROUTES.ACCOUNT;
   }
-  if (role === 'Security') return AUTH_ROUTES.SECURITY_DASHBOARD;
-  if (role === 'Resident' || role === 'Admin') return AUTH_ROUTES.RESIDENT_DASHBOARD;
-  return AUTH_ROUTES.ACCOUNT;
+  return PORTAL_ROUTES[subject.portal] || AUTH_ROUTES.ACCOUNT;
 };

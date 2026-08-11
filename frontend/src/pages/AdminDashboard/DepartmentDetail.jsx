@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Search,
   Send,
+  UserPlus,
   UserRound,
   Users,
   Wrench,
@@ -181,16 +182,35 @@ export default function DepartmentDetail() {
     setMessage('');
   };
 
+  // The assignment is an id. `assignee` stays beside it as a display label, and
+  // the difference between the two is the whole of DECISIONS_NEEDED B2.
+  //
+  // What used to happen: the only thing stored was `${name} - ${role}`, read
+  // back by splitting on ' - '. So a staff member renamed after an assignment
+  // orphaned it, two people with the same first name were indistinguishable, and
+  // "complaints assigned to me" could not be asked at all.
+  //
+  // The backend answers this properly -- `work_order_assignments` holds a
+  // `staff_assignment_id` foreign key and `GET /worker/jobs` is a real query.
+  // This screen is the demo half, over zustand, and is not wired to it; what
+  // changes here is that the demo stops contradicting the schema. Every *lookup*
+  // now uses the id and no code parses the label. The label is still stored
+  // because five other demo screens render `complaint.assignee` directly, and
+  // renaming a field across all of them buys a demo nothing.
   const assignTechnician = (complaint, staffId) => {
     const staffMember = (department.staff ?? []).find(
       (member) => member.id === staffId
     );
     if (!staffMember) {
-      updateComplaint(complaint.id, { assignee: 'Unassigned' });
+      updateComplaint(complaint.id, {
+        assigneeStaffId: '',
+        assignee: 'Unassigned',
+      });
       return;
     }
     updateComplaint(complaint.id, {
-      assignee: `${staffMember.name} - ${staffMember.role}`,
+      assigneeStaffId: staffMember.id,
+      assignee: [staffMember.name, staffMember.role].filter(Boolean).join(' - '),
     });
   };
 
@@ -213,14 +233,9 @@ export default function DepartmentDetail() {
     setMessage('');
   };
 
-  const getAssignedStaffId = (complaint) => {
-    const assigneeName = complaint.assignee?.split(' - ')[0];
-    return (
-      (department.staff ?? []).find(
-        (member) => member.name === assigneeName
-      )?.id ?? ''
-    );
-  };
+  // Was: split the label on ' - ' and match the first part against every staff
+  // name. Now it is the field.
+  const getAssignedStaffId = (complaint) => complaint.assigneeStaffId ?? '';
 
   return (
     <div className="space-y-6">
@@ -265,6 +280,16 @@ export default function DepartmentDetail() {
                   </span>
                 ))}
               </div>
+              {/* The one door from the demo half into the live one. Everything
+                  on this page is zustand; everything behind that link is the
+                  real API. */}
+              <Link
+                to={`/admin/departments/${department.id}/hiring`}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Hire service partners
+              </Link>
             </div>
           </div>
           <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs shadow-sm">
@@ -449,10 +474,12 @@ export default function DepartmentDetail() {
           ) : (
             <div className="space-y-2">
               {department.staff.map((member) => {
+                // The second of the two string comparisons B2 named. A prefix
+                // match credits "Ravi Kumar" with "Ravi Kumaran"'s complaints.
                 const assignmentCount = departmentComplaints.filter(
                   (complaint) =>
                     complaint.status !== 'Resolved' &&
-                    complaint.assignee?.startsWith(member.name)
+                    complaint.assigneeStaffId === member.id
                 ).length;
                 return (
                   <div

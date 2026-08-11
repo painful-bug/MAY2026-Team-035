@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../../store/useApp';
+import { JOB_TITLES, STAFF_RANKS } from '../../lib/staffVocabulary';
 
 const CATEGORY_OPTIONS = [
   'Plumbing',
@@ -29,20 +30,15 @@ const CATEGORY_OPTIONS = [
   'Others',
 ];
 
-const STAFF_ROLES = [
-  'Technician',
-  'Security Guard',
-  'Gate Officer',
-  'Supervisor',
-  'Manager',
-  'Coordinator',
-];
 
 const emptyStaffMember = () => ({
   id: '',
   name: '',
   phone: '',
-  role: 'Technician',
+  // Where they sit, and what they do. Two fields, because they are two
+  // questions -- see lib/staffVocabulary.js for why one list answered neither.
+  rank: 'member',
+  role: '',
 });
 
 const emptyDepartment = () => ({
@@ -853,10 +849,17 @@ function DepartmentForm({
             <Plus className="h-3.5 w-3.5" /> Add member
           </button>
         </div>
+        {/* Suggestions, not a closed set: `job_title` has no check constraint,
+            so a society with a gardener should not need a migration to hire one. */}
+        <datalist id="hb-job-titles">
+          {JOB_TITLES.map((title) => (
+            <option key={title} value={title} />
+          ))}
+        </datalist>
         {form.staff.map((member, index) => (
           <div
             key={member.id || `new-staff-${index}`}
-            className="grid gap-2 rounded-xl border border-slate-100 bg-white p-3 sm:grid-cols-[1.2fr_1fr_1fr_auto]"
+            className="grid gap-2 rounded-xl border border-slate-100 bg-white p-3 sm:grid-cols-[1.2fr_1fr_1fr_1fr_auto]"
           >
             <input
               value={member.name}
@@ -875,19 +878,29 @@ function DepartmentForm({
               placeholder="Phone"
               className={inputClass}
             />
+            {/* Two controls, because `rank` and `job_title` are two questions.
+                One `STAFF_ROLES` list used to answer both and could answer
+                neither: it mixed Manager and Supervisor (ranks) with Technician
+                and Gate Officer (trades), which is why the three copies of it
+                never agreed. See lib/staffVocabulary.js. */}
             <select
-              value={member.role}
-              onChange={(event) =>
-                setStaffField(index, 'role', event.target.value)
-              }
+              value={member.rank || 'member'}
+              onChange={(event) => setStaffField(index, 'rank', event.target.value)}
               className={inputClass}
             >
-              {STAFF_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {role}
+              {STAFF_RANKS.map((entry) => (
+                <option key={entry.value} value={entry.value}>
+                  {entry.label}
                 </option>
               ))}
             </select>
+            <input
+              value={member.role}
+              list="hb-job-titles"
+              placeholder="Job title"
+              onChange={(event) => setStaffField(index, 'role', event.target.value)}
+              className={inputClass}
+            />
             <button
               type="button"
               onClick={() => removeStaffMember(index)}

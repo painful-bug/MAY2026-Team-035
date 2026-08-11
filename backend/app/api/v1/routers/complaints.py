@@ -14,9 +14,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path, status
 
 from app.api.admin_deps import require_admin, require_csrf_unsafe
-from app.api.deps import get_current_user, get_request_client
+from app.api.deps import get_active_membership, get_current_user, get_request_client
 from app.domain.common_schemas import MessageResult
 from app.domain.complaint_schemas import AddCommentRequest, UpdateComplaintRequest
+from app.domain.schemas import MembershipContext
 from app.services import complaints_service
 from supabase import Client
 
@@ -37,6 +38,7 @@ async def update_complaint(
     body: UpdateComplaintRequest,
     complaint_id: str = Path(...),
     principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
     """Change status, assignee, progress or the expected resolution date.
@@ -48,7 +50,7 @@ async def update_complaint(
     resident-visible timeline entry even when nothing else changes.
     """
     complaints_service.update_complaint(
-        client, principal.user_id, complaint_id, body
+        client, principal.user_id, membership.id, complaint_id, body
     )
     return MessageResult(message="Complaint updated.")
 
@@ -63,8 +65,18 @@ async def add_comment(
     body: AddCommentRequest,
     complaint_id: str = Path(...),
     principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
-    """Add a comment. Any member may comment; only admins may write `internal`."""
-    complaints_service.add_comment(client, principal.user_id, complaint_id, body)
+    """Add a comment. Any member may comment; only admins may write `internal`.
+
+    The membership dependency is what makes "any member" a real check. It also
+    replaced a `404` with the documented `403` for a signed-in caller who belongs
+    to no community: the service used to discover that by failing to find their
+    community, which answered "no such complaint" to a question that was really
+    about the caller.
+    """
+    complaints_service.add_comment(
+        client, principal.user_id, membership.id, complaint_id, body
+    )
     return MessageResult(message="Comment added.")

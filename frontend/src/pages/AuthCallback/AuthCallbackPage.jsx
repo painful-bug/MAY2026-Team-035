@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2, XCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
-import { AUTH_ROUTES } from '../../routes/authRoutes';
-import { homeRouteFor } from '../../lib/auth/authService';
+import { AUTH_ROUTES, homeRouteFor } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 
 export default function AuthCallbackPage() {

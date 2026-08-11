@@ -2,9 +2,12 @@
 
 Three things are tested and they are worth keeping apart.
 
-The **HTTP surface** -- who may call, which membership the query is scoped to,
+The **HTTP surface** -- who may call, which *person* the query is scoped to,
 what the response may not contain. The repository is replaced, and the
 substitute records its arguments, which is how the recipient assertions are made.
+Since `0041` the recipient is a profile: a service provider who has registered
+and not been hired holds no membership anywhere, and the answer to their
+application is a notification they have to be able to read.
 
 The **projection** -- what a stored `payload` becomes. Those go through the
 service directly: the interesting cases are payload shapes, and routing one
@@ -24,7 +27,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_active_membership, get_current_user, get_request_client
 from app.core.push_config import get_push_settings
+from app.domain.schemas import Principal
 from app.repositories import notifications_repository, push_repository
 from app.services import notifications_service
 
@@ -64,24 +69,24 @@ def feed(monkeypatch: pytest.MonkeyPatch) -> dict:
     captured: dict = {"rows": [row()], "total": 1, "unread": 1, "marked": True}
 
     def fake_list_feed(
-        client: Any, *, membership_id: str, unread_only: bool, offset: int, limit: int
+        client: Any, *, profile_id: str, unread_only: bool, offset: int, limit: int
     ) -> tuple[list[dict[str, Any]], int]:
-        captured["membership_id"] = membership_id
+        captured["profile_id"] = profile_id
         captured["unread_only"] = unread_only
         captured["offset"] = offset
         captured["limit"] = limit
         return captured["rows"], captured["total"]
 
-    def fake_unread_count(client: Any, *, membership_id: str) -> int:
-        captured["unread_for"] = membership_id
+    def fake_unread_count(client: Any, *, profile_id: str) -> int:
+        captured["unread_for"] = profile_id
         return captured["unread"]
 
     def fake_mark_read(client: Any, *, notification_id: str) -> bool:
         captured["marked_id"] = notification_id
         return bool(captured["marked"])
 
-    def fake_mark_all_read(client: Any, *, membership_id: str) -> int:
-        captured["marked_all_for"] = membership_id
+    def fake_mark_all_read(client: Any) -> int:
+        captured["marked_all"] = True
         return 4
 
     monkeypatch.setattr(notifications_repository, "list_feed", fake_list_feed)
@@ -150,12 +155,14 @@ def test_an_admin_has_a_feed_too(admin_api_client: TestClient, feed: dict) -> No
     assert admin_api_client.get(FEED).status_code == 200
 
 
-def test_the_recipient_is_the_resolved_membership(
+def test_the_recipient_is_the_signed_in_person(
     resident_api_client: TestClient, feed: dict
 ) -> None:
+    """The profile, not the membership. A caller in four communities has one
+    feed and one badge, and a caller in none still has both."""
     resident_api_client.get(FEED)
 
-    assert feed["membership_id"] == "resident-membership-id"
+    assert feed["profile_id"] == "resident-profile-id"
 
 
 def test_a_query_parameter_cannot_choose_the_recipient(
@@ -163,9 +170,9 @@ def test_a_query_parameter_cannot_choose_the_recipient(
 ) -> None:
     """There is no recipient parameter, so nothing reads one. The RLS policy on
     `notifications` would refuse anyway -- this asserts the layer above it."""
-    resident_api_client.get(f"{FEED}?membershipId=someone-else")
+    resident_api_client.get(f"{FEED}?profileId=someone-else")
 
-    assert feed["membership_id"] == "resident-membership-id"
+    assert feed["profile_id"] == "resident-profile-id"
 
 
 def test_the_unread_filter_reaches_the_query(
@@ -197,7 +204,7 @@ def test_invalid_paging_is_rejected_before_the_feed_is_queried(
     response = resident_api_client.get(f"{FEED}?{query}")
 
     assert response.status_code == 422
-    assert "membership_id" not in feed
+    assert "profile_id" not in feed
     assert "unread_for" not in feed
 
 
@@ -309,7 +316,7 @@ def test_read_all_reports_what_moved_and_what_is_left(
 
     assert response.status_code == 200
     assert response.json() == {"marked": 4, "unread": 1}
-    assert feed["marked_all_for"] == "resident-membership-id"
+    assert feed["marked_all"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +372,39 @@ def test_a_non_dict_payload_does_not_break_the_row() -> None:
     assert (body, url) == ("", "")
 
 
+def test_a_hiring_notification_gets_a_link_it_never_carried() -> None:
+    """The five `0035` hiring kinds render a title and carry no `url`, so they
+    have been arriving in the feed as text nobody could tap. Their payloads do
+    carry the id the route needs, which is what makes this a fallback rather
+    than a guess -- and the journal recorded it (5.18) rather than papering over
+    it, so this is where the record is closed."""
+    _, _, url = notifications_service.render(
+        "service_application_received",
+        {"applicationId": "a1", "departmentId": "d1", "departmentName": "Plumbing"},
+    )
+
+    assert url == "/admin/departments/d1/hiring?tab=applications"
+
+
+def test_a_writer_that_names_a_url_is_never_overruled() -> None:
+    """The fallback is the last resort, not a rewrite. `0041` gave the invitation
+    trigger a url of its own, and a table in Python that quietly replaced it
+    would be a second opinion about where a notification goes."""
+    _, _, url = notifications_service.render(
+        "service_application_rejected",
+        {"url": "/worker/communities?application=a1", "departmentId": "d1"},
+    )
+
+    assert url == "/worker/communities?application=a1"
+
+
+def test_a_fallback_url_missing_its_id_yields_nothing() -> None:
+    """A half-substituted path is worse than no path: a link that goes to the
+    wrong screen is one the reader believes."""
+    _, _, url = notifications_service.render("service_invitation_accepted", {})
+
+    assert url == ""
+
 # ---------------------------------------------------------------------------
 # Push registration
 # ---------------------------------------------------------------------------
@@ -418,13 +458,15 @@ def test_subscribing_accepts_the_browsers_own_document(
     assert push_configured["auth"] == "auth-material"
 
 
-def test_a_subscription_is_bound_to_the_resolved_membership(
+def test_a_subscription_names_no_owner_at_all(
     resident_api_client: TestClient,
     csrf_headers: dict[str, str],
     push_configured: dict,
 ) -> None:
-    """Nothing in the body says who this is for. If it did, one resident could
-    subscribe a device to another's notifications."""
+    """Nothing in the body says who this is for, and since `0041` nothing in the
+    call does either -- the RPC reads `auth.uid()`. An owner argument would be a
+    parameter that exists only to be validated against the session it came from,
+    which is a forgery surface guarded rather than removed."""
     resident_api_client.post(
         SUBSCRIPTIONS,
         headers=csrf_headers,
@@ -434,7 +476,8 @@ def test_a_subscription_is_bound_to_the_resolved_membership(
         },
     )
 
-    assert push_configured["membership_id"] == "resident-membership-id"
+    assert "membership_id" not in push_configured
+    assert "profile_id" not in push_configured
 
 
 def test_a_subscription_without_keys_is_rejected(
@@ -562,3 +605,83 @@ def test_the_rest_of_the_api_is_unaffected_by_missing_push_configuration(
     """Push is an enhancement. An unconfigured environment must not be a broken
     environment -- the same shape as `0024` no-opping without `pg_cron`."""
     assert resident_api_client.get(FEED).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# The caller with no membership at all
+#
+# The whole reason `0041` exists. A service provider registers before anybody
+# has hired them, applies to departments, and is told the answer -- all of it
+# while holding no membership anywhere. Under the membership-keyed substrate
+# there was no row that could address them, no feed they could read, and no way
+# for their browser to subscribe. These three cases pin that the guards on all
+# five routes are identity and never membership, by overriding the membership
+# resolver with something that fails the test if it is reached.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def unhired_provider_client(api_client: TestClient) -> TestClient:
+    """Signed in, and a member of nothing."""
+
+    def no_membership() -> None:
+        pytest.fail("These routes must not resolve a membership.")
+
+    api_client.app.dependency_overrides[get_current_user] = lambda: Principal(
+        user_id="provider-profile-id",
+        email="plumber@example.com",
+        email_verified=True,
+        full_name="Test Plumber",
+    )
+    api_client.app.dependency_overrides[get_active_membership] = no_membership
+    api_client.app.dependency_overrides[get_request_client] = lambda: object()
+    return api_client
+
+
+def test_a_provider_with_no_membership_still_has_a_feed(
+    unhired_provider_client: TestClient, feed: dict
+) -> None:
+    """The answer to a job application arrives as a notification. A feed that
+    required a membership would be empty for exactly the person waiting on
+    one."""
+    endpoint = "GET /api/v1/notifications"
+    expected_output = (200, "provider-profile-id")
+
+    response = unhired_provider_client.get(FEED)
+    actual_output = (response.status_code, feed["profile_id"])
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_a_provider_with_no_membership_can_clear_their_badge(
+    unhired_provider_client: TestClient, csrf_headers: dict[str, str], feed: dict
+) -> None:
+    endpoint = "POST /api/v1/notifications/read-all"
+
+    response = unhired_provider_client.post(f"{FEED}/read-all", headers=csrf_headers)
+
+    assert (response.status_code, feed["marked_all"]) == (200, True), endpoint
+
+
+def test_a_provider_with_no_membership_can_turn_push_on(
+    unhired_provider_client: TestClient,
+    csrf_headers: dict[str, str],
+    push_configured: dict,
+) -> None:
+    """Shipped broken on 2026-08-10: the worker profile screen offered a push
+    toggle that posted to an endpoint requiring an active membership, so the one
+    caller it was built for got a 403. The frontend cannot see a guard, which is
+    why this assertion lives here."""
+    endpoint = "POST /api/v1/push/subscriptions"
+
+    response = unhired_provider_client.post(
+        SUBSCRIPTIONS,
+        headers=csrf_headers,
+        json={
+            "endpoint": "https://push.example.test/2",
+            "keys": {"p256dh": "a", "auth": "b"},
+        },
+    )
+
+    assert response.status_code == 200, endpoint
+    assert push_configured["endpoint"] == "https://push.example.test/2"
