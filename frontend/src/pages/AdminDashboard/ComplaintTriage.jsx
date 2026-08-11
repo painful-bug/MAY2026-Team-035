@@ -13,7 +13,7 @@ import { Empty, Pill } from '../../features/security/components/Primitives';
 // moment it is answered, so the two lists barely overlap.
 //
 // **What lands here**, and none of it is a special case in the code — all three
-// are just the routing rule in `0050` finding nothing:
+// are just the routing rule in `complaint_department_routing` finding nothing:
 //
 //   * the category names no department, which is what "Other" means;
 //   * the category is mapped to *several* departments, so the rule refuses to

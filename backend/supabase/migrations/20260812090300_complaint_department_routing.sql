@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- 0050 — Complaint department routing
+-- 20260812090300_complaint_department_routing.sql
 --
 -- Until now a complaint reached a department only once dispatch built a work
 -- order from it (`work_orders.department_id`, 0036). Before that moment it
@@ -36,17 +36,19 @@
 -- an invisible wrong answer, and the only person who could notice is the
 -- department that did not get it.
 --
--- WHY `raise_complaint` IS DROPPED AND REBUILT RATHER THAN CORRECTED IN 0031.
+-- WHY `raise_complaint` IS DROPPED AND REBUILT RATHER THAN REPLACED.
 -- This adds a parameter, which changes the signature. `create or replace` would
 -- not replace anything -- it would create a second overload, and every existing
 -- six-argument call would then fail as ambiguous rather than route badly, which
--- is a worse failure than the one being fixed. The README's correct-in-place
--- precedent is for corrections to what a file already meant; this is a change to
--- what it does, so it lands in its own numbered file. 0031 carries a pointer
--- forward so nobody reads its definition and believes it.
+-- is a worse failure than the one being fixed. So it is dropped by its exact
+-- old signature first. 0031 is applied and cannot carry a pointer forward, so
+-- the warning lives here: **read this definition, not 0031's.**
 --
--- MIGRATION NUMBER. `0034`-`0049` was exhausted by `0049`; the range was
--- extended to `0050`-`0059` in this directory's README on the same day.
+-- WHY THIS FILE IS A TIMESTAMP. Every repository migration through `0047` was
+-- verified applied to the linked hosted project on 2026-08-11, so numbers are
+-- closed and everything after the boundary is forward-only. Section 10 is what
+-- that costs: three functions from 0031 repeated in full to change one call
+-- each, because the file that defines them can no longer be touched.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
@@ -1018,3 +1020,288 @@ comment on function public.department_change_requests(uuid) is
   'Open "this is not ours" requests waiting on this department''s manager.';
 
 grant execute on function public.department_change_requests(uuid) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 10. The three complaint notifications that went to every manager
+--
+-- `reopen_complaint`, `confirm_complaint_resolution` and `add_complaint_comment`
+-- all call `notify_community_staff` -- every admin *and every manager*. So the
+-- plumbing manager was told a lift complaint had been reopened, and the link
+-- went to `/admin/complaints`, which their portal has no route for.
+--
+-- **This could not have been fixed before this file existed.** A complaint had
+-- no department, so there was no narrower true answer than "everybody"; the
+-- widest audience was not laziness, it was the only correct one available.
+-- Section 3 above gives a complaint a department, which is what makes
+-- `notify_complaint_staff` possible -- the admins, plus the manager of the
+-- department the complaint actually belongs to.
+--
+-- The whole body of each function is repeated because `0031` is applied and
+-- immutable. Extracted mechanically from the applied file; every difference is
+-- marked `-- CHANGED`.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.reopen_complaint(
+  p_complaint_id uuid,
+  p_reason       text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row    public.complaints%rowtype;
+  v_reason text := nullif(btrim(coalesce(p_reason, '')), '');
+begin
+  select * into v_row from public.complaints where id = p_complaint_id;
+
+  if v_row.id is null then
+    raise exception 'Complaint not found.' using errcode = 'P0002';
+  end if;
+
+  if not public.is_own_membership(v_row.raised_by_membership_id) then
+    raise exception 'Only the resident who raised a complaint may reopen it.'
+      using errcode = '42501';
+  end if;
+
+  if v_row.status not in ('resolved', 'closed') then
+    -- The message says "resolved" and the check accepts `closed` as well
+    -- because both render as `Resolved` on the wire (`vocabularies.py`). A
+    -- message naming a status the resident's screen never shows would be
+    -- describing a state they cannot see themselves in.
+    raise exception 'Only a resolved complaint can be reopened.'
+      using errcode = '23514';
+  end if;
+
+  if v_reason is null then
+    raise exception 'Reopening a complaint needs a reason.' using errcode = '23514';
+  end if;
+
+  update public.complaints
+     set status                 = 'open',
+         progress_percent       = 0,
+         resolved_at            = null,
+         resolution_rating      = null,
+         resident_feedback      = null,
+         reopened_count         = reopened_count + 1,
+         expected_resolution_at = now()
+           + make_interval(hours => public.complaint_sla_hours(priority)),
+         aggregate_version      = aggregate_version + 1,
+         updated_at             = now()
+   where id = p_complaint_id;
+
+  -- Two events, because two things happened. `0020`'s reader counts reopenings
+  -- by looking for a `status_changed` whose `from` is terminal, and that query
+  -- must keep working; the `reopened` event is what carries the resident's
+  -- reason.
+  insert into public.complaint_events
+    (complaint_id, actor_membership_id, event_type, payload)
+  values
+    (p_complaint_id, v_row.raised_by_membership_id, 'status_changed',
+     jsonb_build_object('from', v_row.status::text, 'to', 'open')),
+    (p_complaint_id, v_row.raised_by_membership_id, 'reopened',
+     jsonb_build_object('reason', v_reason));
+
+  -- CHANGED: was `notify_community_staff(v_row.community_id, …)`.
+  perform public.notify_complaint_staff(
+    p_complaint_id,
+    'complaint.reopened',
+    jsonb_build_object(
+      'title', 'A complaint was reopened',
+      'body',  v_row.title,
+      'url',   '/admin/complaints?complaint=' || p_complaint_id::text,
+      'complaint_id', p_complaint_id
+    ),
+    v_row.raised_by_membership_id
+  );
+end;
+$$;
+
+comment on function public.reopen_complaint(uuid, text) is
+  'Reopen your own resolved complaint with a reason. Restarts the SLA and notifies the community staff.';
+
+grant execute on function public.reopen_complaint(uuid, text) to authenticated;
+
+create or replace function public.confirm_complaint_resolution(
+  p_complaint_id uuid,
+  p_rating       smallint,
+  p_feedback     text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row public.complaints%rowtype;
+begin
+  select * into v_row from public.complaints where id = p_complaint_id;
+
+  if v_row.id is null then
+    raise exception 'Complaint not found.' using errcode = 'P0002';
+  end if;
+
+  if not public.is_own_membership(v_row.raised_by_membership_id) then
+    raise exception 'Only the resident who raised a complaint may confirm it.'
+      using errcode = '42501';
+  end if;
+
+  if v_row.status <> 'resolved' then
+    raise exception 'Only a resolved complaint can be confirmed.'
+      using errcode = '23514';
+  end if;
+
+  if p_rating is null or p_rating < 1 or p_rating > 5 then
+    raise exception 'A resolution rating must be between 1 and 5.'
+      using errcode = '23514';
+  end if;
+
+  update public.complaints
+     set status            = 'closed',
+         resolution_rating = p_rating,
+         resident_feedback = nullif(btrim(coalesce(p_feedback, '')), ''),
+         resolved_at       = coalesce(resolved_at, now()),
+         progress_percent  = 100,
+         aggregate_version = aggregate_version + 1,
+         updated_at        = now()
+   where id = p_complaint_id;
+
+  insert into public.complaint_events
+    (complaint_id, actor_membership_id, event_type, payload)
+  values (
+    p_complaint_id, v_row.raised_by_membership_id, 'resolution_confirmed',
+    jsonb_build_object(
+      'rating', p_rating,
+      'feedback', nullif(btrim(coalesce(p_feedback, '')), '')
+    )
+  );
+
+  -- CHANGED: was `notify_community_staff(v_row.community_id, …)`.
+  perform public.notify_complaint_staff(
+    p_complaint_id,
+    'complaint.resolution_confirmed',
+    jsonb_build_object(
+      'title', 'A resident confirmed a resolution',
+      'body',  v_row.title,
+      'url',   '/admin/complaints?complaint=' || p_complaint_id::text,
+      'complaint_id', p_complaint_id
+    ),
+    v_row.raised_by_membership_id
+  );
+end;
+$$;
+
+comment on function public.confirm_complaint_resolution(uuid, smallint, text) is
+  'Confirm the resolution of your own complaint with a 1-5 rating. Moves resolved to closed.';
+
+grant execute on function public.confirm_complaint_resolution(uuid, smallint, text) to authenticated;
+
+create or replace function public.add_complaint_comment(
+  p_complaint_id      uuid,
+  p_body              text,
+  p_visibility        text,
+  p_author_membership uuid,
+  p_author_label      text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_community_id uuid;
+  v_raised_by    uuid;
+  v_title        text;
+  v_visibility   text := coalesce(nullif(btrim(coalesce(p_visibility, '')), ''), 'public');
+  v_id           uuid;
+begin
+  select c.community_id, c.raised_by_membership_id, c.title
+    into v_community_id, v_raised_by, v_title
+    from public.complaints c where c.id = p_complaint_id;
+
+  if v_community_id is null then
+    raise exception 'Complaint not found.' using errcode = 'P0002';
+  end if;
+
+  if not public.is_community_member(v_community_id) then
+    raise exception 'Only a member of this community may comment.'
+      using errcode = '42501';
+  end if;
+
+  if v_visibility = 'internal' and not public.is_community_admin(v_community_id) then
+    raise exception 'Only an admin may leave an internal comment.'
+      using errcode = '42501';
+  end if;
+
+  if nullif(btrim(coalesce(p_body, '')), '') is null then
+    raise exception 'A comment cannot be empty.' using errcode = '23514';
+  end if;
+
+  insert into public.complaint_comments
+    (complaint_id, author_membership_id, author_label, body, visibility)
+  values
+    (p_complaint_id, p_author_membership, p_author_label, btrim(p_body), v_visibility)
+  returning id into v_id;
+
+  insert into public.complaint_events
+    (complaint_id, actor_membership_id, actor_label, event_type, payload)
+  values (
+    p_complaint_id, p_author_membership, p_author_label, 'comment_added',
+    jsonb_build_object('comment_id', v_id, 'visibility', v_visibility)
+  );
+
+  update public.complaints
+     set aggregate_version = aggregate_version + 1,
+         updated_at        = now()
+   where id = p_complaint_id;
+
+  -- >>> 0031: tell the other party a comment landed.
+  --
+  -- An **internal** comment notifies nobody. The whole point of the flag is
+  -- that the resident does not see it, and a notification saying "new comment
+  -- on your complaint" that leads to a thread where nothing new is visible is a
+  -- worse leak than showing the comment would have been -- it tells the
+  -- resident something was said about them and refuses to say what.
+  --
+  -- The comment body is not copied into the payload. `notifications_service`
+  -- renders exactly `title`, `body` and `url`, and `body` here is the complaint
+  -- title -- the thing the resident already knows -- so a push on a locked
+  -- screen never carries someone else's words about them.
+  if v_visibility = 'public' then
+    if v_raised_by is distinct from p_author_membership then
+      perform public.notify_member(
+        v_raised_by,
+        'complaint.commented',
+        jsonb_build_object(
+          'title', 'New comment on your complaint',
+          'body',  v_title,
+          'url',   '/resident/complaints?complaint=' || p_complaint_id::text,
+          'complaint_id', p_complaint_id
+        )
+      );
+    else
+      -- The resident commented. Staff hear about it instead, otherwise a
+      -- resident chasing their own complaint is talking into an empty room.
+      -- CHANGED: was `notify_community_staff(v_community_id, …)`.
+      perform public.notify_complaint_staff(
+        p_complaint_id,
+        'complaint.commented',
+        jsonb_build_object(
+          'title', 'New comment on a complaint',
+          'body',  v_title,
+          'url',   '/admin/complaints?complaint=' || p_complaint_id::text,
+          'complaint_id', p_complaint_id
+        ),
+        p_author_membership
+      );
+    end if;
+  end if;
+  -- <<< 0031
+
+  return v_id;
+end $$;
+
+grant execute on function
+  public.add_complaint_comment(uuid, text, text, uuid, text) to authenticated;

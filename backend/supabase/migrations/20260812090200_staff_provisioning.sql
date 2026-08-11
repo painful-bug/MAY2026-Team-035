@@ -1,4 +1,4 @@
--- 0049_staff_provisioning.sql
+-- 20260812090200_staff_provisioning.sql
 --
 -- How a manager or a supervisor comes to exist.
 --
@@ -153,7 +153,7 @@ create index if not exists staff_invitations_department_idx
 comment on table public.staff_invitations is
   'A manager or supervisor an administrator has created but who has not signed '
   'in yet. Claimed by email on first sign-in -- there is no registration flow '
-  'for leadership, and no token: see 0049''s header for the trade-off.';
+  'for leadership, and no token: see this file''s header for the trade-off.';
 
 alter table public.staff_invitations enable row level security;
 

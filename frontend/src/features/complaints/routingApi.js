@@ -13,7 +13,7 @@ import { api } from '../../lib/api/client';
 // admin-and-manager only.
 //
 // The routing rule itself is nowhere in this file. It is
-// `resolve_complaint_department` (`0050`) and it runs when the complaint is
+// `resolve_complaint_department` (`complaint_department_routing`) and it runs when the complaint is
 // raised: the category first, the resident's own guess second, the triage queue
 // third. Nothing in the browser gets to re-decide it.
 

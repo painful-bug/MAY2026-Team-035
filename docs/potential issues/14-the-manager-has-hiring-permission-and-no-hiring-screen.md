@@ -6,7 +6,7 @@
 | | |
 |---|---|
 | **Severity** | Medium. A capability that exists in the API, is deliberately granted, and cannot be used. |
-| **Blast radius** | Every department manager, and every security-department manager. Nobody has one yet — `0049` mints the first. |
+| **Blast radius** | Every department manager, and every security-department manager. Nobody has one yet — `staff_provisioning` mints the first. |
 | **Fix size** | Turned out to be one hook, one new page, one new endpoint and a routing fragment. No migration. |
 
 ---
@@ -87,7 +87,7 @@ closed, and **none of them was closed by adding a rewrite rule**. Each was wrong
 
 | Was | Now |
 |---|---|
-| `/admin/complaints?complaint=…` — no manager complaints screen | `0050` gives a complaint a department, so it goes to *that* department's manager, and `/manager/complaints` is where they land. The screen reads `?complaint=` and rings the row |
+| `/admin/complaints?complaint=…` — no manager complaints screen | `complaint_department_routing` gives a complaint a department, so it goes to *that* department's manager, and `/manager/complaints` is where they land. The screen reads `?complaint=` and rings the row |
 | `/admin/amenities?booking=…` — likewise | `0033` corrected: **admins only**. No department owns an amenity, so no manager should have been told |
 | `/admin/security/incidents` for a non-security manager | `0040` corrected: admins and **security-department** managers, the same predicate `_portal_for` uses to hand out `/security-manager` |
 
@@ -102,7 +102,8 @@ often a notification with no good recipient.**
   the first roster row where the caller ranks supervisor or manager. Supervising two departments in
   two societies is legal and rare; a portal-wide department switcher wants `communities[]` in a
   shared context every worker page reads, which is a bigger idea than this screen.
-- **`0050` is unapplied**, like every migration here. The routing rule is statically parsed and the
+- **`complaint_department_routing` is unapplied.** Everything through `0047` is on the hosted
+  project; the four `20260812…` files are not. The routing rule is statically parsed and the
   API is repository-mocked, so nothing in this repository proves that a "Water leakage" complaint
   reaches Plumbing.
 

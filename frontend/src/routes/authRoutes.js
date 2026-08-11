@@ -55,7 +55,7 @@ const PORTAL_ROUTES = Object.freeze({
   // not exist — so that person fell through to `/account`, which is the same
   // failure `SecurityManager` had before it was fixed, one role along. It was
   // unreachable in practice because nothing minted a `manager` membership;
-  // `0049` mints them now, so the route has to be here before the first one
+  // `staff_provisioning` mints them now, so the route has to be here before the first one
   // signs in.
   manager: AUTH_ROUTES.MANAGER_DASHBOARD,
   security: AUTH_ROUTES.SECURITY_DASHBOARD,

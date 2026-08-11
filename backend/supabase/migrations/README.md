@@ -21,7 +21,7 @@ when that file is written:
 |---|---|
 | `0018`–`0024` | admin dashboard |
 | `0025`–`0033` | resident backend |
-| `0034`–`0049`, `0050`–`0059` | service operations and security |
+| `0034`–`0047` | service operations and security (closed — see below) |
 
 Two rules make this work. A workstream takes the lowest free number **in its own
 range** at the moment it writes a file, so two people writing at once cannot
@@ -43,17 +43,31 @@ own worked example immediately: the service plan had reserved `0039` for securit
 operations, the worker portal needed a migration nobody had planned for, and
 `0039` went to whoever wrote first — security operations is `0040`.
 
-**`0050`–`0059` was added to that third range on 2026-08-12**, because `0049` had
-taken the last number in `0034`–`0049` and complaint department routing still
-needed a file. Two things made this the boring option rather than a decision:
-nothing claims `0050`+, and the rule above is *lowest free number in your own
-range*, which only works if a range that runs out gets extended rather than
-quietly borrowing from a neighbour. Extending is bookkeeping; borrowing is the
-collision the rule exists to prevent.
+**The ranges stopped at `0047`, and nothing should be added to them.** The last
+number allocated is `0047`; everything after the deployment boundary is a
+timestamp. That is not a third range, it is the end of ranges: numbers exist to
+stop two people picking the same next integer, and a timestamp cannot collide,
+so the problem the table solves does not arise again. The table is kept because
+it explains files that already exist.
 
-An extension is not a licence to renumber. The rule that a file keeps the number
-it was written with still holds — this table grows at the end, never in the
-middle.
+This replaced a `0050`–`0059` extension written on 2026-08-12, hours before the
+hosted deployment was verified. It was correct under the rule at the time and is
+now moot: those three files are `20260812…` and a number was never needed.
+
+The one rule that survives unchanged: **a file keeps the name it was written
+with.** This list grows at the end, never in the middle.
+
+## After the boundary
+
+| File | Serves |
+|---|---|
+| `20260811162409_service_professional_onboarding.sql` | atomic provider registration, mandatory coordinates and active skills, radius-bounded PostGIS search both ways, `can_hire_for_department`, worker/security mode enforcement |
+| `20260811163408_service_signup_funnel_telemetry.sql` | the five-event signup funnel and its 30-day retention |
+| `20260811192511_fix_unit_residencies_rls_recursion.sql` | the RLS recursion on `unit_residencies` |
+| `20260812090000_notification_audiences.sql` | two audiences that were `notify_community_staff` because nothing narrower existed: amenity payments become admin-only, and gate incidents go to admins and **security-department** managers. Rewrites `settle_amenity_booking_payment` (`0033`) and `record_security_incident` (`0040`) in full, because both files are applied |
+| `20260812090100_skills_and_categories.sql` | `department_skills`, the trigram search, create-and-attach, and the hiring search reading a department's own skills — **rebased onto `20260811162409`**, whose definition of `search_hireable_service_providers` this would otherwise have silently reverted |
+| `20260812090200_staff_provisioning.sql` | `staff_invitations` and the email-bound claim: how a manager or supervisor comes to exist, given that neither has a registration process |
+| `20260812090300_complaint_department_routing.sql` | `complaints.department_id`, category-then-pick-then-triage resolution, the supervisor's change request, and the three `0031` complaint notifications that went to every manager because a complaint had no department to send them to |
 
 | File | Serves |
 |---|---|
@@ -76,7 +90,7 @@ middle.
 | `0037_dispatch_engine.sql` | `dispatch_tasks`, the sweep and the four firing RPCs — no endpoints at all. **Corrected 2026-08-11**: the same broken worker link as `0036`, in a second spelling |
 | `0038_conversations.sql` | the hiring thread between a department and a provider |
 | `0039_worker_actions.sql` | the worker's own side: three views, five verbs, and their working week |
-| `0040_security_operations.sql` | the gate — posts, shifts, two registers, incidents, credential verification and the offline reconcile log — **corrected 2026-08-12**: `record_security_incident` notified `array['admin','manager']`, so every manager in the community was told about gate incidents and sent to a screen only *some* of them have. The audience now mirrors `_portal_for`'s own predicate |
+| `0040_security_operations.sql` | the gate — posts, shifts, two registers, incidents, credential verification and the offline reconcile log — `record_security_incident`'s audience was wrong and is **corrected forward** by `20260812090000`, not here: this file is applied |
 | `0041_person_notifications.sql` | the notification substrate re-addressed from a membership to a person, so a service provider who has not been hired can be told anything at all — plus the conversation's first notification and the notice board's |
 | `0042_roster_provider_link.sql` | one column on `department_staff_overview`, so a roster row can say which service provider it is — the write path has filled `staff_assignments.service_provider_id` since `0035` and no read returned it |
 | `0043_staff_departures.sql` | leaving a community becomes a process a manager approves: a departure freezes the dispatch engine against that person, every job and shift in their name is handed over through the same ranking auto-assignment uses, and only an empty list lets the approval through — `remove_department_member` gains the refusal, and a bar releases the work instead of queueing behind it. **Corrected 2026-08-11**: `reassign_departure_item` sent the guard receiving a handed-over shift to `/security-manager/shifts`, which is neither a route nor their portal |

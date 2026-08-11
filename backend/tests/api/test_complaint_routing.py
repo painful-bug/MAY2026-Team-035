@@ -2,10 +2,11 @@
 
 **What these tests can and cannot prove.** The routing rule itself —
 category first, the resident's pick second, the triage queue third — is
-`resolve_complaint_department` in `0050`, and it is Postgres. It is stubbed
-here, so nothing below shows that a "Water leakage" complaint reaches Plumbing.
-No test in this repository can: no migration has ever been applied to a
-database.
+`resolve_complaint_department` in `complaint_department_routing`, and it is
+Postgres. It is stubbed here, so nothing below shows that a "Water leakage"
+complaint reaches Plumbing. No test in this suite can — it has no database, and
+that is the whole shape of what is unproven. The CI job that resets a local
+Supabase and applies every migration could, and nothing there covers this yet.
 
 What they do prove is the half that is Python, and it is the half where a
 mistake is silent:

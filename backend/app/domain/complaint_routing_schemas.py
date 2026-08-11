@@ -9,8 +9,8 @@ which is why there are three reads rather than one filtered one:
 * a **manager** wants the same list, plus the requests waiting on their answer.
 
 The routing rule itself is not represented here at all. It lives in
-``resolve_complaint_department`` (`0050`) and is applied when a complaint is
-raised — category first, the resident's pick second, the triage queue third.
+``resolve_complaint_department`` (`complaint_department_routing`) and is
+applied when a complaint is raised — category first, the resident's pick second, the triage queue third.
 Restating it in a Python model would give it a second home free to disagree
 with the first.
 """

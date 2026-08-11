@@ -790,7 +790,7 @@ emits).
 > **Corrected 2026-08-12.** That audience used to be `notify_community_staff` — every admin *and
 > every manager in the community*. The manager of the plumbing department was told about lift
 > complaints, and the link went to `/admin/complaints`, which their portal has no route for, so the
-> click silently redirected them home. `0050` replaced it with `notify_complaint_staff`, which needs a
+> click silently redirected them home. `complaint_department_routing` replaced it with `notify_complaint_staff`, which needs a
 > department on the complaint — which is what §7.1 is about.
 
 ### 7.1 Which department owns a complaint
@@ -799,7 +799,7 @@ A complaint used to reach a department only once dispatch built a work order fro
 (`work_orders.department_id`, `0036`). Before that moment it belonged to nobody, which is why every
 manager was told about every complaint: there was no better answer available.
 
-`0050` routes it at the moment it is raised. **The rule, in precedence order** (product owner,
+`complaint_department_routing` routes it at the moment it is raised. **The rule, in precedence order** (product owner,
 2026-08-12):
 
 1. the complaint's **category**, matched to `complaint_categories` and followed through
@@ -3253,7 +3253,8 @@ neighbouring feature moved is how a status board stops being worth reading.
 > one of them. Nothing failed, because an `update … where` that selects nothing is a success — so
 > every module sat at the column default, `absent`, and the Settings screen, which exists precisely
 > so a toggle cannot imply a backend that is not there, would have reported that none of this backend
-> exists. `0022` is corrected in place; it has never been applied to any database.
+> exists. `0022` was corrected in place on 2026-08-04, when nothing here had been applied to any
+database. That allowance ended on 2026-08-11 — see `backend/supabase/migrations/README.md`.
 
 **Three things about money remain unbuilt**, and they are the same three as before §14: nothing runs
 a billing cycle, nothing charges a late fee, and no real payment gateway is integrated (`0033`'s is a
@@ -4018,7 +4019,7 @@ matrix, and it is already wired.
 > catalogue codes that do not exist, so every one of its six updates matched zero rows and every
 > module would have read `absent` — including the ones this document has called `partial` for weeks.
 > The one screen built to be honest about what is missing would have been the one lying. Corrected in
-> place; the migration has never been applied.
+> place on 2026-08-04, which was still allowed then and is not now.
 
 ### 16.7 What the matrix says to do next
 
@@ -4187,7 +4188,7 @@ reference data would be an envelope around a constant.
 | Query | Meaning |
 |---|---|
 | *(none)* | The whole active catalogue, alphabetical. What the service person's registration grid renders. `limit` is **ignored** in this mode — a truncated catalogue would hide trades from somebody choosing their own. |
-| `q` | Closest matches (`0048`'s `search_skills`): exact first, then prefix, then trigram similarity. What the department form's skill box calls on every keystroke. |
+| `q` | Closest matches (`skills_and_categories`'s `search_skills`): exact first, then prefix, then trigram similarity. What the department form's skill box calls on every keystroke. |
 | `limit` | 1–50, default 10. Only meaningful with `q`. |
 
 `category` is free text — `maintenance`, `facilities` or `security` for the seeded twelve, and
@@ -4258,7 +4259,7 @@ reach nobody, silently. The department form renders it as a warning.
 `departmentCount` is how many departments claim the category. Zero means complaints filed under it
 route to no department at all.
 
-This path was retired by the frontend wiring audit and **reinstated by `0048`** — see
+This path was retired by the frontend wiring audit and **reinstated by `skills_and_categories`** — see
 `docs/FRONTEND_WIRING_AUDIT.md`. The reinstated read is not the retired one: it carries the skill
 link, which never existed before.
 
@@ -5086,7 +5087,7 @@ So the service section has two ways in, and they are deliberately asymmetric:
 | Rank | `member` | `manager` or `supervisor` |
 
 **Nothing is mailed.** The email is not a delivery address, it is the **matching key**: whoever signs
-in with it is admitted at that rank. `claim_staff_invitations` (`0049`) runs inside
+in with it is admitted at that rank. `claim_staff_invitations` (`staff_provisioning`) runs inside
 `GET /auth/session`, on the path that has already established the caller has no membership, and
 writes the `community_memberships` row and the `staff_assignments` row in one transaction.
 
@@ -5478,8 +5479,10 @@ two sets did not intersect, so **every department create or update naming a kind
 `Morning` | `Evening` | `Night` | `Full Day` while Python validated `Day` | `Evening` | `Night`.
 Three of the five words failed on one side or the other; only `Evening` and `Night` could be saved.
 
-All three were free to correct because no migration in this project has ever been applied to a
-database. They will not be free a second time.
+All three were free to correct in place because at the time no migration in this project had ever
+been applied to a database. **That is no longer true** — everything through `0047` was verified
+applied to the linked hosted project on 2026-08-11, so a correction now costs a forward migration
+that repeats the whole function body. They were not free a second time.
 
 ### Conversations — the guard that is not in the router
 

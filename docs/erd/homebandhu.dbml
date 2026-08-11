@@ -518,12 +518,12 @@ Table complaints [headercolor: #C53030] {
   Note: 'CHANGED: v1 had no assignee, department, progress, SLA, rating, feedback or reopen count, yet design-of-components.md §6 requires all of them and the frontend renders all of them. Routing through work_orders.department_id alone does not work — the frontend assigns complaints directly and has no work-order UI (§3.9). CHANGED: category is now an FK to complaint_categories, not free text. sla_due_at is computed server-side at submission from urgency + category SLA and is never client-supplied. management_notes is staff-only and must not be selectable by a resident policy.'
 }
 
-// NEW 2026-08-12 (`0050_complaint_department_routing.sql`): a supervisor saying a
+// NEW 2026-08-12 (`20260812090300_complaint_department_routing.sql`): a supervisor saying a
 // complaint belongs to another department, and their manager's answer.
 //
 // `complaints.department_id` above was already in this ERD and had no
 // implementation — routing happened only when dispatch built a work order, so
-// before that moment a complaint belonged to nobody. `0050` closes that gap;
+// before that moment a complaint belonged to nobody. `complaint_department_routing` closes that gap;
 // this table is the only genuinely new entity in it.
 //
 // A supervisor cannot move a complaint themselves, which is why a *request* is

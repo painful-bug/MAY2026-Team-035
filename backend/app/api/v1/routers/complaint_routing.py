@@ -17,8 +17,8 @@ the boundary.
 The boundary is in Postgres: ``is_community_admin`` on the triage queue,
 ``can_manage_department`` on the manager's list and the decision,
 ``can_supervise_department`` on the department queue and the request. Every one
-of the six RPCs in ``0050`` asks its own question, so an id arriving in a URL is
-never an authorization decision -- the posture ``department_hiring.py`` states.
+of the six RPCs in ``complaint_department_routing`` asks its own question, so
+an id arriving in a URL is never an authorization decision -- the posture ``department_hiring.py`` states.
 
 **One asymmetry worth naming.** A supervisor may *ask* for a complaint to move
 and may not move it. That is the ruling, and it is also the only shape that
@@ -90,8 +90,8 @@ async def unassigned_complaints(
     we send it to the admin who can allot it to the department of his choosing.*
 
     It is also where an **ambiguous** category lands. `department_categories`
-    lets one category belong to several departments, and when it does, `0050`
-    routes to nothing rather than picking: a question in this queue gets a right
+    lets one category belong to several departments, and when it does,
+    `complaint_department_routing` routes to nothing rather than picking: a question in this queue gets a right
     answer in one click, where a guess gets a wrong one that only the department
     which *didn't* receive it could ever notice.
 

@@ -14,7 +14,7 @@ import { Empty, Pill } from '../../security/components/Primitives';
 // got a fix would be whichever the author of the day opened.
 //
 // The list itself is the manager's answer to the notification they now receive
-// when a complaint is routed to their department. Before `0050` there was no
+// when a complaint is routed to their department. Before `complaint_department_routing` there was no
 // such notification and no such screen: `notify_community_staff` told *every*
 // manager about *every* complaint and sent them to `/admin/complaints`, which
 // their portal has no route for.

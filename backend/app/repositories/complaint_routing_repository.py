@@ -1,7 +1,7 @@
 """Data access for which department owns a complaint.
 
-Every function here is an RPC in ``0050``, and the reason is the same one
-``skills_repository`` gives: all six are ``SECURITY DEFINER`` and ask their own
+Every function here is an RPC in ``complaint_department_routing``, and the
+reason is the same one ``skills_repository`` gives: all six are ``SECURITY DEFINER`` and ask their own
 authorization question, so a table or view read beside them would answer the
 same question a second way through RLS and the two would drift.
 

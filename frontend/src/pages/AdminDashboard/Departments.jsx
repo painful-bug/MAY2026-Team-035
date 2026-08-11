@@ -35,7 +35,7 @@ import SkillPicker from '../../features/departments/components/SkillPicker';
 //
 // What remains is **leadership**, and it is a different kind of thing. A
 // manager or supervisor is created by typing an email; that person signs in
-// with it and is admitted (`0049`). Nothing is sent, so the pending list below
+// with it and is admitted (`staff_provisioning`). Nothing is sent, so the pending list below
 // the form is the only place a mistyped address is ever visible.
 
 /** A `{ id, name }` pair for the pickers, from the API's parallel arrays (R23). */

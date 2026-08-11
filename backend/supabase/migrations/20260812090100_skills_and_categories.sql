@@ -1,4 +1,4 @@
--- 0048_skills_and_categories.sql
+-- 20260812090100_skills_and_categories.sql
 --
 -- Skills become something an administrator can hold in their hands.
 --
@@ -151,7 +151,7 @@ select
   ))                                             as search_text
 from public.departments d
 left join lateral (
-  -- 'manager' since 0035. This read said 'head' until 0048 and matched nothing.
+  -- 'manager' since 0035. This read said 'head' until this file and matched nothing.
   select s.id, s.display_name
     from public.staff_assignments s
    where s.department_id = d.id
@@ -619,42 +619,39 @@ grant execute on function public.set_department_skills(uuid, uuid[])
 -- ---------------------------------------------------------------------------
 -- 5. Hiring reads the department's own skills too
 --
--- The only change from 0035 509 is the `needed` CTE, which was:
+-- **The base of this function is `20260811162409`, not `0035`.** It was written
+-- against `0035` and rebased on 2026-08-12, when that file redefined the same
+-- function with the same signature. `create or replace` is last-writer-wins:
+-- had this been left alone it would have run afterwards and silently withdrawn
+-- five things -- the radius bound and its GiST-prunable outer bound, the
+-- `is_available` and `location is not null` filters, the worker/security mode
+-- exclusion, the deterministic `lower(name), id` ordering, and the swap of
+-- `can_manage_department` for `can_hire_for_department`. None of those has
+-- anything to do with skills, and reverting them by accident is exactly the
+-- failure a same-signature `create or replace` invites.
 --
---     select distinct cc.skill_id
---       from dept
---       join public.department_categories dc on dc.department_id = dept.id
---       join public.complaint_categories cc  on cc.id = dc.category_id
---      where cc.skill_id is not null
---
--- and is now the union of that with department_skills. Everything else --
--- the HB403 guard, the distance sort, the four exclusion rules, the grouping --
--- is carried over unchanged and deliberately not "improved" in passing, so the
--- diff against 0035 is one CTE.
+-- So the body below is that file's, verbatim, with **one** difference, marked
+-- `-- CHANGED` in place: the `needed` CTE.
 --
 -- UNION, not replacement of the category path: a department that has picked no
 -- skills yet must keep hiring exactly as it did yesterday. This file adds a
 -- second way to say what a department needs; it does not withdraw the first.
+--
+-- Without this the whole feature is decorative. Attaching a skill to a
+-- department would change what the screen displays and nothing about who the
+-- department can hire.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.search_hireable_service_providers(
   p_department_id uuid,
-  p_query         text default null,
-  p_limit         integer default 20,
-  p_offset        integer default 0
+  p_query text default null,
+  p_limit integer default 20,
+  p_offset integer default 0
 )
 returns table (
-  id                   uuid,
-  display_name         text,
-  headline             text,
-  phone_e164           varchar(20),
-  status               text,
-  is_available         boolean,
-  service_radius_km    numeric,
-  distance_km          numeric,
-  matching_skill_names text[],
-  skill_names          text[],
-  community_count      integer,
+  id uuid, display_name text, headline text, phone_e164 varchar(20), status text,
+  is_available boolean, service_radius_km numeric, distance_km numeric,
+  matching_skill_names text[], skill_names text[], community_count integer,
   has_open_application boolean
 )
 language plpgsql
@@ -663,100 +660,85 @@ security definer
 set search_path = public
 as $$
 #variable_conflict use_column
+declare
+  v_department public.departments%rowtype;
+  v_community public.communities%rowtype;
+  v_role text;
 begin
-  if not public.can_manage_department(p_department_id) then
-    raise exception 'You do not manage this department.' using errcode = 'HB403';
+  if not public.can_hire_for_department(p_department_id) then
+    raise exception 'You may not hire for this department.' using errcode = 'HB403';
   end if;
+  select * into v_department from public.departments where id = p_department_id and is_active;
+  if not found then raise exception 'No such department.' using errcode = 'HB404'; end if;
+  select * into v_community from public.communities where id = v_department.community_id;
+  if v_community.location is null then
+    return;
+  end if;
+  v_role := public.professional_membership_role(v_department.kind::text);
 
   return query
-  with dept as (
-    select d.id, d.community_id, c.location
-      from public.departments d
-      join public.communities c on c.id = d.community_id
-     where d.id = p_department_id
-  ),
-  needed as (
+  with needed as (
+    -- CHANGED: was the category path alone. Now the union of it with the
+    -- department's own declared skills.
     select distinct cc.skill_id
-      from dept
-      join public.department_categories dc on dc.department_id = dept.id
-      join public.complaint_categories cc  on cc.id = dc.category_id
-     where cc.skill_id is not null
+      from public.department_categories dc
+      join public.complaint_categories cc on cc.id = dc.category_id
+     where dc.department_id = p_department_id and cc.skill_id is not null
     union
     select distinct ds.skill_id
-      from dept
-      join public.department_skills ds on ds.department_id = dept.id
+      from public.department_skills ds
+     where ds.department_id = p_department_id
   )
-  select
-    p.id,
-    p.display_name,
-    p.headline,
-    p.phone_e164,
-    p.status,
-    p.is_available,
-    p.service_radius_km,
-    case
-      when p.location is null or dept.location is null then null
-      else round(
-        (extensions.st_distance(dept.location, p.location) / 1000)::numeric, 2)
-    end as distance_km,
-    array_agg(distinct ms.name)                       as matching_skill_names,
-    coalesce(
-      (select array_agg(s2.name order by s2.name)
-         from public.service_provider_skills x
-         join public.skills s2 on s2.id = x.skill_id
-        where x.service_provider_id = p.id and s2.is_active),
-      '{}'::text[])                                   as skill_names,
-    (select count(*)::integer
-       from public.community_memberships m
-      where m.profile_id = p.profile_id
-        and m.role in ('worker', 'security')
-        and m.status = 'active'
-        and m.ended_at is null)                       as community_count,
-    exists (
-      select 1 from public.service_applications a
-       where a.department_id = dept.id
-         and a.service_provider_id = p.id
-         and a.status = 'pending')                    as has_open_application
-  from dept
-  join public.service_provider_skills sps on sps.skill_id in (select skill_id from needed)
-  join public.service_providers p         on p.id = sps.service_provider_id
-  join public.skills ms                   on ms.id = sps.skill_id and ms.is_active
-  where p.status = 'active'
-    and (p_query is null or p.display_name ilike '%' || btrim(p_query) || '%')
-    and not exists (
-      select 1 from public.blacklisted_service_providers b
-       where b.community_id = dept.community_id
-         and b.service_provider_id = p.id
-         and b.revoked_at is null
-    )
-    and not exists (
-      select 1 from public.staff_assignments sa
-       where sa.department_id = dept.id
-         and sa.service_provider_id = p.id
-         and sa.status = 'active'
-    )
-    and not exists (
-      select 1 from public.community_memberships m
-       where m.community_id = dept.community_id
-         and m.profile_id = p.profile_id
-         and m.status = 'active'
-         and m.ended_at is null
-    )
-  group by
-    p.id, p.display_name, p.headline, p.phone_e164, p.status, p.is_available,
-    p.service_radius_km, p.profile_id, distance_km, dept.id
-  order by distance_km nulls last, p.display_name
-  limit greatest(1, least(coalesce(p_limit, 20), 100))
-  offset greatest(0, coalesce(p_offset, 0));
+  select p.id, p.display_name, p.headline, p.phone_e164, p.status, p.is_available,
+         p.service_radius_km,
+         round((extensions.st_distance(v_community.location, p.location) / 1000)::numeric, 2),
+         array_agg(distinct ms.name order by ms.name),
+         coalesce((
+           select array_agg(s2.name order by s2.name)
+             from public.service_provider_skills x
+             join public.skills s2 on s2.id = x.skill_id and s2.is_active
+            where x.service_provider_id = p.id
+         ), '{}'::text[]),
+         (select count(*)::integer from public.community_memberships m
+           where m.profile_id = p.profile_id and m.role in ('worker', 'security')
+             and m.status = 'active' and m.ended_at is null),
+         exists(select 1 from public.service_applications a
+           where a.department_id = p_department_id and a.service_provider_id = p.id and a.status = 'pending')
+    from public.service_providers p
+    join public.service_provider_skills sps on sps.service_provider_id = p.id and sps.skill_id in (select skill_id from needed)
+    join public.skills ms on ms.id = sps.skill_id and ms.is_active
+   where p.status = 'active'
+     and p.is_available
+     and p.location is not null
+     -- Constant outer bound lets the GiST index prune the global provider set;
+     -- the next predicate applies each professional's stricter chosen radius.
+     and extensions.st_dwithin(p.location, v_community.location, 500000)
+     and extensions.st_dwithin(p.location, v_community.location, p.service_radius_km * 1000)
+     and (p_query is null or p.display_name ilike '%' || btrim(p_query) || '%')
+     and not exists (select 1 from public.blacklisted_service_providers b
+       where b.community_id = v_department.community_id and b.service_provider_id = p.id and b.revoked_at is null)
+     and not exists (select 1 from public.staff_assignments sa
+       where sa.department_id = p_department_id and sa.service_provider_id = p.id and sa.status = 'active')
+     and not exists (select 1 from public.community_memberships m
+       where m.community_id = v_department.community_id and m.profile_id = p.profile_id
+         and m.status = 'active' and m.ended_at is null)
+     and not exists (select 1 from public.community_memberships m
+       where m.profile_id = p.profile_id and m.role in ('worker', 'security') and m.role::text <> v_role
+         and m.status = 'active' and m.ended_at is null)
+   group by p.id, p.display_name, p.headline, p.phone_e164, p.status,
+            p.is_available, p.service_radius_km, p.profile_id, p.location
+   order by extensions.st_distance(v_community.location, p.location), lower(p.display_name), p.id
+   limit greatest(1, least(coalesce(p_limit, 20), 20))
+   offset greatest(0, coalesce(p_offset, 0));
 end;
 $$;
 
 comment on function public.search_hireable_service_providers(
   uuid, text, integer, integer) is
-  'Service people this department could hire: holding a skill the department '
-  'claims directly or one of its categories needs, not blacklisted, not '
-  'already on its roster, and not already a member of the community. Nearest '
-  'first.';
+  'Service people this department could hire: available, inside their own '
+  'chosen radius, holding a skill the department claims directly or one of its '
+  'categories needs, not blacklisted, not on its roster, not already a member, '
+  'and not already working in the other mode. Nearest first.';
 
 grant execute on function public.search_hireable_service_providers(
   uuid, text, integer, integer) to authenticated;

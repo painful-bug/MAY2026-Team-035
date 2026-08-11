@@ -40,7 +40,7 @@ export default function AdminLayout() {
     { name: 'Messages', path: '/admin/messages', icon: MessageSquare },
     { name: 'Notices Board', path: '/admin/notices', icon: Megaphone },
     { name: 'Complaints Management', path: '/admin/complaints', icon: AlertOctagon },
-    // Complaints the routing rule in `0050` could not place — an "Other"
+    // Complaints the routing rule in `complaint_department_routing` could not place — an "Other"
     // category, a category mapped to two departments, or a resident who said
     // "Not sure". Its own entry rather than a tab on the screen above, because
     // it asks a different question: not how a complaint is going, but whose it

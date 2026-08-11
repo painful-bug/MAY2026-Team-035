@@ -2,7 +2,7 @@
 
 Every function here is an RPC call, and none of them is a ``client.table()``
 read. That is not the house default -- ``departments_repository`` reads views
-directly -- and the reason is that all six functions in ``0048`` are
+directly -- and the reason is that all six functions in ``skills_and_categories`` are
 ``SECURITY DEFINER`` and ask their own authorization question. A view read
 beside them would answer the same question a second way, through RLS, and the
 two would drift.

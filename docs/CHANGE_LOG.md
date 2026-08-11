@@ -17,7 +17,75 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 66: the deployment boundary, and what it invalidated
+
+A teammate's branch landed two commits, and one of them moved a rule this workstream had been
+building on for six weeks. **The linked hosted Supabase project was verified on 2026-08-11 with
+every repository migration through `0047` applied.** Those files are immutable from now on, and
+corrections to them are forward-only.
+
+Session 65, immediately below, was written hours earlier and is **wrong in three places as a
+result**. It is left standing because it is an accurate record of decisions taken under the rule of
+that day; each correction is named here rather than by editing the entry.
+
+### `backend/supabase/migrations/README.md`
+
+`AUDIT` — **the number ranges are closed at `0047`.** Everything after the boundary is a timestamp.
+This overturns Session 65's `0050`–`0059` extension, which was correct when written and is now moot:
+numbers exist so two people do not pick the same next integer, and a timestamp cannot collide. The
+table is kept because it explains files that already exist. New rows for the seven files after the
+boundary.
+
+`AUDIT` — the `0040` **corrected 2026-08-12** row is withdrawn. That correction now lives in
+`20260812090000_notification_audiences.sql`. The row points there instead.
+
+### Migrations — three renamed, two written, three reverted
+
+`DERIVED` — `0048`/`0049`/`0050` became `20260812090100_skills_and_categories.sql`,
+`20260812090200_staff_provisioning.sql` and `20260812090300_complaint_department_routing.sql`.
+Not cosmetic: `0048` sorts **before** `20260811162409`, so leaving the numbers would have run this
+workstream's files before the ones already written against them.
+
+`DERIVED` — `20260812090000_notification_audiences.sql` is new, and exists only because of the
+boundary. Session 65 corrected `0033`'s amenity audience and `0040`'s incident audience *in place*;
+both files are applied, so both edits are reverted and both functions are repeated in full in the
+new file. Same for the three complaint notifications Session 65 edited into `0031` — they are now
+section 10 of the routing migration.
+
+> **What the boundary costs, stated plainly.** The old README allowed in-place correction
+> specifically so that changing one string inside a function body would not require re-declaring the
+> whole function, *because the copy is then free to drift from the original*. That reasoning was
+> right and the allowance is gone, so the drift risk is now real and permanent. What is done about
+> it: every copied body was extracted mechanically from the applied file, so the starting point is
+> provably the applied text, and every difference carries a `-- CHANGED` marker at the line it
+> changes.
+
+`AUDIT` — **`search_hireable_service_providers` was about to be silently reverted.** Both this
+workstream and `20260811162409` redefine it with the same signature, so `create or replace` is
+last-writer-wins and the renamed file now runs second. Left alone it would have withdrawn five
+things that have nothing to do with skills: the radius bound and its GiST-prunable outer bound, the
+`is_available` / `location is not null` filters, the worker/security mode exclusion, the
+deterministic ordering, and `can_hire_for_department` in place of `can_manage_department`. The
+department-skills union is now rebased onto that file's body as a one-CTE diff.
+
+### `docs/API.md`, `docs/COMPLAINT_ENGINE_HANDOFF.md`, `docs/potential issues/14`
+
+`AUDIT` — every sentence claiming *no migration in this project has ever been applied* is now false
+and is corrected with the date the claim expired. Three in API.md, one in the handoff, one in issue
+14, one in `test_dispatcher.py`, one in `test_complaint_routing.py`.
+
+### What was *not* changed
+
+`AUDIT` — the hiring authority moved (`can_hire_for_department`: the department's own manager, with
+community admins as **fallback only** when it has none). That is the other workstream's decision and
+stands. Its consequences for two frontend gates are recorded as work, not overturned here.
+
+---
+
 ## 2026-08-12 — Session 65: three open questions, answered
+
+> **Corrected by Session 66, above.** The migration-range extension, the `0040` in-place row, and
+> the reasoning that made both available were overtaken by the deployment boundary the same day.
 
 Session 64 closed with four open questions. Three were put back to the product owner and answered;
 the fourth — complaint **assignment** semantics — stays with the complaint-engine owner and was not

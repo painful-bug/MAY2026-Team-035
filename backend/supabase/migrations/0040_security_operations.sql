@@ -1195,8 +1195,6 @@ declare
   v_severity  text := lower(btrim(coalesce(p_severity, 'medium')));
   v_client    text := nullif(btrim(coalesce(p_source_client_id, '')), '');
   v_id        uuid;
-  v_payload   jsonb;
-  v_manager   record;
 begin
   if v_summary is null then
     raise exception 'Say what happened.' using errcode = '22004';
@@ -1224,48 +1222,17 @@ begin
   -- The one register write that notifies. A tanker arriving is a record;
   -- something going wrong at the gate at 2am is a message, and `high` or
   -- `critical` is the line between the two.
-  --
-  -- **Corrected 2026-08-12.** This read `array['admin', 'manager']`, which is
-  -- every manager in the community -- so the plumbing department's manager was
-  -- told about a gate incident, and the link went to `/admin/security/incidents`,
-  -- which their portal has no route for. Two separate wrongs with one cause: the
-  -- audience was picked by role alone, and only *some* managers have this screen.
-  --
-  -- The audience is now the same predicate `_portal_for` uses to decide who sees
-  -- `/security-manager` at all (`auth_service.py:271` -- the membership's own
-  -- `department_id`, resolved to `departments.kind`). Deliberately mirrored rather
-  -- than approximated: if the two ever disagree, somebody is notified about a
-  -- screen they cannot open, which is exactly the bug being fixed here.
-  --
-  -- A manager whose membership carries no `department_id` is therefore excluded,
-  -- even though `can_manage_department` would let them manage the security
-  -- department. That manager routes to `/manager`, which has no incidents screen,
-  -- so notifying them would recreate the defect. No path here mints one --
-  -- `staff_invitations.department_id` and `hire_service_applicant` both require a
-  -- department -- so this excludes a row nothing creates.
   if v_severity in ('high', 'critical') then
-    v_payload := jsonb_build_object(
-      'title', 'Security incident reported',
-      'body',  v_summary,
-      'url',   '/admin/security/incidents'
-    );
-
     perform public.notify_community_roles(
-      v_community, array['admin'], 'security.incident', v_payload
+      v_community,
+      array['admin', 'manager'],
+      'security.incident',
+      jsonb_build_object(
+        'title', 'Security incident reported',
+        'body',  v_summary,
+        'url',   '/admin/security/incidents'
+      )
     );
-
-    for v_manager in
-      select m.id
-        from public.community_memberships m
-        join public.departments d on d.id = m.department_id
-       where m.community_id = v_community
-         and m.role::text   = 'manager'
-         and m.status       = 'active'
-         and m.ended_at is null
-         and d.kind         = 'security'
-    loop
-      perform public.notify_member(v_manager.id, 'security.incident', v_payload);
-    end loop;
   end if;
 
   return v_id;
@@ -1273,7 +1240,7 @@ end;
 $$;
 
 comment on function public.record_security_incident(uuid, text, text, text, text, text, uuid, timestamptz, text) is
-  'File an incident. High and critical ones notify the community''s admins and its security-department managers; the rest are a record.';
+  'File an incident. High and critical ones notify the community''s admins and managers; the rest are a record.';
 
 create or replace function public.update_security_incident(
   p_membership_id uuid,

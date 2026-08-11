@@ -152,7 +152,7 @@ def test_every_router_is_mounted(path):
         # rather than the one that was removed. Deleting this line is the
         # decision the docstring below asks for.
         #
-        # `/api/v1/complaint-categories` came back in `0048`, and this is that
+        # `/api/v1/complaint-categories` came back in `skills_and_categories`, and this is that
         # decision made a second time. Its retirement reason (audit line 72) was
         # a statement about two screens: "CreateDepartment.jsx collects
         # categories as free-text inputs, not from a vocabulary, and

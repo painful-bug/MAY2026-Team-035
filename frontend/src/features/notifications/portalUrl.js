@@ -44,7 +44,7 @@ import { AUTH_ROUTES } from '../../routes/authRoutes';
  * rather than here, which is the better fix in both cases:
  *
  * * `/admin/complaints?complaint=…` **is** rewritten now, because
- *   `/manager/complaints` exists. `0050` gave a complaint a department, so the
+ *   `/manager/complaints` exists. `complaint_department_routing` gave a complaint a department, so the
  *   notification goes to *that* department's manager instead of all of them,
  *   and it has somewhere to land.
  * * `/admin/security/incidents` used to reach every manager in the community —

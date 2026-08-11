@@ -78,7 +78,7 @@ class ApplyRequest(CamelModel):
 #
 # * **Rank.** Leadership does not come from the hiring path at all -- an admin
 #   or a manager creates a manager or a supervisor by email
-#   (``staff_invitations``, ``0049``), and that person never registered as a
+#   (``staff_invitations``, ``staff_provisioning``), and that person never registered as a
 #   service provider. Somebody hired *here* registered themselves and applied,
 #   and they join as a ``member``. A promotion afterwards is
 #   ``PATCH /departments/{id}/staff/{staffId}``, which is a different decision
@@ -375,7 +375,7 @@ class StaffInvitation(CamelModel):
     **There is no token and no code.** Leadership has no registration flow: an
     administrator types a name and an email, and that person is admitted the
     first time they sign in with that address. The trade-off -- one factor, and
-    whoever holds the mailbox becomes the manager -- is stated in ``0049``'s
+    whoever holds the mailbox becomes the manager -- is stated in ``staff_provisioning``'s
     header and in ``docs/design/STAFF_PROVISIONING_DESIGN.md`` rather than
     softened. The resident invite's mandatory token is untouched; this is a
     separate table for exactly that reason.

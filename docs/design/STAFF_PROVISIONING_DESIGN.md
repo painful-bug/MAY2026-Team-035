@@ -1,6 +1,6 @@
 # Staff provisioning — how a manager or supervisor comes to exist
 
-**Status** designed and built, `0049_staff_provisioning.sql` · **Date** 2026-08-11
+**Status** designed and built, `20260812090200_staff_provisioning.sql` · **Date** 2026-08-11
 **Touches the auth seam** — `app/services/auth_service.py`, which belongs to the auth workstream.
 This document exists because that file is not changed without one. Raised for the auth owner in
 `docs/FRONTEND_MEETING_AGENDA.md`.
@@ -184,13 +184,15 @@ the ordinary signed-in request pays nothing for it.
 - **No notification.** The person being provisioned has no account to notify.
 - **No self-service.** A manager cannot appoint themselves; every row records
   `created_by_membership_id`.
-- **It has never run.** No migration in this repo has been applied to any database. The claim path in
-  particular cannot be truly proven until a second real account signs in with a provisioned address;
-  until then it is covered by unit tests over the seam and a `pglast` parse of the SQL.
+- **It has never run.** `20260812090200_staff_provisioning.sql` is not applied anywhere — the hosted
+  project stops at `0047`. The claim path in particular cannot be truly proven until a second real
+  account signs in with a provisioned address; until then it is covered by unit tests over the seam,
+  a `pglast` parse of the SQL, and CI's local `supabase db reset`, which at least proves the file
+  applies.
 
 ## Related
 
-- `backend/supabase/migrations/0049_staff_provisioning.sql` — the header carries the same reasoning
+- `backend/supabase/migrations/20260812090200_staff_provisioning.sql` — the header carries the same reasoning
   next to the code
 - `docs/API.md` §18 — the three endpoints
 - `docs/changelogs/2026-08-11-departments-skills-and-connectivity.md` — phase 2

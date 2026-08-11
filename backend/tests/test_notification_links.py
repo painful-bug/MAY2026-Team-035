@@ -457,7 +457,7 @@ UNREWRITTEN_FOR_A_MANAGER = {
     # manager no longer receives this at all -- but this test checks blind, by
     # design, so the entry stays.
     "/admin/amenities",
-    # Admin-only audience (`notify_community_roles(array['admin'])`, `0050`).
+    # Admin-only audience (`notify_community_roles(array['admin'])`, `complaint_department_routing`).
     # The triage queue is *by definition* the complaints no department holds,
     # so a manager equivalent would be a screen with nothing in it.
     "/admin/complaint-triage",

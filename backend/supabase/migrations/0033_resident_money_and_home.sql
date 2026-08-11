@@ -959,15 +959,9 @@ begin
     );
   end if;
 
-  -- **Corrected 2026-08-12.** This was `notify_community_staff`, which is every
-  -- admin *and every manager*. A department manager has no role in amenity
-  -- bookings at all -- no department owns an amenity -- and the link goes to
-  -- `/admin/amenities`, which their portal has no route for, so the click
-  -- bounced them silently to their own overview. Admins only.
   if v_outcome = 'succeeded' then
-    perform public.notify_community_roles(
+    perform public.notify_community_staff(
       v_community_id,
-      array['admin'],
       'amenity.booking_paid',
       jsonb_build_object(
         'title', 'An amenity booking was paid',

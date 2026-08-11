@@ -8409,7 +8409,7 @@ components:
 
         first time they sign in with that address. The trade-off -- one factor, and
 
-        whoever holds the mailbox becomes the manager -- is stated in ``0049``''s
+        whoever holds the mailbox becomes the manager -- is stated in ``staff_provisioning``''s
 
         header and in ``docs/design/STAFF_PROVISIONING_DESIGN.md`` rather than
 
@@ -20584,9 +20584,10 @@ paths:
 
         It is also where an **ambiguous** category lands. `department_categories`
 
-        lets one category belong to several departments, and when it does, `0050`
+        lets one category belong to several departments, and when it does,
 
-        routes to nothing rather than picking: a question in this queue gets a right
+        `complaint_department_routing` routes to nothing rather than picking: a question in this queue
+        gets a right
 
         answer in one click, where a guess gets a wrong one that only the department
 

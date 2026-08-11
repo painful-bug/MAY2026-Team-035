@@ -14,7 +14,7 @@ import { useManagerDepartment } from './useManagerDepartment';
 // portal has no route for, so `ProtectedRoute` bounced them home. Not a 403: a
 // redirect, which reads as a click that did nothing.
 //
-// `0050` fixed both halves. The notification now goes to the *owning*
+// `complaint_department_routing` fixed both halves. The notification now goes to the *owning*
 // department's manager rather than all of them, and this is where it lands.
 // Building one without the other would have left either a manager told about
 // complaints they cannot open, or a screen nobody is sent to.
@@ -24,7 +24,7 @@ import { useManagerDepartment } from './useManagerDepartment';
 
 export default function ManagerComplaints() {
   const { departmentId, department } = useManagerDepartment();
-  // `?complaint=` is on the notification `0050` sends, so this screen has to
+  // `?complaint=` is on the notification `complaint_department_routing` sends, so this screen has to
   // read it. A parameter no screen reads is `docs/potential issues/12`, and
   // arriving at a list of forty rows with no idea which one you were told
   // about is the same failure as arriving nowhere.

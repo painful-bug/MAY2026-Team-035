@@ -276,7 +276,7 @@ def test_the_residents_department_guess_reaches_the_database(
 ) -> None:
     """The pick is a fallback, and a fallback that never arrives is no fallback.
 
-    `resolve_complaint_department` (`0050`) tries the *category* first and only
+    `resolve_complaint_department` (`complaint_department_routing`) tries the *category* first and only
     reaches this when the category maps to no department -- so it decides
     exactly the cases the catalogue cannot: "Other", and anything nobody has
     mapped yet. If the field were dropped between the form and the RPC, the

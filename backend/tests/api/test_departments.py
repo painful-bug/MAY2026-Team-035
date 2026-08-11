@@ -17,8 +17,8 @@ positionally would be a bug no type checker sees.
 ``api_182`` is the one with history. ``department_overview`` matched
 ``rank = 'head'`` for the head lateral; ``0035`` migrated every such row to
 ``'manager'`` and forbade ``'head'``, so ``head_name`` was null for every
-department in the API from ``0035`` until ``0048`` fixed the view -- and
-``0035``'s own header claimed it had already made that fix. The test cannot
+department in the API from ``0035`` until ``skills_and_categories`` fixed the
+view -- and ``0035``'s own header claimed it had already made that fix. The test cannot
 reach Postgres, so it does the half it can: pin that a head the view *does*
 return survives the mapping, so the next time this breaks it breaks in SQL only
 and the search for it starts in the right file.

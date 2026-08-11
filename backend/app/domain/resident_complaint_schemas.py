@@ -175,7 +175,7 @@ class RaiseComplaintRequest(CamelModel):
     #: of the time.
     #:
     #: It is a **fallback, not an instruction**. `resolve_complaint_department`
-    #: (`0050`) tries the category first and only reaches this when the category
+    #: (`complaint_department_routing`) tries the category first and only reaches this when the category
     #: maps to no department: the catalogue is curated by somebody who knows how
     #: this society is organised, and the resident is guessing. So the field
     #: routes exactly the cases the catalogue cannot -- "Other", and anything

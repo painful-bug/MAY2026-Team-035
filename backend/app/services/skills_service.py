@@ -24,8 +24,8 @@ def _text(value: object) -> str:
     """A non-null string for a nullable column.
 
     ``Skill.category`` and ``Skill.description`` are non-optional on the wire
-    and the columns behind them are nullable. ``0048``'s ``create_skill``
-    defaults both, so this only ever covers rows written before it.
+    and the columns behind them are nullable. ``skills_and_categories``'s
+    ``create_skill`` defaults both, so this only ever covers rows written before it.
     """
     return str(value) if value is not None else ""
 

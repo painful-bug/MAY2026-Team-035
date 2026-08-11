@@ -363,7 +363,7 @@ that is still pretending.
 about.** Read this section before you conclude that your fork was decided for
 you, because it was not.
 
-`0050_complaint_department_routing.sql` gives `complaints` a `department_id` and
+`20260812090300_complaint_department_routing.sql` gives `complaints` a `department_id` and
 fills it when the complaint is raised. The rule, from the product owner on
 2026-08-12, in precedence order:
 
@@ -383,7 +383,7 @@ answer nobody sees.
 §8 is about **which person** is working a complaint —
 `complaints.assigned_to_membership_id`, `work_order_assignments`, and an
 optimistic field on a screen. This is about **which department owns it**. They
-are different questions and `0050` deliberately answers only the second:
+are different questions and `complaint_department_routing` deliberately answers only the second:
 
 * nothing here writes `assigned_to_membership_id`;
 * nothing here creates or assigns a work order;
@@ -401,16 +401,19 @@ existing work order") no longer has to invent a department to create one in.
 department's manager was told about lift complaints — raised, reopened,
 resolution-confirmed and commented — each with a link to `/admin/complaints`,
 which a manager's portal has no route for. They now go through
-`notify_complaint_staff` (`0050`): the community's admins, plus the complaint's
+`notify_complaint_staff` (`complaint_department_routing`): the community's admins, plus the complaint's
 **own** department manager.
 
-The three call sites in `0031` were corrected in place. `raise_complaint` was
-dropped and rebuilt in `0050` instead, because adding a parameter changes the
-signature and `create or replace` would have produced a second overload rather
-than a replacement.
+**All four are in `complaint_department_routing`, and none of them is in `0031`.** That file is
+applied to the hosted project and immutable, so `reopen_complaint`,
+`confirm_complaint_resolution` and `add_complaint_comment` are repeated there in
+full — whole bodies, to change one call each — with every difference from the
+applied text marked `-- CHANGED` in place. `raise_complaint` is dropped by its
+exact six-argument signature and rebuilt with seven, because adding a parameter
+to a `create or replace` produces a second overload rather than a replacement.
 
-**`0031` also gained a forward pointer** at its `raise_complaint` section, so
-nobody reads that definition and believes it.
+**Read the definitions in `complaint_department_routing`, not `0031`'s.** `0031` cannot carry a
+pointer forward saying so, which is the practical cost of the boundary.
 
 ### The one thing here that is a judgement call, and is yours
 

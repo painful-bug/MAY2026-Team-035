@@ -395,7 +395,7 @@ export default function App() {
               New: `_portal_for` has returned `'manager'` for a non-security
               department's manager since the security work, and there was no
               route for it — that person landed on `/account`. Nothing minted a
-              `manager` membership until `0049`, so nobody had hit it yet. */}
+              `manager` membership until `staff_provisioning`, so nobody had hit it yet. */}
           <Route
             path={AUTH_ROUTES.MANAGER_DASHBOARD}
             element={
@@ -468,7 +468,7 @@ export default function App() {
             <Route path="admins" element={<AdminsList />} />
             <Route path="notices" element={<AdminNotices />} />
             <Route path="complaints" element={<AdminComplaints />} />
-            {/* Complaints the routing rule in `0050` could not place. A page of
+            {/* Complaints the routing rule in `complaint_department_routing` could not place. A page of
                 its own rather than a panel on the screen above, because that
                 one is a teammate's and asks a different question: theirs is
                 "how is this complaint going", this is "whose is it". */}
