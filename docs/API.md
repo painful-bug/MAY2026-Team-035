@@ -1343,7 +1343,28 @@ leads a department, and the frontend's free-text field still round-trips exactly
 ### `GET /api/v1/departments/{departmentId}`
 
 One department with its **active** roster. **Requires `ADMIN`, or the `MANAGER` of that
-department.** Body as above.
+department.** Body as above, **plus one field the list does not carry**:
+
+| Field | Type | Notes |
+|---|---|---|
+| `canHire` | boolean \| null | Whether **this caller** may hire for **this department**. `null` on the list — see below |
+
+**Why this is a field and not something the browser can work out.** Hiring stopped being a property
+of the caller when `can_hire_for_department` landed: it belongs to the department's own active
+manager — by membership role *or* by an active `staff_assignments` row of rank `manager`, which for
+a security department means `membership_role = 'security'` — and community admins are the fallback
+**only while it has neither**. So the same admin may hire for one department and not the next one
+down the list, and no role check answers it. This field is that function called directly, so the
+screen and the RPC cannot disagree.
+
+`null` means *not asked on this read*, which is a different answer from `false`. `GET /departments`
+leaves it null because it is one round trip per department and the list has no control that needs
+it; defaulting to `false` there would tell twelve screens the admin may hire for none of them.
+
+What it turns off, in `DepartmentHiring.jsx`: the **Applications** and **Find people** tabs.
+`GET .../applications` is filtered by the same predicate through RLS and would come back empty, and
+`GET .../candidates` raises `HB403` — so without this the screen looked broken rather than
+restricted. Roster and departures are `can_manage_department` and are unaffected.
 
 **The one read on this router a manager may make**, and the reason the router's guard changed. Every
 other operation here is `ADMIN`-only and now says so per route; the router itself carries the looser

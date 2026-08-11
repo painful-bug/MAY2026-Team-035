@@ -96,6 +96,33 @@ problems; the third looked like a missing screen and was a missing *column* — 
 department, so there was nobody better to tell than everybody. **A link with no good destination is
 often a notification with no good recipient.**
 
+## It came back on 2026-08-12, from the other side
+
+Worth recording, because the recurrence is more instructive than the original.
+
+The service-professional branch replaced the hiring guard. `can_hire_for_department` gives hiring to
+the department's own active manager — **by membership role or by an active `staff_assignments` row
+of rank `manager`** — and admits community admins as the fallback *only while it has neither*. It is
+a better rule than `can_manage_department` and it is not disputed here.
+
+It broke both frontend gates, in opposite directions.
+
+| | Was | Became |
+|---|---|---|
+| A security department's roster manager | hidden — `accessRole === 'MANAGER'`, and they hold `'security'` | **this file's exact bug**: real permission, no tab |
+| An admin, on a department that has a manager | full hiring screen | applications empty (RLS), candidates `HB403` — a screen that looks broken |
+
+**The fix is that the question stopped having a role-shaped answer**, and the frontend kept asking it
+role-shaped. The same admin may hire for one department and not the next one down the list. So
+`GET /departments/{id}` now carries `canHire`, computed by calling that exact function, and
+`DepartmentHiring.jsx` hides the two hiring tabs and says *who* decides instead. `usePortalScope`
+lost its `canHire` — which no caller ever read — and its docstring now says why no such value can
+exist.
+
+Nav items stay coarse on purpose: a supervisor can still open the hiring screen and be told it is
+not theirs. That costs one click. Hiding it from somebody who *does* hold the permission costs them
+the permission, which is what this file is about.
+
 ## What is still not fixed
 
 - **A supervisor's complaint screen shows one department.** `WorkerDashboard/Complaints.jsx` picks

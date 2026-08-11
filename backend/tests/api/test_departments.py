@@ -92,7 +92,12 @@ def departments(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
         captured["created"] = payload
         return "department-id"
 
+    def fake_can_hire(client: Any, department_id: str) -> bool:
+        captured["asked_can_hire"] = department_id
+        return captured.get("can_hire", True)
+
     repo = departments_service.repo
+    monkeypatch.setattr(repo, "can_hire", fake_can_hire)
     monkeypatch.setattr(
         departments_service.tenancy_repo, "get_caller_community_id", fake_community
     )
@@ -261,3 +266,40 @@ def test_api_186_the_whole_guard_table_holds_for_a_manager(
     # what narrows it to *their* department; this only proves the route is
     # reachable, which is the half the router decides.
     assert manager_api_client.get(ONE).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Who may hire, which stopped being a property of the caller
+# ---------------------------------------------------------------------------
+
+
+def test_api_246_the_department_read_answers_can_hire_for_this_caller(
+    admin_api_client: TestClient, departments: dict
+) -> None:
+    """The screen asks the same function the RPC applies, not a role check.
+
+    `can_hire_for_department` gives hiring to the department's own active
+    manager -- by membership *or* by roster rank -- and admits community admins
+    as a fallback **only while it has neither**. So the same admin may hire for
+    one department and not the next, and no property of the caller can say
+    which. Reimplementing that in the browser would be a second copy of a
+    three-branch rule, and the copy is the one nobody notices going stale.
+    """
+    departments["can_hire"] = False
+    body = admin_api_client.get(ONE).json()
+    assert body["canHire"] is False
+    assert departments["asked_can_hire"] == "department-id"
+
+
+def test_api_247_the_list_leaves_can_hire_unanswered(
+    admin_api_client: TestClient, departments: dict
+) -> None:
+    """`null` means *not asked*, which is different from *no*.
+
+    It is one round trip per department and the list has no control that needs
+    it. Defaulting to `false` instead would have told twelve screens that the
+    admin may not hire for any of them.
+    """
+    row = admin_api_client.get(DEPARTMENTS).json()["items"][0]
+    assert row["canHire"] is None
+    assert "asked_can_hire" not in departments

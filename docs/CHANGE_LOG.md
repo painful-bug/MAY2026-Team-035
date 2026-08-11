@@ -74,11 +74,26 @@ department-skills union is now rebased onto that file's body as a one-CTE diff.
 and is corrected with the date the claim expired. Three in API.md, one in the handoff, one in issue
 14, one in `test_dispatcher.py`, one in `test_complaint_routing.py`.
 
-### What was *not* changed
+### `docs/API.md` — `GET /departments/{departmentId}` gains `canHire`
 
-`AUDIT` — the hiring authority moved (`can_hire_for_department`: the department's own manager, with
-community admins as **fallback only** when it has none). That is the other workstream's decision and
-stands. Its consequences for two frontend gates are recorded as work, not overturned here.
+`DERIVED` — the hiring authority moved and is **not** overturned here:
+`can_hire_for_department` gives hiring to the department's own active manager, by membership role or
+by roster rank, with community admins as the fallback *only while it has neither*. That is the other
+workstream's decision.
+
+What follows from it is ours. **The question stopped having a role-shaped answer** — the same admin
+may hire for one department and not the next — and both frontend gates were still asking it
+role-shaped, in opposite directions: a security department's roster manager holds
+`membership_role = 'security'` and was hidden from a permission they hold (`docs/potential issues/14`
+exactly, recreated), while an admin on a managed department got an empty applications list and an
+`HB403` candidate search, which reads as a broken screen rather than a restricted one.
+
+So the department read carries the answer, computed by calling that function, and the screen says who
+decides. `usePortalScope.canHire` is deleted rather than corrected: no value of that shape can be
+right, and it had no callers.
+
+`null` on the list is *not asked*, distinct from *no* — it is one round trip per department and the
+list has no control that needs it.
 
 ---
 

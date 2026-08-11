@@ -200,11 +200,18 @@ def list_departments(
 def get_department(
     client: Client, user_id: str, department_id: str
 ) -> DepartmentDetail:
-    """One department with its active roster."""
+    """One department with its active roster, and whether this caller may hire.
+
+    ``canHire`` is only filled in here. The list leaves it ``None`` because the
+    answer is per department and per caller, so a list of twelve would be twelve
+    extra round trips for a screen with no control that needs one.
+    """
     community_id = tenancy_repo.get_caller_community_id(client, user_id)
     row = repo.get_department(client, community_id, department_id)
     staff = repo.list_staff(client, community_id, [department_id])
-    return _to_detail(row, staff)
+    detail = _to_detail(row, staff)
+    detail.can_hire = repo.can_hire(client, department_id)
+    return detail
 
 
 def create_department(

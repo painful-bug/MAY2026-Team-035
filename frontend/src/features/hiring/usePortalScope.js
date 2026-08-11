@@ -6,12 +6,10 @@ import { useApp } from '../../store/useApp';
 /**
  * Where the hiring screens are mounted for *this* caller, and what they may do.
  *
- * **The hiring surface has three doors and one implementation.** The endpoints
- * behind it accept `admin` or `manager` — `require_admin_or_manager` at the
- * router, `can_manage_department` inside every RPC — and until 2026-08-11 only
- * the admin portal had screens. A department manager and a security-department
- * manager both hold `membership_role = 'manager'`, both pass both guards, and
- * both landed on a portal with no way in. That is
+ * **The hiring surface has three doors and one implementation.** Until
+ * 2026-08-11 only the admin portal had screens, while a department manager and
+ * a security-department manager both passed every guard on the endpoints behind
+ * it — and both landed on a portal with no way in. That is
  * `docs/potential issues/14`, and this hook is how it closes.
  *
  * ## Why a hook and not a `basePath` prop
@@ -23,16 +21,21 @@ import { useApp } from '../../store/useApp';
  * base from it means the screens cannot disagree with the router about who is
  * looking at them.
  *
- * ## Why `accessRole` and not `role`
+ * ## What this hook deliberately does *not* answer
  *
- * `role` is the display label and it conflates two people. A security
- * department's *manager* holds `membership_role = 'manager'` and is labelled
- * `SecurityManager`; so is a **senior guard**, who holds `membership_role =
- * 'security'` with a manager-or-supervisor roster rank (`_portal_for`,
- * `auth_service.py`). They share a portal and they do not share this
- * permission: `require_admin_or_manager` refuses the guard. `accessRole` is the
- * uppercased membership role, so `canHire` is that guard spelled in the
- * browser — and a Hiring tab shown to a senior guard would be a tab that 403s.
+ * It used to return a `canHire`, spelled `accessRole === 'ADMIN' || 'MANAGER'`
+ * because that was `require_admin_or_manager` written in the browser. **There
+ * is no longer a role that answers the question.** `can_hire_for_department`
+ * gives hiring to the department's own active manager — by membership *or* by
+ * roster rank, which for a security department means `membership_role =
+ * 'security'` — and admits community admins as a fallback **only while it has
+ * neither**. So the same admin may hire for one department and not the next one
+ * down the list, and no property of the caller can say which.
+ *
+ * The department read answers it instead: `GET /departments/{id}` carries
+ * `canHire`, computed by calling that exact function, so the screen and the RPC
+ * cannot disagree. Nav items stay coarse — they decide who reaches the surface,
+ * and the surface explains itself.
  *
  * ## The department id stays in the URL for everybody
  *
@@ -57,8 +60,5 @@ export function usePortalScope() {
      * item be built before any route has supplied an id.
      */
     departmentId: params.departmentId || currentUser?.departmentId || null,
-    /** True when the API would accept this caller's hiring calls. */
-    canHire:
-      currentUser?.accessRole === 'ADMIN' || currentUser?.accessRole === 'MANAGER',
   };
 }

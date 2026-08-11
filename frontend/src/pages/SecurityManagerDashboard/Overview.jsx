@@ -28,7 +28,7 @@ import {
 
 export default function Overview() {
   const { currentUser } = useApp();
-  const canHire = currentUser?.accessRole === 'MANAGER';
+  const mayOpenHiring = ['MANAGER', 'SECURITY'].includes(currentUser?.accessRole);
   const { dayFrom, dayTo } = useMemo(() => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -66,13 +66,18 @@ export default function Overview() {
       />
 
       {/* Guards asking to join this department.
-          Rendered only for the department's *manager* — `accessRole` is the
-          membership role, and this portal is also home to a senior guard
-          (`membership_role = 'security'` with a manager rank) whom the hiring
-          endpoints refuse. The component itself renders nothing when the queue
-          is empty, so this is two conditions for two different reasons: may
-          they, and is there anything. */}
-      {canHire ? (
+
+          Two conditions for two different reasons: may they, and is there
+          anything. The second is the component's own — it renders nothing when
+          the queue is empty — and that is what makes the first one safe to
+          widen. `service_applications_read` is `can_hire_for_department`, so a
+          supervisor's queue comes back empty and this disappears by itself
+          rather than by being predicted here.
+
+          Widened from `MANAGER` on 2026-08-12: a security department's roster
+          manager holds `membership_role = 'security'` and passes that policy,
+          so the narrower gate was hiding their own queue from them. */}
+      {mayOpenHiring ? (
         <JoinRequests
           departmentId={currentUser?.departmentId}
           basePath={AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD}

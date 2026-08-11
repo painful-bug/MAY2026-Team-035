@@ -231,6 +231,28 @@ def update_staff_member(
         ) from exc
 
 
+def can_hire(client: Client, department_id: str) -> bool:
+    """Ask ``can_hire_for_department`` the question the hiring RPCs ask.
+
+    Called rather than reimplemented, because reimplementing it would be a
+    second copy of a rule with three branches -- the department's own manager by
+    membership, its manager by roster rank, and community admins as a fallback
+    *only while it has neither* -- and the copy in Python would be the one
+    nobody notices going stale.
+
+    Fails **closed**. A caller told they may not hire, wrongly, sees a screen
+    explaining who does; a caller told they may, wrongly, sees controls that
+    403 on click, which is the failure this exists to prevent.
+    """
+    try:
+        response = client.rpc(
+            "can_hire_for_department", {"p_department_id": department_id}
+        ).execute()
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(response.data)
+
+
 def remove_staff_member(client: Client, staff_id: str) -> None:
     """Take a member off the active roster (RPC). Deactivation, not deletion (A7)."""
     try:

@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, MapPin, MessageSquare, Search,
-  Shuffle, UserMinus, UserPlus, X,
+  ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, Info, MapPin, MessageSquare,
+  Search, Shuffle, UserMinus, UserPlus, X,
 } from 'lucide-react';
 import { hiringApi } from '../../features/hiring/hiringApi';
 import { usePortalScope } from '../../features/hiring/usePortalScope';
@@ -30,9 +30,17 @@ import { JOB_TITLES, rankLabel } from '../../lib/staffVocabulary';
 // moving to `features/hiring/` so that a rename does not land in the same diff
 // as a behaviour change -- worth doing, separately.
 
+// `hiring: true` marks a tab that `can_hire_for_department` guards. The other
+// two are roster work, which is still `can_manage_department` and unchanged.
+//
+// The split exists because hiring stopped being something a role has. It
+// belongs to the department's own active manager, and a community admin is the
+// fallback *only while it has none* — so the same admin may hire for one
+// department and not the next. The department read answers it per department;
+// these two tabs are what the answer turns off.
 const TABS = [
-  { id: 'applications', label: 'Applications', icon: Inbox },
-  { id: 'candidates', label: 'Find people', icon: Search },
+  { id: 'applications', label: 'Applications', icon: Inbox, hiring: true },
+  { id: 'candidates', label: 'Find people', icon: Search, hiring: true },
   { id: 'roster', label: 'Roster', icon: UserPlus },
   { id: 'departures', label: 'Departures', icon: DoorOpen },
 ];
@@ -593,7 +601,7 @@ export default function DepartmentHiring() {
   // and a deep link that lands on the default tab is a link that lies.
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const tab = TABS.some((entry) => entry.id === tabParam) ? tabParam : 'applications';
+  const requestedTab = TABS.some((entry) => entry.id === tabParam) ? tabParam : 'applications';
   const setTab = (next) => {
     setSearchParams((params) => {
       const copy = new URLSearchParams(params);
@@ -607,15 +615,25 @@ export default function DepartmentHiring() {
     queryClient.invalidateQueries({ queryKey: ['hiring', departmentId] });
   };
 
-  const applications = useQuery({
-    queryKey: ['hiring', departmentId, 'applications'],
-    queryFn: () => hiringApi.applications(departmentId),
-  });
-  // The departures tab needs the roster too, for the successor select.
+  // Unconditional now, and it used to be `enabled` on two tabs only. It carries
+  // `canHire`, which decides what the whole screen offers, so waiting for a tab
+  // change to find out would mean drawing controls first and withdrawing them.
+  // It is also the roster the departures tab's successor select needs.
   const department = useQuery({
     queryKey: ['hiring', departmentId, 'roster'],
     queryFn: () => hiringApi.department(departmentId),
-    enabled: tab === 'roster' || tab === 'departures',
+  });
+  // `undefined` while the read is in flight, so this is "known to be false"
+  // rather than "not true yet" — the difference between explaining a real
+  // restriction and flashing one at somebody who does not have it.
+  const mayHire = department.data ? department.data.canHire !== false : true;
+  const tabs = TABS.filter((entry) => mayHire || !entry.hiring);
+  const tab = tabs.some((entry) => entry.id === requestedTab) ? requestedTab : 'roster';
+
+  const applications = useQuery({
+    queryKey: ['hiring', departmentId, 'applications'],
+    queryFn: () => hiringApi.applications(departmentId),
+    enabled: mayHire,
   });
   const departures = useQuery({
     queryKey: ['hiring', departmentId, 'departures'],
@@ -675,8 +693,30 @@ export default function DepartmentHiring() {
         </p>
       </div>
 
+      {/* Not an error, and deliberately not styled as one: nothing has gone
+          wrong, the decision simply belongs to somebody else. An admin reading
+          this needs to know it is answerable — appoint no manager, or ask
+          theirs — rather than that the screen is broken. */}
+      {department.data && department.data.canHire === false ? (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 p-4"
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
+          <p className="text-xs font-semibold leading-relaxed text-indigo-900">
+            <span className="font-extrabold">
+              {department.data.head
+                ? `${department.data.head} runs hiring for this department.`
+                : 'This department’s manager runs its hiring.'}
+            </span>{' '}
+            Applications and the candidate search are theirs to decide. The roster
+            and departures below are still yours.
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"

@@ -47,10 +47,24 @@ export default function SecurityLayout() {
         // this portal: the department's manager, and a senior guard —
         // `membership_role = 'security'` with a manager-or-supervisor roster
         // rank, whom `_portal_for` routes here so their gate permissions have
-        // screens. Only the first may hire. `role` is `SecurityManager` for
-        // both and would put a 403 in the guard's sidebar; `accessRole` is the
-        // membership role, which is the guard the API actually applies.
-        ...(currentUser?.accessRole === 'MANAGER' && currentUser?.departmentId
+        // screens. `role` is `SecurityManager` for both, so it cannot tell them
+        // apart; `accessRole` is the membership role.
+        //
+        // **Both are admitted now, and until 2026-08-12 only the first was.**
+        // `can_hire_for_department` counts *either* a `manager` membership on
+        // the department *or* an active `staff_assignments` row of rank
+        // `manager` — and a security department's roster manager holds
+        // `membership_role = 'security'`, so the old gate hid the tab from
+        // somebody who has the permission. That is `docs/potential issues/14`
+        // exactly, recreated by a change to the predicate.
+        //
+        // Which leaves the *supervisor*, who reaches the screen and may not
+        // hire. That is deliberate rather than sloppy: the screen asks
+        // `can_hire_for_department` for this department and says who does, so
+        // the cost of showing it is one click and an explanation. The cost of
+        // hiding it is a permission with nowhere to spend it, which is the
+        // more expensive mistake and the one this file has made before.
+        ...(['MANAGER', 'SECURITY'].includes(currentUser?.accessRole) && currentUser?.departmentId
           ? [{
             name: 'Hiring',
             path: `${basePath}/departments/${currentUser.departmentId}/hiring`,

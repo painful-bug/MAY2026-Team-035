@@ -3210,6 +3210,11 @@ components:
           default: 0
           title: Activecomplaintcount
           type: integer
+        canHire:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Canhire
         categories:
           items:
             type: string

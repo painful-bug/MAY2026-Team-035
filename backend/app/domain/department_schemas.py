@@ -136,6 +136,23 @@ class DepartmentDetail(DepartmentSummary):
 
     staff: list[StaffMember] = Field(default_factory=list)
 
+    #: Whether **this caller** may hire for **this department** --
+    #: ``can_hire_for_department`` asked directly, so the screen and the RPC
+    #: cannot disagree about it.
+    #:
+    #: Worth a field rather than a role check in the browser because the answer
+    #: stopped being a property of the caller. Hiring belongs to the department's
+    #: own active manager, and a community admin is the fallback **only while it
+    #: has none** -- so the same admin may hire for one department and not the
+    #: next one down the list. A security department's roster-ranked manager
+    #: qualifies too, and they hold ``membership_role = 'security'``, which no
+    #: role check in the frontend would have guessed.
+    #:
+    #: ``None`` means *not asked on this read*, which is the honest answer for
+    #: the list: it is one round trip per department and the list has no control
+    #: that needs it. Only the single-department read fills it in.
+    can_hire: bool | None = None
+
 
 class StaffMemberInput(CamelModel):
     """A staff member as submitted by the department form.
