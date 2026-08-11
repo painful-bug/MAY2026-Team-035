@@ -1,346 +1,388 @@
-import React, { useState } from 'react';
-import { useApp } from '../../store/useApp';
-import { getVisitorSecurityCode } from '../../lib/visitorPasses';
 import { useNavigate } from 'react-router-dom';
-import QRCode from 'qrcode';
-import { 
-  UserPlus, 
-  AlertTriangle, 
-  CalendarPlus, 
-  CreditCard, 
-  Users, 
-  Megaphone,
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  Bell,
+  CalendarPlus,
   ChevronRight,
-  DollarSign,
-  Download,
-  QrCode,
-  Copy,
-  ShieldCheck
+  CreditCard,
+  Megaphone,
+  UserPlus,
+  Users,
 } from 'lucide-react';
+import { residentApi } from '../../features/resident/residentApi';
+import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
+import { useApp } from '../../store/useApp';
+
+// The resident's front page, over `GET /resident/snapshot` (API.md §14.5).
+//
+// **One read, not six.** The aggregate is a projection of the endpoints each
+// card links to — the same `ResidentInvoice`, `VisitorPass`, `ComplaintSummary`
+// and `Notice` those pages render — which is what stops the bill on this screen
+// disagreeing with the bill on Payments. So there is no second query here for
+// dues or visitors, and adding one would be re-introducing exactly the drift the
+// aggregate exists to prevent.
+//
+// It replaces a read of the zustand demo store, whose shapes are gone rather
+// than mapped: `visitor.flat`, `payment.amount`, `notice.date` and
+// `complaint.timeAgo` were the prototype's invention and none of them is a field
+// the API has. The store slices stay for the admin screens that still read them.
+//
+// Two quick actions used to open a modal here and now navigate. Creating a
+// visitor pass shows a security code exactly once and settling a bill needs an
+// idempotency key the client owns (§14.4): both are whole flows, both live on
+// the page that owns them, and a second implementation of either on the home
+// screen is a second place for them to be wrong. Approving a pass stays on the
+// card — `visitors.pendingApproval` carries whole passes precisely so it can.
+
+const NOTICE_STYLES = {
+  Urgent: 'bg-rose-50 text-rose-700',
+  Important: 'bg-amber-50 text-amber-700',
+  Info: 'bg-blue-50 text-blue-700',
+};
+
+const COMPLAINT_STYLES = {
+  Resolved: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
+  'In Progress': 'bg-blue-55/60 text-blue-700 border border-blue-100/50',
+  Pending: 'bg-rose-50 text-rose-700 border border-rose-100',
+  Cancelled: 'bg-slate-100 text-slate-500 border border-slate-200',
+};
+
+// Every money field on this API is a decimal string, not a number: the wire
+// format is `"1200.00"` so that no amount is ever rounded by a float on the way
+// through. Formatting is the one place it becomes a number.
+const money = (value, currency = 'INR') => {
+  const amount = Number(value ?? 0);
+  if (Number.isNaN(amount)) return String(value ?? '');
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: currency || 'INR',
+    maximumFractionDigits: 0,
+  }).format(amount);
+};
+
+const shortDate = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+};
+
+const relative = (value) => {
+  if (!value) return '';
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) return '';
+  const minutes = Math.round((Date.now() - then.getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return shortDate(value);
+};
+
+const today = () =>
+  new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+function QuickAction({ icon: Icon, tone, title, subtitle, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group rounded-2xl border border-slate-100 bg-white p-4 text-left transition-all hover:border-indigo-200 hover:shadow-sm"
+    >
+      <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${tone}`}>
+        <Icon className="h-4.5 w-4.5" />
+      </div>
+      <p className="text-sm font-extrabold text-slate-800">{title}</p>
+      <div className="mt-1 text-[10px] font-semibold text-slate-400">{subtitle}</div>
+    </button>
+  );
+}
+
+function Card({ children, className = '' }) {
+  return (
+    <div className={`space-y-4 rounded-2xl border border-slate-100 bg-white p-6 ${className}`}>
+      {children}
+    </div>
+  );
+}
 
 export default function DashboardHome() {
-  const { 
-    currentUser, 
-    complaints, 
-    notices, 
-    visitors, 
-    payments, 
-    preapproveVisitor,
-    payInvoice,
-    approveVisitorRequest,
-    rejectVisitorRequest,
-    searchQuery,
-    showToast
-  } = useApp();
-
+  const { currentUser, searchQuery } = useApp();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  // Modals state
-  const [visitorModalOpen, setVisitorModalOpen] = useState(false);
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [visitorQrPass, setVisitorQrPass] = useState(null);
-  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
-  const [visitorQrError, setVisitorQrError] = useState('');
+  useResidentLiveUpdates();
 
-  // Form states for modals
-  const [visitorForm, setVisitorForm] = useState({
-    purpose: 'Guest',
-    purposeDetails: '',
-    time: '16:00',
-    date: new Date().toISOString().split('T')[0],
-    guestCount: 1,
+  const snapshot = useQuery({
+    queryKey: residentKeys.snapshot(),
+    queryFn: () => residentApi.snapshot(),
   });
-  const [selectedInvoice, setSelectedInvoice] = useState(null);
 
-  // 1. Calculations based on user specific mock data and search filter
-  const filteredNotices = notices.filter(n => 
-    n.title.toLowerCase().includes((searchQuery || '').toLowerCase()) ||
-    (n.description && n.description.toLowerCase().includes((searchQuery || '').toLowerCase()))
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: residentKeys.snapshot() });
+
+  const approve = useMutation({
+    mutationFn: (passId) => residentApi.approveVisitorPass(passId),
+    onSuccess: refresh,
+  });
+  const reject = useMutation({
+    mutationFn: (passId) => residentApi.rejectVisitorPass(passId),
+    onSuccess: refresh,
+  });
+
+  const data = snapshot.data;
+  const dues = data?.dues;
+  const visitors = data?.visitors;
+  const primaryInvoice = dues?.primaryInvoice ?? null;
+
+  // The header's search box is UI state and stays one: it narrows what is
+  // already on screen. It is not a query parameter — neither the aggregate nor
+  // the notice list accepts one, and inventing a client-side "search" that
+  // silently only looks at the three newest notices would be worse than this.
+  const term = (searchQuery || '').trim().toLowerCase();
+  const matches = (...values) =>
+    !term || values.some((value) => String(value || '').toLowerCase().includes(term));
+
+  const notices = (data?.notices ?? []).filter((notice) =>
+    matches(notice.title, notice.body)
   );
-
-  const userComplaints = complaints.filter(c => c.userId === currentUser?.id);
-  const filteredComplaints = userComplaints.filter(c => 
-    c.title.toLowerCase().includes((searchQuery || '').toLowerCase()) ||
-    (c.description && c.description.toLowerCase().includes((searchQuery || '').toLowerCase()))
+  const complaints = (data?.complaints?.recent ?? []).filter((complaint) =>
+    matches(complaint.title, complaint.category, complaint.location)
   );
-  const userVisitors = visitors.filter(v => v.flat === currentUser?.flat);
-  const filteredVisitors = userVisitors.filter(v => 
-    (v.name || '').toLowerCase().includes((searchQuery || '').toLowerCase()) ||
-    (v.purpose || '').toLowerCase().includes((searchQuery || '').toLowerCase()) ||
-    (v.purposeDetails || '').toLowerCase().includes((searchQuery || '').toLowerCase())
-  );
-  const pendingVisitors = filteredVisitors.filter(v => v.status === 'Pending Approval');
-  const expectedVisitorsCount = filteredVisitors
-    .filter(v => ['Expected', 'Approved'].includes(v.status))
-    .reduce((count, visitor) => count + Number(visitor.guestCount || 1), 0);
-  const checkedInVisitorsCount = filteredVisitors
-    .filter(v => v.status === 'Checked In')
-    .reduce((count, visitor) => count + Number(visitor.guestCount || 1), 0);
+  const pending = visitors?.pendingApproval ?? [];
 
-  const userPayments = payments.filter(p => p.userId === currentUser?.id);
-  const unpaidInvoices = userPayments.filter(p => p.status === 'Unpaid');
-  const primaryInvoice =
-    unpaidInvoices.find((invoice) =>
-      invoice.title.toLowerCase().includes('maintenance')
-    ) ??
-    unpaidInvoices[0] ??
-    null;
+  if (snapshot.isLoading) {
+    return (
+      <div className="rounded-2xl border border-slate-100 bg-white px-6 py-16 text-center">
+        <p className="text-sm font-bold text-slate-400">Loading your home…</p>
+      </div>
+    );
+  }
 
-  const formatDueDate = (date) =>
-    new Intl.DateTimeFormat('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      timeZone: 'UTC',
-    }).format(new Date(`${date}T00:00:00.000Z`));
-
-  // Format date
-  const getFormattedDate = () => {
-    return new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
-  // Handle Form Submissions
-  const handleAddVisitor = async (e) => {
-    e.preventDefault();
-    setVisitorQrError('');
-    setIsGeneratingQr(true);
-
-    try {
-      const visitor = preapproveVisitor(visitorForm);
-      const qrDataUrl = await QRCode.toDataURL(visitor.qrPayload, {
-        width: 320,
-        margin: 2,
-        color: {
-          dark: '#362016',
-          light: '#fffdf7',
-        },
-        errorCorrectionLevel: 'M',
-      });
-      setVisitorQrPass({ visitor, qrDataUrl });
-    } catch {
-      setVisitorQrError('Unable to generate the QR code. Please try again.');
-    } finally {
-      setIsGeneratingQr(false);
-    }
-  };
-
-  const closeVisitorModal = () => {
-    setVisitorModalOpen(false);
-    setVisitorQrPass(null);
-    setVisitorQrError('');
-    setVisitorForm({
-      purpose: 'Guest',
-      purposeDetails: '',
-      time: '16:00',
-      date: new Date().toISOString().split('T')[0],
-      guestCount: 1,
-    });
-  };
-
-  const copyVisitorSecurityCode = async () => {
-    const securityCode = getVisitorSecurityCode(visitorQrPass?.visitor);
-    if (!securityCode) return;
-
-    await navigator.clipboard.writeText(securityCode);
-    showToast('Security code copied', 'success');
-  };
-
-  const handlePay = (e) => {
-    e.preventDefault();
-    if (!selectedInvoice) return;
-    payInvoice(selectedInvoice.id, 'UPI');
-    setPaymentModalOpen(false);
-  };
+  if (snapshot.error) {
+    return (
+      <div
+        role="alert"
+        className="space-y-3 rounded-2xl border border-rose-100 bg-rose-50 px-6 py-12 text-center"
+      >
+        <p className="text-sm font-extrabold text-rose-800">
+          We could not load your home screen.
+        </p>
+        <p className="text-xs font-semibold text-rose-700">{snapshot.error.message}</p>
+        <button
+          type="button"
+          onClick={() => snapshot.refetch()}
+          className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-700"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Welcome Title */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
-            Good evening, {currentUser?.name.split(' ')[0]} 
+          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
+            Good day, {currentUser?.name?.split(' ')[0] || 'neighbour'}
           </h1>
-          <p className="text-sm font-semibold text-slate-400 mt-1">Here's what's happening in your apartment today.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-400">
+            Here's what's happening in your apartment today.
+          </p>
         </div>
-        <div className="text-xs sm:text-sm font-bold text-slate-500 bg-white border border-slate-100 px-4 py-2 rounded-2xl shadow-sm self-start md:self-auto">
-          {getFormattedDate()}
+        <div className="self-start rounded-2xl border border-slate-100 bg-white px-4 py-2 text-xs font-bold text-slate-500 shadow-sm sm:text-sm md:self-auto">
+          {today()}
         </div>
       </div>
 
-      {/* Quick Action Cards Grid */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <button 
-          onClick={() => setVisitorModalOpen(true)}
-          className="group rounded-2xl border border-slate-100 bg-white p-4 text-left transition-all hover:border-indigo-200 hover:shadow-sm"
-        >
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-            <UserPlus className="h-4.5 w-4.5" />
-          </div>
-          <p className="text-sm font-extrabold text-slate-800">Add Visitor</p>
-          <p className="text-[10px] text-slate-400 font-semibold mt-1">Pre-approve a guest</p>
-        </button>
-
-        <button 
+        <QuickAction
+          icon={UserPlus}
+          tone="bg-indigo-50 text-indigo-600"
+          title="Add Visitor"
+          subtitle="Pre-approve a guest"
+          onClick={() => navigate('/resident/visitors')}
+        />
+        <QuickAction
+          icon={AlertTriangle}
+          tone="bg-rose-50 text-rose-600"
+          title="Raise Complaint"
+          subtitle="Report an issue"
           onClick={() => navigate('/resident/complaints')}
-          className="group rounded-2xl border border-slate-100 bg-white p-4 text-left transition-all hover:border-rose-200 hover:shadow-sm"
-        >
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
-            <AlertTriangle className="h-4.5 w-4.5" />
-          </div>
-          <p className="text-sm font-extrabold text-slate-800">Raise Complaint</p>
-          <p className="text-[10px] text-slate-400 font-semibold mt-1">Report an issue</p>
-        </button>
-
-        <button 
+        />
+        <QuickAction
+          icon={CalendarPlus}
+          tone="bg-emerald-50 text-emerald-600"
+          title="Book Amenity"
+          subtitle="Gym, Club, Pool"
           onClick={() => navigate('/resident/amenities')}
-          className="group rounded-2xl border border-slate-100 bg-white p-4 text-left transition-all hover:border-emerald-200 hover:shadow-sm"
-        >
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-            <CalendarPlus className="h-4.5 w-4.5" />
-          </div>
-          <p className="text-sm font-extrabold text-slate-800">Book Amenity</p>
-          <p className="text-[10px] text-slate-400 font-semibold mt-1">Gym, Club, Pool</p>
-        </button>
-
-        <button 
-          onClick={() => {
-            if (primaryInvoice) {
-              setSelectedInvoice(primaryInvoice);
-              setPaymentModalOpen(true);
-            } else {
-              navigate('/resident/payments');
-            }
-          }}
-          className="group rounded-2xl border border-slate-100 bg-white p-4 text-left transition-all hover:border-amber-200 hover:shadow-sm"
-        >
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-            <CreditCard className="h-4.5 w-4.5" />
-          </div>
-          <p className="text-sm font-extrabold text-slate-800">Pay Maintenance</p>
-          {primaryInvoice ? (
-            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-base font-extrabold text-slate-800">
-                ₹{primaryInvoice.amount.toLocaleString('en-IN')}
+        />
+        <QuickAction
+          icon={CreditCard}
+          tone="bg-amber-50 text-amber-600"
+          title="Pay Maintenance"
+          onClick={() => navigate('/resident/payments')}
+          subtitle={
+            primaryInvoice ? (
+              <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span className="text-base font-extrabold text-slate-800">
+                  {money(primaryInvoice.outstandingAmount, primaryInvoice.currencyCode)}
+                </span>
+                {primaryInvoice.dueOn && (
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    Due {shortDate(primaryInvoice.dueOn)}
+                  </span>
+                )}
               </span>
-              <span className="text-[10px] font-semibold text-slate-400">
-                Due {formatDueDate(primaryInvoice.dueDate)}
-              </span>
-            </div>
-          ) : (
-            <p className="mt-1 text-[10px] font-semibold text-emerald-600">
-              No maintenance dues
-            </p>
-          )}
-        </button>
+            ) : (
+              <span className="font-semibold text-emerald-600">No maintenance dues</span>
+            )
+          }
+        />
       </div>
 
-      {/* Main Grid Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Side: Notices & Complaints */}
-        <div className="lg:col-span-8 space-y-6">
-          {/* Recent Notices */}
-          <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-4">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="space-y-6 lg:col-span-8">
+          <Card>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Megaphone className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-extrabold text-slate-800 text-base">Recent Notices</h3>
+                <Megaphone className="h-5 w-5 text-indigo-600" />
+                <h3 className="text-base font-extrabold text-slate-800">Recent Notices</h3>
               </div>
-              <button 
+              <button
+                type="button"
                 onClick={() => navigate('/resident/notices')}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-0.5"
+                className="flex items-center gap-0.5 text-xs font-bold text-indigo-600 hover:text-indigo-700"
               >
                 View all
-                <ChevronRight className="w-4 h-4" />
+                <ChevronRight className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="divide-y divide-slate-50">
-              {filteredNotices.slice(0, 3).map((notice) => (
-                <div key={notice.id} className="py-4 first:pt-0 last:pb-0 flex items-start justify-between gap-4">
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-550 flex-shrink-0 mt-0.5">
-                      <Megaphone className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-slate-800">{notice.title}</p>
-                      <p className="text-[11px] font-semibold text-slate-400 mt-0.5">{notice.date}</p>
-                    </div>
-                  </div>
-                  <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
-                    notice.urgency === 'High' 
-                      ? 'bg-rose-50 text-rose-700' 
-                      : notice.urgency === 'Medium'
-                      ? 'bg-amber-50 text-amber-700'
-                      : 'bg-blue-50 text-blue-700'
-                  }`}>
-                    {notice.urgency}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* My Complaints */}
-          <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-indigo-650" />
-                <h3 className="font-extrabold text-slate-800 text-base">My Complaints</h3>
-              </div>
-              <button 
-                onClick={() => navigate('/resident/complaints')}
-                className="text-xs font-bold text-indigo-650 hover:text-indigo-750 flex items-center gap-0.5"
-              >
-                View all
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            {filteredComplaints.length === 0 ? (
-              <div className="text-center py-6 text-xs text-slate-400 font-semibold">
-                {searchQuery ? 'No matching complaints found.' : 'No complaints filed yet. Click "Raise Complaint" above if you have an issue.'}
-              </div>
+            {notices.length === 0 ? (
+              <p className="py-6 text-center text-xs font-semibold text-slate-400">
+                {term ? 'No matching notices.' : 'Nothing has been posted yet.'}
+              </p>
             ) : (
-              <div className="space-y-4">
-                {filteredComplaints.slice(0, 2).map((comp) => (
-                  <div key={comp.id} className="p-4 bg-slate-50/50 border border-slate-100 rounded-xl space-y-3.5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h4 className="text-sm font-extrabold text-slate-850">{comp.title}</h4>
-                        <p className="text-[11px] font-semibold text-slate-450 mt-0.5">{comp.assignee} • {comp.timeAgo}</p>
+              <div className="divide-y divide-slate-50">
+                {notices.map((notice) => (
+                  <div
+                    key={notice.id}
+                    className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0"
+                  >
+                    <div className="flex gap-3">
+                      <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-550">
+                        <Megaphone className="h-4 w-4" />
                       </div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        comp.status === 'Resolved' 
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
-                          : comp.status === 'In Progress'
-                          ? 'bg-blue-55/60 text-blue-700 border border-blue-100/50'
-                          : 'bg-rose-50 text-rose-700 border border-rose-100'
-                      }`}>
-                        {comp.status}
-                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-800">{notice.title}</p>
+                        <p className="mt-0.5 text-[11px] font-semibold text-slate-400">
+                          {shortDate(notice.publishedAt)}
+                          {notice.authorName ? ` · ${notice.authorName}` : ''}
+                        </p>
+                      </div>
                     </div>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${
+                        NOTICE_STYLES[notice.urgency] || NOTICE_STYLES.Info
+                      }`}
+                    >
+                      {notice.urgency}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
-          </div>
-        </div>
+          </Card>
 
-        {/* Right Side: Visitors Today & Pay Banner */}
-        <div className="lg:col-span-4 space-y-6">
-          {/* Visitors Today Card */}
-          <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
+          <Card>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-extrabold text-slate-800 text-sm">Visitors Today</h3>
+                <AlertTriangle className="h-5 w-5 text-indigo-650" />
+                <h3 className="text-base font-extrabold text-slate-800">My Complaints</h3>
               </div>
-              <button 
+              <button
+                type="button"
+                onClick={() => navigate('/resident/complaints')}
+                className="flex items-center gap-0.5 text-xs font-bold text-indigo-650 hover:text-indigo-750"
+              >
+                View all
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+
+            {complaints.length === 0 ? (
+              <div className="py-6 text-center text-xs font-semibold text-slate-400">
+                {term
+                  ? 'No matching complaints found.'
+                  : 'No complaints filed yet. Use "Raise Complaint" above if something needs attention.'}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {complaints.slice(0, 2).map((complaint) => (
+                  <button
+                    key={complaint.id}
+                    type="button"
+                    onClick={() => navigate('/resident/complaints')}
+                    className="w-full space-y-3.5 rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-left"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <h4 className="truncate text-sm font-extrabold text-slate-850">
+                          {complaint.title}
+                        </h4>
+                        <p className="mt-0.5 text-[11px] font-semibold text-slate-450">
+                          {complaint.assignee || 'Awaiting assignment'} ·{' '}
+                          {relative(complaint.lastActivityAt)}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {complaint.isUnread && (
+                          <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[9px] font-extrabold text-white">
+                            New
+                          </span>
+                        )}
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            COMPLAINT_STYLES[complaint.status] || COMPLAINT_STYLES.Pending
+                          }`}
+                        >
+                          {complaint.status}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+                {data?.complaints?.total > complaints.length && (
+                  <p className="text-[10px] font-bold text-slate-400">
+                    {data.complaints.total} raised in total.
+                  </p>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <div className="space-y-6 lg:col-span-4">
+          <Card className="space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-indigo-600" />
+                <h3 className="text-sm font-extrabold text-slate-800">Visitors Today</h3>
+              </div>
+              <button
+                type="button"
                 onClick={() => navigate('/resident/visitors?view=history')}
                 className="text-xs font-bold text-indigo-600 hover:underline"
               >
@@ -348,47 +390,63 @@ export default function DashboardHome() {
               </button>
             </div>
 
-            {/* Counters */}
+            {/* Guests, not passes: one pass for a party of twelve counts as
+                twelve, which is what a resident means by "how many are coming". */}
             <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-100/50">
-                <p className="text-base font-extrabold text-slate-850">{expectedVisitorsCount}</p>
-                <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Expected</p>
+              <div className="rounded-xl border border-slate-100/50 bg-slate-50/50 p-2.5">
+                <p className="text-base font-extrabold text-slate-850">
+                  {visitors?.expectedGuests ?? 0}
+                </p>
+                <p className="mt-0.5 text-[9px] font-bold uppercase text-slate-400">Expected</p>
               </div>
-              <div className="bg-emerald-50/20 p-2.5 rounded-xl border border-emerald-100/30">
-                <p className="text-base font-extrabold text-emerald-700">{checkedInVisitorsCount}</p>
-                <p className="text-[9px] text-emerald-650 font-bold uppercase mt-0.5">In</p>
+              <div className="rounded-xl border border-emerald-100/30 bg-emerald-50/20 p-2.5">
+                <p className="text-base font-extrabold text-emerald-700">
+                  {visitors?.checkedInGuests ?? 0}
+                </p>
+                <p className="mt-0.5 text-[9px] font-bold uppercase text-emerald-650">In</p>
               </div>
-              <div className="bg-indigo-50/20 p-2.5 rounded-xl border border-indigo-100/30">
-                <p className="text-base font-extrabold text-indigo-700">{pendingVisitors.length}</p>
-                <p className="text-[9px] text-indigo-650 font-bold uppercase mt-0.5">Pending</p>
+              <div className="rounded-xl border border-indigo-100/30 bg-indigo-50/20 p-2.5">
+                <p className="text-base font-extrabold text-indigo-700">
+                  {visitors?.pendingCount ?? 0}
+                </p>
+                <p className="mt-0.5 text-[9px] font-bold uppercase text-indigo-650">Pending</p>
               </div>
             </div>
 
-            {/* Pending approvals requests */}
-            {pendingVisitors.length > 0 ? (
+            {pending.length > 0 ? (
               <div className="space-y-3">
-                <p className="text-[10px] font-extrabold text-indigo-655 uppercase tracking-wide bg-indigo-50/55 p-2 rounded-lg border border-indigo-100/30">
-                  ⚠️ {pendingVisitors.length} visitor requests awaiting your approval:
+                <p className="rounded-lg border border-indigo-100/30 bg-indigo-50/55 p-2 text-[10px] font-extrabold uppercase tracking-wide text-indigo-655">
+                  {visitors.pendingCount} visitor request
+                  {visitors.pendingCount === 1 ? '' : 's'} awaiting your approval
                 </p>
                 <div className="space-y-2.5">
-                  {pendingVisitors.slice(0, 3).map((vis) => (
-                    <div key={vis.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-2.5">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="text-xs font-bold text-slate-800">{vis.name}</p>
-                          <p className="text-[10px] text-slate-450 font-semibold">{vis.purpose} • {vis.eta}</p>
-                        </div>
+                  {pending.map((pass) => (
+                    <div
+                      key={pass.id}
+                      className="space-y-2.5 rounded-xl border border-slate-100 bg-slate-50 p-3"
+                    >
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{pass.visitorName}</p>
+                        <p className="text-[10px] font-semibold text-slate-450">
+                          {pass.purposeDetails || pass.purpose}
+                          {pass.validFrom ? ` · ${shortDate(pass.validFrom)}` : ''} ·{' '}
+                          {pass.guestCount} guest{pass.guestCount === 1 ? '' : 's'}
+                        </p>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <button
-                          onClick={() => approveVisitorRequest(vis.id)}
-                          className="py-1 bg-indigo-600 hover:bg-indigo-750 text-white text-[10px] font-bold rounded-lg transition-colors"
+                          type="button"
+                          onClick={() => approve.mutate(pass.id)}
+                          disabled={approve.isPending || reject.isPending}
+                          className="rounded-lg bg-indigo-600 py-1 text-[10px] font-bold text-white transition-colors hover:bg-indigo-750 disabled:bg-slate-300"
                         >
                           Approve
                         </button>
                         <button
-                          onClick={() => rejectVisitorRequest(vis.id)}
-                          className="py-1 border border-slate-200 hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-lg transition-colors"
+                          type="button"
+                          onClick={() => reject.mutate(pass.id)}
+                          disabled={approve.isPending || reject.isPending}
+                          className="rounded-lg border border-slate-200 py-1 text-[10px] font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:text-slate-300"
                         >
                           Reject
                         </button>
@@ -396,290 +454,86 @@ export default function DashboardHome() {
                     </div>
                   ))}
                 </div>
+                {(approve.error || reject.error) && (
+                  <p role="alert" className="text-[10px] font-semibold text-rose-600">
+                    {(approve.error || reject.error).message}
+                  </p>
+                )}
               </div>
             ) : (
-              <div className="text-center py-4 text-xs text-slate-400 font-semibold border border-dashed border-slate-200 rounded-xl">
+              <div className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-xs font-semibold text-slate-400">
                 No pending requests.
               </div>
             )}
-          </div>
+          </Card>
 
-          {/* Maintenance Due Blue Banner */}
           {primaryInvoice && (
-            <div className="bg-indigo-600 text-white rounded-2xl p-6 space-y-4 shadow-lg shadow-indigo-150 relative overflow-hidden">
-              {/* Background abstract circles */}
-              <div className="absolute right-0 bottom-0 translate-x-1/4 translate-y-1/4 w-32 h-32 bg-white/10 rounded-full" />
-              
+            <div className="relative space-y-4 overflow-hidden rounded-2xl bg-indigo-600 p-6 text-white shadow-lg shadow-indigo-150">
+              <div className="absolute bottom-0 right-0 h-32 w-32 translate-x-1/4 translate-y-1/4 rounded-full bg-white/10" />
               <div className="space-y-1">
-                <span className="text-[9px] font-extrabold uppercase tracking-widest text-indigo-200">Maintenance Due</span>
-                <p className="text-3xl font-extrabold">₹{primaryInvoice.amount.toLocaleString()}</p>
-                <p className="text-[10px] text-indigo-150 font-semibold">Due {primaryInvoice.dueDate}</p>
+                <span className="text-[9px] font-extrabold uppercase tracking-widest text-indigo-200">
+                  {primaryInvoice.title}
+                </span>
+                <p className="text-3xl font-extrabold">
+                  {money(primaryInvoice.outstandingAmount, primaryInvoice.currencyCode)}
+                </p>
+                <p className="text-[10px] font-semibold text-indigo-150">
+                  {primaryInvoice.dueOn ? `Due ${shortDate(primaryInvoice.dueOn)}` : 'Payable now'}
+                  {primaryInvoice.isOverdue ? ' · overdue' : ''}
+                </p>
+                {/* The total is a lower bound when the aggregate could not read
+                    every unpaid bill. Saying so beats a number quietly too small:
+                    a resident pays what they are shown and believes they are square. */}
+                {dues?.unpaidCount > 1 && (
+                  <p className="text-[10px] font-semibold text-indigo-150">
+                    {dues.unpaidCount} unpaid ·{' '}
+                    {money(dues.outstandingTotal, dues.currencyCode)}
+                    {dues.isPartialTotal ? ' or more' : ''} outstanding
+                  </p>
+                )}
               </div>
-
-              <button 
-                onClick={() => {
-                  setSelectedInvoice(primaryInvoice);
-                  setPaymentModalOpen(true);
-                }}
-                className="w-full bg-white/20 hover:bg-white/35 text-white font-bold py-2.5 rounded-xl text-xs transition-colors backdrop-blur-sm z-10 relative"
+              <button
+                type="button"
+                onClick={() => navigate('/resident/payments')}
+                className="relative z-10 w-full rounded-xl bg-white/20 py-2.5 text-xs font-bold text-white backdrop-blur-sm transition-colors hover:bg-white/35"
               >
-                Pay Now
+                {primaryInvoice.isPayable ? 'Pay Now' : 'View bill'}
               </button>
             </div>
           )}
+
+          <Card className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Bell className="h-4 w-4 text-indigo-600" />
+              <h3 className="text-sm font-extrabold text-slate-800">Recent Activity</h3>
+              {data?.unreadNotifications > 0 && (
+                <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                  {data.unreadNotifications}
+                </span>
+              )}
+            </div>
+            {(data?.activity ?? []).length === 0 ? (
+              <p className="text-xs font-semibold text-slate-400">Nothing yet.</p>
+            ) : (
+              <ul className="space-y-2.5">
+                {data.activity.map((item) => (
+                  <li key={item.id} className="flex items-start gap-2">
+                    {item.isUnread && (
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-indigo-500" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold text-slate-700">{item.title}</p>
+                      <p className="text-[10px] font-semibold text-slate-400">
+                        {relative(item.createdAt)}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         </div>
       </div>
-
-      {/* --- MODALS --- */}
-
-      {/* Visitor Pre-Approval Modal */}
-      {visitorModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl border border-slate-100 max-w-md w-full p-6 space-y-6 animate-slide-up">
-            <div className="flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-extrabold text-slate-900">
-                  {visitorQrPass ? 'Visitor QR Pass' : 'Pre-approve Visitors'}
-                </h3>
-                <p className="mt-1 text-[11px] font-semibold text-slate-400">
-                  {visitorQrPass
-                    ? 'One QR code for the complete visitor group.'
-                    : 'Create a shared gate pass for expected visitors.'}
-                </p>
-              </div>
-              <button 
-                onClick={closeVisitorModal}
-                className="text-xs font-bold text-slate-400 hover:text-slate-650"
-              >
-                {visitorQrPass ? 'Done' : 'Cancel'}
-              </button>
-            </div>
-
-            {visitorQrPass ? (
-              <div className="space-y-5">
-                <div className="mx-auto w-fit rounded-2xl border border-indigo-100 bg-white p-3 shadow-sm">
-                  <img
-                    src={visitorQrPass.qrDataUrl}
-                    alt="Visitor group QR pass"
-                    className="h-56 w-56"
-                  />
-                </div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-extrabold text-slate-800">
-                        {visitorQrPass.visitor.purpose === 'Other'
-                          ? visitorQrPass.visitor.purposeDetails || 'Other'
-                          : visitorQrPass.visitor.purpose}{' '}
-                        Group Pass
-                      </p>
-                      <p className="mt-1 text-[11px] font-semibold text-slate-400">
-                        {visitorQrPass.visitor.purpose} ·{' '}
-                        {visitorQrPass.visitor.date} at{' '}
-                        {visitorQrPass.visitor.expectedTime}
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-[10px] font-extrabold text-indigo-700">
-                      {visitorQrPass.visitor.guestCount} Guest
-                      {visitorQrPass.visitor.guestCount === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2 rounded-xl bg-white p-3 text-[11px] font-semibold text-slate-500">
-                    <QrCode className="h-4 w-4 shrink-0 text-indigo-600" />
-                    Share this same QR and security code with every guest in the
-                    group.
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="rounded-xl bg-white p-2 text-indigo-600 shadow-sm">
-                        <ShieldCheck className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                          Security Code
-                        </p>
-                        <p className="mt-0.5 font-mono text-xl font-extrabold tracking-[0.2em] text-slate-900">
-                          {getVisitorSecurityCode(visitorQrPass.visitor)}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={copyVisitorSecurityCode}
-                      className="flex items-center gap-1.5 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      Copy
-                    </button>
-                  </div>
-                  <p className="mt-3 text-[10px] font-semibold leading-relaxed text-slate-500">
-                    Security can scan the QR or enter this code manually. It is
-                    valid for the complete visitor group.
-                  </p>
-                </div>
-                <a
-                  href={visitorQrPass.qrDataUrl}
-                  download={`HomeBandhu-${visitorQrPass.visitor.purpose}-Group-QR.png`}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white shadow-md shadow-indigo-100 transition-colors hover:bg-indigo-700"
-                >
-                  <Download className="h-4 w-4" />
-                  Download QR Code
-                </a>
-              </div>
-            ) : (
-              <form onSubmit={handleAddVisitor} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Purpose</label>
-                  <select
-                    value={visitorForm.purpose}
-                    onChange={(e) => setVisitorForm({ ...visitorForm, purpose: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
-                  >
-                    <option value="Guest">Guest</option>
-                    <option value="Service">Service</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-
-                {visitorForm.purpose === 'Other' && (
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                      Specify Purpose
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={visitorForm.purposeDetails}
-                      onChange={(e) =>
-                        setVisitorForm({
-                          ...visitorForm,
-                          purposeDetails: e.target.value,
-                        })
-                      }
-                      placeholder="e.g. Family event"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-medium"
-                    />
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Expected Date</label>
-                    <input
-                      type="date"
-                      required
-                      min={new Date().toISOString().split('T')[0]}
-                      value={visitorForm.date}
-                      onChange={(e) => setVisitorForm({ ...visitorForm, date: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Expected Time</label>
-                    <input
-                      type="time"
-                      required
-                      value={visitorForm.time}
-                      onChange={(e) => setVisitorForm({ ...visitorForm, time: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Number of Guests</label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    max="25"
-                    value={visitorForm.guestCount}
-                    onChange={(e) =>
-                      setVisitorForm({
-                        ...visitorForm,
-                        guestCount: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
-                  />
-                  <p className="text-[10px] font-semibold text-slate-400">
-                    The same QR code will be valid for this complete group.
-                  </p>
-                </div>
-
-                {visitorQrError && (
-                  <p className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
-                    {visitorQrError}
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isGeneratingQr}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white shadow-md shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  <QrCode className="h-4 w-4" />
-                  {isGeneratingQr ? 'Generating QR...' : 'Generate QR Code'}
-                </button>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Pay Maintenance Due Modal */}
-      {paymentModalOpen && selectedInvoice && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl border border-slate-100 max-w-md w-full p-6 space-y-6 animate-slide-up">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-extrabold text-slate-900">Simulate Payment</h3>
-              <button 
-                onClick={() => setPaymentModalOpen(false)}
-                className="text-xs font-bold text-slate-400 hover:text-slate-650"
-              >
-                Cancel
-              </button>
-            </div>
-
-            <div className="bg-indigo-50/50 border border-indigo-100/50 rounded-2xl p-4.5 space-y-2">
-              <span className="text-[9px] font-extrabold uppercase tracking-wide text-indigo-500">Invoice Details</span>
-              <p className="text-sm font-bold text-slate-805">{selectedInvoice.title}</p>
-              <div className="flex justify-between items-baseline pt-2">
-                <span className="text-xs text-slate-450 font-bold">Total Amount:</span>
-                <span className="text-xl font-extrabold text-slate-900">₹{selectedInvoice.amount.toLocaleString()}</span>
-              </div>
-            </div>
-
-            <form onSubmit={handlePay} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Payment Method</label>
-                <div className="grid grid-cols-2 gap-3 text-center">
-                  <div className="p-3 border border-indigo-500 bg-indigo-50/20 text-indigo-950 rounded-xl text-xs font-bold cursor-pointer">
-                    UPI (Simulated)
-                  </div>
-                  <div className="p-3 border border-slate-150 text-slate-500 hover:bg-slate-50 rounded-xl text-xs font-bold cursor-not-allowed">
-                    Credit Card
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-slate-400 font-semibold text-center leading-relaxed">
-                Clicking pay will mark the maintenance invoice status as **Paid** in context memory and update your dashboard stats.
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3 bg-indigo-650 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-100 text-sm flex items-center justify-center gap-1.5"
-              >
-                <DollarSign className="w-4 h-4" />
-                Pay ₹{selectedInvoice.amount.toLocaleString()}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

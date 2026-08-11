@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CalendarDays,
@@ -24,9 +25,89 @@ import {
   getResidentAmenityBookings,
   validateBookingSlot,
 } from '../../features/amenities/services/amenityBookingsService.js';
-import { useAmenitiesStore } from '../../features/amenities/store/useAmenitiesStore.js';
+import { DEFAULT_AMENITY_SETTINGS } from '../../features/amenities/constants/amenitySettings.js';
+import { normalizeAmenityRecord } from '../../features/amenities/utils/amenitySettingsModel.js';
+import { residentApi } from '../../features/resident/residentApi.js';
 import { useAppStore } from '../../store/appStore.js';
 import { useAuthStore } from '../../store/authStore.js';
+
+// The catalogue below is wired to `GET /amenities/available`
+// (`docs/API.md` §10, `backend/app/api/v1/routers/resident_amenities.py`) —
+// this is finding 3.1's fix: the old `useAmenitiesStore` read
+// `getDashboardSnapshot()`, i.e. `GET /dashboard/snapshot`, which is
+// ADMIN/MANAGER-guarded and 403s a resident. `BookableAmenity` is a distinct,
+// narrower projection (no `pendingRequests`/`outstandingDues`), so it is
+// mapped onto the shape the existing booking UI already expects rather than
+// the admin shape it used to read.
+//
+// **Booking creation stays exactly as it was.** It already calls real
+// endpoints (`POST /amenities/{id}/bookings/request`,
+// `POST /amenity-bookings/cancel`) — that part of the demo was not invented.
+// What is untouched here is the *read* side of "my bookings"
+// (`getResidentAmenityBookings`), which still goes through the
+// admin-guarded snapshot and will 403 for a resident; wiring it to
+// `GET /amenity-bookings/mine` is out of this page's scope (see the phase-6
+// charter) and is reported as a blocker instead of fixed in place.
+const mapBookableAmenity = (item) =>
+  normalizeAmenityRecord({
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    category: item.category,
+    location: item.location,
+    image: item.image,
+    capacity: item.capacity,
+    isActive: true,
+    status: 'Active',
+    operatingHours: {
+      openingTime: item.openingTime,
+      closingTime: item.closingTime,
+      slotDurationMinutes: item.slotDurationMinutes,
+      cleaningBufferMinutes: 0,
+    },
+    bookingSettings: {
+      mode: item.bookingMode,
+      maxActiveBookingsPerResident: item.maxActiveBookingsPerResident,
+      requireAdminApproval: item.requiresApproval,
+      allowPrivateBooking: item.allowPrivateBooking,
+      allowRecurringBooking: item.allowRecurringBooking,
+      allowGuestBooking: item.allowGuestBooking,
+      allowSameDayBooking: item.allowSameDayBooking,
+      enableWaitlist: false,
+      enableAutoApproval: false,
+    },
+    paymentSettings: {
+      bookingFee: item.bookingFee,
+      securityDeposit: item.securityDeposit,
+      lateCancellationCharge: 0,
+      damageDeposit: 0,
+      refundPolicy: item.refundPolicy,
+      currency: item.currencyCode,
+    },
+    availabilitySettings: {
+      // `closedDays` is real; `maintenanceDays` / `holidayOverrides` have no
+      // resident-facing reader (admin-only fields), so they are empty rather
+      // than guessed at.
+      closedDays: item.closedDays || [],
+      maintenanceDays: [],
+      holidayOverrides: [],
+      temporaryClosure: false,
+      // `null` on the wire means "this amenity sets no limit of its own", not
+      // "there is no limit" (docs/API.md §10) — the booking RPC still applies
+      // its own rules on write. The client-side slot math needs a concrete
+      // number, so a `null` here falls back to the same defaults the admin
+      // settings form ships with, not to an invented value.
+      minimumBookingDurationMinutes:
+        item.minimumBookingDurationMinutes ??
+        DEFAULT_AMENITY_SETTINGS.availabilitySettings.minimumBookingDurationMinutes,
+      maximumBookingDurationMinutes:
+        item.maximumBookingDurationMinutes ??
+        DEFAULT_AMENITY_SETTINGS.availabilitySettings.maximumBookingDurationMinutes,
+      advanceBookingWindowDays:
+        item.advanceBookingWindowDays ??
+        DEFAULT_AMENITY_SETTINGS.availabilitySettings.advanceBookingWindowDays,
+    },
+  });
 
 const todayISO = () => new Date().toISOString().split('T')[0];
 
@@ -197,10 +278,23 @@ const statusClassNames = {
 };
 
 export default function Amenities() {
-  const amenities = useAmenitiesStore((state) => state.amenities);
-  const isLoading = useAmenitiesStore((state) => state.isLoading);
-  const amenitiesError = useAmenitiesStore((state) => state.error);
-  const fetchAmenities = useAmenitiesStore((state) => state.fetchAmenities);
+  const queryClient = useQueryClient();
+  const amenitiesQuery = useQuery({
+    queryKey: ['resident', 'amenities-available'],
+    queryFn: () => residentApi.availableAmenities(),
+  });
+  const amenities = useMemo(
+    () => (amenitiesQuery.data?.items || []).map(mapBookableAmenity),
+    [amenitiesQuery.data]
+  );
+  const isLoading = amenitiesQuery.isLoading;
+  const amenitiesError = amenitiesQuery.error
+    ? amenitiesQuery.error.message || 'Could not load amenities.'
+    : null;
+  const fetchAmenities = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ['resident', 'amenities-available'] }),
+    [queryClient]
+  );
   const currentUser = useAuthStore((state) => state.currentUser);
   const searchQuery = useAppStore((state) => state.searchQuery);
   const showToast = useAppStore((state) => state.showToast);
@@ -235,7 +329,7 @@ export default function Amenities() {
   }, [currentUser?.id]);
 
   useEffect(() => {
-    fetchAmenities();
+    // No explicit initial fetch: `useQuery` above already fetches on mount.
     loadUserBookings();
 
     const handleRefresh = () => {
