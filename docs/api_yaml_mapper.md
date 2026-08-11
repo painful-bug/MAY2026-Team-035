@@ -393,6 +393,8 @@ schemas `domain/service_provider_schemas.py`, `domain/common_schemas.py`, `domai
 | `GET /api/v1/worker/applications` | `list_my_applications` :98 | `list_my_applications_api_v1_worker_applications_get` | 200 array of ServiceApplication | § `GET /api/v1/worker/applications` (API.md:4284) |
 | `POST /api/v1/worker/applications` | `apply` :126 | `apply_api_v1_worker_applications_post` | 201 ServiceApplication | § `POST /api/v1/worker/applications` (API.md:4300) |
 | `DELETE /api/v1/worker/applications/{application_id}` | `withdraw` :152 | `withdraw_api_v1_worker_applications__application_id__delete` | 200 ServiceApplication | § `DELETE …/{applicationId}` |
+| `POST /api/v1/worker/applications/{application_id}/decision` | `decide_invitation` | `decide_invitation_api_v1_worker_applications__application_id__decision_post` | 200 ServiceApplication | § `POST …/{applicationId}/decision` |
+| `POST /api/v1/telemetry/service-signup` | `record_service_signup_event` | `record_service_signup_event_api_v1_telemetry_service_signup_post` | 200 MessageResponse | § `POST /api/v1/telemetry/service-signup` |
 | `GET /api/v1/worker/communities` | `list_my_communities` :41 | `list_my_communities_api_v1_worker_communities_get` | 200 array of ServiceEngagement | § `GET /api/v1/worker/communities` (API.md:4218) |
 | `GET /api/v1/worker/communities/search` | `search_communities` :67 | `search_communities_api_v1_worker_communities_search_get` | 200 array of ServiceableCommunity | § `GET …/communities/search` |
 | `POST /api/v1/worker/communities/{staff_id}/departure` | `request_departure` :185 | `request_departure_api_v1_worker_communities__staff_id__departure_post` | 201 StaffDeparture | § `POST …/{staffId}/departure` |

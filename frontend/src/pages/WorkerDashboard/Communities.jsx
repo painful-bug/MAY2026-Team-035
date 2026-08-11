@@ -1,9 +1,13 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, LogOut, MapPin, Search } from 'lucide-react';
+import { Building2, LogOut, MapPin } from 'lucide-react';
+import CommunitySearch from '../../components/common/CommunitySearch';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
+import { destinationAfterAuth } from '../../routes/authRoutes';
+import { useAuthStore } from '../../store/authStore';
+import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
 
 // One screen, three panels. The plan gave this three sidebar entries --
 // MyCommunities, FindCommunities, Applications -- and they are three views of
@@ -133,7 +137,7 @@ function Rosters() {
   );
 }
 
-function Find() {
+function Find({ onApplied }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
   const [term, setTerm] = useState('');
@@ -141,11 +145,18 @@ function Find() {
     queryKey: ['worker-community-search', term],
     queryFn: () => workerApi.searchCommunities({ query: term }),
   });
+  const profile = useQuery({ queryKey: ['worker-profile'], queryFn: workerApi.profile });
+  const applications = useQuery({ queryKey: ['worker-applications'], queryFn: workerApi.myApplications });
+  const openDepartments = new Set(
+    (applications.data ?? []).filter((row) => row.status === 'pending').map((row) => row.departmentId),
+  );
   const apply = useMutation({
     mutationFn: (departmentId) => workerApi.apply({ departmentId }),
     onSuccess: () => {
+      void recordServiceSignupEvent('first_application_submitted');
       void queryClient.invalidateQueries({ queryKey: ['worker-applications'] });
       void queryClient.invalidateQueries({ queryKey: ['worker-community-search'] });
+      onApplied();
     },
   });
 
@@ -153,26 +164,42 @@ function Find() {
 
   return (
     <div className="space-y-4">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          setTerm(query.trim());
-        }}
-        className="flex gap-2"
-      >
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by name, or leave blank for the nearest"
-            className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm font-medium outline-none focus:border-indigo-400"
-          />
-        </div>
-        <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
-          Search
-        </button>
-      </form>
+      <CommunitySearch
+        inputId="worker-community-search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onSubmit={() => setTerm(query.trim())}
+        placeholder="Search by name, or leave blank for the nearest"
+        submitLabel="Search"
+        isLoading={results.isPending}
+        error={results.isError ? results.error?.message || 'Could not search for communities.' : null}
+        items={rows}
+        showEmpty={results.isSuccess && rows.length === 0}
+        emptyMessage="No communities match your skills, name search, and travel radius right now."
+        resultsClassName="grid gap-3 sm:grid-cols-2"
+        renderResult={(community) => (
+          <div key={community.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-extrabold text-slate-900">{community.name}</p>
+                <p className="mt-0.5 flex items-center gap-1 truncate text-xs font-semibold text-slate-500">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {[community.city, community.state].filter(Boolean).join(', ') || 'Location not set'}
+                </p>
+              </div>
+              {community.distanceKm != null && <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold tabular-nums text-slate-600">{community.distanceKm} km</span>}
+            </div>
+            {community.matchingSkillNames?.length > 0 && <p className="mt-2 text-[11px] font-semibold text-slate-500">Needs: {community.matchingSkillNames.join(', ')}</p>}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(community.departments ?? []).map((department) => (
+                <button key={department.id} type="button" disabled={apply.isPending || openDepartments.has(department.id)} onClick={() => apply.mutate(department.id)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
+                  {openDepartments.has(department.id) ? 'Application open' : `Apply · ${department.name}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      />
 
       {apply.isError && (
         <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -185,67 +212,32 @@ function Find() {
         </p>
       )}
 
-      {results.isPending && <p className="py-10 text-center text-sm font-semibold text-slate-400">Searching…</p>}
+      <p className="rounded-xl bg-indigo-50 px-4 py-3 text-xs font-semibold text-indigo-800">
+        Showing the nearest matches within your {profile.data?.serviceRadiusKm ?? 15} km travel radius. Communities outside it or without coordinates are not shown.
+      </p>
 
-      {results.isSuccess && rows.length === 0 && (
-        // The endpoint's own note: an empty result usually means no skills
-        // saved, not that no society needs them. Saying so here is the fix.
-        <p className="rounded-2xl border border-dashed border-slate-300 px-5 py-10 text-center text-sm font-semibold text-slate-500">
-          Nothing matched. If you have not saved your trades yet, do that on{' '}
-          <span className="font-extrabold">Profile</span> — this search matches on them.
-        </p>
-      )}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {rows.map((community) => (
-          <div key={community.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-extrabold text-slate-900">{community.name}</p>
-                <p className="mt-0.5 flex items-center gap-1 truncate text-xs font-semibold text-slate-500">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {[community.city, community.state].filter(Boolean).join(', ') || 'Location not set'}
-                </p>
-              </div>
-              {community.distanceKm != null && (
-                <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold tabular-nums text-slate-600">
-                  {community.distanceKm} km
-                </span>
-              )}
-            </div>
-
-            {community.matchingSkillNames?.length > 0 && (
-              <p className="mt-2 text-[11px] font-semibold text-slate-500">
-                Needs: {community.matchingSkillNames.join(', ')}
-              </p>
-            )}
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(community.departments ?? []).map((department) => (
-                <button
-                  key={department.id}
-                  type="button"
-                  disabled={apply.isPending}
-                  onClick={() => apply.mutate(department.id)}
-                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
-                >
-                  Apply · {department.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
 
 function Applications() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const refreshSession = useAuthStore((state) => state.refreshSession);
   const applications = useQuery({ queryKey: ['worker-applications'], queryFn: workerApi.myApplications });
   const withdraw = useMutation({
     mutationFn: (id) => workerApi.withdrawApplication(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['worker-applications'] }),
+  });
+  const decision = useMutation({
+    mutationFn: ({ id, value }) => workerApi.decideInvitation(id, value),
+    onSuccess: async (_, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ['worker-applications'] });
+      if (variables.value === 'accepted') {
+        const context = await refreshSession();
+        navigate(destinationAfterAuth(context), { replace: true });
+      }
+    },
   });
   const rows = applications.data ?? [];
 
@@ -260,6 +252,11 @@ function Applications() {
 
   return (
     <div className="space-y-3">
+      {withdraw.isError || decision.isError ? (
+        <p role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {withdraw.error?.message || decision.error?.message || 'Could not update that application.'}
+        </p>
+      ) : null}
       {rows.map((application) => (
         <div key={application.id} className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -287,7 +284,7 @@ function Applications() {
               >
                 {application.status}
               </span>
-              {application.status === 'pending' && (
+              {application.status === 'pending' && application.direction === 'applied' && (
                 <button
                   type="button"
                   disabled={withdraw.isPending}
@@ -296,6 +293,12 @@ function Applications() {
                 >
                   Withdraw
                 </button>
+              )}
+              {application.status === 'pending' && application.direction === 'invited' && (
+                <>
+                  <button type="button" disabled={decision.isPending} onClick={() => decision.mutate({ id: application.id, value: 'accepted' })} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">Accept</button>
+                  <button type="button" disabled={decision.isPending} onClick={() => decision.mutate({ id: application.id, value: 'rejected' })} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-50">Decline</button>
+                </>
               )}
             </div>
           </div>
@@ -339,7 +342,7 @@ export default function WorkerCommunities() {
       </div>
 
       {tab === 'rosters' && <Rosters />}
-      {tab === 'find' && <Find />}
+      {tab === 'find' && <Find onApplied={() => setTab('applications')} />}
       {tab === 'applications' && <Applications />}
     </div>
   );

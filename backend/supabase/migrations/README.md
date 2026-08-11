@@ -3,17 +3,14 @@
 Applied in filename order. `0001_baseline.sql` is headed *"Apply only to a new
 Supabase project"*; everything after it is additive.
 
-**None of them has been applied to any database yet** — including
-`0001_baseline.sql`.
+The linked hosted project was verified on 2026-08-11 with every repository
+migration through `0047` applied. Those files are immutable. All fixes and new
+features now use forward-only timestamped migrations; never edit an applied
+file or weaken constraints to accommodate hosted drift.
 
-That is also why a handful of rows below say **corrected `<date>`** rather than
-naming a follow-up migration. The additive rule protects databases that have
-already run a file; where no database has, and the correction is a string literal
-inside a function body, a fix migration would have to re-declare the entire
-function to change it — and the copy would then be free to drift from the
-original. `0022` set the precedent on 2026-08-04 and `0032`, `0036`, `0037` and
-`0043` follow it. **Once anything here has been applied anywhere, this stops
-being available and corrections become new numbered files.**
+Rows below that say **corrected `<date>`** describe corrections made before the
+linked deployment boundary was verified. They are historical context, not
+permission to edit those migrations again.
 
 ## Number ranges
 
@@ -75,6 +72,8 @@ operations, the worker portal needed a migration nobody had planned for, and
 | `0045_departure_scheduling.sql` | a departure gets a date and the manager gets the decision: the time-aware freeze (`departure_bars_work`), the queue-priority column on `dispatch_tasks` with the `departure_removal` timekeeper as the fifth kind, windowed release, decide-with-date — **overturns 0043's zero-commitment refusal on Approve** (PO, 2026-08-10; the gate survives on direct Remove) — plus `departure_coverage`, `staff_schedule_items`, and a name that settings can no longer rewrite |
 | `0046_direct_messages.sql` | person-to-person chat for the dock on every portal: one thread per pair per community, the worker↔resident job thread that locks when the work order ends, `dm_pair_allowed`/`dm_recipients` ("the committee" is the admin role), and names as snapshots because `profiles` is self-read-only |
 | `0047_security_roster.sql` | one read function, `security_roster` — the shift form's guard picker, authorized by `gate_admin_community_for`, because a security-rank manager cannot reach the hiring surface's roster reads. No table, no view; the ERD is untouched |
+| `20260811162409_service_professional_onboarding.sql` | atomic provider registration, mandatory coordinates and active skills, radius-bounded PostGIS search in both directions, exact department-manager/admin-fallback hiring authority, worker/security mode enforcement, and community coordinate writes |
+| `20260811163408_service_signup_funnel_telemetry.sql` | the narrow five-event signup funnel and its 30-day retention job; no generic analytics or experiment framework |
 
 `0028` is the resident range's first file rather than `0025` because §9 puts it
 first: it closes a disclosure in code that already ships instead of adding a

@@ -25,6 +25,7 @@ from app.domain.service_provider_schemas import (
     SetSkillsRequest,
     Skill,
     SkillsSavedResult,
+    SaveServiceProviderRequest,
     UpdateServiceProviderRequest,
 )
 from app.repositories import service_providers_repository as repo
@@ -99,6 +100,23 @@ def save_mine(
         latitude=body.latitude,
         longitude=body.longitude,
         service_radius_km=body.service_radius_km,
+    )
+    return get_mine(client, profile_id=profile_id)
+
+
+def register_mine(
+    client: Client, *, profile_id: str, body: SaveServiceProviderRequest
+) -> ServiceProviderProfile:
+    """Atomically create or repair the caller's complete professional profile."""
+    repo.register_profile(
+        client,
+        display_name=body.display_name,
+        headline=body.headline,
+        phone=body.phone,
+        latitude=body.latitude,
+        longitude=body.longitude,
+        service_radius_km=body.service_radius_km,
+        skill_ids=body.skill_ids,
     )
     return get_mine(client, profile_id=profile_id)
 

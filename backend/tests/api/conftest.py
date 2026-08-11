@@ -79,6 +79,11 @@ def admin_api_client(api_client: TestClient) -> TestClient:
 
 
 @pytest.fixture
+def worker_api_client(api_client: TestClient) -> TestClient:
+    return _authenticated_client(api_client, role="worker")
+
+
+@pytest.fixture
 def csrf_headers(api_client: TestClient) -> dict[str, str]:
     """Start the pre-auth CSRF flow and return unsafe-request headers."""
     response = api_client.get("/api/v1/auth/csrf")

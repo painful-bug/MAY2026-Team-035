@@ -106,6 +106,10 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
         captured["saved"] = kwargs
         return "provider-id"
 
+    def fake_register_profile(client: Any, **kwargs: Any) -> str:
+        captured["registered"] = kwargs
+        return "provider-id"
+
     def fake_set_skills(client: Any, *, skill_ids: list[str]) -> int:
         captured["skill_ids"] = skill_ids
         return captured["skill_count"]
@@ -118,6 +122,7 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     monkeypatch.setattr(repo, "get_by_profile", fake_get_by_profile)
     monkeypatch.setattr(repo, "list_skills", fake_list_skills)
     monkeypatch.setattr(repo, "save_profile", fake_save_profile)
+    monkeypatch.setattr(repo, "register_profile", fake_register_profile)
     monkeypatch.setattr(repo, "set_skills", fake_set_skills)
     monkeypatch.setattr(repo, "set_availability", fake_set_availability)
     yield captured
@@ -148,12 +153,21 @@ def test_api_125_registering_returns_the_profile_the_database_settled_on(
     never contained. Echoing the request back would return everything except the
     answers."""
     endpoint = "POST /api/v1/service-providers"
-    input_data = {"displayName": "Ravi Kumar", "phone": "+919876543210"}
+    input_data = {
+        "displayName": " Ravi Kumar ",
+        "phone": "+919876543210",
+        "latitude": 12.9716,
+        "longitude": 77.5946,
+        "serviceRadiusKm": 15,
+        "skillIds": ["skill-plumbing"],
+    }
     expected_output = {
         "status_code": 201,
         "skill_names": ["Plumbing"],
         "community_count": 2,
         "service_radius_km": 15.0,
+        "registered_name": "Ravi Kumar",
+        "registered_skills": ["skill-plumbing"],
     }
 
     response = provider_client.post(PROVIDERS, json=input_data, headers=csrf_headers)
@@ -163,6 +177,8 @@ def test_api_125_registering_returns_the_profile_the_database_settled_on(
         "skill_names": body["skillNames"],
         "community_count": body["communityCount"],
         "service_radius_km": body["serviceRadiusKm"],
+        "registered_name": providers["registered"]["display_name"],
+        "registered_skills": providers["registered"]["skill_ids"],
     }
 
     assert actual_output == expected_output, endpoint
@@ -174,7 +190,7 @@ def test_api_126_an_omitted_field_reaches_the_rpc_as_null_not_as_a_blank(
     """The RPC coalesces a null onto the stored value, so `None` is what makes a
     partial PATCH leave the other fields alone. Sending `""` would erase them."""
     endpoint = "PATCH /api/v1/service-providers/me"
-    input_data = {"displayName": "Ravi Kumar"}
+    input_data = {}
     expected_output = {"status_code": 200, "bio": None, "latitude": None}
 
     response = provider_client.patch(ME, json=input_data, headers=csrf_headers)
@@ -253,13 +269,50 @@ def test_api_130_a_write_without_the_csrf_pair_is_refused(
     """These routes carry no membership guard, so CSRF is the only thing standing
     between a cross-site form post and someone's registration."""
     endpoint = "POST /api/v1/service-providers"
-    input_data = {"displayName": "Ravi Kumar"}
+    input_data = {
+        "displayName": "Ravi Kumar",
+        "latitude": 12.9716,
+        "longitude": 77.5946,
+        "skillIds": ["skill-plumbing"],
+    }
     expected_output = {"status_code": 403}
 
     response = provider_client.post(PROVIDERS, json=input_data)
     actual_output = {"status_code": response.status_code}
 
     assert actual_output == expected_output, endpoint
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"displayName": "Ravi Kumar", "longitude": 77.5946, "skillIds": ["s1"]},
+        {"displayName": "Ravi Kumar", "latitude": 12.9716, "skillIds": ["s1"]},
+        {"displayName": "Ravi Kumar", "latitude": 12.9716, "longitude": 77.5946, "skillIds": []},
+        {"displayName": "Ravi Kumar", "latitude": 12.9716, "longitude": 77.5946, "skillIds": ["s1", "s1"]},
+        {"displayName": "Ravi Kumar", "latitude": 91, "longitude": 77.5946, "skillIds": ["s1"]},
+        {"displayName": "Ravi Kumar", "latitude": 12.9716, "longitude": 77.5946, "serviceRadiusKm": 501, "skillIds": ["s1"]},
+    ],
+)
+def test_registration_rejects_incomplete_or_invalid_location_and_skills(
+    provider_client: TestClient,
+    providers: dict,
+    csrf_headers: dict[str, str],
+    payload: dict[str, Any],
+) -> None:
+    response = provider_client.post(PROVIDERS, json=payload, headers=csrf_headers)
+
+    assert response.status_code == 422
+    assert "registered" not in providers
+
+
+def test_skills_cannot_be_replaced_with_an_empty_set(
+    provider_client: TestClient, providers: dict, csrf_headers: dict[str, str]
+) -> None:
+    response = provider_client.put(MY_SKILLS, json={"skillIds": []}, headers=csrf_headers)
+
+    assert response.status_code == 422
+    assert "skill_ids" not in providers
 
 
 def test_api_131_a_name_shorter_than_the_schema_allows_is_a_422(

@@ -84,11 +84,11 @@ async def register(
     409 the person cannot act on. The status is still `201`, because from the
     client's side the resource now exists either way.
 
-    Coordinates are optional and worth sending. A provider with none still
-    appears in every community search; they simply sort last, since there is no
-    distance to order them by.
+    Coordinates, a service radius, and at least one active skill are required.
+    The database writes the profile and complete skill set atomically, so an
+    invalid skill cannot leave a partially registered professional behind.
     """
-    return service.save_mine(client, profile_id=principal.user_id, body=body)
+    return service.register_mine(client, profile_id=principal.user_id, body=body)
 
 
 @router.get(

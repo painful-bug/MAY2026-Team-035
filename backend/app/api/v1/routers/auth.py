@@ -38,6 +38,7 @@ from app.domain.schemas import (
     AuthMethod,
     AuthMethodsResponse,
     EmailTokenRequest,
+    EmailConfirmationResendRequest,
     MessageResponse,
     PasswordResetCompleteRequest,
     PasswordResetRequest,
@@ -144,8 +145,20 @@ async def password_sign_up(body: PasswordSignUpRequest) -> MessageResponse:
     _require_enabled("email_password")
     if get_settings().auth_captcha_enabled and not body.captcha_token:
         raise ValidationError("Complete the CAPTCHA challenge.", code="captcha_required")
-    await _run_provider_operation(auth_service.sign_up_with_password, email=body.email, password=body.password, full_name=body.full_name.strip(), captcha_token=body.captcha_token)
-    return MessageResponse(message="If the account can be created, check your email to confirm it.")
+    await _run_provider_operation(
+        auth_service.sign_up_with_password,
+        email=body.email,
+        password=body.password,
+        full_name=body.full_name.strip(),
+        captcha_token=body.captcha_token,
+        intent=body.intent,
+    )
+    message = (
+        "If the account can be created, check your email to confirm it."
+        if get_settings().auth_email_confirmation_required
+        else "If the account can be created, sign in with your email and password."
+    )
+    return MessageResponse(message=message)
 
 
 @router.post("/password/sign-in", response_model=MessageResponse, dependencies=[Depends(require_csrf)])
@@ -168,7 +181,7 @@ async def verify_email(body: EmailTokenRequest, response: Response) -> MessageRe
 
 
 @router.post("/email/resend", response_model=MessageResponse, dependencies=[Depends(require_csrf)])
-async def resend_email(body: PasswordResetRequest) -> MessageResponse:
+async def resend_email(body: EmailConfirmationResendRequest) -> MessageResponse:
     """Send the sign-up confirmation link again.
 
     The recovery path when the first link expired, never arrived, or was spent by
@@ -184,6 +197,7 @@ async def resend_email(body: PasswordResetRequest) -> MessageResponse:
         auth_service.resend_confirmation_email,
         email=body.email.strip().casefold(),
         captcha_token=body.captcha_token,
+        intent=body.intent,
     )
     return MessageResponse(message="If an unconfirmed account exists, a confirmation email will be sent.")
 

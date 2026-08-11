@@ -10,7 +10,7 @@ from fastapi import APIRouter
 
 from app.api.v1.admin_api import admin_router
 from app.api.v1.resident_api import resident_router
-from app.api.v1.routers import access_requests, auth, communities, dashboard, invitations, onboarding
+from app.api.v1.routers import access_requests, auth, communities, dashboard, invitations, onboarding, telemetry
 from app.api.v1.service_api import service_router
 
 api_router = APIRouter()
@@ -20,6 +20,7 @@ api_router.include_router(access_requests.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(invitations.router)
 api_router.include_router(onboarding.router)
+api_router.include_router(telemetry.router)
 api_router.include_router(admin_router)
 api_router.include_router(resident_router)
 api_router.include_router(service_router)

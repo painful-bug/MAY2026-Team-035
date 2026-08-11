@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Building2, House, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import CommunityUnitInput from '../../components/onboarding/CommunityUnitInput';
+import LocationCoordinatesInput from '../../components/common/LocationCoordinatesInput';
 import OnboardingLayout from '../../components/onboarding/OnboardingLayout';
 import SectionCard from '../../components/onboarding/SectionCard';
 import SegmentedToggle from '../../components/onboarding/SegmentedToggle';
@@ -29,6 +30,9 @@ export default function AssociationRegistrationPage() {
   const stateName = useOnboardingStore((state) => state.state);
   const postalCode = useOnboardingStore((state) => state.postalCode);
   const countryCode = useOnboardingStore((state) => state.countryCode);
+  const latitude = useOnboardingStore((state) => state.latitude);
+  const longitude = useOnboardingStore((state) => state.longitude);
+  const setCommunityCoordinates = useOnboardingStore((state) => state.setCommunityCoordinates);
   const blocks = useOnboardingStore((state) => state.blocks);
   const villas = useOnboardingStore((state) => state.villas);
   const setAssociationName = useOnboardingStore(
@@ -92,6 +96,8 @@ export default function AssociationRegistrationPage() {
       state: stateName,
       postalCode,
       countryCode,
+      latitude,
+      longitude,
       communityType,
       blocks,
       villas,
@@ -203,6 +209,17 @@ export default function AssociationRegistrationPage() {
             ))}
           </div>
         </SectionCard>
+
+        <LocationCoordinatesInput
+          value={{ latitude, longitude }}
+          onChange={(coordinates) => {
+            setCommunityCoordinates(coordinates);
+            clearError('location');
+          }}
+          idPrefix="community-onboarding"
+          required
+        />
+        {errors.location ? <p role="alert" className="text-xs font-semibold text-rose-600">{errors.location}</p> : null}
 
         <SegmentedToggle
           label="Community Type"

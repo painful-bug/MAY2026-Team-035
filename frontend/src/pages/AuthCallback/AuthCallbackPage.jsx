@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2, XCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import AuthCard from '../../components/auth/AuthCard';
-import { AUTH_ROUTES, homeRouteFor } from '../../routes/authRoutes';
+import { AUTH_ROUTES, authIntentFromSearch, destinationAfterAuth } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
+import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
 
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
   const completeExternalLogin = useAuthStore((state) => state.completeExternalLogin);
   const ran = useRef(false);
   const [error, setError] = useState('');
+  const intent = authIntentFromSearch(window.location.search);
 
   useEffect(() => {
     if (ran.current) return;
@@ -17,15 +19,13 @@ export default function AuthCallbackPage() {
 
     completeExternalLogin().then((result) => {
       if (result.success) {
-        const intent = new URLSearchParams(window.location.search).get('intent');
-        const destination = result.onboardingEligible && intent === 'register'
-          ? AUTH_ROUTES.GET_STARTED
-          : homeRouteFor(result.context);
+        if (intent) void recordServiceSignupEvent('auth_completed');
+        const destination = destinationAfterAuth(result.context, intent);
         navigate(destination, { replace: true });
       }
       else setError(result.message);
     });
-  }, [completeExternalLogin, navigate]);
+  }, [completeExternalLogin, intent, navigate]);
 
   return (
     <AuthCard title="Completing sign in" description="Verifying your HomeBandhu access">
@@ -33,7 +33,7 @@ export default function AuthCallbackPage() {
         <div className="space-y-4 text-center">
           <XCircle className="w-9 h-9 text-rose-600 mx-auto" />
           <p className="text-xs font-semibold text-rose-700">{error}</p>
-          <Link to={AUTH_ROUTES.LOGIN} className="inline-flex w-full justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white">
+          <Link to={`${AUTH_ROUTES.LOGIN}${intent ? `?intent=${intent}` : ''}`} className="inline-flex w-full justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white">
             Back to sign in
           </Link>
         </div>

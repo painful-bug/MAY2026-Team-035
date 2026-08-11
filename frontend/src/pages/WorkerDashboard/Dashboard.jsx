@@ -115,7 +115,10 @@ export default function WorkerDashboardHome() {
   // Empty state one: signed in, never registered as a service person. This is
   // the screen `applicationUser()` returning null used to hide, because a
   // provider with no membership had no `currentUser` and was bounced to login.
-  if (!provider) return <RegisterProvider />;
+  const profileComplete = provider?.latitude != null
+    && provider?.longitude != null
+    && (provider?.skillIds?.length ?? 0) > 0;
+  if (!profileComplete) return <RegisterProvider provider={provider} />;
 
   // Empty state two: registered, hired nowhere. Plan point 6 -- a join prompt,
   // not an empty calendar.
@@ -126,12 +129,10 @@ export default function WorkerDashboardHome() {
         title="You are not on any roster yet"
         body="Find societies whose departments need your trades, and apply. Nearest first."
         action={
-          <Link
-            to={`${AUTH_ROUTES.WORKER_DASHBOARD}/communities`}
-            className="mt-5 inline-block rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
-          >
-            Find communities
-          </Link>
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            <Link to={`${AUTH_ROUTES.WORKER_DASHBOARD}/communities?tab=find`} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">Find work</Link>
+            <Link to={`${AUTH_ROUTES.WORKER_DASHBOARD}/communities?tab=applications`} className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Check applications</Link>
+          </div>
         }
       />
     );

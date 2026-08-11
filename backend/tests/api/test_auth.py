@@ -176,7 +176,56 @@ def test_api_006_resend_reaches_the_provider_and_reveals_nothing(
 
     assert endpoint == "POST /api/v1/auth/email/resend"
     assert actual_output == expected_output
-    assert asked == [{"email": "resident@example.com", "captcha_token": None}]
+    assert asked == [
+        {"email": "resident@example.com", "captcha_token": None, "intent": None}
+    ]
+
+
+def test_service_signup_intent_is_allowlisted_and_reaches_the_confirmation_redirect(
+    api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.v1.routers import auth as auth_router
+
+    asked: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        auth_router.auth_service,
+        "sign_up_with_password",
+        lambda **kwargs: asked.append(kwargs),
+    )
+
+    response = api_client.post(
+        "/api/v1/auth/password/sign-up",
+        json={
+            "full_name": "Ravi Kumar",
+            "email": "ravi@example.com",
+            "password": "a-long-enough-password",
+            "intent": "service-provider",
+        },
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "If the account can be created, check your email to confirm it."
+    assert asked[0]["intent"] == "service-provider"
+
+
+def test_unknown_signup_intent_is_rejected(
+    api_client: TestClient, csrf_headers: dict[str, str]
+) -> None:
+    response = api_client.post(
+        "/api/v1/auth/password/sign-up",
+        json={
+            "full_name": "Ravi Kumar",
+            "email": "ravi@example.com",
+            "password": "a-long-enough-password",
+            "intent": "admin",
+        },
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 422
 
 
 def test_api_007_email_confirmation_establishes_browser_session(

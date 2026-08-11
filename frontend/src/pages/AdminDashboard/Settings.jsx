@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../store/useApp';
 import { Settings, Shield, Bell, CreditCard, Save } from 'lucide-react';
 import { api } from '../../lib/api/client';
+import LocationCoordinatesInput from '../../components/common/LocationCoordinatesInput';
 
 export default function SettingsPage() {
   const { showToast } = useApp();
@@ -9,6 +10,7 @@ export default function SettingsPage() {
   const [fineCharge, setFineCharge] = useState(false);
   const [gateSecurity, setGateSecurity] = useState(false);
   const [noticeAlert, setNoticeAlert] = useState(false);
+  const [coordinates, setCoordinates] = useState({ latitude: '', longitude: '' });
 
   useEffect(() => {
     async function loadSettings() {
@@ -18,6 +20,10 @@ export default function SettingsPage() {
         setGateSecurity(data.preferences?.requireVisitorPreapproval ?? false);
         setAutoBilling(data.billing?.autoBillingEnabled ?? false);
         setFineCharge(data.billing?.lateFeeEnabled ?? false);
+        setCoordinates({
+          latitude: data.community?.latitude ?? '',
+          longitude: data.community?.longitude ?? '',
+        });
       } catch (err) {
         showToast('Failed to load current settings', 'error');
       }
@@ -26,13 +32,19 @@ export default function SettingsPage() {
   }, [showToast]);
 
   const handleSave = async () => {
+    if (coordinates.latitude === '' || coordinates.longitude === '') {
+      showToast('Community coordinates are required', 'error');
+      return;
+    }
     try {
       await Promise.all([
         api('/settings', {
           method: 'PUT',
           body: JSON.stringify({
             requireVisitorPreapproval: gateSecurity,
-            noticeSmsBroadcastEnabled: noticeAlert
+            noticeSmsBroadcastEnabled: noticeAlert,
+            latitude: Number(coordinates.latitude),
+            longitude: Number(coordinates.longitude),
           })
         }),
         api('/billing-settings', {
@@ -65,6 +77,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-6 text-xs font-semibold text-slate-600">
+          <LocationCoordinatesInput value={coordinates} onChange={setCoordinates} idPrefix="community-settings" required />
           {/* Automated Billing */}
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">

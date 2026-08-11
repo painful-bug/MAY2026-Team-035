@@ -36,6 +36,8 @@ export const validateAssociationDetails = ({
   state,
   postalCode,
   countryCode,
+  latitude,
+  longitude,
   communityType,
   blocks,
   villas,
@@ -57,6 +59,9 @@ export const validateAssociationDetails = ({
   if (!postalCode?.trim()) errors.postalCode = 'Postal code is required.';
   if (!/^[a-z]{2}$/i.test(countryCode?.trim() || '')) {
     errors.countryCode = 'Use a two-letter country code.';
+  }
+  if (latitude === '' || longitude === '' || !Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) {
+    errors.location = 'Community coordinates are required.';
   }
 
   if (

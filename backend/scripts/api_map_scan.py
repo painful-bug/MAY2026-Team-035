@@ -4,6 +4,7 @@ Run from ``backend/``::
 
     python scripts/api_map_scan.py            # report
     python scripts/api_map_scan.py --strict   # exit 1 on any finding
+    python scripts/api_map_scan.py --max-findings 20  # reject baseline growth
 
 ``export_openapi.py --check`` proves the yaml matches what FastAPI *declares*.
 It cannot prove the declaration matches what the handler *does* -- a handler
@@ -263,6 +264,11 @@ def main() -> int:
     parser.add_argument(
         "--strict", action="store_true", help="exit 1 when anything is reported"
     )
+    parser.add_argument(
+        "--max-findings",
+        type=int,
+        help="exit 1 only when findings exceed this recorded baseline",
+    )
     args = parser.parse_args()
 
     spec = yaml.safe_load(_SPEC.read_text(encoding="utf-8"))
@@ -316,6 +322,8 @@ def main() -> int:
         )
     else:
         print("\nno findings.")
+    if args.max_findings is not None and len(findings) > args.max_findings:
+        return 1
     return 1 if findings and args.strict else 0
 
 

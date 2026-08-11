@@ -366,6 +366,12 @@ NO_STORY = {
         " which is step 2. Registration itself serves nobody's story and claiming"
         " otherwise would inflate the matrix.",
     ),
+    "service_signup_telemetry": (
+        "Non-functional",
+        "Privacy-minimal launch-funnel measurement for operators. It records"
+        " one allowlisted event name against a random first-party visitor id;"
+        " no interviewed user experiences this write as a feature.",
+    ),
     "hiring": (
         "Feature",
         "Applying, inviting, hiring, removing and barring a service person."
@@ -1612,6 +1618,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         errors=["401", "403", "404", "422", "500"],
         no_story=NO_STORY["service_provider"],
     ),
+    ("post", "/api/v1/telemetry/service-signup"): op(
+        errors=["403", "422", "500"],
+        no_story=NO_STORY["service_signup_telemetry"],
+    ),
     # -- hiring, the provider's side ---------------------------------------
     # Same guard as the registration routes above: identity only, no membership.
     # The `404` on all five is `service_provider_not_found` -- these are the
@@ -1647,10 +1657,14 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         errors=["401", "403", "404", "409", "500"],
         no_story=NO_STORY["hiring"],
     ),
+    ("post", "/api/v1/worker/applications/{application_id}/decision"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["hiring"],
+    ),
     # -- hiring, the department's side -------------------------------------
     # Every one of these carries a department id in the path, and on every one
-    # the router guard is the coarse check while `can_manage_department` in the
-    # database is the real one. That is why `403` is on the two GETs as well:
+    # identity is the coarse HTTP check while the hiring-only database predicate
+    # is the real one. That is why `403` is on the two GETs as well:
     # a manager of another community reaches the handler and is refused by
     # Postgres.
     ("get", "/api/v1/departments/{department_id}/applications"): op(

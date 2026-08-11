@@ -12,6 +12,8 @@ export const createAssociationRegistration = async ({ onboardingState }) => {
       state: onboardingState.state,
       postal_code: onboardingState.postalCode,
       country_code: onboardingState.countryCode,
+      latitude: Number(onboardingState.latitude),
+      longitude: Number(onboardingState.longitude),
       blocks: onboardingState.blocks,
       villas: onboardingState.villas,
       block_locations: onboardingState.blockLocations,

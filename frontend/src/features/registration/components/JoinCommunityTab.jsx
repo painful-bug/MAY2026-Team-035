@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Building2, Loader2, Search } from 'lucide-react';
+import { Building2, Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import CommunitySearch from '../../../components/common/CommunitySearch';
 import { useCommunitySearch } from '../hooks/useCommunitySearch';
 import { registrationApi } from '../registrationApi';
 
@@ -66,29 +67,26 @@ export default function JoinCommunityTab() {
 
   return (
     <form onSubmit={submit} className="space-y-5">
-      <div className="space-y-2">
-        <label htmlFor="community-search" className="text-xs font-bold uppercase tracking-wider text-slate-500">Find your community</label>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input id="community-search" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(null); }} placeholder="Start typing a community name" className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-medium outline-none focus:border-indigo-500" />
-        </div>
-        {query.trim().length > 0 && query.trim().length < 2 ? <p className="text-xs font-medium text-slate-500">Enter at least two characters.</p> : null}
-        {search.isFetching ? <p className="inline-flex items-center gap-2 text-xs font-medium text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Searching communities…</p> : null}
-        {search.error ? <p role="alert" className="text-xs font-semibold text-rose-600">{search.error.message}</p> : null}
-        {search.data?.items?.length ? (
-          <ul role="listbox" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            {search.data.items.map((community) => (
-              <li key={community.id}>
-                <button type="button" onClick={() => { setSelected(community); setQuery(community.name); }} className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-indigo-50 ${selected?.id === community.id ? 'bg-indigo-50' : ''}`}>
-                  <Building2 className="h-4 w-4 text-indigo-600" />
-                  <span><span className="block font-bold text-slate-800">{community.name}</span><span className="block text-xs text-slate-500">{community.city || 'Location unavailable'}{community.state ? `, ${community.state}` : ''}</span></span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {query.trim().length >= 2 && !search.isFetching && search.data?.items?.length === 0 ? <p className="text-xs font-medium text-slate-500">No active communities match that name.</p> : null}
-      </div>
+      <CommunitySearch
+        label="Find your community"
+        value={query}
+        onChange={(event) => { setQuery(event.target.value); setSelected(null); }}
+        placeholder="Start typing a community name"
+        hint={query.trim().length > 0 && query.trim().length < 2 ? <p className="text-xs font-medium text-slate-500">Enter at least two characters.</p> : null}
+        isLoading={search.isFetching}
+        error={search.error?.message}
+        items={search.data?.items ?? []}
+        showEmpty={query.trim().length >= 2 && !search.isFetching && search.data?.items?.length === 0}
+        emptyMessage="No active communities match that name."
+        resultsRole="listbox"
+        resultsClassName="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+        renderResult={(community) => (
+          <button key={community.id} type="button" role="option" aria-selected={selected?.id === community.id} onClick={() => { setSelected(community); setQuery(community.name); }} className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-indigo-50 ${selected?.id === community.id ? 'bg-indigo-50' : ''}`}>
+            <Building2 className="h-4 w-4 text-indigo-600" />
+            <span><span className="block font-bold text-slate-800">{community.name}</span><span className="block text-xs text-slate-500">{community.city || 'Location unavailable'}{community.state ? `, ${community.state}` : ''}</span></span>
+          </button>
+        )}
+      />
       {selected ? (
         <div className="grid gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 sm:grid-cols-2">
           <label className="space-y-2 text-xs font-bold uppercase tracking-wider text-slate-500">Relationship

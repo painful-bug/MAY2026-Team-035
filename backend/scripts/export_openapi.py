@@ -143,6 +143,7 @@ def _operations(spec: dict):
 # joining a community, then the admin surface, then the resident surface.
 _TAGS: tuple[tuple[str, str], ...] = (
     ("auth", "Sign-in, token refresh and the caller's own profile."),
+    ("telemetry", "Privacy-minimal, best-effort service-signup funnel events."),
     ("onboarding", "Founding a community -- once per community, by its first admin."),
     ("communities", "Finding a community to join, and reading its unit list."),
     (
@@ -167,8 +168,8 @@ _TAGS: tuple[tuple[str, str], ...] = (
     (
         "department-hiring",
         "Applications, invitations, candidate search, removal and blacklisting, "
-        "from the department's side. The router guard asks whether the caller "
-        "manages anything; the database asks whether they manage this.",
+        "from the department's side. HTTP establishes identity; the database "
+        "decides whether the caller may hire for this department.",
     ),
     (
         "service-providers",

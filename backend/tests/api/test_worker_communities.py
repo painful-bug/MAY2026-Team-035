@@ -29,6 +29,7 @@ from app.services import hiring_service
 COMMUNITIES = "/api/v1/worker/communities"
 SEARCH = "/api/v1/worker/communities/search"
 APPLICATIONS = "/api/v1/worker/applications"
+DECISION = "/api/v1/worker/applications/application-id/decision"
 
 PROFILE_ID = "provider-profile-id"
 PROVIDER_ID = "provider-id"
@@ -284,6 +285,54 @@ def test_api_140_withdrawing_reaches_the_rpc_as_a_decision_not_a_delete(
     }
 
     assert actual_output == expected_output, endpoint
+
+
+def test_provider_can_accept_an_invitation_without_supplying_employment_terms(
+    provider_client: TestClient, hiring: dict, csrf_headers: dict[str, str]
+) -> None:
+    hiring["applications"] = [application_row(direction="invited")]
+
+    response = provider_client.post(
+        DECISION,
+        json={"decision": "accepted", "note": "Happy to join."},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 200
+    assert hiring["decided"] == {
+        "id": "application-id",
+        "decision": "accepted",
+        "rank": None,
+        "job_title": None,
+        "shift": None,
+        "note": "Happy to join.",
+    }
+
+
+def test_provider_invitation_decision_rejects_employment_terms(
+    provider_client: TestClient, hiring: dict, csrf_headers: dict[str, str]
+) -> None:
+    response = provider_client.post(
+        DECISION,
+        json={"decision": "accepted", "rank": "manager"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 422
+    assert "decided" not in hiring
+
+
+def test_provider_invitation_decision_rejects_withdrawn(
+    provider_client: TestClient, hiring: dict, csrf_headers: dict[str, str]
+) -> None:
+    response = provider_client.post(
+        DECISION,
+        json={"decision": "withdrawn"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 422
+    assert "decided" not in hiring
 
 
 def test_api_141_applying_without_the_csrf_pair_is_refused(
