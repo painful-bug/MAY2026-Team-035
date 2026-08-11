@@ -449,6 +449,10 @@ package "Complaints & Work Orders  (red)" #FFEBEE {
     - category : String
     - urgency : Urgency
     - status : ComplaintStatus
+    ' 0050: which department owns this. Null is a real state and not a gap --
+    ' it means the routing rule found nothing and the complaint is waiting in
+    ' the administrator's triage queue.
+    - departmentId : UUID [0..1]
     - submittedAt : DateTime
     - resolvedAt : DateTime [0..1]
     - createdAt : DateTime
@@ -458,6 +462,25 @@ package "Complaints & Work Orders  (red)" #FFEBEE {
     + raiseWorkOrder(dept : Department) : WorkOrder
     + resolve() : void
     + reopen(reason : String) : void
+    ' Category first, the resident's own guess second, nothing third. The rule
+    ' lives in resolve_complaint_department (0050) and has exactly one home.
+    + routeToDepartment(category : String, residentChoice : Department [0..1]) : Department [0..1]
+  }
+
+  ' 0050. A supervisor saying a complaint belongs elsewhere, and the answer from
+  ' the manager of the department GIVING IT UP -- never the one receiving it.
+  ' A supervisor who could move work out of their own department could empty it.
+  class ComplaintDepartmentRequest <<entity>> {
+    - id : UUID {PK}
+    ' Nullable: "this is not ours" is worth saying without knowing whose it is.
+    ' Accepted with nothing named, the complaint returns to the triage queue.
+    - toDepartmentId : UUID [0..1]
+    - reason : Text [0..1]
+    - status : RequestStatus
+    - decidedAt : DateTime [0..1]
+    - createdAt : DateTime
+    + accept(destination : Department [0..1]) : void
+    + reject() : void
   }
 
   class ComplaintEvent <<event>> {
@@ -1676,6 +1699,11 @@ Unit "0..1" -- "0..*" Complaint : raisedForUnit
 ResidentMembership "1" -- "0..*" Complaint : raisedBy
 Complaint "1" *-- "0..*" ComplaintEvent : timeline
 CommunityMembership "0..1" -- "0..*" ComplaintEvent : actor
+Department "0..1" -- "0..*" Complaint : owns
+Complaint "1" *-- "0..*" ComplaintDepartmentRequest : transferRequests
+Department "0..1" -- "0..*" ComplaintDepartmentRequest : requestedFrom
+Department "0..1" -- "0..*" ComplaintDepartmentRequest : requestedTo
+CommunityMembership "1" -- "0..*" ComplaintDepartmentRequest : requestedBy
 Community "1" -- "0..*" WorkOrder : workOrders
 Complaint "0..1" -- "0..*" WorkOrder : derivedWorkOrders
 Department "0..1" -- "0..*" WorkOrder : handledBy

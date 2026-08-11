@@ -148,7 +148,20 @@ def test_every_router_is_mounted(path):
         # second table -- so the path now serves a projection that never existed
         # rather than the one that was removed. Deleting this line is the
         # decision the docstring below asks for.
-        "/api/v1/complaint-categories",
+        #
+        # `/api/v1/complaint-categories` came back in `0048`, and this is that
+        # decision made a second time. Its retirement reason (audit line 72) was
+        # a statement about two screens: "CreateDepartment.jsx collects
+        # categories as free-text inputs, not from a vocabulary, and
+        # Departments.jsx reads department.categories off the department.
+        # Nothing fetches a category list." **Both halves have since expired.**
+        # CreateDepartment.jsx was deleted in 38927e5, and the department form's
+        # category box is now a combobox whose whole job is to stop somebody
+        # inventing "Plumbling" beside "Plumbing" -- which it cannot do without
+        # the list. The new path is also not the old one: it carries each
+        # category's linked skill, so the form can show the categories that
+        # match no trade and therefore reach no service person in any hiring
+        # search. That projection never existed before.
         "/api/v1/payments",
         "/api/v1/amenities",
         "/api/v1/settings/modules",

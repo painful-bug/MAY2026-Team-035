@@ -213,6 +213,27 @@ components:
       - message
       title: AddCommentRequest
       type: object
+    AddDepartmentSkillRequest:
+      description: 'One skill, by name, to create if needed and attach.
+
+
+        This is the only request in the API that may write to the global skill
+
+        catalogue as a side effect, and it is deliberate: the alternative is a
+
+        client that creates then attaches, which can half-fail and leave a skill
+
+        nobody asked for.'
+      properties:
+        name:
+          maxLength: 80
+          minLength: 1
+          title: Name
+          type: string
+      required:
+      - name
+      title: AddDepartmentSkillRequest
+      type: object
     AddHouseholdPhoneRequest:
       description: 'A number to register against the caller''s own flat.
 
@@ -718,6 +739,25 @@ components:
           - type: 'null'
           title: Unit Id
       title: ApproveAccessRequest
+      type: object
+    AssignDepartmentRequest:
+      description: 'Allot an unrouted complaint, or move a routed one.
+
+
+        One body for two different acts, because they are the same write with
+
+        different callers: an admin answering the triage queue, and a manager moving
+
+        work out of their own department. Which one you are is decided in Postgres
+
+        by what the complaint currently holds, not by which endpoint you called.'
+      properties:
+        departmentId:
+          title: Departmentid
+          type: string
+      required:
+      - departmentId
+      title: AssignDepartmentRequest
       type: object
     AssignWorkOrderRequest:
       description: 'Put a named person on the job.
@@ -1461,6 +1501,99 @@ components:
       - reason
       title: CancelWorkOrderRequest
       type: object
+    CandidateProfile:
+      description: 'A service person as a *hiring manager* sees them.
+
+
+        Deliberately not ``ServiceProviderProfile``. That model is what somebody
+
+        sees of themselves; this one is what a stranger with a vacancy sees, and the
+
+        difference is two fields:
+
+
+        **No ``latitude``/``longitude``.** The hiring surface already answers the
+
+        only question a manager has about where somebody is -- ``distanceKm``, which
+
+        the candidate list computes from the community''s own point. Handing out a
+
+        home coordinate instead would be answering a question nobody asked with a
+
+        fact the person did not offer for that purpose. ``serviceRadiusKm`` is here
+
+        because it is a statement they published about how far they travel.
+
+
+        **No ``profileId``.** Nothing on this screen addresses them by profile, and
+
+        an id that unlocks other surfaces is not something a candidate read should
+
+        hand out.
+
+
+        ``phone`` *is* here, and is not a widening: the candidate list and every
+
+        application card have carried ``phoneE164`` since ``0035``. Somebody being
+
+        considered for a job in your building is somebody you may ring.'
+      properties:
+        bio:
+          title: Bio
+          type: string
+        communityCount:
+          title: Communitycount
+          type: integer
+        displayName:
+          title: Displayname
+          type: string
+        headline:
+          title: Headline
+          type: string
+        id:
+          title: Id
+          type: string
+        isAvailable:
+          title: Isavailable
+          type: boolean
+        phone:
+          title: Phone
+          type: string
+        registeredAt:
+          format: date-time
+          title: Registeredat
+          type: string
+        serviceRadiusKm:
+          title: Serviceradiuskm
+          type: number
+        skillIds:
+          items:
+            type: string
+          title: Skillids
+          type: array
+        skillNames:
+          items:
+            type: string
+          title: Skillnames
+          type: array
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - displayName
+      - headline
+      - bio
+      - phone
+      - serviceRadiusKm
+      - status
+      - isAvailable
+      - skillIds
+      - skillNames
+      - communityCount
+      - registeredAt
+      title: CandidateProfile
+      type: object
     CardInstrument:
       description: 'Card details, held only long enough to be judged.
 
@@ -1727,6 +1860,45 @@ components:
       - id
       - unit_code
       title: CommunityUnitOption
+      type: object
+    ComplaintCategory:
+      description: 'One of a community''s complaint categories, and the trade it resolves to.
+
+
+        ``skillName`` being null is the case this model exists to surface. A
+
+        category whose name matches no trade is not an error -- ``0034`` 204-206
+
+        settled that -- but until now it has been *invisible*, and an invisible one
+
+        is a category whose complaints no hiring search will ever match, with
+
+        nothing anywhere saying so. The category form shows it as a warning.'
+      properties:
+        departmentCount:
+          default: 0
+          title: Departmentcount
+          type: integer
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        skillId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillid
+        skillName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillname
+      required:
+      - id
+      - name
+      title: ComplaintCategory
       type: object
     ComplaintComment:
       description: One comment on a complaint. Public only -- see the module docstring.
@@ -2524,6 +2696,30 @@ components:
       - endsAt
       title: CreateShiftRequest
       type: object
+    CreateSkillRequest:
+      description: Add a trade to the global catalogue.
+      properties:
+        category:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Category
+        description:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          maxLength: 80
+          minLength: 1
+          title: Name
+          type: string
+      required:
+      - name
+      title: CreateSkillRequest
+      type: object
     CreateUnavailabilityRequest:
       description: Mark a window unavailable, in every community that employs the caller.
       properties:
@@ -2745,15 +2941,13 @@ components:
       description: 'Answer a pending negotiation.
 
 
-        The terms are accepted here rather than supplied at application time,
+        ``jobTitle`` is supplied here rather than at application time, because on an
 
-        because on an application nobody has offered any yet -- the manager names
+        application nobody has offered anything yet -- the manager names it at the
 
-        them at the moment they say yes. On an *invitation* they are already in the
+        moment they say yes. On an *invitation* it is already in the row and this
 
-        row and this request cannot change them: a provider accepting cannot promote
-
-        themselves by sending ``rank``.'
+        request cannot change it.'
       properties:
         decision:
           title: Decision
@@ -2770,20 +2964,33 @@ components:
             type: string
           - type: 'null'
           title: Note
-        rank:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Rank
-        shift:
-          anyOf:
-          - maxLength: 40
-            type: string
-          - type: 'null'
-          title: Shift
       required:
       - decision
       title: DecideApplicationRequest
+      type: object
+    DecideDepartmentChangeRequest:
+      description: 'The manager''s answer.
+
+
+        ``toDepartmentId`` may override what the supervisor suggested — the manager
+
+        knows the society better and is the one being asked. Accepting with nothing
+
+        named returns the complaint to the admin''s triage queue, which is what "not
+
+        ours, and I don''t know whose either" actually means.'
+      properties:
+        decision:
+          title: Decision
+          type: string
+        toDepartmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Todepartmentid
+      required:
+      - decision
+      title: DecideDepartmentChangeRequest
       type: object
     DecideDepartureRequest:
       description: 'Approve or reject a departure.
@@ -2828,6 +3035,151 @@ components:
           - type: 'null'
           title: Reason
       title: DeclineJobRequest
+      type: object
+    DepartmentChangeRequest:
+      description: 'A supervisor''s "this belongs elsewhere", waiting on their manager.
+
+
+        ``toDepartmentId`` is nullable at every layer, and that is the honest shape.
+
+        A supervisor who knows a lift complaint is not plumbing usually does not
+
+        know whose it is, and forcing them to name a destination would either stop
+
+        them saying anything or make them guess.'
+      properties:
+        complaintId:
+          title: Complaintid
+          type: string
+        complaintTitle:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complainttitle
+        createdAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Createdat
+        id:
+          title: Id
+          type: string
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        requestedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requestedby
+        toDepartmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Todepartmentid
+        toDepartmentName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Todepartmentname
+      required:
+      - id
+      - complaintId
+      title: DepartmentChangeRequest
+      type: object
+    DepartmentComplaint:
+      description: 'One complaint on a department''s queue.
+
+
+        ``raisedBy`` and ``unitCode`` are joined in the RPC rather than fetched per
+
+        row: a queue screen that renders fifty complaints would otherwise make fifty
+
+        follow-up reads to answer "who, and which flat", which is the first thing
+
+        anyone looks at.
+
+
+        ``openRequestId`` is present so the screen knows a transfer has already been
+
+        asked for. Without it the only way to draw the button correctly would be to
+
+        read the request list and join the two client-side, and a supervisor would
+
+        be able to file the same request twice before finding out the unique index
+
+        refuses it.'
+      properties:
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        createdAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Createdat
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        dueAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Dueat
+        id:
+          title: Id
+          type: string
+        location:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Location
+        openRequestId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Openrequestid
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        raisedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Raisedby
+        resolvedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Resolvedat
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+        unitCode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitcode
+      required:
+      - id
+      - title
+      - status
+      title: DepartmentComplaint
       type: object
     DepartmentDetail:
       description: A department plus its roster.
@@ -2895,6 +3247,16 @@ components:
           default: 0
           title: Resolvedcomplaintcount
           type: integer
+        skillIds:
+          items:
+            type: string
+          title: Skillids
+          type: array
+        skills:
+          items:
+            type: string
+          title: Skills
+          type: array
         slaHours:
           anyOf:
           - type: integer
@@ -2923,6 +3285,34 @@ components:
       - createdAt
       - updatedAt
       title: DepartmentDetail
+      type: object
+    DepartmentOption:
+      description: 'A department, named, for a destination picker.
+
+
+        Three fields, because a picker needs three. ``GET /departments`` carries
+
+        roster counts, categories, opening hours and skills and is admin-only for
+
+        good reason -- widening *that* so a manager could draw a dropdown would have
+
+        traded a real read boundary for a widget.'
+      properties:
+        id:
+          title: Id
+          type: string
+        kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      title: DepartmentOption
       type: object
     DepartmentRef:
       description: A department the caller could apply to, named and addressable.
@@ -3613,7 +4003,16 @@ components:
       title: InvitationCreated
       type: object
     InviteRequest:
-      description: A manager inviting one provider, with the terms on offer.
+      description: 'A manager inviting one provider onto the roster.
+
+
+        ``jobTitle`` is the only term on offer, and it is free text with
+
+        suggestions rather than a closed list -- ``staff_assignments.job_title`` has
+
+        no check constraint, so a society with a lift technician or a pool attendant
+
+        can say so without a migration.'
       properties:
         jobTitle:
           anyOf:
@@ -3627,22 +4026,58 @@ components:
             type: string
           - type: 'null'
           title: Message
-        rank:
-          default: member
-          title: Rank
-          type: string
         serviceProviderId:
           title: Serviceproviderid
           type: string
-        shift:
-          anyOf:
-          - maxLength: 40
-            type: string
-          - type: 'null'
-          title: Shift
       required:
       - serviceProviderId
       title: InviteRequest
+      type: object
+    InviteStaffRequest:
+      description: 'Create a manager or a supervisor.
+
+
+        ``email`` is required and is the whole mechanism: it is what the person''s
+
+        Google sign-in is matched against. A typo here does not fail loudly -- it
+
+        produces an invitation nobody can claim -- which is why the department
+
+        screen shows pending invitations rather than assuming they land.'
+      properties:
+        email:
+          maxLength: 254
+          minLength: 3
+          title: Email
+          type: string
+        jobTitle:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Jobtitle
+        name:
+          maxLength: 120
+          minLength: 1
+          title: Name
+          type: string
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        rank:
+          enum:
+          - manager
+          - supervisor
+          title: Rank
+          type: string
+      required:
+      - email
+      - name
+      - rank
+      title: InviteStaffRequest
       type: object
     InvoiceDetail:
       description: One invoice with everything hanging off it.
@@ -5659,6 +6094,11 @@ components:
           minLength: 1
           title: Category
           type: string
+        departmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Departmentid
         description:
           default: ''
           maxLength: 4000
@@ -6259,6 +6699,22 @@ components:
       - bookingStatus
       - amountPaid
       title: ReportRow
+      type: object
+    RequestDepartmentChangeRequest:
+      description: A supervisor asking for a complaint to be moved.
+      properties:
+        reason:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Reason
+        toDepartmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Todepartmentid
+      title: RequestDepartmentChangeRequest
       type: object
     RequestDepartureRequest:
       description: Open a departure, from either side.
@@ -7470,6 +7926,25 @@ components:
           type: array
       title: SetAvailabilityRulesRequest
       type: object
+    SetDepartmentSkillsRequest:
+      description: 'The department''s whole skill set, as the form submits it.
+
+
+        Ids rather than names, because by the time this is sent every skill exists:
+
+        the form''s "Add skill" button creates a new one through
+
+        ``POST /departments/{id}/skills`` and gets an id back. A name here would be
+
+        a second, quieter way to write to the global catalogue.'
+      properties:
+        skillIds:
+          items:
+            type: string
+          title: Skillids
+          type: array
+      title: SetDepartmentSkillsRequest
+      type: object
     SetSkillsRequest:
       description: 'The complete set of trades this person offers.
 
@@ -7562,6 +8037,39 @@ components:
       - category
       - description
       title: Skill
+      type: object
+    SkillCreated:
+      description: 'A skill, and whether this call is what brought it into being.
+
+
+        ``created`` is false when a case-insensitive match already existed, which is
+
+        the normal outcome of somebody typing a trade that is already there. The
+
+        router turns it into 201 or 200 so the status code is not a polite fiction.'
+      properties:
+        category:
+          title: Category
+          type: string
+        created:
+          title: Created
+          type: boolean
+        description:
+          title: Description
+          type: string
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      - category
+      - description
+      - created
+      title: SkillCreated
       type: object
     SkillsSavedResult:
       description: How many trades this person now offers.
@@ -7804,6 +8312,77 @@ components:
       - status
       title: StaffDepartureDetail
       type: object
+    StaffInvitation:
+      description: 'A manager or supervisor created but not yet signed in.
+
+
+        **There is no token and no code.** Leadership has no registration flow: an
+
+        administrator types a name and an email, and that person is admitted the
+
+        first time they sign in with that address. The trade-off -- one factor, and
+
+        whoever holds the mailbox becomes the manager -- is stated in ``0049``''s
+
+        header and in ``docs/design/STAFF_PROVISIONING_DESIGN.md`` rather than
+
+        softened. The resident invite''s mandatory token is untouched; this is a
+
+        separate table for exactly that reason.
+
+
+        ``rank`` is ``manager`` or ``supervisor`` only. ``member`` is absent because
+
+        that rank is reached solely by hiring a registered service provider.'
+      properties:
+        claimedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Claimedat
+        createdAt:
+          format: date-time
+          title: Createdat
+          type: string
+        departmentId:
+          title: Departmentid
+          type: string
+        email:
+          title: Email
+          type: string
+        id:
+          title: Id
+          type: string
+        jobTitle:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Jobtitle
+        name:
+          title: Name
+          type: string
+        phone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone
+        rank:
+          title: Rank
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - departmentId
+      - email
+      - name
+      - rank
+      - status
+      - createdAt
+      title: StaffInvitation
+      type: object
     StaffMember:
       description: 'One person on a department''s roster.
 
@@ -8007,6 +8586,64 @@ components:
       required:
       - name
       title: StaffMemberInput
+      type: object
+    UnassignedComplaint:
+      description: 'One complaint in the admin''s triage queue.
+
+
+        Narrower than ``DepartmentComplaint`` and deliberately so: this list exists
+
+        to answer one question — *whose is this?* — and the fields that help answer
+
+        it are the category, what was written and who wrote it. A due date on a
+
+        complaint nobody has been given yet would be a deadline with no owner.'
+      properties:
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        createdAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Createdat
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        id:
+          title: Id
+          type: string
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        raisedBy:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Raisedby
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+        unitCode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitcode
+      required:
+      - id
+      - title
+      - status
+      title: UnassignedComplaint
       type: object
     UnavailabilityBlock:
       description: A window the worker is not available in.
@@ -8442,6 +9079,78 @@ components:
           - type: 'null'
           title: Status
       title: UpdateShiftRequest
+      type: object
+    UpdateStaffInvitationRequest:
+      description: 'Correct an unclaimed invitation.
+
+
+        This is the answer the product owner gave on 2026-08-12 to the one way a
+
+        single-factor invitation fails: the admin mistypes the address, nobody can
+
+        claim it, and nothing tells anybody. Rather than add a second factor, the
+
+        mistake is made correctable once the pending list makes it visible.
+
+
+        **Every field is optional and ``None`` means "leave it alone".** A form that
+
+        patches only the email cannot blank the job title by not sending it. The two
+
+        nullable fields accept ``""`` as "clear this"; ``email``, ``name`` and
+
+        ``rank`` have no clear, because an invitation without them binds nothing,
+
+        names nobody, or admits at no rank.
+
+
+        ``rank`` is editable for the same reason ``email`` is -- choosing
+
+        *supervisor* when you meant *manager* is a keyboard mistake of exactly the
+
+        same kind. The **department is not**, and its absence here is load-bearing:
+
+        it is what ``can_manage_department`` authorizes against, so a move would let
+
+        the manager of one department mint staff into another. That is
+
+        revoke-and-reissue, under the authority of wherever it is going.'
+      properties:
+        email:
+          anyOf:
+          - maxLength: 254
+            minLength: 3
+            type: string
+          - type: 'null'
+          title: Email
+        jobTitle:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Jobtitle
+        name:
+          anyOf:
+          - maxLength: 120
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+        phone:
+          anyOf:
+          - maxLength: 32
+            type: string
+          - type: 'null'
+          title: Phone
+        rank:
+          anyOf:
+          - enum:
+            - manager
+            - supervisor
+            type: string
+          - type: 'null'
+          title: Rank
+      title: UpdateStaffInvitationRequest
       type: object
     UpdateStaffMemberRequest:
       description: Patch one roster entry.
@@ -12135,6 +12844,54 @@ paths:
           resident story reaches.
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/complaint-categories:
+    get:
+      description: 'Every category this community has, with the trade each one resolves to.
+
+
+        ``skillName`` is null when the category''s name matches no trade. That is
+
+        not an error -- a community may name a category the catalogue has no word
+
+        for -- but it has consequences nobody could see until now: a category with
+
+        no trade behind it matches no service person in any hiring search. The form
+
+        shows it as a warning rather than leaving it silent.
+
+
+        ``departmentCount`` is how many departments claim the category. Zero means
+
+        complaints filed under it reach no department at all.'
+      operationId: list_categories_api_v1_complaint_categories_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ComplaintCategory'
+                title: Response List Categories Api V1 Complaint Categories Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: This community's complaint categories
+      tags:
+      - skills
+      x-user-stories:
+      - coverage: partial
+        id: US-2.9
+        role: The vocabulary the directory's departments are described in, and which of it reaches nobody
+        title: Verified management contact directory
   /api/v1/complaints:
     get:
       description: 'The caller''s own complaints, newest first.
@@ -12503,6 +13260,208 @@ paths:
         id: US-2.6
         role: A resident-visible comment joins the timeline; an internal one never does
         title: Complaint status tracking with history
+  /api/v1/complaints/{complaint_id}/department:
+    patch:
+      description: "Give a complaint to a department, or move it to another one.\n\n**One endpoint, two\
+        \ acts, and which one you are performing is decided in\nPostgres by what the complaint currently\
+        \ holds** -- not by which route you\ncalled or what you claim to be:\n\n* the complaint has **no**\
+        \ department → only an **admin** may allot it;\n* the complaint **has** one → only that department's\
+        \ **manager** (or an\n  admin, who passes `can_manage_department` everywhere) may move it out.\n\
+        \nAuthorizing the move on the department the complaint is *leaving* is the\nload-bearing half.\
+        \ The obvious alternative -- checking the caller manages\nthe destination -- would let the manager\
+        \ of B reach into A and help\nthemselves to A's work.\n\nRe-assigning to the department that already\
+        \ holds it is a no-op rather than\na 409, because a double-clicked button is not an error worth\
+        \ a message."
+      operationId: assign_department_api_v1_complaints__complaint_id__department_patch
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignDepartmentRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Allot or move a complaint
+      tags:
+      - complaint-routing
+      x-user-stories:
+      - coverage: served
+        id: US-2.8
+        role: Puts a name on who is answerable for a complaint, and lets that be corrected when the routing
+          rule gets it wrong
+        title: Complaint accountability
+  /api/v1/complaints/{complaint_id}/department-requests:
+    post:
+      description: 'A supervisor saying this complaint is not their department''s.
+
+
+        `toDepartmentId` is **optional on purpose**. A supervisor who knows a lift
+
+        complaint is not plumbing usually does not know whose it is, and requiring a
+
+        destination would either silence them or make them guess. Accepted with
+
+        nothing named, the complaint returns to the admin''s triage queue.
+
+
+        Returns 409 when the complaint has not been assigned to any department yet
+
+        -- there is nothing to move it out of and no manager whose inbox this would
+
+        land in -- and 409 on a second open request for the same complaint. Two
+
+        supervisors disagreeing about where a complaint belongs is a conversation,
+
+        not two rows racing a manager''s inbox.'
+      operationId: request_department_change_api_v1_complaints__complaint_id__department_requests_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestDepartmentChangeRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Ask for a complaint to be moved
+      tags:
+      - complaint-routing
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'A supervisor telling their manager a complaint belongs to another department, and
+          the manager''s answer. Entirely inside the staff side of the wall: no interviewee described
+          it because no resident ever sees it, and the complaint stories are about what happens to *their*
+          complaint, not about who ends up holding it. It exists because the routing rule in 0050 is a
+          rule and rules are wrong sometimes -- and the alternative to a request is a supervisor who can
+          silently empty their own queue.'
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/complaints/{complaint_id}/department-requests/{request_id}:
+    patch:
+      description: 'The manager''s answer: `accept` or `reject`.
+
+
+        The manager may name a different destination than the supervisor suggested
+
+        -- they know the society better and they are the one being asked. Accepting
+
+        with **no** destination sends the complaint back to the admin''s triage
+
+        queue, which is what "not ours, and I don''t know whose either" honestly
+
+        means; inventing a department for it would be worse than admitting that.
+
+
+        The supervisor who asked is notified either way. A request that is silently
+
+        rejected is a request they raise again next week.'
+      operationId: decide_department_change_api_v1_complaints__complaint_id__department_requests__request_id__patch
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      - description: Access-request id.
+        in: path
+        name: request_id
+        required: true
+        schema:
+          title: Request Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideDepartmentChangeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Answer a move request
+      tags:
+      - complaint-routing
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'A supervisor telling their manager a complaint belongs to another department, and
+          the manager''s answer. Entirely inside the staff side of the wall: no interviewee described
+          it because no resident ever sees it, and the complaint stories are about what happens to *their*
+          complaint, not about who ends up holding it. It exists because the routing rule in 0050 is a
+          rule and rules are wrong sometimes -- and the alternative to a request is a supervisor who can
+          silently empty their own queue.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/complaints/{complaint_id}/read:
     post:
       description: 'Record that the caller has seen the complaint as it now stands.
@@ -13519,6 +14478,60 @@ paths:
         id: US-2.6
         role: complaints[] carries status, comments[] and history[], filtered to the caller's own
         title: Complaint status tracking with history
+  /api/v1/department-options:
+    get:
+      description: 'Id, name and kind of every active department in the caller''s community.
+
+
+        This exists because of a control that could not be drawn. `GET /departments`
+
+        is admin-only, so a manager deciding where to move a complaint, or a
+
+        supervisor naming where they think one belongs, had no way to learn any
+
+        department''s name -- which would have made the destination field a box you
+
+        type a UUID into.
+
+
+        Three fields, not the admin list''s roster counts, categories, hours and
+
+        skills. Widening a real read boundary so a dropdown can be drawn is the
+
+        trade this avoids.'
+      operationId: department_options_api_v1_department_options_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DepartmentOption'
+                title: Response Department Options Api V1 Department Options Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Every department, named, for a picker
+      tags:
+      - complaint-routing
+      x-no-user-story:
+        api-type: Master data
+        rationale: 'Id and name of each department, so a destination can be picked from a list. It exists
+          because of a control that could not be drawn, not because anyone asked for it: GET /departments
+          is admin-only and carries roster counts, categories, hours and skills, so the only way for a
+          manager or supervisor to name a department was to type a UUID. Widening that read to serve a
+          dropdown would have been the worse trade.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/departments:
     get:
       description: 'Departments with their staff, category claims and complaint counts.
@@ -13888,11 +14901,13 @@ paths:
         `membership_role` since the baseline and nothing has ever issued either.
 
 
-        The terms are supplied *here* rather than at application time, because on an
+        **Always at rank `member`.** This request carries no `rank` and no `shift`
 
-        application nobody has offered any yet. Omitting `rank` hires them as a
+        (ruling of 2026-08-11 — see `POST .../invitations`), so the RPC''s own
 
-        `member`.
+        default applies. `jobTitle` is supplied here rather than at application
+
+        time, because on an application nobody has offered one yet.
 
 
         Three distinct refusals share the `409`: the row was **already decided**
@@ -14136,6 +15151,134 @@ paths:
           endpoint notifies a resident about their complaint, and it does not.'
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/departments/{department_id}/complaint-department-requests:
+    get:
+      description: 'Open "this isn''t ours" requests, for the manager who must answer them.
+
+
+        Manager-only, where the list above is manager-and-supervisor: a supervisor
+
+        can see the requests they raised in the complaint list''s `openRequestId`,
+
+        and the queue itself is an inbox, which is a manager''s.'
+      operationId: department_change_requests_api_v1_departments__department_id__complaint_department_requests_get
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DepartmentChangeRequest'
+                title: Response Department Change Requests Api V1 Departments  Department Id  Complaint
+                  Department Requests Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Move requests waiting on this manager
+      tags:
+      - complaint-routing
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'A supervisor telling their manager a complaint belongs to another department, and
+          the manager''s answer. Entirely inside the staff side of the wall: no interviewee described
+          it because no resident ever sees it, and the complaint stories are about what happens to *their*
+          complaint, not about who ends up holding it. It exists because the routing rule in 0050 is a
+          rule and rules are wrong sometimes -- and the alternative to a request is a supervisor who can
+          silently empty their own queue.'
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/departments/{department_id}/complaints:
+    get:
+      description: 'The department''s queue, newest first, for its manager and supervisors.
+
+
+        Both roles read the same list because they act on the same complaints: the
+
+        supervisor triages and requests a move, the manager answers the request and
+
+        can move it themselves. Splitting it into two endpoints would have meant two
+
+        projections that must agree about what a complaint looks like.
+
+
+        Each row carries `openRequestId` when a transfer has already been asked for,
+
+        so the screen can draw the button correctly without a second read -- and so a
+
+        supervisor cannot file the same request twice before the unique index tells
+
+        them.'
+      operationId: department_complaints_api_v1_departments__department_id__complaints_get
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DepartmentComplaint'
+                title: Response Department Complaints Api V1 Departments  Department Id  Complaints Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: This department's complaints
+      tags:
+      - complaint-routing
+      x-user-stories:
+      - coverage: served
+        id: US-2.6
+        role: The department's own queue, which is where the status a resident tracks is actually moved
+        title: Complaint status tracking with history
+      - coverage: served
+        id: US-2.8
+        role: One department holds it and can see everything it holds, so 'who is dealing with this' has
+          an answer that is not a person's memory
+        title: Complaint accountability
   /api/v1/departments/{department_id}/departures:
     get:
       description: 'Who is leaving, and how much of their handover is left.
@@ -14613,16 +15756,25 @@ paths:
       x-user-stories: []
   /api/v1/departments/{department_id}/invitations:
     post:
-      description: 'Offer someone a place on the roster.
+      description: 'Offer someone a place on the roster, as a team member.
 
 
-        An invitation carries its **terms** — `rank`, `jobTitle`, `shift` — because
+        **Rank is not a parameter and neither is shift** (product-owner ruling,
 
-        the person accepting has to know what they are accepting. They cannot change
+        2026-08-11). A service person hired through this surface joins as a
 
-        them: `POST .../decide` ignores those fields on an invitation, so a provider
+        `member`; managers and supervisors are provisioned by email through
 
-        cannot accept themselves in as a manager.
+        `POST .../staff-invitations` and never registered as providers in the first
+
+        place. `staff_assignments.shift` describes nothing the system reads — work
+
+        reaches a worker through the dispatch sweep or a supervisor''s assignment,
+
+        and a guard''s rota is `security_shifts`.
+
+
+        `jobTitle` is the one term on offer, and the person accepting sees it.
 
 
         **The invited person is notified**, which they were not until `0041`. This
@@ -14773,6 +15925,238 @@ paths:
           endpoint notifies a resident about their complaint, and it does not.'
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/departments/{department_id}/skills:
+    get:
+      description: 'The trades this department employs, alphabetically.
+
+
+        Empty for every department that has not chosen any: skills are **never**
+
+        inherited from the department''s complaint categories. The two answer
+
+        different questions, and inheriting one from the other would give every
+
+        department a skill list nobody picked.'
+      operationId: list_department_skills_api_v1_departments__department_id__skills_get
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Skill'
+                title: Response List Department Skills Api V1 Departments  Department Id  Skills Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Skills a department needs
+      tags:
+      - skills
+      x-no-user-story:
+        api-type: Master data
+        rationale: The global list of trades a service person can offer. The complaint stories assume
+          somebody competent turns up; something still has to say what competent means. Global rather
+          than per-community on purpose -- see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which
+          communities need my skills' search has to run before the person holds a membership anywhere.
+        status: Not covered by user story
+      x-user-stories: []
+    post:
+      description: 'The department form''s "Add skill" button, in one call.
+
+
+        Creates the trade in the global catalogue if no case-insensitive match
+
+        exists, then attaches it to this department. **One call rather than two**,
+
+        because create-then-attach can half-fail, and a skill created but not
+
+        attached is catalogue litter nobody asked for.
+
+
+        Responds **201** when the skill was newly created and **200** when an
+
+        existing one was attached. Attaching a skill the department already has is
+
+        not an error -- it is idempotent and returns the same body.'
+      operationId: add_department_skill_api_v1_departments__department_id__skills_post
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddDepartmentSkillRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillCreated'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Add a skill to a department by name
+      tags:
+      - skills
+      x-no-user-story:
+        api-type: Master data
+        rationale: The global list of trades a service person can offer. The complaint stories assume
+          somebody competent turns up; something still has to say what competent means. Global rather
+          than per-community on purpose -- see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which
+          communities need my skills' search has to run before the person holds a membership anywhere.
+        status: Not covered by user story
+      x-user-stories: []
+    put:
+      description: 'Make the department''s skill set exactly ``skillIds``.
+
+
+        Every id is checked to name an active skill **before** anything is deleted,
+
+        so a request carrying one bad id fails with 422 rather than emptying the
+
+        list on its way to failing.
+
+
+        Returns the set as it now stands, read back from the database rather than
+
+        echoed, so a caller learns what actually landed.'
+      operationId: set_department_skills_api_v1_departments__department_id__skills_put
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetDepartmentSkillsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Skill'
+                title: Response Set Department Skills Api V1 Departments  Department Id  Skills Put
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Replace a department's skills
+      tags:
+      - skills
+      x-no-user-story:
+        api-type: Master data
+        rationale: The global list of trades a service person can offer. The complaint stories assume
+          somebody competent turns up; something still has to say what competent means. Global rather
+          than per-community on purpose -- see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which
+          communities need my skills' search has to run before the person holds a membership anywhere.
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/departments/{department_id}/skills/{skill_id}:
+    delete:
+      description: 'Remove one trade from this department''s list.
+
+
+        The skill itself is untouched: it is global, and another department almost
+
+        certainly needs it. Detaching one the department does not have is a no-op
+
+        rather than a 404 -- the caller''s intent is already satisfied.'
+      operationId: remove_department_skill_api_v1_departments__department_id__skills__skill_id__delete
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: path
+        name: skill_id
+        required: true
+        schema:
+          title: Skill Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Detach a skill from a department
+      tags:
+      - skills
+      x-no-user-story:
+        api-type: Master data
+        rationale: The global list of trades a service person can offer. The complaint stories assume
+          somebody competent turns up; something still has to say what competent means. Global rather
+          than per-community on purpose -- see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which
+          communities need my skills' search has to run before the person holds a membership anywhere.
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/departments/{department_id}/staff:
     post:
       description: 'Add one person to a roster.
@@ -14884,6 +16268,329 @@ paths:
         id: US-2.9
         role: Replaces the roster wholesale
         title: Verified management contact directory
+  /api/v1/departments/{department_id}/staff-invitations:
+    get:
+      description: 'Managers and supervisors created here, whether or not they have arrived.
+
+
+        **Claimed ones are kept in the list.** An administrator needs to know that
+
+        the manager they created has actually signed in, and a list that dropped
+
+        each person at the moment they arrived would answer a different question --
+
+        it would look identical whether somebody was still expected or had been
+
+        working for a month.
+
+
+        `claimedAt` is null until their first sign-in. A `pending` row that is weeks
+
+        old is usually a mistyped address, and this list is the only place that is
+
+        visible: nothing else fails when an email is wrong, because there is nothing
+
+        to deliver.'
+      operationId: list_staff_invitations_api_v1_departments__department_id__staff_invitations_get
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/StaffInvitation'
+                title: Response List Staff Invitations Api V1 Departments  Department Id  Staff Invitations
+                  Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Leadership created for this department
+      tags:
+      - department-hiring
+      x-no-user-story:
+        api-type: Master data
+        rationale: 'Creating the manager who runs a department and the supervisor who helps. Upstream
+          of every service story the way hiring is, and one step further back: hiring needs somebody to
+          do the hiring. The ruling is that leadership has NO registration flow -- an administrator types
+          a name and an email and that person is admitted on first sign-in -- so unlike the service person''s
+          path there is no story here to serve, only a precondition to satisfy. Nobody interviewed described
+          appointing their own manager, because in every society interviewed the manager was already there.'
+        status: Not covered by user story
+      x-user-stories: []
+    post:
+      description: 'Provision leadership by email. **No invitation is sent and none is needed.**
+
+
+        The email is not a delivery address, it is the **matching key**: whoever
+
+        signs in with it is admitted to this department at that rank. Nothing is
+
+        mailed, so a wrong address produces no bounce and no error -- only an
+
+        invitation that stays `pending` forever, which is why the list above exists.
+
+
+        `rank` is `manager` or `supervisor`. `member` is refused: that rank is
+
+        reached only by hiring a registered service provider, which is the whole
+
+        point of removing typed-in technicians from the department form.
+
+
+        The membership role is **derived at sign-in**, not stored -- a manager
+
+        becomes `manager`, a supervisor becomes `security` or `worker` depending on
+
+        the department''s kind. Deriving it late means a department that changes kind
+
+        between now and then cannot mint a membership pointing at the wrong portal.
+
+
+        Returns 409 when that address already belongs to this community, because the
+
+        claim would fail on the same check and offering the invitation would be
+
+        offering a dead end.'
+      operationId: invite_staff_member_api_v1_departments__department_id__staff_invitations_post
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteStaffRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffInvitation'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Create a manager or supervisor
+      tags:
+      - department-hiring
+      x-no-user-story:
+        api-type: Master data
+        rationale: 'Creating the manager who runs a department and the supervisor who helps. Upstream
+          of every service story the way hiring is, and one step further back: hiring needs somebody to
+          do the hiring. The ruling is that leadership has NO registration flow -- an administrator types
+          a name and an email and that person is admitted on first sign-in -- so unlike the service person''s
+          path there is no story here to serve, only a precondition to satisfy. Nobody interviewed described
+          appointing their own manager, because in every society interviewed the manager was already there.'
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/departments/{department_id}/staff-invitations/{invitation_id}:
+    delete:
+      description: 'Withdraw leadership that has not signed in yet.
+
+
+        **Revoked, not deleted**: who created an invitation and when is worth
+
+        keeping, and a mistyped address that was noticed and withdrawn is exactly
+
+        the history somebody will want later.
+
+
+        Returns 409 once it has been claimed. Removing somebody who has already
+
+        started is a departure, not a withdrawal, and has its own five routes above
+
+        for the good reason that their work has to go somewhere.'
+      operationId: revoke_staff_invitation_api_v1_departments__department_id__staff_invitations__invitation_id__delete
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: path
+        name: invitation_id
+        required: true
+        schema:
+          title: Invitation Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Withdraw an unclaimed invitation
+      tags:
+      - department-hiring
+      x-no-user-story:
+        api-type: Master data
+        rationale: 'Creating the manager who runs a department and the supervisor who helps. Upstream
+          of every service story the way hiring is, and one step further back: hiring needs somebody to
+          do the hiring. The ruling is that leadership has NO registration flow -- an administrator types
+          a name and an email and that person is admitted on first sign-in -- so unlike the service person''s
+          path there is no story here to serve, only a precondition to satisfy. Nobody interviewed described
+          appointing their own manager, because in every society interviewed the manager was already there.'
+        status: Not covered by user story
+      x-user-stories: []
+    patch:
+      description: 'Fix a mistyped address before anybody claims it.
+
+
+        This exists because of how the endpoint above fails. Nothing is mailed, so a
+
+        wrong email does not bounce -- the invitation simply sits `pending` and the
+
+        person never arrives. The pending list is what makes that visible; this is
+
+        what the admin does about it.
+
+
+        **Omitted means unchanged.** Only the fields present in the body move, so a
+
+        form that patches the email cannot blank the job title by not sending it.
+
+        `phone` and `jobTitle` accept `""` to clear; `email`, `name` and `rank` do
+
+        not, because an invitation without them binds nothing, names nobody, or
+
+        admits at no rank.
+
+
+        **`departmentId` is not in the body, and that is the point.** The department
+
+        is what `can_manage_department` authorizes this call against, so allowing it
+
+        to move would let the manager of one department mint staff into another
+
+        without that department''s manager being asked. Moving an invitation is
+
+        revoke-and-reissue, under the authority of wherever it is going.
+
+
+        Returns 409 once it has been claimed -- by then the address has already
+
+        admitted somebody and editing it here would change nothing about who got in
+
+        -- and 409 if the new address already belongs to the community or already
+
+        has an open invitation.'
+      operationId: update_staff_invitation_api_v1_departments__department_id__staff_invitations__invitation_id__patch
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      - in: path
+        name: invitation_id
+        required: true
+        schema:
+          title: Invitation Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStaffInvitationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffInvitation'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Correct an unclaimed invitation
+      tags:
+      - department-hiring
+      x-no-user-story:
+        api-type: Master data
+        rationale: 'Creating the manager who runs a department and the supervisor who helps. Upstream
+          of every service story the way hiring is, and one step further back: hiring needs somebody to
+          do the hiring. The ruling is that leadership has NO registration flow -- an administrator types
+          a name and an email and that person is admitted on first sign-in -- so unlike the service person''s
+          path there is no story here to serve, only a precondition to satisfy. Nobody interviewed described
+          appointing their own manager, because in every society interviewed the manager was already there.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/departments/{department_id}/staff/{staff_id}:
     delete:
       description: 'Take a member off the active roster.
@@ -18411,6 +20118,87 @@ paths:
           inflate the matrix.'
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/service-providers/{provider_id}:
+    get:
+      description: 'The person behind a candidate tile, an application, or a notification.
+
+
+        **All three of those lead here, because all three are about somebody who is
+
+        not yet on a roster.** `GET /departments/{id}/staff/{staffId}` is the
+
+        employee page and it needs a `staff_assignments` row; nobody being
+
+        *considered* has one. Without this route the hiring screens could list
+
+        people and never open one.
+
+
+        Narrower than `GET /service-providers/me`: no coordinates and no profile id.
+
+        `distanceKm` on the candidate list already answers where they are, from the
+
+        community''s own point, and `serviceRadiusKm` here is a statement they
+
+        published about how far they travel. A home coordinate is neither.
+
+
+        Not scoped to a department, and it does not need to be — the row is the
+
+        person''s own registration and carries no community''s business. The search
+
+        that surfaced them has already applied this department''s blacklist and
+
+        roster rules.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | You are neither an admin nor a manager |
+
+        | 404 | `service_provider_not_found` | No provider with that id |'
+      operationId: get_candidate_api_v1_service_providers__provider_id__get
+      parameters:
+      - in: path
+        name: provider_id
+        required: true
+        schema:
+          title: Provider Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateProfile'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: One service person, for a hiring manager
+      tags:
+      - service-providers
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'Applying, inviting, hiring, removing and barring a service person. Downstream of registration
+          and upstream of everything that closes a story: US-2.7 and US-2.8 are about a complaint being
+          worked, and US-3.3 to US-3.6 are about a gate being staffed, and neither can begin until somebody
+          has been hired. Hiring ENABLES those stories without serving any of them, which is the honest
+          verdict and not a modest one -- claiming a share of US-2.7 here would make the matrix say this
+          endpoint notifies a resident about their complaint, and it does not.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/settings:
     get:
       description: 'Everything the settings screen needs, in one request.
@@ -18494,7 +20282,25 @@ paths:
       x-user-stories: []
   /api/v1/skills:
     get:
-      description: 'Every active skill, alphabetically.
+      description: 'Every active skill, alphabetically -- or the closest matches to ``q``.
+
+
+        **Without ``q`` this is exactly the endpoint it has always been**: the whole
+
+        catalogue, alphabetical, unpaginated, which is what the service person''s
+
+        registration grid renders. ``limit`` is ignored in that mode on purpose --
+
+        a truncated catalogue would silently hide trades from somebody choosing
+
+        theirs.
+
+
+        With ``q`` it is the suggestion box behind the department form''s skill
+
+        field: exact match first, then prefix, then trigram similarity. Use
+
+        ``POST /skills`` to add one that is not there.
 
 
         **Global, not per-community**, which is the asymmetry the whole feature rests
@@ -18514,6 +20320,29 @@ paths:
 
         has held it for two years keeps the row that says so.'
       operationId: list_skills_api_v1_skills_get
+      parameters:
+      - description: Closest-match filter. Omit for the whole catalogue, which is what the registration
+          screen's chip grid wants.
+        in: query
+        name: q
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 80
+            type: string
+          - type: 'null'
+          description: Closest-match filter. Omit for the whole catalogue, which is what the registration
+            screen's chip grid wants.
+          title: Q
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 10
+          maximum: 50
+          minimum: 1
+          title: Limit
+          type: integer
       responses:
         '200':
           content:
@@ -18543,6 +20372,126 @@ paths:
           communities need my skills' search has to run before the person holds a membership anywhere.
         status: Not covered by user story
       x-user-stories: []
+    post:
+      description: 'Create a skill, or return the one that already answers to that name.
+
+
+        The match is case- and whitespace-insensitive, so ``"  plumbing "`` finds
+
+        ``Plumbing`` rather than creating a second one. **This is not an error and
+
+        is not reported as one** -- somebody typing a trade that already exists has
+
+        asked a reasonable question and gets a usable answer.
+
+
+        Responds **201** when the skill was created and **200** when it already
+
+        existed, matching ``created`` in the body. A retired trade asked for again
+
+        is reactivated rather than duplicated.
+
+
+        The catalogue is global: a skill added by one community is immediately
+
+        available to every other, which is the point -- one vocabulary means a
+
+        plumber claims "Plumbing" once and the hiring search matches everywhere.'
+      operationId: create_skill_api_v1_skills_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSkillRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillCreated'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Add a trade to the global catalogue
+      tags:
+      - skills
+      x-no-user-story:
+        api-type: Master data
+        rationale: The global list of trades a service person can offer. The complaint stories assume
+          somebody competent turns up; something still has to say what competent means. Global rather
+          than per-community on purpose -- see SERVICE_OPERATIONS_PROGRESS.md 4.1 -- because the 'which
+          communities need my skills' search has to run before the person holds a membership anywhere.
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/unassigned-complaints:
+    get:
+      description: 'The admin''s triage queue, oldest first.
+
+
+        A complaint lands here when its category names no department **and** the
+
+        resident either did not pick one or picked something that no longer exists.
+
+        In practice that is the `Other` category and anything nobody has mapped yet
+
+        -- which is exactly the ruling: *if the complaint category is left at other,
+
+        we send it to the admin who can allot it to the department of his choosing.*
+
+
+        It is also where an **ambiguous** category lands. `department_categories`
+
+        lets one category belong to several departments, and when it does, `0050`
+
+        routes to nothing rather than picking: a question in this queue gets a right
+
+        answer in one click, where a guess gets a wrong one that only the department
+
+        which *didn''t* receive it could ever notice.
+
+
+        Resolved complaints are excluded. One that was answered without ever being
+
+        allotted needs nothing from anybody.'
+      operationId: unassigned_complaints_api_v1_unassigned_complaints_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/UnassignedComplaint'
+                title: Response Unassigned Complaints Api V1 Unassigned Complaints Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Complaints nothing could route
+      tags:
+      - complaint-routing
+      x-user-stories:
+      - coverage: served
+        id: US-2.8
+        role: The queue of complaints no category and no resident guess could route. Before this they
+          were owned by nobody and looked identical to the ones that were
+        title: Complaint accountability
   /api/v1/visitor-passes:
     get:
       description: 'The caller''s own passes, newest first.
@@ -20793,6 +22742,10 @@ tags:
     per community; a resident and a serviceman share only the work-order thread, which locks when the
     job ends. Identity-only guard for the conversations reason -- participation is a property of the thread.'
   name: messages
+- description: Which department owns a complaint. Decided when it is raised -- the category first, the
+    resident's own guess second, the admin's triage queue third -- and corrected afterwards by an admin
+    allotting, a manager moving, or a supervisor asking their manager to.
+  name: complaint-routing
 - description: Turning a triaged complaint into a scheduled visit by a named person. The role guard is
     coarse because a supervisor is a rank on a roster and not a membership role; the department check
     is in the database.
@@ -20804,5 +22757,10 @@ tags:
     CSV exports. The one surface in this feature scoped to a single community, because a gate belongs
     to one society.'
   name: security-operations
+- description: Authoring the global trade catalogue, and saying which trades a department needs. Reading
+    the catalogue is `service-providers`' `GET /skills`, because that endpoint exists for the registration
+    screen and any signed-in person may call it; everything here is admin-or-manager only. The catalogue
+    is global and a department's claim on it is not.
+  name: skills
 - description: Liveness.
   name: system

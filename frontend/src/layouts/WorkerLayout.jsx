@@ -9,6 +9,7 @@ import {
   MapPinned,
   Menu,
   MessageSquare,
+  MessageSquareWarning,
   Settings,
   UserRound,
   Wrench,
@@ -37,6 +38,12 @@ const NAV = [
   { name: 'Calendar', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/calendar`, icon: CalendarDays },
   { name: 'Availability', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/availability`, icon: Clock },
   { name: 'Communities', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/communities`, icon: MapPinned },
+  // Supervisors only in practice — the page itself checks the roster rank the
+  // worker snapshot already carries, and tells a technician plainly that their
+  // work arrives as jobs instead. It is in the nav for everyone because the
+  // session carries no rank, and putting one there would mean editing the auth
+  // owner's file so a menu item could be hidden.
+  { name: 'Complaints', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/complaints`, icon: MessageSquareWarning },
   { name: 'Messages', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/messages`, icon: MessageSquare },
   { name: 'Profile', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/profile`, icon: UserRound },
   { name: 'Settings', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/settings`, icon: Settings },

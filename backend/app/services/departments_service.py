@@ -65,6 +65,11 @@ def _to_summary(row: dict) -> DepartmentSummary:
         # up positionally as well as by content (R23).
         categories=list(row.get("category_names") or []),
         category_ids=[str(value) for value in (row.get("category_ids") or [])],
+        # Same positional pairing, from the same view (0048). Empty for a
+        # department that has chosen no skills, which is every department until
+        # somebody picks some -- they are never inherited from categories.
+        skills=list(row.get("skill_names") or []),
+        skill_ids=[str(value) for value in (row.get("skill_ids") or [])],
         head=row.get("head_name"),
         head_staff_id=row.get("head_staff_id"),
         email=row.get("contact_email"),

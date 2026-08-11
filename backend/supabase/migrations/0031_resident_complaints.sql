@@ -295,6 +295,17 @@ grant select on public.complaint_overview to authenticated;
 -- ---------------------------------------------------------------------------
 -- 5. raise_complaint
 --
+-- **Superseded 2026-08-12 by `0050_complaint_department_routing.sql`, which
+-- drops this six-argument function and creates a seven-argument one.** Read
+-- 0050's definition, not this one. Two things changed there: the complaint is
+-- routed to a department at the moment it is raised, and the notification stops
+-- going to every manager in the community -- `notify_community_staff` meant a
+-- plumbing manager was told about a lift complaint and sent to a screen their
+-- portal does not have. This file is left as it was written rather than
+-- corrected in place, because a new parameter changes the signature: `create or
+-- replace` would have produced a second overload and made every existing
+-- six-argument call ambiguous.
+--
 -- The membership id is a parameter and is checked against `is_own_membership`,
 -- the pattern `0030`'s subscription writes established. A SECURITY DEFINER
 -- function that trusts a caller-supplied membership id is one that lets anyone
@@ -488,8 +499,12 @@ begin
     (p_complaint_id, v_row.raised_by_membership_id, 'reopened',
      jsonb_build_object('reason', v_reason));
 
-  perform public.notify_community_staff(
-    v_row.community_id,
+  -- **Corrected 2026-08-12.** `notify_community_staff` is every admin *and
+  -- every manager*, so the plumbing manager was told a lift complaint had been
+  -- reopened. `notify_complaint_staff` (`0050`) narrows it to the admins and
+  -- the complaint's own department manager.
+  perform public.notify_complaint_staff(
+    p_complaint_id,
     'complaint.reopened',
     jsonb_build_object(
       'title', 'A complaint was reopened',
@@ -573,8 +588,9 @@ begin
     )
   );
 
-  perform public.notify_community_staff(
-    v_row.community_id,
+  -- Corrected 2026-08-12, same as `complaint.reopened` above.
+  perform public.notify_complaint_staff(
+    p_complaint_id,
     'complaint.resolution_confirmed',
     jsonb_build_object(
       'title', 'A resident confirmed a resolution',
@@ -884,8 +900,9 @@ begin
     else
       -- The resident commented. Staff hear about it instead, otherwise a
       -- resident chasing their own complaint is talking into an empty room.
-      perform public.notify_community_staff(
-        v_community_id,
+      -- Corrected 2026-08-12, same as the two above.
+      perform public.notify_complaint_staff(
+        p_complaint_id,
         'complaint.commented',
         jsonb_build_object(
           'title', 'New comment on a complaint',

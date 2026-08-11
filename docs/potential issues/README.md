@@ -24,6 +24,7 @@ Nothing here is a guess. Every claim names the file and line it came from, and e
 | 11 | [The naming contract in `API.md` §1.3 is wrong](11-snake-case-in-the-published-contract.md) | Doc defect | Low, but it is a contract giving a wrong answer |
 | 12 | [Four notification parameters that no screen reads](12-notification-parameters-no-screen-reads.md) | Silent UX defect | Low each; they share a failure mode with no alarm on it |
 | 13 | [Dead code in files this workstream does not own](13-dead-code-in-files-this-workstream-does-not-own.md) | Tech debt | Low — written down because nothing else will |
+| 14 | [The manager has hiring permission and no hiring screen](14-the-manager-has-hiring-permission-and-no-hiring-screen.md) | Unreachable capability | **Resolved 2026-08-11** — the file records what the fix turned up, and the one part still open |
 
 ## Three vintages, and why they are stored differently
 

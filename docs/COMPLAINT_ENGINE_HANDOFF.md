@@ -296,3 +296,127 @@ status, a visibility or a priority, add it there rather than in a service.
 been applied to any database** — including `0001_baseline.sql`. Every predicate
 described here is unexecuted. What is written down is what the SQL says, checked
 by reading and by `pglast`, not what a database has been observed doing.
+
+---
+
+## 8. Added 2026-08-11 — the assignment control, and a question that is yours
+
+The admin department screen's "Assign technician" dropdown changed, and one
+thing about it is **deliberately left undecided** because it is yours.
+
+### What changed, and why it had to
+
+`DepartmentDetail.jsx` read its roster from `department.staff` — the zustand
+snapshot's copy. That list is **always empty**: `GET /dashboard/snapshot` builds
+every department as `{ staff: [], categories: [] }`
+(`dashboard_service.py`:203). The control looked functional only because the
+department form used to collect typed-in staff names and write them
+optimistically into the same local array, so it survived until a reload.
+
+Those typed-in names are gone. Technicians are outside people now — they
+register, apply or are invited, and a manager decides — so the department form
+no longer invents them, and the dropdown had to stop reading a list nothing
+fills. It now reads the real roster (`GET /departments?pageSize=100`, whose
+`staff[]` is `staff_assignments` including `serviceProviderId` since `0042`),
+and is relabelled **"Assign to staff"**, since a hired plumber is not a
+technician in any vocabulary this schema uses.
+
+The empty state now links to `/admin/departments/:id/hiring`, which is the
+screen that actually populates it.
+
+### The question, unanswered
+
+**`assigneeStaffId` on a complaint is not `work_order_assignments.staff_assignment_id`.**
+
+The screen sets it optimistically in zustand; the backend records assignment on
+a *work order*, not on the complaint, and D5 says a complaint may have several.
+So there are two ideas of "who is on this" and nothing reconciles them:
+
+| | Where it lives | Who writes it |
+|---|---|---|
+| `complaint.assigneeStaffId` + `assignee` label | zustand, this screen | an admin using the dropdown |
+| `work_order_assignments.staff_assignment_id` | Postgres | `create_work_order`, and the dispatch engine |
+
+Three ways this could go, and **none of them is ours to choose**:
+
+1. **The dropdown creates a work order.** Assignment stops being a complaint
+   field; `POST /complaints/{id}/work-orders` already exists and has no caller.
+   Truest to D5, and it changes what the control means.
+2. **The dropdown assigns the complaint's existing work order.**
+   `POST /work-orders/{id}/assign` exists, also with no caller. Needs an answer
+   for a complaint with none, or several.
+3. **`complaints.assigned_to_membership_id` stays the admin's own field** and
+   means "who is accountable", separate from who is doing the work. Then the two
+   are not in conflict and both should be shown.
+
+The frontend has been left on the shape it had — an optimistic local field —
+because changing it commits to one of these, and the choice belongs to whoever
+owns the complaint lifecycle. Nothing new depends on the answer; the control
+works either way. But it is a real fork, and it is the one thing on that screen
+that is still pretending.
+
+---
+
+## 9. Added 2026-08-12 — a complaint now has a department, and this is not §8
+
+**A ruling was made on complaint routing and it is not the one §8 asks you
+about.** Read this section before you conclude that your fork was decided for
+you, because it was not.
+
+`0050_complaint_department_routing.sql` gives `complaints` a `department_id` and
+fills it when the complaint is raised. The rule, from the product owner on
+2026-08-12, in precedence order:
+
+1. the complaint's **category**, matched to `complaint_categories` and followed
+   through `department_categories` (`0019`) to a department;
+2. failing that, **the department the resident named** on the form — a new
+   optional `departmentId` on `POST /complaints`, whose "Not sure" option sends
+   `null`;
+3. failing that, **nothing** — an admin triage queue, and an admin allots it.
+
+A category attached to several departments routes to *nothing* rather than
+picking, so the ambiguity becomes a question a human answers rather than a wrong
+answer nobody sees.
+
+### Why this does not decide §8
+
+§8 is about **which person** is working a complaint —
+`complaints.assigned_to_membership_id`, `work_order_assignments`, and an
+optimistic field on a screen. This is about **which department owns it**. They
+are different questions and `0050` deliberately answers only the second:
+
+* nothing here writes `assigned_to_membership_id`;
+* nothing here creates or assigns a work order;
+* `department_complaints()` reports the complaint and its open transfer request,
+  and says nothing about who is doing the work.
+
+If anything, the fork in §8 is now easier to take: a complaint has a department
+before any work order exists, so option 2 ("the dropdown assigns the complaint's
+existing work order") no longer has to invent a department to create one in.
+
+### What else changed under you, and why
+
+**Four notifications stopped going to every manager in the community.**
+`notify_community_staff` means every admin *and every manager*, so the plumbing
+department's manager was told about lift complaints — raised, reopened,
+resolution-confirmed and commented — each with a link to `/admin/complaints`,
+which a manager's portal has no route for. They now go through
+`notify_complaint_staff` (`0050`): the community's admins, plus the complaint's
+**own** department manager.
+
+The three call sites in `0031` were corrected in place. `raise_complaint` was
+dropped and rebuilt in `0050` instead, because adding a parameter changes the
+signature and `create or replace` would have produced a second overload rather
+than a replacement.
+
+**`0031` also gained a forward pointer** at its `raise_complaint` section, so
+nobody reads that definition and believes it.
+
+### The one thing here that is a judgement call, and is yours
+
+**A supervisor can ask for a complaint to be moved; their manager decides.**
+`complaint_department_requests`, and the two RPCs either side of it. The shape
+was chosen because a supervisor who could move work out of their own department
+could empty it — but *whether a transfer should also notify or need consent from
+the receiving department* is a lifecycle question and it is unanswered. Today
+the receiving department finds out by being notified after the fact.

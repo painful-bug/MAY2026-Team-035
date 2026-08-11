@@ -782,9 +782,165 @@ emits).
 
 > **Every write in this section notifies somebody.** A status change reaches the resident who raised
 > the complaint; raising, reopening, confirming and a resident's own comment reach the community's
-> admins and managers. The notification is written **inside the same transaction** as the change that
-> caused it, in the RPC rather than in this API, so there is no path that changes a complaint without
-> telling anyone — including the paths this API does not own. See §5.2 for how it is delivered.
+> admins and **the complaint's own department manager**. The notification is written **inside the
+> same transaction** as the change that caused it, in the RPC rather than in this API, so there is no
+> path that changes a complaint without telling anyone — including the paths this API does not own.
+> See §5.2 for how it is delivered.
+
+> **Corrected 2026-08-12.** That audience used to be `notify_community_staff` — every admin *and
+> every manager in the community*. The manager of the plumbing department was told about lift
+> complaints, and the link went to `/admin/complaints`, which their portal has no route for, so the
+> click silently redirected them home. `0050` replaced it with `notify_complaint_staff`, which needs a
+> department on the complaint — which is what §7.1 is about.
+
+### 7.1 Which department owns a complaint
+
+A complaint used to reach a department only once dispatch built a work order from it
+(`work_orders.department_id`, `0036`). Before that moment it belonged to nobody, which is why every
+manager was told about every complaint: there was no better answer available.
+
+`0050` routes it at the moment it is raised. **The rule, in precedence order** (product owner,
+2026-08-12):
+
+1. the complaint's **category**, matched to `complaint_categories` and followed through
+   `department_categories` (`0019`) to a department;
+2. failing that, **the department the resident named** on the form;
+3. failing that, **nothing** — the complaint waits in the admin's triage queue.
+
+Category over the resident's pick is the ruling and it is the right way round: the category mapping is
+curated by somebody who knows how this society is organised, and the resident is guessing. The
+resident's pick is not decoration — it routes exactly the cases the catalogue cannot, which is the
+`Other` category and anything nobody has mapped yet.
+
+**`"Other"` and `"Not sure"` are not special values anywhere.** They are the two inputs that match
+nothing and fall through to the next rule. Encoding them as sentinels would have added two more
+strings every reader has to know about, to say what the absence of a match already says.
+
+**An ambiguous category goes to a human.** `department_categories` has a composite primary key, so one
+category may legally belong to several departments. When it does, the rule routes to *nothing* rather
+than picking. A complaint in the triage queue is a visible question answered in one click; a complaint
+sent to whichever department claimed the category first is an invisible wrong answer, and the only
+person who could notice is the department that did not get it.
+
+#### `GET /api/v1/unassigned-complaints`
+
+The admin's triage queue, oldest first. Resolved complaints are excluded — one answered without ever
+being allotted needs nothing from anybody.
+
+**Not `/complaints/unassigned`.** `GET /complaints/{complaintId}` already exists and swallowed it,
+reading `unassigned` as a complaint id. Declaring the literal earlier would have worked and would have
+left this endpoint's correctness depending on which order two routers are included in.
+
+| | |
+|---|---|
+| Guard | `admin`, `manager`, `worker`, `security` at the router; `is_community_admin` in the RPC |
+| Returns | `200` array of `UnassignedComplaint` |
+| Errors | `401`, `403`, `500` |
+
+#### `GET /api/v1/department-options`
+
+Id, name and kind of every active department in the caller's community. Any active member.
+
+It exists because of a control that could not be drawn: `GET /departments` is admin-only and carries
+roster counts, categories, hours and skills, so a manager choosing where to move a complaint had no
+way to learn any department's name. Three fields rather than widening a real read boundary to serve a
+dropdown.
+
+| | |
+|---|---|
+| Returns | `200` array of `DepartmentOption` — `id`, `name`, `kind` |
+| Errors | `401`, `403`, `500` |
+
+#### `PATCH /api/v1/complaints/{complaintId}/department`
+
+Give a complaint to a department, or move it to another one.
+
+**One endpoint, two acts, and which one you are performing is decided in Postgres from what the
+complaint currently holds** — not from which route you called or what you claim to be:
+
+* the complaint has **no** department → only an **admin** may allot it;
+* the complaint **has** one → only that department's **manager** (or an admin, who passes
+  `can_manage_department` everywhere) may move it out.
+
+Authorizing the move on the department the complaint is *leaving* is the load-bearing half. Checking
+the caller manages the **destination** instead would let the manager of B reach into A and help
+themselves to A's work.
+
+Re-assigning to the department that already holds it is a no-op rather than a `409`, because a
+double-clicked button is not an error worth a message.
+
+```json
+{ "departmentId": "…" }
+```
+
+| | |
+|---|---|
+| Errors | `401`, `403`, `404`, `422`, `500` |
+
+#### `POST /api/v1/complaints/{complaintId}/department-requests`
+
+A supervisor saying this complaint is not their department's. **A supervisor cannot move it
+themselves** — that is the ruling, and it is the only shape that works: a supervisor who could push
+work out of their own department could empty it, and the department receiving it would have no say
+either way.
+
+`toDepartmentId` is **optional**. A supervisor who knows a lift complaint is not plumbing usually does
+not know whose it is, and requiring a destination would either silence them or make them guess.
+
+```json
+{ "toDepartmentId": "…", "reason": "Not a plumbing job." }
+```
+
+| | |
+|---|---|
+| Guard | `can_supervise_department` on the department currently holding it |
+| `409` | the complaint has no department yet, or a request is already open on it |
+| Errors | `401`, `403`, `404`, `409`, `422`, `500` |
+
+#### `PATCH /api/v1/complaints/{complaintId}/department-requests/{requestId}`
+
+The manager's answer: `accept` or `reject`. The manager answering is the manager of the department
+**giving the complaint up**, never the one receiving it.
+
+They may name a different destination than the supervisor suggested. **Accepting with no destination
+returns the complaint to the admin's triage queue**, which is what "not ours, and I don't know whose
+either" honestly means. The supervisor is notified either way — a request that is silently rejected is
+one they raise again next week.
+
+```json
+{ "decision": "accept", "toDepartmentId": "…" }
+```
+
+| | |
+|---|---|
+| Errors | `401`, `403`, `404`, `409`, `422`, `500` |
+
+#### `GET /api/v1/departments/{departmentId}/complaints`
+
+The department's queue, newest first, for its **manager and its supervisors**. Both read the same list
+because they act on the same rows; two endpoints would have meant two projections that must agree
+about what a complaint looks like.
+
+Each row carries `openRequestId` when a transfer has already been asked for, so the screen draws the
+button correctly without a second read — and a supervisor cannot file the same request twice before
+the unique index tells them.
+
+| | |
+|---|---|
+| Query | `status` — optional, filters on the stored status |
+| Guard | `can_supervise_department` |
+| Errors | `401`, `403`, `404`, `500` |
+
+#### `GET /api/v1/departments/{departmentId}/complaint-department-requests`
+
+Open transfer requests waiting on this department's manager. **Manager-only**, where the list above is
+manager-and-supervisor: a supervisor sees the request they raised as `openRequestId` on the complaint,
+and the queue itself is an inbox, which is a manager's.
+
+| | |
+|---|---|
+| Guard | `can_manage_department` |
+| Errors | `401`, `403`, `404`, `500` |
 
 ### The two vocabularies
 
@@ -905,9 +1061,17 @@ Raise a complaint. **Requires an active membership.** `201 Created`, and the bod
   "description": "The B-block lift has been stopping between 3 and 4.",
   "category": "Elevator",
   "urgency": "High",
-  "location": "B Block"
+  "location": "B Block",
+  "departmentId": null
 }
 ```
+
+> **`departmentId` is the resident's guess, and it is a fallback rather than an instruction.** `null`
+> is what the form's "Not sure" option sends, and it is the ordinary case. The category decides first
+> — see §7.1 — and this is consulted only when the category maps to no department, which is the
+> `Other` category and anything nobody has mapped yet. A department id from another community, or one
+> that no longer exists, is **ignored rather than refused**: a stale form should file the complaint
+> into the triage queue, not fail to file it.
 
 > **`expectedResolutionAt` is not accepted.** High → 24h, Medium → 48h, Low → 72h, applied by the
 > database on insert. The rule used to live in `createComplaintsSlice.js`, where a resident could have
@@ -922,7 +1086,10 @@ one thing the client could not have computed and is exactly what it is about to 
 upload endpoint does — so this endpoint takes what it can honour rather than accepting data it drops.
 Tracked in §15.
 
-Raising notifies every active admin and manager of the community.
+Raising notifies the community's active admins and **the manager of the department the complaint
+routed to**, if it routed to one. Until 2026-08-12 it notified every manager in the community, which
+meant a plumbing manager was told about lift complaints and sent to a screen their portal has no route
+for.
 
 | Status | Code | Cause |
 |---|---|---|
@@ -1175,11 +1342,24 @@ leads a department, and the frontend's free-text field still round-trips exactly
 
 ### `GET /api/v1/departments/{departmentId}`
 
-One department with its **active** roster. **Requires `ADMIN`.** Body as above.
+One department with its **active** roster. **Requires `ADMIN`, or the `MANAGER` of that
+department.** Body as above.
+
+**The one read on this router a manager may make**, and the reason the router's guard changed. Every
+other operation here is `ADMIN`-only and now says so per route; the router itself carries the looser
+`require_admin_or_manager`, because FastAPI cannot remove a router dependency for a single route.
+That inverts the failure mode — a new route added here without `ADMIN_ONLY` would be open to every
+manager in the community — so `tests/api/test_departments.py::test_api_186` asserts the whole table
+rather than one route at a time.
+
+The manager portal has no other way to read its own department: `GET /departments` is admin-only, so
+a manager cannot look themselves up, and the only thing that knows which department they run is
+`membership.department_id` from `GET /auth/session`. Narrowing to *their* department is
+`can_manage_department` in Postgres, not this route.
 
 | Status | Code | Cause |
 |---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
+| `401` / `403` | | Not authenticated / neither an admin nor a manager |
 | `404` | `not_found` | No such department in the caller's community |
 
 ### `PATCH /api/v1/departments/{departmentId}`
@@ -3996,22 +4176,181 @@ thing standing between a cross-site form post and someone's registration.
 
 The global catalogue of trades. **Requires authentication only.**
 
-Returns a bare array rather than a `Page`: it is twelve rows of seeded reference data, and paging it
-would be an envelope around a constant.
+Returns a bare array rather than a `Page`: without `q` it is the whole catalogue, and paging
+reference data would be an envelope around a constant.
 
 ```json
 [{ "id": "…", "name": "Plumbing", "category": "maintenance",
    "description": "Leaks, taps, drainage, sanitary fittings." }]
 ```
 
-`category` is free text — `maintenance`, `facilities` or `security` for the seeded twelve — rather
-than an enum, because the catalogue is data and a closed enum would mean a code change before an
-operator could add a trade. A retired trade is filtered out here rather than deleted, so a provider
-who has held it for two years keeps the row that says so.
+| Query | Meaning |
+|---|---|
+| *(none)* | The whole active catalogue, alphabetical. What the service person's registration grid renders. `limit` is **ignored** in this mode — a truncated catalogue would hide trades from somebody choosing their own. |
+| `q` | Closest matches (`0048`'s `search_skills`): exact first, then prefix, then trigram similarity. What the department form's skill box calls on every keystroke. |
+| `limit` | 1–50, default 10. Only meaningful with `q`. |
+
+`category` is free text — `maintenance`, `facilities` or `security` for the seeded twelve, and
+`other` for anything added through `POST /skills` — rather than an enum, because the catalogue is
+data and a closed enum would mean a code change before an operator could add a trade. A retired
+trade is filtered out here rather than deleted, so a provider who has held it for two years keeps
+the row that says so.
 
 | Status | Code | Cause |
 |---|---|---|
 | 401 | `authentication_error` | No credentials, or credentials that no longer verify |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/skills`
+
+Add a trade to the global catalogue. **Admins and department managers only.**
+
+```json
+{ "name": "Lift Maintenance", "category": null, "description": null }
+```
+
+**The status code is the answer to "did this exist already".** The match is case- and
+whitespace-insensitive, so `"  plumbing "` finds `Plumbing`:
+
+| Outcome | Status | Body |
+|---|---|---|
+| Created | `201` | `{ "id": "…", "name": "Lift Maintenance", "category": "other", "description": "", "created": true }` |
+| Already existed | `200` | the same shape with `"created": false` and the **stored** spelling |
+
+Typing a trade that already exists is not an error and is not reported as one. A **retired** trade
+asked for again is reactivated rather than duplicated — `is_active` goes back to true and the
+provider history hanging off it is untouched.
+
+Omitted `category` becomes `other` rather than null, because `category` is non-null on the wire and
+the worker's registration grid groups by it; `other` earns a visible group, which is honest — nobody
+classified it.
+
+**The catalogue is global.** A skill one community adds is immediately available to every other, and
+that is the point rather than a leak: one vocabulary is what makes a plumber claim "Plumbing" once
+and match everywhere. The bar is admin-or-manager rather than admin-only because a manager who needs
+"Lift Maintenance" should not have to file a ticket to type a word — that is how a catalogue ends up
+with everything under Others.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted` | The CSRF pair failed, or the caller is neither admin nor manager anywhere |
+| 422 | `request_validation_error`, `check_violation` | A blank name, or one over 80 characters |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/complaint-categories`
+
+Every complaint category in the caller's community, with the trade each one resolves to.
+**Admins and department managers only.**
+
+```json
+[{ "id": "…", "name": "Plumbing", "skillId": "…", "skillName": "Plumbing", "departmentCount": 2 },
+ { "id": "…", "name": "Plumbling", "skillId": null, "skillName": null, "departmentCount": 1 }]
+```
+
+**`skillName: null` is the row this endpoint exists to surface.** `complaint_categories.skill_id` is
+filled by exact name match against the catalogue (`link_category_skill`, `0034`), and a category
+matching no trade is not an error — a community may name one the catalogue has no word for. But it
+has a consequence nobody could see: that category matches no service person in
+`search_hireable_service_providers` or `search_serviceable_communities`, so complaints filed under it
+reach nobody, silently. The department form renders it as a warning.
+
+`departmentCount` is how many departments claim the category. Zero means complaints filed under it
+route to no department at all.
+
+This path was retired by the frontend wiring audit and **reinstated by `0048`** — see
+`docs/FRONTEND_WIRING_AUDIT.md`. The reinstated read is not the retired one: it carries the skill
+link, which never existed before.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `role_not_permitted` | Not an admin or manager |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/departments/{departmentId}/skills`
+
+The trades one department needs, alphabetically. **Admins, and the manager of that department.**
+
+Returns the same `Skill` shape as `GET /skills`, because it is the same object — a second shape for
+it would be two vocabularies for one thing.
+
+**Empty is the normal answer.** A department inherits no skills by default, and in particular
+inherits none from its complaint categories. The two answer different questions — which trade handles
+this kind of complaint, versus which trades this department employs — and deriving one from the other
+would give every department a list nobody chose.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `role_not_permitted`, `HB403` | Not an admin or manager, or a manager of a different department |
+| 404 | `not_found` | No such department |
+| 500 | `internal_error` | Unhandled |
+
+### `PUT /api/v1/departments/{departmentId}/skills`
+
+Replace the department's skill set. **Admins, and the manager of that department.**
+
+```json
+{ "skillIds": ["…", "…"] }
+```
+
+Ids rather than names: by the time this is sent every skill exists, because the form's add button
+creates one through `POST /departments/{id}/skills` and gets an id back. Accepting names here would
+be a second, quieter way to write to the global catalogue.
+
+**Every id is validated before anything is deleted.** A request carrying one retired or unknown id
+fails with 422 and leaves the set as it was, rather than emptying the list on its way to failing.
+
+The response is the set read back from the database, not the request echoed, so a caller learns what
+actually landed.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
+| 404 | `not_found` | No such department |
+| 422 | `request_validation_error`, `check_violation` | An id naming no active skill |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/departments/{departmentId}/skills`
+
+Add a skill by name, creating it in the global catalogue first if it does not exist.
+**Admins, and the manager of that department.**
+
+```json
+{ "name": "Lift Maintenance" }
+```
+
+**This is the department form's "Add skill" button, and it is deliberately one call.**
+Create-then-attach from the client can half-fail, and the half that lands is a skill created and
+attached to nothing — catalogue litter nobody asked for, produced by the failure that happens on a
+phone at the end of a long form.
+
+Same status-code rule as `POST /skills`: **201** when the trade was newly created, **200** when an
+existing one was attached. Attaching a skill the department already has is idempotent, not an error.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
+| 404 | `not_found` | No such department |
+| 422 | `request_validation_error`, `check_violation` | A blank name, or one over 80 characters |
+| 500 | `internal_error` | Unhandled |
+
+### `DELETE /api/v1/departments/{departmentId}/skills/{skillId}`
+
+Detach one trade from one department. **Admins, and the manager of that department.**
+
+The skill itself is untouched — it is global, and another department almost certainly needs it.
+Detaching one the department does not have is a **no-op, not a 404**: the caller's intent is already
+satisfied.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
+| 422 | `request_validation_error` | A malformed id |
 | 500 | `internal_error` | Unhandled |
 
 ### `POST /api/v1/service-providers`
@@ -4157,6 +4496,49 @@ else here: it is the row's answer, and a caller with no row gets a 404 instead o
 | 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
 | 404 | `not_found` | The caller has not registered as a service provider |
 | 422 | `request_validation_error` | `isAvailable` missing or not a boolean |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/service-providers/{providerId}`
+
+One service person, as a **hiring manager** sees them. Added 2026-08-11. Admin or manager only — the
+one route on this router with a role guard, and the only one about somebody other than the caller.
+
+```json
+{
+  "id": "e0c4…", "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
+  "bio": "Twelve years on residential plumbing…", "phone": "+919876543210",
+  "serviceRadiusKm": 15, "status": "active", "isAvailable": true,
+  "skillIds": ["…"], "skillNames": ["Plumbing", "Carpentry"],
+  "communityCount": 2, "registeredAt": "2026-07-02T09:00:00Z"
+}
+```
+
+**Why this exists.** The hiring surface has three ways to arrive at a person — a tile in the
+candidate list, a card in the applications inbox, and the `service_application_received`
+notification — and all three are about somebody **not yet on a roster**.
+`GET /departments/{id}/staff/{staffId}` is the employee page and needs a `staff_assignments` row,
+which nobody being *considered* has. Without this route the hiring screens could list people and
+never open one.
+
+**Narrower than `GET /service-providers/me`, deliberately.** No `latitude`/`longitude` and no
+`profileId`. The candidate list's `distanceKm` already answers where somebody is, measured from the
+community's own point, which is the question a manager actually has; a home coordinate is a
+different fact, offered for a different purpose. `serviceRadiusKm` is here because it is a statement
+the person published about how far they travel.
+
+**The guard is the whole point of the route.** `service_providers_read` (`0034` §11) is
+`auth.uid() is not null`, so Postgres would hand this row to any signed-in caller — a manager has to
+be able to find somebody they have never met. `require_admin_or_manager` is what stops that being a
+directory of every tradesperson in the country, browsable by every resident with an account. It is
+**not** scoped to a department: the row is the person's own registration and carries no community's
+business, and the search that surfaced them already applied this department's blacklist and roster
+rules.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Neither an admin nor a manager |
+| 404 | `service_provider_not_found` | No provider with that id |
 | 500 | `internal_error` | Unhandled |
 
 ### Hiring — one negotiation, two directions
@@ -4395,16 +4777,32 @@ endpoint for every service person in the country.
 
 Offer somebody a place on the roster. **Requires `admin` or `manager`.** `201 Created`.
 
-**Request** — `{ "serviceProviderId": "…", "rank": "member", "jobTitle": "Plumber",
-"shift": "Day", "message": "We need a plumber on Tuesdays." }`
+**Request** — `{ "serviceProviderId": "…", "jobTitle": "Plumber",
+"message": "We need a plumber on Tuesdays." }`
 
 An invitation **carries its terms**, because the person accepting has to know what they are
-accepting. They cannot change them: `POST .../decide` ignores `rank`, `jobTitle` and `shift` on an
-invitation, so a provider cannot accept themselves in as a manager.
+accepting. They cannot change them: `POST .../decide` ignores `jobTitle` on an invitation.
 
-`rank` is `manager` | `supervisor` | `member`. **`head` is accepted as a synonym for `manager`**,
-because that is the word the department screens and `API.md` §8 have always used for the person who
-runs a department; `manager` is what the column stores.
+> **Changed 2026-08-11 — `rank` and `shift` are gone from this request.** A product-owner ruling:
+> *"the only people added from servicemen are technicians (member). no supervisors or managers are
+> hired this way. there is no shift or anything. there is no shift system. job assignment is only on
+> demand as the auto assign or supervisor does."*
+>
+> Both halves are separate facts and both matter. **Rank**: leadership never comes from this path —
+> an admin or a manager creates a manager or a supervisor by email through
+> `POST /departments/{id}/staff-invitations`, and that person never registered as a service provider.
+> Somebody hired *here* registered themselves and joins as a `member`; a promotion afterwards is
+> `PATCH /departments/{id}/staff/{staffId}`, a different decision with a different guard.
+> **Shift**: `staff_assignments.shift` is a descriptive text column from `0019`'s typed-roster era and
+> **nothing schedules from it** — work reaches a worker through the dispatch sweep (`0037`) or a
+> supervisor's assignment, and a guard's actual rota is `security_shifts` (`0040`), a different table
+> with real timestamps.
+>
+> This is a **narrowing of the API, not a schema change**: the column and `0035`'s `p_rank`/`p_shift`
+> parameters both stay, and no migration was needed because `decide_service_application` already
+> defaults an omitted rank to `member`. A stale client still sending `rank` is **ignored, not
+> rejected** — the models do not forbid extra fields — so a cached bundle cannot produce a
+> supervisor. `tests/api/test_department_hiring.py::test_api_144` pins that.
 
 **The invited person is notified** — `0041`, and they were not until then. The reason they could not
 be was the schema: `notifications.recipient_membership_id` was `not null`, and somebody who has not
@@ -4422,23 +4820,24 @@ was the worst of the three outcomes and until `0041` it was the only one with no
 | 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a manager of this department |
 | 404 | `not_found` | No such service provider |
 | 409 | `conflict` | Already invited, blacklisted here, or already a member of this community |
-| 422 | `unknown_rank`, `request_validation_error` | A rank outside the three |
+| 422 | `request_validation_error` | `serviceProviderId` missing, or `jobTitle` over 120 characters |
 | 500 | `internal_error` | Unhandled |
 
 ### `POST /api/v1/departments/{departmentId}/applications/{applicationId}/decide`
 
 Answer a pending application. **Requires `admin` or `manager`. The hire happens here.**
 
-**Request** — `{ "decision": "accepted", "rank": "member", "jobTitle": "Plumber", "shift": "Day",
-"note": null }`
+**Request** — `{ "decision": "accepted", "jobTitle": "Plumber", "note": null }`
 
 `decision` is `accepted` or `rejected`. **`withdrawn` is deliberately not accepted here**: a manager
 withdrawing an application instead of rejecting it would erase the record that they refused somebody.
 Withdrawal belongs to the side that opened the negotiation and has its own route.
 
-The terms are supplied *here* rather than at application time, because on an application nobody has
-offered any yet — the manager names them at the moment they say yes. Omitting `rank` hires them as a
-`member`.
+`jobTitle` is supplied *here* rather than at application time, because on an application nobody has
+offered one yet — the manager names it at the moment they say yes.
+
+**Always at rank `member`, and no shift.** `rank` and `shift` were removed from this request on
+2026-08-11 — see `POST .../invitations` above for the ruling and why it needed no migration.
 
 Three distinct refusals share the `409`: the row was **already decided** (two managers clicked
 accept; the row is locked `for update` and the second one loses), the provider is **blacklisted**
@@ -4451,7 +4850,7 @@ this community.
 | 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the caller is not the side entitled to answer |
 | 404 | `not_found` | No such application |
 | 409 | `conflict` | Already decided, blacklisted, or already a member |
-| 422 | `unknown_decision`, `unknown_rank` | A decision outside the two, or a rank outside the three |
+| 422 | `unknown_decision`, `request_validation_error` | A decision outside the two, or `jobTitle` over 120 characters |
 | 500 | `internal_error` | Unhandled |
 
 ### `POST /api/v1/departments/{departmentId}/members/{staffId}/remove`
@@ -4645,6 +5044,174 @@ screen they see is the one that no longer lists the community.
 | 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or that roster row is not yours |
 | 404 | `not_found` | No open request on that row |
 | 409 | `conflict` | Already decided between the read and the write |
+| 500 | `internal_error` | Unhandled |
+
+### Leadership provisioning — the other way into a department
+
+Everything above this heading is about a service person who registered themselves and negotiated
+their way onto a roster. The three endpoints below are about somebody who did neither.
+
+> **The ruling.** *"There is no registration process for the manager or supervisor. The manager is
+> created by the admin and the OAuth goes through based on the manager email that is given in the
+> creation process. The supervisor is either created by the admin or the manager… The servicemen (of
+> technician rank in the hierarchy) are the only ones in the whole service section who have a
+> registration process of their own."*
+
+So the service section has two ways in, and they are deliberately asymmetric:
+
+| | Servicemen | Leadership |
+|---|---|---|
+| Who initiates | The person | An admin, or a manager for a supervisor |
+| Registration | `POST /service-providers` | **None** |
+| Negotiation | `service_applications` — apply or be invited, then a decision | **None** |
+| Admitted when | A manager accepts | They sign in with the address that was typed |
+| Rank | `member` | `manager` or `supervisor` |
+
+**Nothing is mailed.** The email is not a delivery address, it is the **matching key**: whoever signs
+in with it is admitted at that rank. `claim_staff_invitations` (`0049`) runs inside
+`GET /auth/session`, on the path that has already established the caller has no membership, and
+writes the `community_memberships` row and the `staff_assignments` row in one transaction.
+
+**The membership role is derived at sign-in, not stored** — the same derivation
+`decide_service_application` does:
+
+| `rank` | department `kind` | membership role | lands in |
+|---|---|---|---|
+| `manager` | `service` | `manager` | `/manager` |
+| `manager` | `security` | `manager` | `/security-manager` |
+| `supervisor` | `service` | `worker` | `/worker` |
+| `supervisor` | `security` | `security` | `/security-manager` |
+
+Deriving late means a department that changes kind between the invitation and the sign-in cannot mint
+a membership pointing at the wrong portal.
+
+**The trade-off, stated rather than softened.** Email alone is one factor: whoever controls that
+mailbox at first sign-in becomes the manager of that department. There is no code to intercept and no
+link to forward, so the exposure is narrower than a mailed token — but it is real, and the admin
+typing the address correctly is the only check. The resident invite's mandatory token is
+**untouched**; leadership has its own table for exactly that reason. See
+`docs/design/STAFF_PROVISIONING_DESIGN.md`.
+
+#### `GET /api/v1/departments/{departmentId}/staff-invitations`
+
+Managers and supervisors created here, whether or not they have arrived.
+**Requires `admin` or `manager`**, and the RPC additionally requires that they manage *this*
+department.
+
+```json
+[{ "id": "…", "departmentId": "…", "email": "manager@example.com", "name": "Priya Nair",
+   "phone": "+919876543210", "rank": "manager", "jobTitle": "Department manager",
+   "status": "pending", "claimedAt": null, "createdAt": "2026-08-11T09:00:00Z" }]
+```
+
+**Claimed rows stay in the list.** An administrator needs to distinguish "still expected" from "has
+been working for a month", and a list that dropped each person on arrival would look identical either
+way.
+
+`claimedAt` is null until their first sign-in. **A `pending` row that is weeks old is usually a
+mistyped address, and this list is the only place that is visible** — nothing is delivered, so
+nothing bounces and nothing errors.
+
+Optional `?status=pending|claimed|revoked`.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `role_not_permitted`, `HB403` | Not an admin or manager, or a manager of a different department |
+| 404 | `not_found` | No such department |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/departments/{departmentId}/staff-invitations`
+
+Create a manager or a supervisor. **Requires `admin` or `manager`.**
+
+```json
+{ "email": "manager@example.com", "name": "Priya Nair", "rank": "manager",
+  "phone": "+919876543210", "jobTitle": "Department manager" }
+```
+
+`rank` is `manager` or `supervisor` — a closed set on the wire, not only in the database.
+**`member` is refused**: that rank is reached solely by hiring a registered service provider, which
+is the whole point of removing typed-in technicians from the department form.
+
+**A manager may call this**, which is what lets a manager create a supervisor without being an
+administrator. The predicate is `can_manage_department`, the same one that guards hiring.
+
+The response is the row **read back**, not the request echoed: the RPC lowercases and trims the
+address, and showing an administrator `Manager@Example.COM` while the database waits for
+`manager@example.com` would hide the one thing that decides whether this works.
+
+Returns **409** when that address already belongs to this community — the claim would fail on the
+same check, so offering the invitation would be offering a dead end.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
+| 404 | `not_found` | No such department |
+| 409 | `conflict` | That address already belongs to this community |
+| 422 | `request_validation_error`, `check_violation` | A rank outside the two, a blank name, or an address with no `@` |
+| 500 | `internal_error` | Unhandled |
+
+#### `PATCH /api/v1/departments/{departmentId}/staff-invitations/{invitationId}`
+
+Correct an unclaimed invitation. **Requires `admin` or `manager`.**
+
+**This exists because of how the endpoint above fails.** Nothing is mailed, so a wrong address does
+not bounce — the invitation simply sits `pending` and the person never arrives. The pending list is
+what makes that visible; this is what the administrator does about it. The product owner's ruling on
+2026-08-12 was to keep the single factor and make the mistake correctable rather than add a second
+one.
+
+```json
+{ "email": "correct@example.com", "name": "Priya Nair", "rank": "supervisor",
+  "phone": "+919876543210", "jobTitle": "Shift supervisor" }
+```
+
+**Every field is optional and omitted means unchanged**, so a form patching only the email cannot
+blank the job title by not sending it. `phone` and `jobTitle` accept `""` to clear; `email`, `name`
+and `rank` do not, because an invitation without them binds nothing, names nobody, or admits at no
+rank.
+
+`rank` is editable for the same reason `email` is — choosing *supervisor* when you meant *manager* is
+a keyboard mistake of the same kind.
+
+> **`departmentId` is not in the body, and its absence is load-bearing.** The department is what
+> `can_manage_department` authorizes this call against, so allowing it to move would let the manager
+> of one department mint staff into another without that department's manager being asked. Moving an
+> invitation is revoke-and-reissue, under the authority of wherever it is going.
+
+The response is the row **read back**, for the same reason as the create — and more pointedly, since
+the purpose of this call is to answer *"is the address right now?"* rather than *"is it what I just
+typed?"*.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
+| 404 | `not_found` | No such invitation |
+| 409 | `conflict` | Already claimed, already withdrawn, the new address already belongs to this community, or it already has an open invitation |
+| 422 | `request_validation_error`, `check_violation` | A rank outside the two, a blank name, or an address with no `@` |
+| 500 | `internal_error` | Unhandled |
+
+#### `DELETE /api/v1/departments/{departmentId}/staff-invitations/{invitationId}`
+
+Withdraw leadership that has not signed in yet. **Requires `admin` or `manager`.**
+
+**Revoked, not deleted.** Who created an invitation and when is worth keeping — a mistyped address
+that was noticed and withdrawn is exactly the history somebody will want later.
+
+Returns **409** once it has been claimed. Removing somebody who has already started is a *departure*,
+not a withdrawal, and has its own five endpoints below for the good reason that their work has to go
+somewhere first.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
+| 404 | `not_found` | No such invitation |
+| 409 | `conflict` | Already claimed — use the departure flow |
+| 422 | `request_validation_error` | A malformed id |
 | 500 | `internal_error` | Unhandled |
 
 #### `GET /api/v1/departments/{departmentId}/departures`

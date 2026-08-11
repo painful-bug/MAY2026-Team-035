@@ -30,6 +30,7 @@ from app.domain.hiring_schemas import (
     DepartureItem,
     HireableProvider,
     InviteRequest,
+    InviteStaffRequest,
     ReassignItemRequest,
     RemoveMemberRequest,
     ScheduleItem,
@@ -38,7 +39,9 @@ from app.domain.hiring_schemas import (
     ServiceEngagement,
     StaffDeparture,
     StaffDepartureDetail,
+    StaffInvitation,
     StaffMemberDetail,
+    UpdateStaffInvitationRequest,
 )
 from app.repositories import hiring_repository as repo
 from app.repositories import service_providers_repository as providers_repo
@@ -49,15 +52,15 @@ from app.repositories import service_providers_repository as providers_repo
 from app.services.departments_service import _to_staff as _to_staff_member
 from supabase import Client
 
-#: The stored rank vocabulary. ``head`` is the wire word for the person holding
-#: ``manager`` (0035 1) and is accepted here so a client that has only ever seen
-#: the department screens is not turned away for using its own word.
-_RANK_TO_STORAGE = {
-    "manager": "manager",
-    "head": "manager",
-    "supervisor": "supervisor",
-    "member": "member",
-}
+#: There is no rank vocabulary here any more.
+#:
+#: ``_RANK_TO_STORAGE`` mapped the wire words -- including ``head``, the
+#: department screens' name for the person holding ``manager`` -- onto the
+#: stored three. Both callers stopped sending a rank on 2026-08-11 (see
+#: ``InviteRequest``), so the table and its lookup were deleted rather than left
+#: as an unreachable translation somebody would later trust. The stored
+#: vocabulary itself is unchanged and still lives in the check constraint on
+#: ``staff_assignments.rank``.
 
 #: What a decision endpoint accepts. ``withdrawn`` is deliberately absent: it is
 #: reached by ``DELETE``, because withdrawing is retracting your own request and
@@ -95,13 +98,6 @@ def _departments(value: object) -> list[DepartmentRef]:
 
 def _number(value: object) -> float | None:
     return None if value is None else float(value)
-
-
-def _rank_to_storage(value: str | None) -> str | None:
-    """Wire rank -> stored rank. ``None`` when unrecognised, never guessed."""
-    if value is None:
-        return None
-    return _RANK_TO_STORAGE.get(value.strip().lower())
 
 
 def _to_application(row: dict[str, Any]) -> ServiceApplication:
@@ -414,20 +410,23 @@ def search_candidates(
 def invite(
     client: Client, *, department_id: str, body: InviteRequest
 ) -> ServiceApplication:
-    """Invite one provider onto this department's roster."""
-    rank = _rank_to_storage(body.rank)
-    if rank is None:
-        raise ValidationError(
-            f"Unknown rank '{body.rank}'.", code="unknown_rank"
-        )
+    """Invite one provider onto this department's roster, as a ``member``.
+
+    The rank is a constant rather than a parameter, per the 2026-08-11 ruling
+    recorded on ``InviteRequest``: leadership is provisioned by email
+    (``staff_invitations``), and somebody who registered as a service provider
+    and is being offered work joins as a team member. ``p_rank`` is still
+    passed explicitly rather than left to the RPC's default, so the value this
+    layer intends is visible at the call site.
+    """
     application_id = repo.invite_provider(
         client,
         department_id=department_id,
         service_provider_id=body.service_provider_id,
         message=body.message,
-        rank=rank,
+        rank="member",
         job_title=body.job_title,
-        shift=body.shift,
+        shift=None,
     )
     return _read_back(client, application_id=application_id)
 
@@ -447,17 +446,19 @@ def decide(
             "decision must be 'accepted' or 'rejected'.", code="unknown_decision"
         )
 
-    rank = _rank_to_storage(body.rank) if body.rank else None
-    if body.rank and rank is None:
-        raise ValidationError(f"Unknown rank '{body.rank}'.", code="unknown_rank")
-
+    # Rank and shift are not sent, and the RPC's own defaults are what fills
+    # them: an omitted rank becomes `member`, an omitted shift stays null. See
+    # `InviteRequest` for the ruling. Passing `None` rather than `"member"`
+    # here -- unlike `invite` above -- because on an *invitation* the row
+    # already carries terms and `coalesce(p_rank, v_app.rank, 'member')` must
+    # be allowed to fall through to them.
     repo.decide_application(
         client,
         application_id=application_id,
         decision=decision,
-        rank=rank,
+        rank=None,
         job_title=body.job_title,
-        shift=body.shift,
+        shift=None,
         note=body.note,
     )
     return _read_back(client, application_id=application_id)
@@ -733,3 +734,113 @@ def _read_back(client: Client, *, application_id: str) -> ServiceApplication:
     if row is None:
         raise NotFoundError("No such application.", code="application_not_found")
     return _to_application(row)
+
+
+# ---------------------------------------------------------------------------
+# Leadership provisioning (0049)
+#
+# The asymmetry worth holding on to: everything above this line is about a
+# service person who registered themselves and negotiated their way onto a
+# roster. Everything below is about somebody who did neither -- an administrator
+# typed their name, and they will be a manager the first time they sign in.
+# ---------------------------------------------------------------------------
+
+
+def _to_invitation(row: dict[str, Any]) -> StaffInvitation:
+    return StaffInvitation(
+        id=row["id"],
+        department_id=row["department_id"],
+        email=str(row.get("invitee_email") or ""),
+        name=str(row.get("invitee_name") or ""),
+        phone=row.get("invitee_phone_e164"),
+        rank=str(row.get("rank") or ""),
+        job_title=row.get("job_title"),
+        status=str(row.get("status") or "pending"),
+        claimed_at=row.get("claimed_at"),
+        created_at=row["created_at"],
+    )
+
+
+def list_staff_invitations(
+    client: Client, *, department_id: str, status: str | None = None
+) -> list[StaffInvitation]:
+    """Leadership invited into this department, claimed or not.
+
+    The claimed ones are kept and returned: an administrator looking at a
+    department needs to know that the manager they created has actually arrived,
+    and a list that dropped them at the moment they signed in would answer a
+    different question.
+    """
+    return [
+        _to_invitation(row)
+        for row in repo.list_staff_invitations(
+            client, department_id=department_id, status=status
+        )
+    ]
+
+
+def invite_staff_member(
+    client: Client, *, department_id: str, body: InviteStaffRequest
+) -> StaffInvitation:
+    """Create a manager or supervisor, and read the row back.
+
+    Read back rather than assembled from the request, because ``rank`` and
+    ``email`` are normalised in the RPC -- lowercased, trimmed -- and echoing
+    the request would show the caller what they typed rather than what will be
+    matched against at sign-in. On this endpoint that difference is the whole
+    feature.
+    """
+    invitation_id = repo.invite_staff_member(
+        client,
+        department_id=department_id,
+        email=body.email,
+        name=body.name,
+        rank=body.rank,
+        phone=body.phone,
+        job_title=body.job_title,
+    )
+    rows = repo.list_staff_invitations(
+        client, department_id=department_id, status=None
+    )
+    for row in rows:
+        if str(row.get("id")) == invitation_id:
+            return _to_invitation(row)
+    raise NotFoundError("That invitation could not be read back.")
+
+
+def update_staff_invitation(
+    client: Client,
+    *,
+    department_id: str,
+    invitation_id: str,
+    body: UpdateStaffInvitationRequest,
+) -> StaffInvitation:
+    """Correct an unclaimed invitation, and read the row back.
+
+    Read back for the same reason ``invite_staff_member`` reads back, only more
+    so: the point of this endpoint is to fix an address, and echoing the request
+    would show the admin what they typed rather than the normalised value that
+    will actually be matched at sign-in. On a screen whose whole job is "is this
+    right now?", that is the difference between confirming and assuming.
+    """
+    repo.update_staff_invitation(
+        client,
+        invitation_id=invitation_id,
+        email=body.email,
+        name=body.name,
+        rank=body.rank,
+        phone=body.phone,
+        job_title=body.job_title,
+    )
+    rows = repo.list_staff_invitations(
+        client, department_id=department_id, status=None
+    )
+    for row in rows:
+        if str(row.get("id")) == invitation_id:
+            return _to_invitation(row)
+    raise NotFoundError("That invitation could not be read back.")
+
+
+def revoke_staff_invitation(client: Client, *, invitation_id: str) -> None:
+    """Withdraw an unclaimed invitation."""
+    repo.revoke_staff_invitation(client, invitation_id=invitation_id)

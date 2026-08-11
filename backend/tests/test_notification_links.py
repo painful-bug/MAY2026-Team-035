@@ -122,23 +122,52 @@ def _join(parent: str, segment: str) -> str:
     return f"{parent.rstrip('/')}/{segment}"
 
 
-def route_elements() -> dict[str, str]:
-    """Every full path `App.jsx` mounts, and the component it renders there.
+#: A `const NAME = (<>…</>);` holding `<Route>` elements, spliced in wherever
+#: `{NAME}` appears inside the tree.
+#:
+#: `HIRING_ROUTES` is the first of these (2026-08-11): the hiring sub-tree is
+#: mounted under `/admin`, `/manager` and `/security-manager`, and writing it
+#: three times is how two of the three would eventually drift. React Router
+#: flattens a fragment among `<Route>` children, so this parser has to as well
+#: -- otherwise it reads the definition at file scope, mounts those paths at the
+#: root, and concludes that `/admin/departments/{id}/hiring` does not exist.
+_FRAGMENT_DEF = re.compile(
+    r"^const\s+([A-Z][A-Z0-9_]*)\s*=\s*\(\s*<>(.*?)</>\s*\);", re.M | re.S
+)
+_FRAGMENT_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
+#: Stands in for "whatever this fragment ends up nested under" while its own
+#: paths are being resolved. Never appears in a result.
+_FRAGMENT_BASE = "/\x00frag"
 
-    A path can be claimed twice -- a layout `<Route>` with children and the
-    index `<Route>` inside it resolve to the same string -- and the second is
-    the one that answers a notification. The leaf wins, which here means the
-    self-closing tag wins, because a layout is never self-closing.
-    """
-    text = _APP_JSX.read_text(encoding="utf-8")
-    constants = _auth_routes()
+
+def _walk_routes(
+    text: str,
+    constants: dict[str, str],
+    fragments: dict[str, list[tuple[str, str]]],
+    base: str = "",
+) -> dict[str, str]:
+    """The shared walk. Returns ``{full path: component}``."""
     routes: dict[str, str] = {}
-    stack: list[str] = []
+    stack: list[str] = [base] if base else []
     index = 0
 
     while index < len(text):
         opened = _ROUTE_OPEN.search(text, index)
         closed = text.find(_ROUTE_CLOSE, index)
+        reference = _FRAGMENT_REF.search(text, index) if fragments else None
+
+        # A fragment reference before the next tag: splice its routes in,
+        # relative to whatever is currently open.
+        if reference is not None and reference.group(1) in fragments:
+            before_open = opened is None or reference.start() < opened.start()
+            before_close = closed == -1 or reference.start() < closed
+            if before_open and before_close:
+                parent = stack[-1] if stack else ""
+                for segment, element in fragments[reference.group(1)]:
+                    routes.setdefault(_join(parent, segment), element)
+                index = reference.end()
+                continue
+
         if opened is None and closed == -1:
             break
         if closed != -1 and (opened is None or closed < opened.start()):
@@ -167,6 +196,38 @@ def route_elements() -> dict[str, str]:
             stack.append(full)
             index = end
     return routes
+
+
+def route_elements() -> dict[str, str]:
+    """Every full path `App.jsx` mounts, and the component it renders there.
+
+    A path can be claimed twice -- a layout `<Route>` with children and the
+    index `<Route>` inside it resolve to the same string -- and the second is
+    the one that answers a notification. The leaf wins, which here means the
+    self-closing tag wins, because a layout is never self-closing.
+
+    Route fragments are lifted out first and spliced back in at each `{NAME}`,
+    which is what React Router does with them.
+    """
+    text = _APP_JSX.read_text(encoding="utf-8")
+    constants = _auth_routes()
+
+    # Walked against a sentinel base, then stripped back off. Walking with an
+    # empty base would return `/departments/…` — an *absolute* path, which
+    # `_join` then refuses to nest under `/admin`, and every hiring route would
+    # silently mount at the root. The sentinel keeps a child a child.
+    fragments: dict[str, list[tuple[str, str]]] = {}
+    for name, body in _FRAGMENT_DEF.findall(text):
+        walked = _walk_routes(body, constants, {}, base=_FRAGMENT_BASE)
+        fragments[name] = sorted(
+            (path[len(_FRAGMENT_BASE):].lstrip("/"), element)
+            for path, element in walked.items()
+        )
+    # Removed from the tree text so the definition is not also walked at file
+    # scope, which would mount every fragment path at the root.
+    tree = _FRAGMENT_DEF.sub("", text)
+
+    return _walk_routes(tree, constants, fragments)
 
 
 def route_table() -> set[str]:
@@ -347,4 +408,143 @@ def test_every_notification_url_resolves_to_a_mounted_route() -> None:
     ]
     assert not broken, "notification links that land on the catch-all:\n  " + (
         "\n  ".join(broken)
+    )
+
+
+# ---------------------------------------------------------------------------
+# The same question, asked for the reader rather than for the URL (2026-08-11)
+#
+# `test_every_notification_url_resolves_to_a_mounted_route` above asks whether a
+# link goes *somewhere*. It has always passed for the hiring notifications,
+# because `/admin/departments/{id}/hiring` is a real route -- for an admin.
+#
+# Several of these notifications are addressed to `array['admin', 'manager']`,
+# and for a manager `ProtectedRoute requiredRole="Admin"` does not 404 and does
+# not show a 403: it redirects to their own portal. So the link resolved, the
+# guard held, and the user saw a click that appeared to do nothing. Exactly the
+# failure this module was written to catch, one axis over -- **resolving is not
+# the same as resolving for the person who was told.**
+#
+# `portalNotificationUrl` (frontend) rewrites what it can. This mirrors its rule
+# table in Python, which is a second implementation and is worth it here: what
+# is being asserted is that the *route tree* has a destination for each rewrite,
+# and only the route tree can answer that.
+# ---------------------------------------------------------------------------
+
+_PORTAL_BASES = {"manager": "/manager", "security-manager": "/security-manager"}
+
+#: `/admin/…` prefixes that a manager's notification is left pointing at,
+#: because their portal has no equivalent screen. **Not acceptable defects** --
+#: each one is a manager receiving a link that redirects them home. Rewriting
+#: them would be worse: a route that does not exist fails more confusingly than
+#: one that visibly bounces. Recorded in
+#: `docs/potential issues/14-…` under "What is still not fixed".
+#:
+#: The third is the widest: `0040` fans `/admin/security/incidents` out to
+#: *every* manager in the community, so a plumbing manager is told about gate
+#: incidents. That is a notification-audience question in `0040`, not a routing
+#: one, and it is the honest remainder of issue 14.
+#:
+#: **This test does not know a notification's audience** and deliberately checks
+#: every `/admin/…` url against every manager portal. That over-reaches -- some
+#: of these are addressed to somebody who is not a manager at all -- and the
+#: over-reach is cheap, because the answer for each is a line here saying which
+#: it is. A test that tried to infer the recipient would be re-implementing
+#: `notify_community_roles` in a regex.
+UNREWRITTEN_FOR_A_MANAGER = {
+    # No manager equivalent exists, and should not: no department owns an
+    # amenity. `0033` was corrected on 2026-08-12 to notify admins only, so a
+    # manager no longer receives this at all -- but this test checks blind, by
+    # design, so the entry stays.
+    "/admin/amenities",
+    # Admin-only audience (`notify_community_roles(array['admin'])`, `0050`).
+    # The triage queue is *by definition* the complaints no department holds,
+    # so a manager equivalent would be a screen with nothing in it.
+    "/admin/complaint-triage",
+    # Rewritten for `manager` — `/manager/complaints` exists as of 2026-08-12 —
+    # and deliberately *not* for `security-manager`, which has no complaints
+    # screen: a gate department's work arrives as incidents and shift entries,
+    # not as resident complaints. This set is shared by both parametrisations,
+    # so the entry that excuses the security manager also blunts the check for
+    # the plain manager. Accepted: the rewrite is asserted positively by
+    # `test_the_python_mirror_matches_the_javascript_rule_table`.
+    "/admin/complaints",
+    # `/admin/security/incidents` is rewritten for `security-manager` and not
+    # for a plain `manager` -- correctly, since `0040` was corrected on
+    # 2026-08-12 to notify admins and *security-department* managers only. A
+    # plumbing manager no longer receives it; the entry stays because this test
+    # cannot see an audience.
+    "/admin/security/incidents",
+    # Addressed to `work_order.supervisor_membership_id` — a supervisor, whose
+    # portal is `/worker`, not a manager's. It is on this list because the test
+    # checks blind, and it stays unrewritten for a stronger reason than the
+    # others: **the destination does not exist for anybody.** There is no
+    # supervisor triage screen in any portal, so `?job=` has nothing to read it
+    # — `docs/potential issues/10`, and the matching entry in
+    # `IGNORED_QUERY_PARAMETERS` above.
+    "/admin/departments?",
+}
+
+
+def _portal_url(url: str, portal: str) -> str:
+    """`features/notifications/portalUrl.js`, in Python."""
+    if not url.startswith("/admin/"):
+        return url
+    base = _PORTAL_BASES.get(portal)
+    if base is None:
+        return url
+    rest = url[len("/admin"):]
+    if re.match(r"^/departments/[^/?#]+/(hiring|staff/|candidates/)", rest):
+        return base + rest
+    if rest == "/messages" or rest.startswith("/messages?"):
+        return base + rest
+    if re.match(r"^/departments/[^/?#]+(?:[?#].*)?$", rest):
+        return base
+    if rest == "/security/incidents" and portal == "security-manager":
+        return f"{base}/incidents"
+    if portal == "manager" and (
+        rest == "/complaints" or rest.startswith("/complaints?")
+    ):
+        return f"{base}{rest}"
+    return url
+
+
+def test_the_python_mirror_matches_the_javascript_rule_table() -> None:
+    """A second implementation is only safe while it is checked against the
+    first. The four rules are read out of `portalUrl.js` by name rather than by
+    behaviour -- enough to fail loudly if somebody adds a fifth here and not
+    there, or renames one."""
+    source = (
+        _ROOT / "frontend" / "src" / "features" / "notifications" / "portalUrl.js"
+    ).read_text(encoding="utf-8")
+    expected = {
+        "DEPARTMENT_SUBSCREEN",
+        "DEPARTMENT_ROOT",
+        "/messages",
+        "/security/incidents",
+    }
+    missing = sorted(token for token in expected if token not in source)
+    assert not missing, f"portalUrl.js no longer mentions: {missing}"
+
+
+@pytest.mark.parametrize("portal", sorted(_PORTAL_BASES))
+def test_a_managers_notification_lands_somewhere_they_may_go(portal: str) -> None:
+    routes = route_table()
+    stranded = []
+    for name, line, url in emitted_urls():
+        if not url.startswith("/admin/"):
+            continue
+        rewritten = _portal_url(url, portal)
+        if rewritten.startswith("/admin/"):
+            prefix = next(
+                (p for p in UNREWRITTEN_FOR_A_MANAGER if rewritten.startswith(p)), None
+            )
+            if prefix is None:
+                stranded.append(f"{name}:{line} — {url} (no rule, not on record)")
+            continue
+        if not resolves(rewritten, routes):
+            stranded.append(f"{name}:{line} — {url} → {rewritten} (no such route)")
+
+    assert not stranded, (
+        f"notification links a {portal} cannot follow:\n  " + "\n  ".join(stranded)
     )

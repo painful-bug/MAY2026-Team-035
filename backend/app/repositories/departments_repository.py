@@ -28,7 +28,7 @@ _DEPARTMENT_SELECT = (
     "id, name, description, contact_email, contact_phone_e164, opens_at, closes_at,"
     "sla_hours, kind, status, created_at, updated_at, head_name, head_staff_id,"
     "staff_count, active_complaint_count, resolved_complaint_count,"
-    "overdue_complaint_count, category_ids, category_names"
+    "overdue_complaint_count, category_ids, category_names, skill_ids, skill_names"
 )
 
 _STAFF_SELECT = (

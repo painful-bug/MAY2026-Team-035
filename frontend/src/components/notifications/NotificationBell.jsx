@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, CheckCheck, Inbox } from 'lucide-react';
 import { notificationsApi } from '../../features/notifications/notificationsApi';
+import { portalNotificationUrl } from '../../features/notifications/portalUrl';
+import { useApp } from '../../store/useApp';
 
 // The real bell. Until Phase 2 Step 5 the only bell in the app was a hard-coded
 // red dot over demo data; this one reads GET /notifications and, on click,
@@ -27,6 +29,7 @@ export default function NotificationBell() {
   const panelRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { currentUser } = useApp();
 
   const feed = useQuery({
     queryKey: ['notifications'],
@@ -69,7 +72,12 @@ export default function NotificationBell() {
   const openItem = (item) => {
     if (item.isUnread) markRead.mutate(item.id);
     setOpen(false);
-    if (item.url) navigate(item.url);
+    // Not `item.url` directly. Several notification kinds are addressed to
+    // admins *and* managers and spell their url `/admin/…`, because SQL cannot
+    // know who will read it — see `portalNotificationUrl`. Navigating to the
+    // literal value bounces a manager silently back to their own overview,
+    // which reads as a click that did nothing.
+    if (item.url) navigate(portalNotificationUrl(item.url, currentUser?.portal));
   };
 
   return (

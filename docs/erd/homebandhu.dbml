@@ -518,6 +518,37 @@ Table complaints [headercolor: #C53030] {
   Note: 'CHANGED: v1 had no assignee, department, progress, SLA, rating, feedback or reopen count, yet design-of-components.md §6 requires all of them and the frontend renders all of them. Routing through work_orders.department_id alone does not work — the frontend assigns complaints directly and has no work-order UI (§3.9). CHANGED: category is now an FK to complaint_categories, not free text. sla_due_at is computed server-side at submission from urgency + category SLA and is never client-supplied. management_notes is staff-only and must not be selectable by a resident policy.'
 }
 
+// NEW 2026-08-12 (`0050_complaint_department_routing.sql`): a supervisor saying a
+// complaint belongs to another department, and their manager's answer.
+//
+// `complaints.department_id` above was already in this ERD and had no
+// implementation — routing happened only when dispatch built a work order, so
+// before that moment a complaint belonged to nobody. `0050` closes that gap;
+// this table is the only genuinely new entity in it.
+//
+// A supervisor cannot move a complaint themselves, which is why a *request* is
+// a row rather than an UPDATE: one who could push work out of their own
+// department could empty it, and the department receiving it would have no say
+// either way.
+Table complaint_department_requests [headercolor: #C53030] {
+  id uuid [pk]
+  complaint_id uuid [not null, ref: > complaints.id]
+  from_department_id uuid [ref: > departments.id]
+  to_department_id uuid [ref: > departments.id]
+  requested_by_membership_id uuid [not null, ref: > community_memberships.id]
+  reason text
+  status text [not null]
+  decided_by_membership_id uuid [ref: > community_memberships.id]
+  decided_at timestamptz
+  created_at timestamptz [not null]
+
+  indexes {
+    complaint_id [unique, name: 'complaint_department_requests_one_open']
+  }
+
+  Note: 'status: pending | accepted | rejected. to_department_id is NULLABLE on purpose — "this is not ours" is worth saying without knowing whose it is, and accepting such a request returns the complaint to the admin triage queue (department_id = null). The unique index is PARTIAL, on status = pending: two supervisors disagreeing about where a complaint belongs is a conversation, not two rows racing a manager''s inbox. Answered by the manager of from_department_id, never to_department_id — authorizing on the destination would let the manager of B take A''s work.'
+}
+
 // NEW: design-of-components.md §6 — comments between residents and the management team.
 Table complaint_comments [headercolor: #C53030] {
   id uuid [pk]
@@ -1323,6 +1354,7 @@ TableGroup gold_people_operations {
 TableGroup red_service_workflows {
   complaint_categories
   complaints
+  complaint_department_requests
   complaint_comments
   complaint_read_state
   complaint_attachments

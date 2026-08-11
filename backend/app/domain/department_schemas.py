@@ -100,6 +100,15 @@ class DepartmentSummary(CamelModel):
     #: ...paired with their ids, per the R23 label+id rule.
     category_ids: list[str] = Field(default_factory=list)
 
+    #: Skills the department needs, chosen explicitly. **Empty by default and
+    #: never inherited from ``categories``** -- the two answer different
+    #: questions (which trade handles this kind of complaint, versus which
+    #: trades this department employs) and inheriting one from the other would
+    #: silently give every department skills nobody chose. Same label+id pairing
+    #: as categories, per R23.
+    skills: list[str] = Field(default_factory=list)
+    skill_ids: list[str] = Field(default_factory=list)
+
     #: The head's name. Backed by the staff row with ``rank = 'manager'``
     #: (``'head'`` before 0035). ``head`` stays the wire word.
     head: str | None = None
@@ -199,6 +208,30 @@ class ReplaceStaffRequest(CamelModel):
     """
 
     staff: list[StaffMemberInput] = Field(default_factory=list)
+
+
+class SetDepartmentSkillsRequest(CamelModel):
+    """The department's whole skill set, as the form submits it.
+
+    Ids rather than names, because by the time this is sent every skill exists:
+    the form's "Add skill" button creates a new one through
+    ``POST /departments/{id}/skills`` and gets an id back. A name here would be
+    a second, quieter way to write to the global catalogue.
+    """
+
+    skill_ids: list[str] = Field(default_factory=list)
+
+
+class AddDepartmentSkillRequest(CamelModel):
+    """One skill, by name, to create if needed and attach.
+
+    This is the only request in the API that may write to the global skill
+    catalogue as a side effect, and it is deliberate: the alternative is a
+    client that creates then attaches, which can half-fail and leave a skill
+    nobody asked for.
+    """
+
+    name: str = Field(min_length=1, max_length=80)
 
 
 class UpdateStaffMemberRequest(CamelModel):

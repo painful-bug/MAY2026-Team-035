@@ -11,6 +11,7 @@ import {
   ScanLine,
   ShieldAlert,
   ShieldCheck,
+  UserPlus,
   X,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
@@ -35,9 +36,27 @@ export default function SecurityLayout() {
         { name: 'Registers', path: `${basePath}/registers`, icon: ClipboardList },
         { name: 'Incidents', path: `${basePath}/incidents`, icon: ShieldAlert },
         { name: 'Exports', path: `${basePath}/exports`, icon: Download },
-        // No "Manage Staff" entry: hiring, ranks and departures live in the
-        // admin portal's department screens, which are the real roster. The
-        // demo's local staff array here was a second, disagreeing copy.
+        // Hiring, added 2026-08-11. The comment that stood here said staffing
+        // "lives in the admin portal's department screens" — which was true and
+        // was the bug: a security department's manager holds
+        // `membership_role = 'manager'`, passes `require_admin_or_manager` and
+        // `can_manage_department`, and had no screen for either. Same gap as
+        // the plumbing manager's, one role along (`docs/potential issues/14`).
+        //
+        // **Gated on `accessRole`, not on `role`.** Two different people reach
+        // this portal: the department's manager, and a senior guard —
+        // `membership_role = 'security'` with a manager-or-supervisor roster
+        // rank, whom `_portal_for` routes here so their gate permissions have
+        // screens. Only the first may hire. `role` is `SecurityManager` for
+        // both and would put a 403 in the guard's sidebar; `accessRole` is the
+        // membership role, which is the guard the API actually applies.
+        ...(currentUser?.accessRole === 'MANAGER' && currentUser?.departmentId
+          ? [{
+            name: 'Hiring',
+            path: `${basePath}/departments/${currentUser.departmentId}/hiring`,
+            icon: UserPlus,
+          }]
+          : []),
         { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },
       ]
     : [

@@ -175,17 +175,11 @@ def test_api_143_accepting_makes_exactly_one_call_carrying_the_terms(
     so the only thing the API can promise is that it never writes them
     separately: one call, with the terms, and nothing beside it."""
     endpoint = DECIDE_ENDPOINT
-    input_data = {
-        "decision": "accepted",
-        "rank": "supervisor",
-        "jobTitle": "Plumber",
-        "shift": "Day",
-    }
+    input_data = {"decision": "accepted", "jobTitle": "Plumber"}
     expected_output = {
         "status_code": 200,
         "calls": ["decide"],
         "decision": "accepted",
-        "rank": "supervisor",
         "job_title": "Plumber",
         "status_returned": "accepted",
     }
@@ -197,7 +191,6 @@ def test_api_143_accepting_makes_exactly_one_call_carrying_the_terms(
         "status_code": response.status_code,
         "calls": hiring["calls"],
         "decision": hiring["decided"]["decision"],
-        "rank": hiring["decided"]["rank"],
         "job_title": hiring["decided"]["job_title"],
         "status_returned": response.json()["status"],
     }
@@ -205,15 +198,29 @@ def test_api_143_accepting_makes_exactly_one_call_carrying_the_terms(
     assert actual_output == expected_output, endpoint
 
 
-def test_api_144_head_is_accepted_as_a_rank_and_stored_as_manager(
+def test_api_144_a_rank_sent_by_a_stale_client_cannot_promote_anybody(
     admin_api_client: TestClient, hiring: dict, csrf_headers: dict[str, str]
 ) -> None:
-    """`head` is the wire word the department screens have always used;
-    `manager` is what 0035 stores. Accepting only the stored word would turn a
-    working admin screen into a 422 for no gain."""
+    """Nobody is hired above `member` through the serviceman path.
+
+    Until 2026-08-11 this request carried `rank`, and this case asserted that
+    `head` was translated to the stored `manager`. The PO removed rank from
+    this path entirely: leadership is provisioned by email, and somebody who
+    registered as a service provider joins as a team member.
+
+    A field the model no longer declares is **ignored**, not rejected -- Pydantic
+    defaults to `extra='ignore'`. That is the right failure for this rule and it
+    is why the case is worth keeping rather than deleting: a browser holding a
+    cached bundle that still sends `rank: 'supervisor'` must not produce a
+    supervisor. It forwards nothing, and the RPC's own default settles it.
+    """
     endpoint = DECIDE_ENDPOINT
-    input_data = {"decision": "accepted", "rank": "head"}
-    expected_output = {"status_code": 200, "rank_forwarded": "manager"}
+    input_data = {"decision": "accepted", "rank": "supervisor", "shift": "Day"}
+    expected_output = {
+        "status_code": 200,
+        "rank_forwarded": None,
+        "shift_forwarded": None,
+    }
 
     response = admin_api_client.post(
         DECIDE, json=input_data, headers=csrf_headers
@@ -221,6 +228,7 @@ def test_api_144_head_is_accepted_as_a_rank_and_stored_as_manager(
     actual_output = {
         "status_code": response.status_code,
         "rank_forwarded": hiring["decided"]["rank"],
+        "shift_forwarded": hiring["decided"]["shift"],
     }
 
     assert actual_output == expected_output, endpoint
@@ -337,31 +345,34 @@ def test_api_149_a_resident_cannot_reach_the_hiring_surface(
     assert actual_output == expected_output, endpoint
 
 
-def test_api_150_an_invitation_carries_its_terms_and_notifies_nobody(
+def test_api_150_an_invitation_offers_a_job_title_at_member_rank(
     admin_api_client: TestClient, hiring: dict, csrf_headers: dict[str, str]
 ) -> None:
-    """The terms travel with the invitation because the person accepting has to
-    know what they are accepting -- and they cannot change them, since `decide`
-    ignores those fields on an invitation.
+    """An invitation offers a *job title*, and always at rank `member`.
 
-    Nobody is notified, and that is the schema rather than an omission:
-    `notifications.recipient_membership_id` is `not null`, and someone who has
-    not been hired here holds no membership to address. The invitation surfaces
-    on their `GET /worker/applications` screen instead.
+    It carried `rank` and `shift` until the 2026-08-11 ruling. Both are gone:
+    leadership is provisioned by email through `staff-invitations` and never
+    hired here, and `staff_assignments.shift` describes nothing the system
+    reads -- work reaches a worker through the dispatch sweep or a supervisor,
+    and a guard's rota is `security_shifts`.
+
+    `rank` is asserted as the literal `member` rather than `None`: the service
+    layer sends it explicitly so the value this API intends is visible at the
+    call site rather than inherited from an RPC default nobody reading the
+    Python would see.
     """
     endpoint = "POST /api/v1/departments/department-id/invitations"
     input_data = {
         "serviceProviderId": "provider-id",
-        "rank": "supervisor",
         "jobTitle": "Plumber",
-        "shift": "Full Day",
         "message": "We need a plumber on Tuesdays.",
     }
     expected_output = {
         "status_code": 201,
         "calls": ["invite"],
-        "rank": "supervisor",
-        "shift": "Full Day",
+        "rank": "member",
+        "shift": None,
+        "job_title": "Plumber",
         "department_id": "department-id",
     }
 
@@ -373,6 +384,7 @@ def test_api_150_an_invitation_carries_its_terms_and_notifies_nobody(
         "calls": hiring["calls"],
         "rank": hiring["invited"]["rank"],
         "shift": hiring["invited"]["shift"],
+        "job_title": hiring["invited"]["job_title"],
         "department_id": hiring["invited"]["department_id"],
     }
 

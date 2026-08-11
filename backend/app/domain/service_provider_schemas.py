@@ -63,6 +63,51 @@ class ServiceProviderProfile(CamelModel):
     updated_at: datetime
 
 
+class CandidateProfile(CamelModel):
+    """A service person as a *hiring manager* sees them.
+
+    Deliberately not ``ServiceProviderProfile``. That model is what somebody
+    sees of themselves; this one is what a stranger with a vacancy sees, and the
+    difference is two fields:
+
+    **No ``latitude``/``longitude``.** The hiring surface already answers the
+    only question a manager has about where somebody is -- ``distanceKm``, which
+    the candidate list computes from the community's own point. Handing out a
+    home coordinate instead would be answering a question nobody asked with a
+    fact the person did not offer for that purpose. ``serviceRadiusKm`` is here
+    because it is a statement they published about how far they travel.
+
+    **No ``profileId``.** Nothing on this screen addresses them by profile, and
+    an id that unlocks other surfaces is not something a candidate read should
+    hand out.
+
+    ``phone`` *is* here, and is not a widening: the candidate list and every
+    application card have carried ``phoneE164`` since ``0035``. Somebody being
+    considered for a job in your building is somebody you may ring.
+    """
+
+    id: str
+    display_name: str
+    headline: str
+    bio: str
+    phone: str
+    service_radius_km: float
+    #: ``active`` or ``suspended``. A suspended provider is not offered by the
+    #: candidate search at all, so this is only ever ``active`` when reached
+    #: from there -- but an application from before a suspension can still be
+    #: opened, and the screen should be able to say so.
+    status: str
+    #: Their own "not taking work" toggle. It does not stop a manager hiring
+    #: them; it stops the dispatcher offering them jobs afterwards.
+    is_available: bool
+    skill_ids: list[str]
+    skill_names: list[str]
+    #: How many communities currently employ them. The one number on this page
+    #: that is about workload rather than identity.
+    community_count: int
+    registered_at: datetime
+
+
 class UpdateServiceProviderRequest(CamelModel):
     """Edit what is already registered — everything except the name.
 

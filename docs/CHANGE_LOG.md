@@ -17,6 +17,231 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 65: three open questions, answered
+
+Session 64 closed with four open questions. Three were put back to the product owner and answered;
+the fourth — complaint **assignment** semantics — stays with the complaint-engine owner and was not
+touched.
+
+### `backend/supabase/migrations/README.md`
+
+`PO` — the service-operations range is extended to **`0050`–`0059`**. `0049` took the last number in
+`0034`–`0049` and complaint routing still needed a file. Nothing claims `0050`+, and the rule *lowest
+free number in your own range* only works if a range that runs out gets extended rather than quietly
+borrowing from a neighbour. Recorded with the note that extending grows the table at the end, never
+in the middle.
+
+`AUDIT` — `0040` gains a **corrected 2026-08-12** row, following the precedent `0022`, `0032`,
+`0036`, `0037` and `0043` set: nothing here has been applied to any database, so an audience mistake
+inside a function body is fixed in place. **This stops being available the moment anything is
+applied**, and the README already says so.
+
+### `docs/design/STAFF_PROVISIONING_DESIGN.md`
+
+`PO` — the single factor **stands**, and a claim code was offered and declined: *"lets assume that
+the admin wont make any typos for now and if the admin wants he can change the email when he notices
+via an edit option."* The recovery path was built instead —
+`PATCH /departments/{id}/staff-invitations/{invitationId}`.
+
+`DERIVED` — the **department is not editable** on that endpoint. It is what `can_manage_department`
+authorizes the call against, so a move would let the manager of one department mint staff into
+another. Moving an invitation is revoke-and-reissue under the authority of wherever it is going.
+
+The trade-off section now says plainly what the edit does and does not change: it makes the
+*accident* recoverable and does nothing about the security case. An address that is wrong *and*
+belongs to a real HomeBandhu user still admits that person, still silently.
+
+### `docs/erd/homebandhu.dbml`
+
+`AUDIT` — **`complaints.department_id` was already in the ERD and had no implementation.** Routing
+happened only when dispatch built a work order, so before that moment a complaint belonged to nobody.
+`0050` brings the implementation into line with a design decision already recorded here rather than
+changing the design.
+
+`DERIVED` — new table **`complaint_department_requests`**, the only genuinely new entity. A
+supervisor cannot move a complaint themselves, so the request is a row rather than an UPDATE: one who
+could push work out of their own department could empty it, and the receiving department would have
+no say either way.
+
+### `docs/class-diagram/homebandhu-domain.puml`
+
+`DERIVED` — `Complaint` gains `departmentId [0..1]` and `routeToDepartment(...)`, plus the
+`ComplaintDepartmentRequest` entity and five associations. **Null `departmentId` is a real state, not
+a gap** — it means the rule found nothing and the complaint is in the administrator's triage queue.
+
+### `docs/API.md`
+
+`PO` — new **§7.1**, the routing rule in precedence order: category, then the resident's own guess,
+then the triage queue. Category over the resident's pick is the ruling and it is the right way round —
+the category mapping is curated by somebody who knows how the society is organised, and the resident
+is guessing.
+
+`DERIVED` — **`"Other"` and `"Not sure"` are documented as *not* special values.** They are the two
+inputs that match nothing and fall through. Naming them as sentinels would have put two more strings
+in the system to express what the absence of a match already says.
+
+`DERIVED` — an **ambiguous category routes to nothing**. `department_categories` has a composite
+primary key, so one category may belong to several departments; the rule refuses to pick even when
+the resident named one of the candidates, because letting them break the tie would invert the
+precedence rule the section exists to state.
+
+`AUDIT` — the complaints preamble's audience claim was **wrong and is corrected**: raising,
+reopening, confirming and commenting reached every admin *and every manager in the community*, not
+"admins and managers" of anything relevant. Four notifications now go to the admins and the
+complaint's own department manager.
+
+### `docs/potential issues/14-…`
+
+`AUDIT` — the three notification links this file recorded as deliberately-unrewritable are all
+closed, and **none by adding a rewrite rule**. Two were audience mistakes (`0033`, `0040`) and one
+was a missing column (`0050`). The lesson is written down: *a link with no good destination is often
+a notification with no good recipient.*
+
+### `docs/COMPLAINT_ENGINE_HANDOFF.md`
+
+`PO` — new **§9**, written to be read *before* the owner concludes their §8 fork was decided for
+them. It was not: §8 is which **person** works a complaint, §9 is which **department** owns it, and
+`0050` deliberately answers only the second — it writes no `assigned_to_membership_id` and creates no
+work order. One genuine judgement call is handed over: whether a transfer should need consent from
+the *receiving* department, which today finds out by being notified after the fact.
+
+---
+
+## 2026-08-11 — Session 64: the manager who could not hire
+
+A follow-up to Session 63, on one instruction: build out the hiring screen recorded as
+`docs/potential issues/14`, and first **report which role it had actually been built for**.
+
+### `docs/potential issues/14-…` and its `README.md`
+
+`AUDIT` — marked **resolved**, and rewritten rather than annotated, because the audit found the gap
+was wider than the file described. The answer to "was this built for the admin or the supervisor?" is
+**the admin**, and never the supervisor: `require_admin_or_manager` checks the *membership role*, and
+a supervisor holds `worker`. Rank and role are separate axes and only role is checked here, so
+supervisors have never had hiring permission at any layer.
+
+Two things the file did not know when it was written, both now recorded in it: the
+**security-department manager** had the identical gap (`SecurityLayout.jsx` said so in a comment),
+and the `service_application_received` notification — which `0035` addresses to
+`array['admin','manager']` — carried an `/admin/…` link that silently redirected a manager to their
+own overview.
+
+### `docs/API.md`
+
+`DERIVED` — a new `GET /api/v1/service-providers/{providerId}`, documented with the reason it is
+narrower than the provider's own profile read: no coordinates and no profile id, because
+`distanceKm` from the candidate list already answers where somebody is and a home coordinate is a
+different fact offered for a different purpose. The **guard** is the point of the route existing at
+all — `service_providers_read` is `auth.uid() is not null`, so Postgres would give the row to any
+signed-in caller.
+
+`PO` — `rank` and `shift` struck from `POST /departments/{id}/invitations` and
+`POST .../decide`, quoting the ruling verbatim in place. Both halves recorded separately because
+they are separate facts: leadership never comes from the hiring path (it is provisioned by email),
+and `staff_assignments.shift` is a column **nothing schedules from** — the dispatch sweep and
+`security_shifts` do that work. `security_shifts` is explicitly untouched, so nobody reads "there is
+no shift system" as applying to the gate rota.
+
+### `docs/changelogs/2026-08-11-…`
+
+`DERIVED` — a phase-6 section, two new breaking-change entries (7 and 8), and the open-questions
+section rewritten into **settled** and **still open**. Two of the three questions raised at the end
+of Session 63 were answered by the PO and are now recorded as decisions with their reasons, not as
+questions.
+
+### Not changed, deliberately
+
+The ERD and class diagram. Session 64 adds **no tables, no columns and no migration** — the
+`0034`–`0049` range is exhausted and this work needed none of it, because
+`service_provider_overview` was already readable and `decide_service_application` already defaulted
+an omitted rank to `member`. A five-gate pass with nothing to record is worth saying out loud rather
+than leaving as a silent omission.
+
+---
+
+## 2026-08-11 — Session 63: departments, skills and the manager who could not sign in
+
+Four instructions, and the first three are done. The fourth — wire every dangling backend operation
+— is deliberately incomplete and says so at the end.
+
+### `docs/changelogs/` (new folder)
+
+`PO` — the ruling was to keep a **detailed changelog of this execution, in addition to the normal
+ones, so it can be shared with teammates**. `CHANGE_LOG.md` is keyed on documents and is terse;
+that one is keyed on endpoints, schema and contracts, and carries a "files touched, grouped by
+owner" section so each person finds their own. `docs/changelogs/README.md` gives the folder a
+convention rather than one example, the shape `docs/issue fixes/` was given.
+
+Written **per phase as each landed**, not at the end. A changelog assembled from memory after eight
+phases is a summary, and the details a teammate needs are exactly the ones that get lost.
+
+### `docs/API.md`
+
+`DERIVED` — six operations for the skill catalogue (`0048`) and three for leadership provisioning
+(`0049`), each with its status table. `GET /skills` gained `q`/`limit` and the entry now states that
+the no-query behaviour is unchanged, because it already had a consumer.
+
+`DERIVED` — the `GET /departments/{id}` entry changed from `ADMIN` to `ADMIN` **or the department's
+own manager**, with the reason: the manager portal has no other way to read its own department, and
+this was the only department operation with no frontend caller at all.
+
+`PO` — a new §"Leadership provisioning" recording the ruling verbatim: *managers and supervisors
+have no registration process; servicemen are the only role in the service section that does.*
+
+### `docs/design/STAFF_PROVISIONING_DESIGN.md` (new)
+
+`DERIVED` — required, not optional: `0049` changes `auth_service.py`, which belongs to the auth
+workstream, and the standing rule is that file is only touched with a design doc. It records the
+mechanism, the derived-role table, and **the one-factor trade-off in plain words** — whoever holds
+that mailbox at first sign-in becomes the manager. The resident invite's mandatory token is
+untouched; leadership got its own table specifically so that rule would not have to bend.
+
+### `docs/FRONTEND_WIRING_AUDIT.md`
+
+`AUDIT` — the `GET /complaint-categories` row is struck through and marked reinstated. Its
+retirement reason was a statement about two screens, and **both halves expired**:
+`CreateDepartment.jsx` was deleted in `38927e5`, and the department form's category field is now a
+combobox that cannot prevent duplicates without the list. The reinstated read also is not the
+retired one — it carries each category's linked skill.
+
+### `docs/COMPLAINT_ENGINE_HANDOFF.md`
+
+`DERIVED` — a new §8. The "Assign technician" dropdown had been reading `department.staff`, which
+the snapshot always builds empty, so it has been offering a choice of nobody. It now reads the real
+roster. **The question of what an assignment *means* is left open on purpose** — three possible
+shapes are set out, and the choice belongs to whoever owns the complaint lifecycle.
+
+### `docs/potential issues/14` (new)
+
+`AUDIT` — a department manager may hire and has no screen to hire from. Reusing the admin hiring
+screen would have shipped four `/admin/...` links that 403 for them, so the tab was dropped and the
+gap written down. Also notes something about the sweep itself: **reachability is not the same as
+reachability by everyone who is allowed.**
+
+### Two corrections to earlier sessions
+
+> **`0035` said it replaced `department_overview` and did not.** Its own header states the reason
+> to: *"leave `department_overview` matching on `'head'` and the admin screen's head field is
+> permanently null."* It replaced `apply_department_head` and never touched the view — so
+> `head_name` has been null for every department in the API since `0035`. `0048` corrects the
+> predicate while replacing the view anyway. Recorded here rather than only in the migration,
+> because a comment claiming a fix that was not made is worse than no comment.
+
+> **Session 60's five-gate note on `search_hireable_service_providers` is now partly superseded.**
+> The function derives the skills a department needs from its categories; from `0048` it is the
+> union of that and the department's own skills. Not a correction of that session — a deliberate
+> behaviour change, made because otherwise attaching a skill to a department would change nothing
+> anybody could observe.
+
+### What is not done
+
+`PO` — the ruling on the connectivity sweep was **"everything dangling"**, all 51 operations.
+Phases 1–5 (skills, provisioning, the admin form, the manager portal) are complete; **phases 6 and 7
+— the resident portal's 24 operations and the work-order, amenity and money surfaces — are not
+started.** The plan named them as the cut line if scope ran long, and it has. They are unblocked and
+independent of everything above.
+
+
 ## 2026-08-11 — Session 62: the four that are not ours, and everything nothing reaches
 
 **Context.** PO: *"are the 5 issues you identified documented? if not document them in potential

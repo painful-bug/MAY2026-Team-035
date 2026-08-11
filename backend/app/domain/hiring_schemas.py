@@ -16,6 +16,7 @@ thing a cross-community screen does not have.
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import Field
 
@@ -62,33 +63,67 @@ class ApplyRequest(CamelModel):
     message: str | None = Field(default=None, max_length=2000)
 
 
+# ---------------------------------------------------------------------------
+# A hired service person is always a ``member``, and there is no shift.
+#
+# Both models below used to carry ``rank`` and ``shift``. A product-owner
+# ruling on 2026-08-11 removed them from this path:
+#
+#   "the only people added from servicemen are technicians (member). no
+#    supervisors or managers are hired this way. there is no shift or anything.
+#    there is no shift system. job assignment is only on demand as the auto
+#    assign or supervisor does."
+#
+# The two halves of that are separate facts and both are load-bearing:
+#
+# * **Rank.** Leadership does not come from the hiring path at all -- an admin
+#   or a manager creates a manager or a supervisor by email
+#   (``staff_invitations``, ``0049``), and that person never registered as a
+#   service provider. Somebody hired *here* registered themselves and applied,
+#   and they join as a ``member``. A promotion afterwards is
+#   ``PATCH /departments/{id}/staff/{staffId}``, which is a different decision
+#   with a different guard.
+#
+# * **Shift.** ``staff_assignments.shift`` is a descriptive text column from
+#   ``0019``'s typed-roster era. **Nothing schedules from it** -- work reaches a
+#   worker through the dispatch sweep (``0037``) or a supervisor's assignment,
+#   and a guard's actual rota is ``security_shifts`` (``0040``), a different
+#   table with real timestamps. Collecting a word like "Day" at hire time
+#   described nothing and was read by nothing.
+#
+# The column and ``0035``'s ``p_rank``/``p_shift`` parameters both stay -- this
+# is a narrowing of what the API accepts, not a schema change, and it needed no
+# migration because ``decide_service_application`` already defaults an omitted
+# rank to ``member`` and leaves an omitted shift null.
+# ---------------------------------------------------------------------------
+
+
 class InviteRequest(CamelModel):
-    """A manager inviting one provider, with the terms on offer."""
+    """A manager inviting one provider onto the roster.
+
+    ``jobTitle`` is the only term on offer, and it is free text with
+    suggestions rather than a closed list -- ``staff_assignments.job_title`` has
+    no check constraint, so a society with a lift technician or a pool attendant
+    can say so without a migration.
+    """
 
     service_provider_id: str
     message: str | None = Field(default=None, max_length=2000)
-    #: ``manager`` | ``supervisor`` | ``member``. The stored vocabulary; the
-    #: department's ``head`` is the person holding ``manager``.
-    rank: str = "member"
     job_title: str | None = Field(default=None, max_length=120)
-    shift: str | None = Field(default=None, max_length=40)
 
 
 class DecideApplicationRequest(CamelModel):
     """Answer a pending negotiation.
 
-    The terms are accepted here rather than supplied at application time,
-    because on an application nobody has offered any yet -- the manager names
-    them at the moment they say yes. On an *invitation* they are already in the
-    row and this request cannot change them: a provider accepting cannot promote
-    themselves by sending ``rank``.
+    ``jobTitle`` is supplied here rather than at application time, because on an
+    application nobody has offered anything yet -- the manager names it at the
+    moment they say yes. On an *invitation* it is already in the row and this
+    request cannot change it.
     """
 
     #: ``accepted`` or ``rejected``.
     decision: str
-    rank: str | None = None
     job_title: str | None = Field(default=None, max_length=120)
-    shift: str | None = Field(default=None, max_length=40)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -324,3 +359,81 @@ class RemoveMemberRequest(CamelModel):
     """Take someone off a roster. Reapplication stays open."""
 
     reason: str | None = Field(default=None, max_length=500)
+
+
+class StaffInvitation(CamelModel):
+    """A manager or supervisor created but not yet signed in.
+
+    **There is no token and no code.** Leadership has no registration flow: an
+    administrator types a name and an email, and that person is admitted the
+    first time they sign in with that address. The trade-off -- one factor, and
+    whoever holds the mailbox becomes the manager -- is stated in ``0049``'s
+    header and in ``docs/design/STAFF_PROVISIONING_DESIGN.md`` rather than
+    softened. The resident invite's mandatory token is untouched; this is a
+    separate table for exactly that reason.
+
+    ``rank`` is ``manager`` or ``supervisor`` only. ``member`` is absent because
+    that rank is reached solely by hiring a registered service provider.
+    """
+
+    id: str
+    department_id: str
+    email: str
+    name: str
+    phone: str | None = None
+    rank: str
+    job_title: str | None = None
+    #: ``pending`` | ``claimed`` | ``revoked``.
+    status: str
+    #: When they first signed in. Null until they do.
+    claimed_at: datetime | None = None
+    created_at: datetime
+
+
+class InviteStaffRequest(CamelModel):
+    """Create a manager or a supervisor.
+
+    ``email`` is required and is the whole mechanism: it is what the person's
+    Google sign-in is matched against. A typo here does not fail loudly -- it
+    produces an invitation nobody can claim -- which is why the department
+    screen shows pending invitations rather than assuming they land.
+    """
+
+    email: str = Field(min_length=3, max_length=254)
+    name: str = Field(min_length=1, max_length=120)
+    #: A closed set on the wire, not just in the RPC. Two values, and both are
+    #: refused by `staff_invitations_rank_check` if they ever disagree -- but a
+    #: 422 from the schema tells the form which words are legal, where a round
+    #: trip to Postgres only tells it that this one was not.
+    rank: Literal["manager", "supervisor"]
+    phone: str | None = Field(None, max_length=32)
+    job_title: str | None = Field(None, max_length=60)
+
+
+class UpdateStaffInvitationRequest(CamelModel):
+    """Correct an unclaimed invitation.
+
+    This is the answer the product owner gave on 2026-08-12 to the one way a
+    single-factor invitation fails: the admin mistypes the address, nobody can
+    claim it, and nothing tells anybody. Rather than add a second factor, the
+    mistake is made correctable once the pending list makes it visible.
+
+    **Every field is optional and ``None`` means "leave it alone".** A form that
+    patches only the email cannot blank the job title by not sending it. The two
+    nullable fields accept ``""`` as "clear this"; ``email``, ``name`` and
+    ``rank`` have no clear, because an invitation without them binds nothing,
+    names nobody, or admits at no rank.
+
+    ``rank`` is editable for the same reason ``email`` is -- choosing
+    *supervisor* when you meant *manager* is a keyboard mistake of exactly the
+    same kind. The **department is not**, and its absence here is load-bearing:
+    it is what ``can_manage_department`` authorizes against, so a move would let
+    the manager of one department mint staff into another. That is
+    revoke-and-reissue, under the authority of wherever it is going.
+    """
+
+    email: str | None = Field(None, min_length=3, max_length=254)
+    name: str | None = Field(None, min_length=1, max_length=120)
+    rank: Literal["manager", "supervisor"] | None = None
+    phone: str | None = Field(None, max_length=32)
+    job_title: str | None = Field(None, max_length=60)

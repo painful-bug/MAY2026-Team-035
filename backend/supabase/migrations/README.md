@@ -24,7 +24,7 @@ when that file is written:
 |---|---|
 | `0018`–`0024` | admin dashboard |
 | `0025`–`0033` | resident backend |
-| `0034`–`0049` | service operations and security |
+| `0034`–`0049`, `0050`–`0059` | service operations and security |
 
 Two rules make this work. A workstream takes the lowest free number **in its own
 range** at the moment it writes a file, so two people writing at once cannot
@@ -45,6 +45,18 @@ bookkeeping catching up with what the directory says. The same rule caught its
 own worked example immediately: the service plan had reserved `0039` for security
 operations, the worker portal needed a migration nobody had planned for, and
 `0039` went to whoever wrote first — security operations is `0040`.
+
+**`0050`–`0059` was added to that third range on 2026-08-12**, because `0049` had
+taken the last number in `0034`–`0049` and complaint department routing still
+needed a file. Two things made this the boring option rather than a decision:
+nothing claims `0050`+, and the rule above is *lowest free number in your own
+range*, which only works if a range that runs out gets extended rather than
+quietly borrowing from a neighbour. Extending is bookkeeping; borrowing is the
+collision the rule exists to prevent.
+
+An extension is not a licence to renumber. The rule that a file keeps the number
+it was written with still holds — this table grows at the end, never in the
+middle.
 
 | File | Serves |
 |---|---|
@@ -67,7 +79,7 @@ operations, the worker portal needed a migration nobody had planned for, and
 | `0037_dispatch_engine.sql` | `dispatch_tasks`, the sweep and the four firing RPCs — no endpoints at all. **Corrected 2026-08-11**: the same broken worker link as `0036`, in a second spelling |
 | `0038_conversations.sql` | the hiring thread between a department and a provider |
 | `0039_worker_actions.sql` | the worker's own side: three views, five verbs, and their working week |
-| `0040_security_operations.sql` | the gate — posts, shifts, two registers, incidents, credential verification and the offline reconcile log |
+| `0040_security_operations.sql` | the gate — posts, shifts, two registers, incidents, credential verification and the offline reconcile log — **corrected 2026-08-12**: `record_security_incident` notified `array['admin','manager']`, so every manager in the community was told about gate incidents and sent to a screen only *some* of them have. The audience now mirrors `_portal_for`'s own predicate |
 | `0041_person_notifications.sql` | the notification substrate re-addressed from a membership to a person, so a service provider who has not been hired can be told anything at all — plus the conversation's first notification and the notice board's |
 | `0042_roster_provider_link.sql` | one column on `department_staff_overview`, so a roster row can say which service provider it is — the write path has filled `staff_assignments.service_provider_id` since `0035` and no read returned it |
 | `0043_staff_departures.sql` | leaving a community becomes a process a manager approves: a departure freezes the dispatch engine against that person, every job and shift in their name is handed over through the same ranking auto-assignment uses, and only an empty list lets the approval through — `remove_department_member` gains the refusal, and a bar releases the work instead of queueing behind it. **Corrected 2026-08-11**: `reassign_departure_item` sent the guard receiving a handed-over shift to `/security-manager/shifts`, which is neither a route nor their portal |

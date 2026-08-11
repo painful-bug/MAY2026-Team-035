@@ -46,6 +46,42 @@ def get_by_profile(client: Client, *, profile_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
+#: What a hiring manager may read about somebody who does not work for them.
+#:
+#: A **narrower list than ``_PROFILE_SELECT``**, and the narrowing is the point
+#: rather than an optimisation: ``latitude``/``longitude`` and ``profile_id``
+#: are absent, so no code path below can leak them even by accident. The view's
+#: read policy would have allowed them -- ``service_providers_read`` is
+#: ``auth.uid() is not null`` -- which is exactly why the restriction has to be
+#: written down somewhere, and a column list is the only place it survives
+#: somebody adding a field to the schema later.
+_CANDIDATE_SELECT = (
+    "id, display_name, headline, bio, phone_e164, service_radius_km, status, "
+    "is_available, skill_ids, skill_names, community_count, created_at"
+)
+
+
+def get_by_id(client: Client, *, provider_id: str) -> dict[str, Any] | None:
+    """One service person by provider id, or ``None``.
+
+    Read with the **caller's** client, like everything else here. The view is
+    ``security_invoker``, so the policy on ``service_providers`` decides -- and
+    that policy admits any signed-in caller, which is why the route above this
+    carries the real guard. A service-role read would have been the same rows
+    with the check silently removed.
+    """
+    rows = (
+        client.table(_OVERVIEW)
+        .select(_CANDIDATE_SELECT)
+        .eq("id", provider_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else None
+
+
 def list_skills(client: Client) -> list[dict[str, Any]]:
     """The active skill catalogue, alphabetically.
 

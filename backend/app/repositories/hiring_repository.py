@@ -516,3 +516,97 @@ def blacklist_provider(
         raise translate(
             exc, default_message="Could not blacklist that service provider."
         ) from exc
+
+
+def list_staff_invitations(
+    client: Client, *, department_id: str, status: str | None
+) -> list[dict[str, Any]]:
+    """Leadership invited into this department, claimed or not."""
+    try:
+        response = client.rpc(
+            "department_staff_invitations",
+            {"p_department_id": department_id, "p_status": status},
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not read this department's invitations."
+        ) from exc
+    rows = response.data or []
+    return rows if isinstance(rows, list) else [rows]
+
+
+def invite_staff_member(
+    client: Client,
+    *,
+    department_id: str,
+    email: str,
+    name: str,
+    rank: str,
+    phone: str | None,
+    job_title: str | None,
+) -> str:
+    """Create a manager or supervisor to be admitted by email on first sign-in."""
+    try:
+        response = client.rpc(
+            "invite_staff_member",
+            {
+                "p_department_id": department_id,
+                "p_email": email,
+                "p_name": name,
+                "p_rank": rank,
+                "p_phone": phone,
+                "p_job_title": job_title,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not create that invitation."
+        ) from exc
+    return str(response.data or "")
+
+
+def update_staff_invitation(
+    client: Client,
+    *,
+    invitation_id: str,
+    email: str | None,
+    name: str | None,
+    rank: str | None,
+    phone: str | None,
+    job_title: str | None,
+) -> None:
+    """Correct one that has not been claimed.
+
+    Every argument is passed through even when ``None``, rather than building a
+    sparse payload: the RPC's own contract is that ``null`` means "leave alone",
+    so omitting a key and sending it as null must mean the same thing. Sending
+    all five keeps that promise on this side of the wire too.
+    """
+    try:
+        client.rpc(
+            "update_staff_invitation",
+            {
+                "p_invitation_id": invitation_id,
+                "p_email": email,
+                "p_name": name,
+                "p_rank": rank,
+                "p_phone": phone,
+                "p_job_title": job_title,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not correct that invitation."
+        ) from exc
+
+
+def revoke_staff_invitation(client: Client, *, invitation_id: str) -> None:
+    """Withdraw one that has not been claimed."""
+    try:
+        client.rpc(
+            "revoke_staff_invitation", {"p_invitation_id": invitation_id}
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not withdraw that invitation."
+        ) from exc
