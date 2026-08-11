@@ -17,6 +17,67 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 67: the audit of the merged commits, and phase 6 by specialists
+
+The first session run by the charter workflow: three sub-agents (charters in `.claude/agents/`),
+each with a scope fence and a mandated report, with synthesis and every `docs/` change staying here.
+Two things happened at once: the merged service-professional commits (`fc69d3f`, `ce3fafe`) were
+line-audited on the user's suspicion of bugs, and the resident portal was wired end to end
+(phase 6 — potential issue 09 resolved, see its banner).
+
+### The audit: twelve findings, four fixed, two escalated, six recorded
+
+`AUDIT` — the audit also *cleared* the merged work's foundations, which is worth as much as the
+findings: PostGIS units and argument order correct, SECURITY DEFINER hygiene complete, registration
+atomic, the RLS-recursion fix genuine and strictly narrower than the policy it replaced, and
+`ce3fafe`'s rewrites of the applied files byte-faithful to the baseline.
+
+**Fixed the same day** (each with a fail-before/pass-after test): the email-confirmation
+`intent` concatenation that would have broken confirmation outright under a `{{ .RedirectTo }}`
+template; the `/get-started` dead end for an email-path service professional (third door, destination
+computed from `destinationAfterAuth` so the two paths cannot drift); the admin Settings coordinate
+inputs whose `required`/`min`/`max` never fired outside a form; the telemetry visitor cookie whose
+30-day window never slid, double-counting returning visitors.
+
+**Escalated to files of their own**: [potential issue 15](potential%20issues/15-the-service-professional-intent-dies-in-the-confirmation-email.md)
+(the intent still dies in the fixed email template, so the funnel's `auth_completed` undercounts —
+a dashboard-configuration decision) and [16](potential%20issues/16-the-separate-account-rule-only-looks-one-way.md)
+(the separate-account rule is enforced in one direction only — a product question).
+
+**Recorded here, deliberately not acted on**: the unauthenticated telemetry endpoint joins
+potential issue 3's rate-limiting table; `sign_in_with_password`'s unconditional confirmed-email
+check now applies in production only (staging strictness is a conscious choice for the owner);
+`service_applications_read` silently lost department-less managers (inert — nothing mints one);
+`departments.hours` landed as `text` against the baseline's `jsonb` (inert type drift, now
+permanent); `0034`'s `search_serviceable_communities` comment describes the pre-replacement
+null-coordinate behaviour; CI's closing `git diff --check` cannot catch generated-file drift, and
+the workflow exports the (demo) service-role key to `$GITHUB_ENV` — both left because CI cannot be
+verified locally.
+
+### `docs/potential issues/`
+
+`AUDIT` — 09 resolved (banner carries the residual: the Amenities "Your Bookings" table, now
+phase 7's first item). 10 recounted: 164/199, with `GET /events` moved to "reached another way"
+(`EventSource`, structurally invisible to the sweep). 3 gained the telemetry endpoint. 4
+half-resolved by the boundary — `0001`–`0047` applied, the four `20260812…` files still nowhere.
+15 and 16 are new.
+
+### `docs/API.md`, router docstrings, `docs/FRONTEND_WIRING_AUDIT.md`
+
+`DERIVED` — the two "the form collects them [attachments]" sentences now record that it no longer
+does; the wiring audit's resident postscript records phase 6 and that `payInvoice` was wired to the
+resident simulator, not the forbidden admin settlement endpoint.
+
+### One frozen-interface lesson
+
+`AUDIT` — `residentApi.js` was written by the orchestrator as the frozen interface before launch,
+and both of its documentation errors (`resolveComplaint`'s invented `{accepted}` shape; `body` where
+`AddCommentRequest` says `message`) were caught by the implementing agents against the schemas.
+The convention held — both agents reported rather than silently diverging — but the lesson stands:
+an interface frozen before its shapes are verified freezes the errors too.
+
+---
+
 ## 2026-08-12 — Session 66: the deployment boundary, and what it invalidated
 
 A teammate's branch landed two commits, and one of them moved a rule this workstream had been

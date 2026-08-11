@@ -13127,11 +13127,13 @@ paths:
         reason the notification substrate was built before this step.
 
 
-        Attachments are **not** accepted yet. The form collects them and no upload
+        Attachments are **not** accepted yet, and since 2026-08-12 the form no
 
-        endpoint exists; sending them would be accepting data this backend then
+        longer collects them either -- promising a resident their photo reached
 
-        drops.'
+        somebody would be worse than not asking. `media` stays in the schema for
+
+        the day an upload endpoint exists.'
       operationId: raise_complaint_api_v1_complaints_post
       requestBody:
         content:

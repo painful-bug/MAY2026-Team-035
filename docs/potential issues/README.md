@@ -13,18 +13,20 @@ Nothing here is a guess. Every claim names the file and line it came from, and e
 |---|---|---|---|
 | 1 | [OAuth callback never checks which provider started the sign-in](#1-oauth-callback-never-checks-which-provider-started-the-sign-in) | Security (latent) | Before a second provider is enabled |
 | 2 | [`roles.py` documents an RBAC model the code no longer uses](#2-rolespy-documents-an-rbac-model-the-code-no-longer-uses) | Correctness trap | **Resolved 2026-08-10** — see the note under its body |
-| 3 | [No rate limiting on the guessable or mail-sending endpoints](#3-no-rate-limiting-on-the-guessable-or-mail-sending-endpoints) | Security | Before public launch |
-| 4 | [No migration has ever been applied to any database](#4-no-migration-has-ever-been-applied-to-any-database) | Deployment blocker | Now |
+| 3 | [No rate limiting on the guessable or mail-sending endpoints](#3-no-rate-limiting-on-the-guessable-or-mail-sending-endpoints) | Security | Before public launch — grew a fifth endpoint 2026-08-12 |
+| 4 | [No migration has ever been applied to any database](#4-no-migration-has-ever-been-applied-to-any-database) | Deployment blocker | **Half-resolved 2026-08-11** — `0001`–`0047` are applied to the hosted project; see the note under its body |
 | 5 | [Supabase email templates do not match our own setup document](#5-supabase-email-templates-do-not-match-our-own-setup-document) | Configuration | Now — it is half of #22 |
 | 6 | [149 lint violations make a CI lint gate impossible](#6-149-lint-violations-make-a-ci-lint-gate-impossible) | Tech debt | Whenever the auth work settles |
 | 7 | [Design docs outside `API.md` still describe phone/SMS OTP](#7-design-docs-outside-apimd-still-describe-phonesms-otp) | Doc drift | Low |
 | 8 | [`/auth/*` speaks `snake_case`, everything else speaks `camelCase`](#8-auth-speaks-snake_case-everything-else-speaks-camelcase) | Consistency | Superseded in scope by 11 |
-| 9 | [The resident portal is still a demo](09-resident-portal-is-still-a-demo.md) | Unfinished wiring | Before any demo involving a resident |
-| 10 | [51 API operations have no frontend consumer](10-api-operations-with-no-frontend-consumer.md) | Inventory | Low as a defect, high as a planning input |
+| 9 | [The resident portal is still a demo](09-resident-portal-is-still-a-demo.md) | Unfinished wiring | **Resolved 2026-08-12** — wired end to end; one table left for phase 7, named in the banner |
+| 10 | [51 API operations have no frontend consumer](10-api-operations-with-no-frontend-consumer.md) | Inventory | Low as a defect, high as a planning input — recounted 2026-08-12: 164/199 |
 | 11 | [The naming contract in `API.md` §1.3 is wrong](11-snake-case-in-the-published-contract.md) | Doc defect | Low, but it is a contract giving a wrong answer |
 | 12 | [Four notification parameters that no screen reads](12-notification-parameters-no-screen-reads.md) | Silent UX defect | Low each; they share a failure mode with no alarm on it |
 | 13 | [Dead code in files this workstream does not own](13-dead-code-in-files-this-workstream-does-not-own.md) | Tech debt | Low — written down because nothing else will |
 | 14 | [The manager has hiring permission and no hiring screen](14-the-manager-has-hiring-permission-and-no-hiring-screen.md) | Unreachable capability | **Resolved 2026-08-11** — the file records what the fix turned up, and the one part still open |
+| 15 | [The service-professional intent dies in the confirmation email](15-the-service-professional-intent-dies-in-the-confirmation-email.md) | Silent funnel break | The dead end is fixed; the metric is still wrong until the template decision |
+| 16 | [The separate-account rule only looks one way](16-the-separate-account-rule-only-looks-one-way.md) | Product decision | Before a professional base exists to hit it |
 
 ## Three vintages, and why they are stored differently
 
@@ -35,6 +37,12 @@ inline below, in the order they were written.
 path from auth through the resident, admin, guard, security-manager and worker portals — and each has
 a file of its own, because each needed more than a screenful: an inventory, the contract it says is
 wrong, and a link to that contract.
+
+**15–16** came out of the 2026-08-12 audit of the merged service-professional auth commits
+(`fc69d3f`, `ce3fafe`) — twelve findings, of which four were fixed the same day, six were recorded
+in `docs/CHANGE_LOG.md` Session 67, and these two need a decision nobody in that session could make
+alone: one is a Supabase dashboard configuration with a breakage trap beside it, the other is a
+product question about what "separate account" is protecting.
 
 **12–13** came out of fixing something else on the same day, which is the usual way: correcting one
 notification's deep link raised the question of how many others were half-corrected, and deleting one
@@ -188,6 +196,7 @@ No endpoint in the service is rate-limited. Four unauthenticated ones deserve it
 | `POST /api/v1/invitations/prepare` | Takes an invite token **and** a short code — both guessable in principle, and a hit grants community access |
 | `POST /api/v1/auth/email/resend` | Sends mail on every call |
 | `POST /api/v1/auth/password/reset/request` | Sends mail on every call |
+| `POST /api/v1/telemetry/service-signup` | *Added 2026-08-12.* Unauthenticated, and the dedupe key is a **client-supplied** cookie — `require_csrf` is its only gate, satisfiable by any non-browser client that echoes `GET /auth/csrf`'s preauth token with a forged `Origin`. N forged visitor uuids × 5 event types = unbounded inserts until the 30-day prune. Signing the cookie would not help; an attacker just requests a fresh one |
 
 The last two are the cheapest abuse available: each request costs the project a real email, and both
 deliberately answer identically whether or not the address exists, so there is no natural brake.
@@ -214,6 +223,14 @@ response shape, so the contract is settled — only the implementation is missin
 ## 4. No migration has ever been applied to any database
 
 **Labels:** `blocker`, `database`, `deployment`
+
+> **Half-resolved 2026-08-11.** The linked hosted project was verified with every repository
+> migration through `0047` applied — the first-run wall of failures this entry predicted was paid
+> down, and those files are now **immutable** (`backend/supabase/migrations/README.md`, "After the
+> boundary"). What remains open is the other half: the four `20260812…` files written since are
+> **not** applied anywhere, so everything that depends on them — skills, staff provisioning,
+> complaint routing, the notification-audience corrections — is still exactly as untested against a
+> real database as this entry describes. The suggested fix below now applies to that set.
 
 ### Body
 

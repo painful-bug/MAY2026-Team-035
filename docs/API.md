@@ -1082,9 +1082,10 @@ Raise a complaint. **Requires an active membership.** `201 Created`, and the bod
 The response is the created complaint rather than an acknowledgement, because the SLA deadline is the
 one thing the client could not have computed and is exactly what it is about to display.
 
-**Attachments are not accepted yet.** The form collects them, `media` exists in the schema, and no
-upload endpoint does — so this endpoint takes what it can honour rather than accepting data it drops.
-Tracked in §15.
+**Attachments are not accepted yet.** `media` exists in the schema and no upload endpoint does — so
+this endpoint takes what it can honour rather than accepting data it drops. Since 2026-08-12 the
+resident form no longer collects them either, for the mirror-image reason: a form field that
+promises a resident their photo reached somebody is worse than no field. Tracked in §15.
 
 Raising notifies the community's active admins and **the manager of the department the complaint
 routed to**, if it routed to one. Until 2026-08-12 it notified every manager in the community, which

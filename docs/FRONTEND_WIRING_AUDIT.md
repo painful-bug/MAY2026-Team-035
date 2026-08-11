@@ -50,9 +50,14 @@ Since `appStore` no longer persists tenant data, those writes are lost on refres
 | Maintenance | filter only — read-only | snapshot | — *(ours removed)* |
 | Settings | 4 toggles, `handleSave` only toasts | ✗ dead | **kept** (step 9) |
 
-Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartment` (Profile) are also dead.
+Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartment` (Profile) were also dead.
+**Closed 2026-08-12 by phase 6**: the whole resident portal — home, complaints, visitors, payments, notices,
+profile, and the amenities browse list — now reads and writes the API through
+`frontend/src/features/resident/residentApi.js`; the demo slices' resident data writes are deleted. Issue 09
+carries the page-by-page record; the one residual (the Amenities "Your Bookings" table) is named there.
 
-**`payInvoice` must not be wired to `POST /invoices/{id}/payments`.** That endpoint marks money as *received* and
+**`payInvoice` must not be wired to `POST /invoices/{id}/payments`** — and it was not: the resident pages use
+`POST /invoices/{id}/pay`, the resident-scoped simulator. The admin-side endpoint marks money as *received* and
 settles the invoice, so exposing it to the payer would let a resident clear their own dues by asserting they had
 paid. It stays admin-only. Resident self-service needs a payment gateway whose webhook calls it — unbuilt, though
 the baseline's `payments.provider` and `unique(community_id, idempotency_key)` now support it.

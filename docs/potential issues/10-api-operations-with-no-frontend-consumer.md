@@ -6,6 +6,15 @@
 
 ---
 
+> **Recounted 2026-08-12, after phase 6.** The service now serves **199 operations** and the sweep
+> reads **164 reached**. The resident block below (23 + 1) is closed — issue 9 carries the
+> resolution — and `GET /events` joined the "reached another way" table: it is consumed by
+> `frontend/src/features/resident/residentEvents.js` via `new EventSource(...)`, one of the
+> consumption paths the sweep's own docstring declares it does not model, so it will read as
+> unreached forever and is not an orphan. The 27-operation admin bucket below is unchanged and is
+> phase 7's worklist; the numbers in the body are kept as written because the *structure* of the
+> inventory, not the counts, is what this file is for.
+
 ## Body
 
 The service serves **179 operations**. The React app makes **124 API calls**, which between them
