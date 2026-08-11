@@ -36,6 +36,21 @@ export default function SettingsPage() {
       showToast('Community coordinates are required', 'error');
       return;
     }
+    // The range check has to live here. `LocationCoordinatesInput` marks its
+    // two inputs `required` with `min`/`max`, but this page saves from a button
+    // rather than a form submit, and native constraint validation only runs on
+    // submit -- so on this screen alone those attributes never fire. Without
+    // this, a latitude of 999 reached `PUT /settings`, failed Pydantic's
+    // `le=90`, and came back as an unexplained 422 toast naming no field.
+    const latitude = Number(coordinates.latitude);
+    const longitude = Number(coordinates.longitude);
+    if (
+      !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+      || !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+    ) {
+      showToast('Latitude must be between -90 and 90, and longitude between -180 and 180', 'error');
+      return;
+    }
     try {
       await Promise.all([
         api('/settings', {
@@ -43,8 +58,8 @@ export default function SettingsPage() {
           body: JSON.stringify({
             requireVisitorPreapproval: gateSecurity,
             noticeSmsBroadcastEnabled: noticeAlert,
-            latitude: Number(coordinates.latitude),
-            longitude: Number(coordinates.longitude),
+            latitude,
+            longitude,
           })
         }),
         api('/billing-settings', {

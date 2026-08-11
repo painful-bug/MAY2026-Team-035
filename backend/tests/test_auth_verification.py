@@ -11,6 +11,7 @@ verified the address, and an OAuth JWT is not required to carry the claim at all
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
@@ -198,6 +199,49 @@ def test_resending_asks_for_a_signup_link_pointing_at_the_confirmation_page(
             },
         }
     ]
+
+
+def test_the_service_intent_is_appended_as_a_query_parameter_not_concatenated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``?a=b?intent=…`` is one parameter, not two.
+
+    The confirmation page parses ``token_hash`` out of this query string. A
+    second ``?`` makes ``URLSearchParams`` swallow everything after it into one
+    value, so the link arrives with nothing to confirm -- a base URL that
+    already carries a query has to extend it with ``&``.
+    """
+    settings = get_settings()
+
+    monkeypatch.setattr(settings, "frontend_base_url", "https://app.example.com")
+    assert auth_service.confirmation_redirect_url("service-provider") == (
+        "https://app.example.com/auth/confirm-email?intent=service-provider"
+    )
+
+    # A deployment whose frontend origin already carries a query -- a preview
+    # host, or a proxy that tags its own traffic. The intent has to extend that
+    # query rather than start a second one.
+    monkeypatch.setattr(settings, "frontend_base_url", "https://preview.example.com?build=42")
+    joined = auth_service.confirmation_redirect_url("service-provider")
+    assert joined.count("?") == 1
+    assert parse_qs(urlsplit(joined).query) == {
+        "build": ["42/auth/confirm-email"],
+        "intent": ["service-provider"],
+    }
+
+
+def test_no_intent_leaves_the_confirmation_url_exactly_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every non-professional signup keeps the URL the setup document names."""
+    monkeypatch.setattr(get_settings(), "frontend_base_url", "https://app.example.com")
+
+    assert auth_service.confirmation_redirect_url() == (
+        "https://app.example.com/auth/confirm-email"
+    )
+    assert auth_service.confirmation_redirect_url("register") == (
+        "https://app.example.com/auth/confirm-email"
+    )
 
 
 def test_resending_stays_silent_when_the_provider_fails(

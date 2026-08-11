@@ -94,11 +94,23 @@ def confirmation_redirect_url(intent: str | None = None) -> str:
     ``docs/SUPABASE_AUTH_SETUP.md``.  A template left on GoTrue's default
     ``{{ .ConfirmationURL }}`` redirects to this page with no hash to spend,
     which is what leaves the confirm button with nothing to do.
+
+    **The intent is appended as a query parameter, not concatenated with a
+    literal ``?``.** A base URL that already carries a query -- which is what a
+    ``frontend_base_url`` with one, or any future caller passing a richer
+    landing page, would produce -- would otherwise yield ``…?a=b?intent=…``.
+    That is not a URL with two parameters: ``URLSearchParams`` reads the whole
+    tail as one value, so the *other* parameter silently disappears. The page
+    this lands on parses ``token_hash`` out of exactly that query string, so
+    the failure mode is a confirmation link that cannot be confirmed.
     """
     from app.config import get_settings
 
     base = f"{get_settings().frontend_base_url.rstrip('/')}/auth/confirm-email"
-    return f"{base}?intent=service-provider" if intent == "service-provider" else base
+    if intent != "service-provider":
+        return base
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{urlencode({'intent': intent})}"
 
 
 def _unconfirmed_email() -> AuthenticationError:
