@@ -18,6 +18,7 @@ import {
 import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useAuthStore } from '../store/authStore';
 import { workerApi } from '../features/worker/workerApi';
+import { isProviderProfileComplete } from '../features/worker/providerProfile';
 import NotificationBell from '../components/notifications/NotificationBell';
 import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
 
@@ -132,14 +133,10 @@ export default function WorkerLayout() {
     );
   }
 
-  // The predicate is deliberately completeness, not existence: a provider row
-  // can exist but be unusable (registration submitted without coordinates, or
-  // with no active skill), and those users must land on the registration
-  // screen too, prefilled from what they did save.
+  // The predicate (completeness, not existence — see providerProfile.js) is
+  // shared with ChatDock, which hides the floating bubble on the same test.
   const provider = snapshot.data?.provider;
-  const profileComplete = provider?.latitude != null
-    && provider?.longitude != null
-    && (provider?.skillIds?.length ?? 0) > 0;
+  const profileComplete = isProviderProfileComplete(provider);
 
   if (!profileComplete) {
     // Deep links like /worker/settings redirect to /worker rather than

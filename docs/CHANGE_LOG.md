@@ -40,14 +40,30 @@ snapshot failure gets a minimal retry screen instead of a blank page. The old in
 deleted, not shadowed. The transition needs no reload: the form's submit already awaits the
 snapshot invalidation before navigating, so the portal appears the moment registration lands.
 
+### fix(worker) — the chat dock was the one piece of chrome that leaked through
+
+`PO` (owner's follow-up report: the floating chat bubble still rendered over the registration
+form) / `DERIVED` — `ChatDock` is mounted once globally in `App.jsx`, outside the routes and
+therefore outside any layout gate, and its only hide rule was "signed out". The dock now defers to
+the same gate: on `/worker` paths it subscribes to the same `['worker-snapshot']` query (deduped,
+and `enabled`-gated so admins and residents never call `/worker/snapshot`) and hides while the
+snapshot is unresolved or the profile is incomplete. The predicate itself was extracted to a new
+single-definition helper, `features/worker/providerProfile.js` (`isProviderProfileComplete`),
+imported by both the layout and the dock so the two gates cannot drift — it lives in its own module
+rather than beside `workerApi` because the tests mock that module wholesale. Deliberately NOT hidden
+for membership-less identities in general: a registered-but-unhired provider keeps the dock, because
+hiring conversations happen there.
+
 Five-gate: frontend only. ERD, class diagram, component design, Supabase — no impact
 (`WorkerLayout` was already the snapshot owner; this is a gate relocation, not a new component).
 
 ### Verification
 
-`npm run test` 51 passed / 11 files (baseline 45/10; six new `WorkerLayout.test.jsx` gate tests:
-no-chrome, prefill, registered-unchanged, deep-link redirect, loading hold, error retry) ·
-`npx oxlint` 0 · `npm run build` clean.
+`npm run test` 54 passed / 12 files (baseline 45/10; six new `WorkerLayout.test.jsx` gate tests —
+no-chrome, prefill, registered-unchanged, deep-link redirect, loading hold, error retry — and three
+new `ChatDock.test.jsx` tests — hidden for unregistered on `/worker`, visible for registered, and
+visible on non-worker paths with zero worker-snapshot calls) · `npx oxlint` 0 · `npm run build`
+clean.
 
 ---
 
