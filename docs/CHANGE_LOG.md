@@ -40,6 +40,30 @@ snapshot failure gets a minimal retry screen instead of a blank page. The old in
 deleted, not shadowed. The transition needs no reload: the form's submit already awaits the
 snapshot invalidation before navigating, so the portal appears the moment registration lands.
 
+### fix(db) — community creation has been impossible on the hosted database
+
+`AUDIT` (from the owner's live failure: admin onboarding's "Create community" step died with
+*"Unable to create the association"*) — the backend log showed the real error:
+`new row for relation "communities" violates check constraint "communities_status_canonical"`,
+failing row containing `Active`. Root cause is a legacy seam, not this branch's work: the hosted
+database predates `0001_baseline.sql`, and its legacy tooling created the status columns with
+title-cased defaults. Teammate migration `20260730163759` normalized the existing communities
+*rows* and added the lowercase-canonical constraint — but never fixed the column *default*, so
+`create_founder_community` (which never names `status` and rides the default) has violated the
+constraint on every call since that file was applied. New forward-only migration
+`20260812160000_legacy_status_defaults.sql`: sets the `communities.status` default to `'active'`,
+and defensively does the same for `units` **plus** the row normalization the 2026-07-30 file never
+gave it — a title-cased unit fails *silently* (the baseline's unit-belongs-to-community check and
+the `units_member` RLS policy both filter on `status = 'active'`, so such a unit is invisible to
+resident onboarding rather than loudly rejected). On a baseline-created database every statement is
+a no-op. pglast-parsed clean; independent of the other six pending files, so it can be applied
+alone to unblock community creation; `MIGRATION_APPLY_RUNBOOK.md` now carries it as file 7 with
+post-checks (and its trailing sections renumbered).
+
+Five-gate: Supabase only (a column-default repair; no schema shape change, so ERD and class diagram
+carry nothing new). Frontend — no change; the failing screen starts working once the file is
+applied. Component design — no impact.
+
 ### fix(worker) — the chat dock was the one piece of chrome that leaked through
 
 `PO` (owner's follow-up report: the floating chat bubble still rendered over the registration

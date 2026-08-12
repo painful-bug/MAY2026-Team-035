@@ -1,6 +1,6 @@
-# Apply runbook — the six unapplied migrations
+# Apply runbook — the seven unapplied migrations
 
-This is a step-by-step guide for the repository owner to apply, by hand, the six
+This is a step-by-step guide for the repository owner to apply, by hand, the seven
 migration files that exist in `backend/supabase/migrations/` but are not yet
 applied to the linked hosted Supabase project. It assumes you have the
 Supabase dashboard and/or a `supabase` CLI linked to the project
@@ -13,7 +13,7 @@ written and is summarized at the bottom, in "What was checked before this was
 written." Nothing here was run against a database; that verification is
 necessarily static.**
 
-The six files, in the order you must apply them (filename order — this is also
+The seven files, in the order you must apply them (filename order — this is also
 dependency order, confirmed below):
 
 1. `20260812090000_notification_audiences.sql`
@@ -22,6 +22,10 @@ dependency order, confirmed below):
 4. `20260812090300_complaint_department_routing.sql`
 5. `20260812113000_professional_membership_symmetry.sql`
 6. `20260812120000_work_order_notification_urls.sql`
+7. `20260812160000_legacy_status_defaults.sql` — added 2026-08-12 after the
+   owner hit the live failure it fixes. **Independent of files 1–6**: if you
+   have not applied the others yet and just need community creation unblocked,
+   this one can be applied on its own, in any order relative to the rest.
 
 ---
 
@@ -415,6 +419,59 @@ department list.
 
 ---
 
+## 7. `20260812160000_legacy_status_defaults.sql`
+
+**What it does.** Fixes the live failure the owner hit on 2026-08-12: creating
+a community through admin onboarding died with
+
+```
+new row for relation "communities" violates check constraint
+"communities_status_canonical" ... Failing row contains (..., Active, ...)
+```
+
+The hosted database predates `0001_baseline.sql` — its legacy tooling created
+the status columns with a title-cased default (`'Active'`).
+`20260730163759_normalize_community_statuses.sql` normalized the existing
+communities *rows* and added the canonical (lowercase) check constraint, but
+left the column *default* untouched, so any insert relying on the default —
+`create_founder_community` never names `status` — has violated the constraint
+ever since. This file sets `communities.status` default to `'active'`, and
+does the same for `units` (same legacy tooling, same RPC insert path, but no
+constraint to make the failure loud: a title-cased unit is silently invisible
+to the baseline's unit-belongs-to-community check and the `units_member` RLS
+policy, both of which filter on `status = 'active'`) — including a row
+normalization for units, which the 2026-07-30 file never covered. On a
+database created from the baseline every statement is a no-op.
+
+**Order note.** This file is independent of files 1–6 (it touches only column
+defaults and unit rows; nothing in 1–6 reads or writes them). Applying it
+first to unblock community creation, then 1–6 later, is fine.
+
+**What to expect.** One `UPDATE n` (very likely `UPDATE 0` unless legacy
+units exist), two `ALTER TABLE` acknowledgements, and one notice:
+`communities.status default is now 'active'::text`.
+
+**Post-check.**
+
+```sql
+select table_name, column_default
+  from information_schema.columns
+ where table_schema = 'public'
+   and table_name in ('communities', 'units')
+   and column_name = 'status';
+-- expect: 'active'::text for both
+
+select count(*) as title_cased_units
+  from public.units
+ where status is distinct from lower(btrim(status));
+-- expect: 0
+```
+
+Functionally: retry the admin onboarding "Create community" step that failed —
+it should now complete.
+
+---
+
 ## 5x. If a file fails partway through
 
 None of the six files wraps its own statements in an explicit
@@ -435,8 +492,10 @@ file's statements individually (one at a time, not as one paste) and stopping
 between them, or applying via a tool that does not wrap the whole file in one
 transaction. If you did that and stopped mid-file:
 
-- **Files 1, 2, 3, 5, 6**: every statement in each is independently
-  idempotent (see the guard list above). Just resume from wherever you
+- **Files 1, 2, 3, 5, 6, 7**: every statement in each is independently
+  idempotent (see the guard list above; file 7 is an `update` that matches
+  nothing on a second run, two `alter ... set default`s that are safe to
+  repeat, and a read-only `do` block). Just resume from wherever you
   stopped, or from the top of the file — both are safe.
 - **File 4**: the same is true for every statement except the
   `drop function if exists public.raise_complaint(uuid, text, text, text,
@@ -457,7 +516,7 @@ out), not something a retry alone fixes.
 
 ---
 
-## 7. After all six are applied
+## 8. After all seven are applied
 
 1. **Run the database advisors.** Dashboard → Database → Advisors (Security
    Advisor and Performance Advisor). New tables in this set
@@ -500,9 +559,9 @@ out), not something a retry alone fixes.
 
 ---
 
-## 8. What becomes true once applied
+## 9. What becomes true once applied
 
-Once all six are live on the hosted project, these are safe to click through
+Once all seven are live on the hosted project, these are safe to click through
 and confirm by hand in the running app:
 
 - **Skills UI**: a department's edit screen can add/remove skills by name
@@ -525,13 +584,20 @@ and confirm by hand in the running app:
   department manager (or security-department manager, for gate incidents) or
   admin now lands on a screen that shows the job or incident in question,
   not on a department list with nothing to do there.
+- **Community creation works**: the admin-onboarding "Create community" step
+  completes instead of failing on the `communities_status_canonical`
+  constraint.
 
 ---
 
 ## What was checked before this was written
 
 This section is provenance, not further instructions — everything below was
-already done, statically, before this runbook existed.
+already done, statically, before this runbook existed. (The table below covers
+the original six files. File 7, added 2026-08-12 after the owner hit the live
+`communities_status_canonical` failure, was verified separately at the time it
+was written: `pglast.parse_sql` clean, 4 statements, every statement
+independently idempotent, and it names no object created by files 1–6.)
 
 | Check | Result |
 |---|---|
