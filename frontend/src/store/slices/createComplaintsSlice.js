@@ -1,16 +1,22 @@
 import { genId } from '../../lib/ids';
-import { todayISO } from '../../lib/dates';
 import { useAuthStore } from '../authStore';
 import { api } from '../../lib/api/client';
 
-const getExpectedResolutionAt = (urgency, createdAt) => {
-  const hoursByUrgency = { High: 24, Medium: 48, Low: 72 };
-  const expectedAt = new Date(createdAt);
-  expectedAt.setHours(
-    expectedAt.getHours() + (hoursByUrgency[urgency] ?? 48)
-  );
-  return expectedAt.toISOString();
-};
+// What is left here is the **admin** half of the demo store, and only that.
+//
+// The resident's complaint screen used to raise, reopen, confirm and mark read
+// through this slice, and it now calls the API through
+// `features/resident/residentApi.js` with react-query holding the result. Those
+// four actions are gone rather than kept alongside: two writers for one record
+// is how a screen ends up showing a status the server never agreed to.
+//
+// `raiseComplaint` also computed the SLA deadline in the browser, which the
+// database has done since `0031` — a resident could send themselves a
+// one-minute deadline and the admin portal could not see it at all. That rule
+// left with the function; nothing in the frontend computes it now.
+//
+// `complaints`, `updateComplaint` and `addComplaintComment` stay because the
+// admin and manager screens still read and write them.
 
 const createTimelineEvent = (type, label, message, actor, createdAt) => ({
   id: genId('event'),
@@ -39,28 +45,6 @@ const getComplaintTimeline = (complaint) => {
 
 export const createComplaintsSlice = (set, get) => ({
   complaints: [],
-
-  raiseComplaint: async (complaintData) => {
-    try {
-      const result = await api('/complaints', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: complaintData.title.trim(),
-          description: complaintData.description.trim(),
-          category: complaintData.category,
-          urgency: complaintData.urgency || 'Low',
-          location: complaintData.location?.trim() || '',
-        })
-      });
-      set((s) => ({ complaints: [result, ...s.complaints] }));
-      get().showToast('Complaint Raised Successfully', 'success');
-      get().addActivity(`You raised complaint "${complaintData.title}"`, 'complaint');
-      return result;
-    } catch (e) {
-      get().showToast(e.message || 'Failed to raise complaint on server', 'error');
-      return null;
-    }
-  },
 
   updateComplaint: async (complaintId, updatedFields) => {
     const c = get().complaints.find((comp) => comp.id === complaintId);
@@ -188,97 +172,4 @@ export const createComplaintsSlice = (set, get) => ({
 
     return comment;
   },
-
-  reopenComplaint: (complaintId, reason) => {
-    const complaint = get().complaints.find((item) => item.id === complaintId);
-    const currentUser = useAuthStore.getState().currentUser;
-    const trimmedReason = reason.trim();
-    if (!complaint || complaint.status !== 'Resolved' || !trimmedReason) {
-      return null;
-    }
-
-    const updatedAt = new Date().toISOString();
-    const event = createTimelineEvent(
-      'reopened',
-      'Complaint reopened',
-      trimmedReason,
-      currentUser?.name ?? 'Resident',
-      updatedAt
-    );
-    set((state) => ({
-      complaints: state.complaints.map((item) =>
-        item.id === complaintId
-          ? {
-              ...item,
-              status: 'Pending',
-              progress: 0,
-              assignee: 'Unassigned',
-              resolutionConfirmed: false,
-              rating: null,
-              residentFeedback: '',
-              reopenedCount: Number(item.reopenedCount || 0) + 1,
-              expectedResolutionAt: getExpectedResolutionAt(
-                item.urgency,
-                updatedAt
-              ),
-              timeline: [...getComplaintTimeline(item), event],
-              updatedAt,
-              hasUnreadUpdate: false,
-            }
-          : item
-      ),
-    }));
-    get().showToast('Complaint reopened', 'success');
-    get().addActivity(`You reopened complaint "${complaint.title}"`, 'complaint');
-    return event;
-  },
-
-  confirmComplaintResolution: (complaintId, resolutionData) => {
-    const complaint = get().complaints.find((item) => item.id === complaintId);
-    const currentUser = useAuthStore.getState().currentUser;
-    const rating = Number(resolutionData.rating);
-    if (
-      !complaint ||
-      complaint.status !== 'Resolved' ||
-      rating < 1 ||
-      rating > 5
-    ) {
-      return null;
-    }
-
-    const updatedAt = new Date().toISOString();
-    const event = createTimelineEvent(
-      'confirmed',
-      'Resolution confirmed',
-      resolutionData.feedback?.trim()
-        ? `Resident feedback: ${resolutionData.feedback.trim()}`
-        : `The resident confirmed the resolution with a ${rating}-star rating.`,
-      currentUser?.name ?? 'Resident',
-      updatedAt
-    );
-    set((state) => ({
-      complaints: state.complaints.map((item) =>
-        item.id === complaintId
-          ? {
-              ...item,
-              resolutionConfirmed: true,
-              rating,
-              residentFeedback: resolutionData.feedback?.trim() ?? '',
-              timeline: [...getComplaintTimeline(item), event],
-              updatedAt,
-              hasUnreadUpdate: false,
-            }
-          : item
-      ),
-    }));
-    get().showToast('Thank you for your feedback', 'success');
-    return event;
-  },
-
-  markComplaintRead: (complaintId) =>
-    set((state) => ({
-      complaints: state.complaints.map((item) =>
-        item.id === complaintId ? { ...item, hasUnreadUpdate: false } : item
-      ),
-    })),
 });

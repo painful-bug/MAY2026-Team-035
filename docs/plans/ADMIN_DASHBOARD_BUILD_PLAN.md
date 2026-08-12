@@ -210,8 +210,16 @@ and every existing guard keep reading `profiles.role` and **no auth code changes
 Each step is one PR. Steps 1–2 ship no endpoints.
 
 **All nine steps are written as of 2026-07-30** — eight migrations (`0010`–`0017`), 70 operations across
-55 paths, 275 tests. **No migration has been applied to any database and no verification query has ever
-been run**, which is now the whole remaining risk in this workstream (`DECISIONS_NEEDED.md` E1, F1).
+55 paths, 275 tests. ~~**No migration has been applied to any database and no verification query has ever
+been run**, which is now the whole remaining risk in this workstream~~ (`DECISIONS_NEEDED.md` E1, F1).
+
+> **That risk expired on 2026-08-11, and the sentence above is struck rather than deleted because it
+> was the governing constraint for six weeks.** The linked hosted Supabase project was verified with
+> every repository migration through `0047` applied — see
+> [`backend/supabase/migrations/README.md`](../../backend/supabase/migrations/README.md), which now
+> makes `0001`–`0047` immutable and every correction after them forward-only and timestamped. What
+> replaces the old risk is a narrower one: the `20260812…` files written after the boundary are
+> parsed but not yet applied.
 
 ### ~~Step 0 — Security~~ — *reassigned*
 §1.1 and §1.2 are owned by the auth/security developer, in parallel. Not in this stream. The

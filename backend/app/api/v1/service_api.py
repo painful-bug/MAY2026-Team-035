@@ -3,7 +3,15 @@
 Same arrangement as ``admin_api.py`` and ``resident_api.py``, for the reason
 those give: ``app.api.v1`` mounts this with one import and one
 ``include_router``, so two workstreams never edit the same router list and the
-merge stays clean. Ten routers, which is all of them.
+merge stays clean. Twelve routers, which is all of them.
+
+``complaint_routing`` (0050) sits here for the same ownership reason
+``resident_scheduling`` does. A complaint is the resident surface's noun, but
+*which department holds it* is a department question end to end -- the queue is
+a department's, the transfer request is a supervisor's and the answer is their
+manager's -- and separating it from the hiring and work-order routers that share
+those populations would put one half of the department's day in a file the other
+half's author never opens.
 
 ``messages`` (0046) sits here even though its audience is every portal: the
 chat dock exists because of this workstream's populations — a manager and
@@ -37,12 +45,14 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.routers import (
+    complaint_routing,
     conversations,
     department_hiring,
     messages,
     resident_scheduling,
     security_operations,
     service_providers,
+    skills,
     work_orders,
     worker_communities,
     worker_jobs,
@@ -59,4 +69,6 @@ service_router.include_router(conversations.router)
 service_router.include_router(work_orders.router)
 service_router.include_router(resident_scheduling.router)
 service_router.include_router(security_operations.router)
+service_router.include_router(skills.router)
+service_router.include_router(complaint_routing.router)
 service_router.include_router(messages.router)

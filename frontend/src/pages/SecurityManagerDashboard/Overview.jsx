@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Boxes, Droplets, ShieldCheck } from 'lucide-react';
+import JoinRequests from '../../features/hiring/components/JoinRequests';
 import { securityApi } from '../../features/security/securityApi';
 import {
   Empty,
@@ -11,6 +12,8 @@ import {
   PageHeading,
   Pill,
 } from '../../features/security/components/Primitives';
+import { AUTH_ROUTES } from '../../routes/authRoutes';
+import { useApp } from '../../store/useApp';
 import {
   INCIDENT_STATUS_STYLES,
   SEVERITY_STYLES,
@@ -24,6 +27,8 @@ import {
 // which is the behaviour a snapshot would have taken away.
 
 export default function Overview() {
+  const { currentUser } = useApp();
+  const mayOpenHiring = ['MANAGER', 'SECURITY'].includes(currentUser?.accessRole);
   const { dayFrom, dayTo } = useMemo(() => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -59,6 +64,25 @@ export default function Overview() {
         title="Security operations"
         description="Today at the gate: what moved, who is on, and what is still open."
       />
+
+      {/* Guards asking to join this department.
+
+          Two conditions for two different reasons: may they, and is there
+          anything. The second is the component's own — it renders nothing when
+          the queue is empty — and that is what makes the first one safe to
+          widen. `service_applications_read` is `can_hire_for_department`, so a
+          supervisor's queue comes back empty and this disappears by itself
+          rather than by being predicted here.
+
+          Widened from `MANAGER` on 2026-08-12: a security department's roster
+          manager holds `membership_role = 'security'` and passes that policy,
+          so the narrower gate was hiding their own queue from them. */}
+      {mayOpenHiring ? (
+        <JoinRequests
+          departmentId={currentUser?.departmentId}
+          basePath={AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD}
+        />
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard

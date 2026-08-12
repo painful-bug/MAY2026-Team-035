@@ -86,7 +86,20 @@ def provider_client(api_client: TestClient) -> TestClient:
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     """Replace the repository. Records arguments, returns what is staged."""
-    captured: dict = {"row": overview_row(), "skill_count": 1, "is_available": True}
+    captured: dict = {
+        "row": overview_row(),
+        # What `_CANDIDATE_SELECT` actually asks PostgREST for. Spelled as its
+        # own row rather than reusing `overview_row()` so that a test asserting
+        # "no coordinates on the wire" is testing the *service*, not a fixture
+        # that helpfully removed them.
+        "candidate_row": {
+            key: value
+            for key, value in overview_row().items()
+            if key not in ("profile_id", "latitude", "longitude", "updated_at")
+        },
+        "skill_count": 1,
+        "is_available": True,
+    }
 
     def fake_get_by_profile(client: Any, *, profile_id: str) -> dict[str, Any] | None:
         captured["profile_id"] = profile_id
@@ -118,7 +131,12 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
         captured["requested_availability"] = is_available
         return captured["is_available"]
 
+    def fake_get_by_id(client: Any, *, provider_id: str) -> dict[str, Any] | None:
+        captured["requested_provider_id"] = provider_id
+        return captured["candidate_row"]
+
     repo = service_providers_service.repo
+    monkeypatch.setattr(repo, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(repo, "get_by_profile", fake_get_by_profile)
     monkeypatch.setattr(repo, "list_skills", fake_list_skills)
     monkeypatch.setattr(repo, "save_profile", fake_save_profile)
@@ -354,6 +372,113 @@ def test_api_132_the_router_calls_the_service_it_imported(
     actual_output = {
         "status_code": response.status_code,
         "display_name": response.json()["displayName"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+# ---------------------------------------------------------------------------
+# The candidate read (2026-08-11)
+#
+# The one route on this router about somebody other than the caller, and so the
+# only one with a role guard. Every case below is about the difference between
+# what the *view* would give up and what this endpoint chooses to.
+# ---------------------------------------------------------------------------
+
+
+def test_api_237_a_hiring_manager_reads_a_candidate_without_their_coordinates(
+    manager_api_client: TestClient, providers: dict
+) -> None:
+    """The read behind every "open this person" click on the hiring surface.
+
+    `latitude` and `longitude` are absent, and that is the case worth having:
+    `service_providers_read` is `auth.uid() is not null`, so the view would hand
+    a home coordinate to anybody signed in. `distanceKm` on the candidate list
+    already answers where somebody is, measured from the community's own point,
+    which is the question a manager actually has.
+    """
+    endpoint = "GET /api/v1/service-providers/{providerId}"
+    expected_output = {
+        "status_code": 200,
+        "display_name": "Ravi Kumar",
+        "skill_names": ["Plumbing"],
+        "has_coordinates": False,
+        "has_profile_id": False,
+        "requested_id": "provider-id",
+    }
+
+    response = manager_api_client.get(f"{PROVIDERS}/provider-id")
+    body = response.json()
+    actual_output = {
+        "status_code": response.status_code,
+        "display_name": body["displayName"],
+        "skill_names": body["skillNames"],
+        "has_coordinates": "latitude" in body or "longitude" in body,
+        "has_profile_id": "profileId" in body,
+        "requested_id": providers["requested_provider_id"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_238_a_resident_may_not_browse_the_service_directory(
+    resident_api_client: TestClient, providers: dict
+) -> None:
+    """`require_admin_or_manager` is the whole point of this route existing
+    separately from a plain view read.
+
+    Postgres would return the row -- the read policy admits any signed-in
+    caller, because a manager has to be able to find somebody they have never
+    met. The guard here is what stops that being a directory of every
+    tradesperson in the country, browsable by every resident with an account.
+    """
+    endpoint = "GET /api/v1/service-providers/{providerId}"
+    expected_output = {"status_code": 403}
+
+    response = resident_api_client.get(f"{PROVIDERS}/provider-id")
+    actual_output = {"status_code": response.status_code}
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_239_the_literal_me_still_reaches_the_caller_s_own_profile(
+    provider_client: TestClient, providers: dict
+) -> None:
+    """Route ordering, asserted rather than assumed.
+
+    `/service-providers/{providerId}` is declared after `/service-providers/me`
+    precisely so FastAPI matches the literal first. Reversed, `me` would arrive
+    as a provider id -- and because the new route carries a role guard, an
+    unregistered service person would get a 403 on their own settings screen
+    instead of the 404 that sends them to the registration form.
+    """
+    endpoint = "GET /api/v1/service-providers/me"
+    expected_output = {"status_code": 200, "has_coordinates": True}
+
+    response = provider_client.get(ME)
+    actual_output = {
+        "status_code": response.status_code,
+        "has_coordinates": "latitude" in response.json(),
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_240_an_unknown_provider_id_is_a_404_not_an_empty_profile(
+    manager_api_client: TestClient, providers: dict
+) -> None:
+    """Same reasoning as `GET /me`: "there is no such person" and "there is a
+    person with nothing filled in" are different answers, and a screen that
+    rendered the second for the first would show a blank card with a hire
+    button on it."""
+    endpoint = "GET /api/v1/service-providers/{providerId}"
+    providers["candidate_row"] = None
+    expected_output = {"status_code": 404, "code": "service_provider_not_found"}
+
+    response = manager_api_client.get(f"{PROVIDERS}/nobody")
+    actual_output = {
+        "status_code": response.status_code,
+        "code": response.json()["error"]["code"],
     }
 
     assert actual_output == expected_output, endpoint

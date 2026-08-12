@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, MapPin, MessageSquare, Search,
-  Shuffle, UserMinus, UserPlus, X,
+  ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, Info, MapPin, MessageSquare,
+  Search, Shuffle, UserMinus, UserPlus, X,
 } from 'lucide-react';
 import { hiringApi } from '../../features/hiring/hiringApi';
-import { JOB_TITLES, SHIFTS, STAFF_RANKS, rankLabel } from '../../lib/staffVocabulary';
+import { usePortalScope } from '../../features/hiring/usePortalScope';
+import { JOB_TITLES, rankLabel } from '../../lib/staffVocabulary';
 
 // The manager's side of hiring: who wants in, who could be asked, who is on.
 //
@@ -18,10 +19,28 @@ import { JOB_TITLES, SHIFTS, STAFF_RANKS, rankLabel } from '../../lib/staffVocab
 // question and a manager moves between them in one sitting: somebody applies,
 // you look for alternatives, you decide, you look at the roster you just
 // changed. Same reasoning as the worker portal's Communities screen.
+//
+// **This file lives under AdminDashboard/ and is no longer only the admin's.**
+// It is mounted at three bases -- /admin, /manager and /security-manager --
+// because the endpoints behind it have always accepted `admin` or `manager` and
+// only one of the three had a screen (`docs/potential issues/14`). Every link
+// out of it is built from `usePortalScope().base` rather than a literal
+// `/admin/...`; a hardcoded one here is a link that 403s for two thirds of the
+// people allowed to be on this page. It stays in this directory rather than
+// moving to `features/hiring/` so that a rename does not land in the same diff
+// as a behaviour change -- worth doing, separately.
 
+// `hiring: true` marks a tab that `can_hire_for_department` guards. The other
+// two are roster work, which is still `can_manage_department` and unchanged.
+//
+// The split exists because hiring stopped being something a role has. It
+// belongs to the department's own active manager, and a community admin is the
+// fallback *only while it has none* — so the same admin may hire for one
+// department and not the next. The department read answers it per department;
+// these two tabs are what the answer turns off.
 const TABS = [
-  { id: 'applications', label: 'Applications', icon: Inbox },
-  { id: 'candidates', label: 'Find people', icon: Search },
+  { id: 'applications', label: 'Applications', icon: Inbox, hiring: true },
+  { id: 'candidates', label: 'Find people', icon: Search, hiring: true },
   { id: 'roster', label: 'Roster', icon: UserPlus },
   { id: 'departures', label: 'Departures', icon: DoorOpen },
 ];
@@ -69,57 +88,55 @@ function Distance({ km }) {
   );
 }
 
-// The terms a manager names at the moment they say yes.
+// The one term a manager names at the moment they say yes.
 //
 // This form exists on an *application* and not on an invitation, and that is the
 // API's shape rather than a layout choice: on an application nobody has offered
 // terms yet, and on an invitation they are already in the row and `decide`
-// ignores anything sent with the acceptance -- which is what stops a provider
-// accepting themselves in as a manager.
+// ignores anything sent with the acceptance.
+//
+// **It used to collect a rank and a shift as well.** Both were removed on
+// 2026-08-11 by a product-owner ruling, and both for their own reason.
+//
+//   Rank -- nobody is hired above `member` through this path. A manager or a
+//   supervisor is provisioned by email on the department screen and never
+//   registered as a service provider in the first place; somebody arriving
+//   here registered themselves and applied. Offering a Rank select was
+//   offering a second, quieter way to mint leadership.
+//
+//   Shift -- there is no shift system. `staff_assignments.shift` is a text
+//   column from the typed-roster era that nothing schedules from: work reaches
+//   a worker through the dispatch sweep or a supervisor's assignment, and a
+//   guard's actual rota is `security_shifts`, a different table with real
+//   timestamps. A "Day / Evening / Night" select described nothing.
 function AcceptTerms({ onSubmit, onCancel, pending }) {
-  const [rank, setRank] = useState('member');
   const [jobTitle, setJobTitle] = useState('');
-  const [shift, setShift] = useState('Day');
 
   return (
     <form
       className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit({ rank, jobTitle: jobTitle.trim() || null, shift });
+        onSubmit({ jobTitle: jobTitle.trim() || null });
       }}
     >
       <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-500">
-        Terms on offer
+        Hire as a team member
       </p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <label className="space-y-1.5">
-          <span className="text-[11px] font-bold text-slate-500">Rank</span>
-          <select className={inputClass} value={rank} onChange={(e) => setRank(e.target.value)}>
-            {STAFF_RANKS.map((entry) => (
-              <option key={entry.value} value={entry.value}>{entry.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="space-y-1.5">
-          <span className="text-[11px] font-bold text-slate-500">Job title</span>
-          {/* Free text with suggestions: `job_title` has no check constraint, so
-              a closed list here would invent a rule the database does not have. */}
-          <input
-            className={inputClass}
-            list="hb-job-titles"
-            value={jobTitle}
-            placeholder="Plumber"
-            onChange={(e) => setJobTitle(e.target.value)}
-          />
-        </label>
-        <label className="space-y-1.5">
-          <span className="text-[11px] font-bold text-slate-500">Shift</span>
-          <select className={inputClass} value={shift} onChange={(e) => setShift(e.target.value)}>
-            {SHIFTS.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </label>
-      </div>
+      <label className="block space-y-1.5">
+        <span className="text-[11px] font-bold text-slate-500">
+          Job title <span className="font-semibold text-slate-400">(optional)</span>
+        </span>
+        {/* Free text with suggestions: `job_title` has no check constraint, so
+            a closed list here would invent a rule the database does not have. */}
+        <input
+          className={inputClass}
+          list="hb-job-titles"
+          value={jobTitle}
+          placeholder="Plumber"
+          onChange={(e) => setJobTitle(e.target.value)}
+        />
+      </label>
       <div className="flex gap-2">
         <button
           type="submit"
@@ -235,19 +252,15 @@ function ApplicationCard({ application, onDecide, pending }) {
   );
 }
 
-function CandidateCard({ candidate, departmentId, onInvited }) {
+function CandidateCard({ candidate, departmentId, basePath, onInvited }) {
   const [inviting, setInviting] = useState(false);
-  const [rank, setRank] = useState('member');
   const [jobTitle, setJobTitle] = useState('');
-  const [shift, setShift] = useState('Day');
   const [message, setMessage] = useState('');
 
   const invite = useMutation({
     mutationFn: () => hiringApi.invite(departmentId, {
       serviceProviderId: candidate.id,
-      rank,
       jobTitle: jobTitle.trim() || null,
-      shift,
       message: message.trim() || null,
     }),
     onSuccess: () => { setInviting(false); onInvited(); },
@@ -257,7 +270,18 @@ function CandidateCard({ candidate, departmentId, onInvited }) {
     <article className="space-y-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="font-extrabold text-slate-800">{candidate.displayName}</h3>
+          {/* The name is the doorway to the full profile, the same way a roster
+              tile opens the employee page. Nobody here is on a roster yet, so
+              it cannot be that page -- `GET /departments/{id}/staff/{staffId}`
+              needs a `staff_assignments` row. It is the candidate page. */}
+          <h3 className="font-extrabold text-slate-800">
+            <Link
+              to={`${basePath}/departments/${departmentId}/candidates/${candidate.id}`}
+              className="hover:text-indigo-700"
+            >
+              {candidate.displayName}
+            </Link>
+          </h3>
           <p className="text-xs font-semibold text-slate-400">
             {candidate.headline || 'No headline'}
           </p>
@@ -302,23 +326,15 @@ function CandidateCard({ candidate, departmentId, onInvited }) {
           className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4"
           onSubmit={(event) => { event.preventDefault(); invite.mutate(); }}
         >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <select className={inputClass} value={rank} onChange={(e) => setRank(e.target.value)}>
-              {STAFF_RANKS.map((entry) => (
-                <option key={entry.value} value={entry.value}>{entry.label}</option>
-              ))}
-            </select>
-            <input
-              className={inputClass}
-              list="hb-job-titles"
-              value={jobTitle}
-              placeholder="Job title"
-              onChange={(e) => setJobTitle(e.target.value)}
-            />
-            <select className={inputClass} value={shift} onChange={(e) => setShift(e.target.value)}>
-              {SHIFTS.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </div>
+          {/* Job title only. Rank and shift were removed on 2026-08-11 -- see
+              AcceptTerms above for why each of them went. */}
+          <input
+            className={inputClass}
+            list="hb-job-titles"
+            value={jobTitle}
+            placeholder="Job title (optional)"
+            onChange={(e) => setJobTitle(e.target.value)}
+          />
           <textarea
             className={inputClass}
             rows={2}
@@ -384,7 +400,7 @@ const dayText = (value) => {
 // the conflicting work to the dispatch pool. The card approves at the
 // *requested* date; picking a different date, checking coverage and the
 // per-item handover live on the employee page this card links to.
-function DepartureCard({ departure, departmentId, roster, onChanged }) {
+function DepartureCard({ departure, departmentId, basePath, roster, onChanged }) {
   const [open, setOpen] = useState(false);
   const isPending = departure.status === 'pending';
 
@@ -416,7 +432,7 @@ function DepartureCard({ departure, departmentId, roster, onChanged }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <Link
-            to={`/admin/departments/${departmentId}/staff/${departure.staffAssignmentId}?departure=${departure.id}`}
+            to={`${basePath}/departments/${departmentId}/staff/${departure.staffAssignmentId}?departure=${departure.id}`}
             className="font-extrabold text-slate-800 hover:text-indigo-700"
           >
             {departure.displayName}
@@ -578,14 +594,14 @@ function DepartureCard({ departure, departmentId, roster, onChanged }) {
 }
 
 export default function DepartmentHiring() {
-  const { departmentId } = useParams();
+  const { base: basePath, departmentId } = usePortalScope();
   const queryClient = useQueryClient();
   // The tab lives in the URL, not in useState: the backend has emitted
   // `?tab=applications` / `?tab=departures` notification links since 0043,
   // and a deep link that lands on the default tab is a link that lies.
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const tab = TABS.some((entry) => entry.id === tabParam) ? tabParam : 'applications';
+  const requestedTab = TABS.some((entry) => entry.id === tabParam) ? tabParam : 'applications';
   const setTab = (next) => {
     setSearchParams((params) => {
       const copy = new URLSearchParams(params);
@@ -599,15 +615,25 @@ export default function DepartmentHiring() {
     queryClient.invalidateQueries({ queryKey: ['hiring', departmentId] });
   };
 
-  const applications = useQuery({
-    queryKey: ['hiring', departmentId, 'applications'],
-    queryFn: () => hiringApi.applications(departmentId),
-  });
-  // The departures tab needs the roster too, for the successor select.
+  // Unconditional now, and it used to be `enabled` on two tabs only. It carries
+  // `canHire`, which decides what the whole screen offers, so waiting for a tab
+  // change to find out would mean drawing controls first and withdrawing them.
+  // It is also the roster the departures tab's successor select needs.
   const department = useQuery({
     queryKey: ['hiring', departmentId, 'roster'],
     queryFn: () => hiringApi.department(departmentId),
-    enabled: tab === 'roster' || tab === 'departures',
+  });
+  // `undefined` while the read is in flight, so this is "known to be false"
+  // rather than "not true yet" — the difference between explaining a real
+  // restriction and flashing one at somebody who does not have it.
+  const mayHire = department.data ? department.data.canHire !== false : true;
+  const tabs = TABS.filter((entry) => mayHire || !entry.hiring);
+  const tab = tabs.some((entry) => entry.id === requestedTab) ? requestedTab : 'roster';
+
+  const applications = useQuery({
+    queryKey: ['hiring', departmentId, 'applications'],
+    queryFn: () => hiringApi.applications(departmentId),
+    enabled: mayHire,
   });
   const departures = useQuery({
     queryKey: ['hiring', departmentId, 'departures'],
@@ -651,11 +677,15 @@ export default function DepartmentHiring() {
       </datalist>
 
       <div>
+        {/* The admin's department screen is admin-only, and a manager has no
+            equivalent -- their whole portal is one department, so "back to the
+            department" is the portal's own overview. */}
         <Link
-          to={`/admin/departments/${departmentId}`}
+          to={basePath === '/admin' ? `${basePath}/departments/${departmentId}` : basePath}
           className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-700"
         >
-          <ArrowLeft className="h-4 w-4" />Back to department
+          <ArrowLeft className="h-4 w-4" />
+          {basePath === '/admin' ? 'Back to department' : 'Back to overview'}
         </Link>
         <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-slate-900">Hiring</h1>
         <p className="mt-1 text-xs font-semibold text-slate-400">
@@ -663,8 +693,30 @@ export default function DepartmentHiring() {
         </p>
       </div>
 
+      {/* Not an error, and deliberately not styled as one: nothing has gone
+          wrong, the decision simply belongs to somebody else. An admin reading
+          this needs to know it is answerable — appoint no manager, or ask
+          theirs — rather than that the screen is broken. */}
+      {department.data && department.data.canHire === false ? (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 p-4"
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
+          <p className="text-xs font-semibold leading-relaxed text-indigo-900">
+            <span className="font-extrabold">
+              {department.data.head
+                ? `${department.data.head} runs hiring for this department.`
+                : 'This department’s manager runs its hiring.'}
+            </span>{' '}
+            Applications and the candidate search are theirs to decide. The roster
+            and departures below are still yours.
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -680,7 +732,7 @@ export default function DepartmentHiring() {
           </button>
         ))}
         <Link
-          to="/admin/messages"
+          to={`${basePath}/messages`}
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600"
         >
           <MessageSquare className="h-4 w-4" />Messages
@@ -729,6 +781,7 @@ export default function DepartmentHiring() {
                   key={candidate.id}
                   candidate={candidate}
                   departmentId={departmentId}
+                  basePath={basePath}
                   onInvited={invalidate}
                 />
               ))}
@@ -751,6 +804,7 @@ export default function DepartmentHiring() {
                 key={departure.id}
                 departure={departure}
                 departmentId={departmentId}
+                basePath={basePath}
                 roster={roster}
                 onChanged={invalidate}
               />
@@ -773,7 +827,7 @@ export default function DepartmentHiring() {
                   {/* The tile is the doorway to the employee page: schedule,
                       details, and the departure decision when one is open. */}
                   <Link
-                    to={`/admin/departments/${departmentId}/staff/${member.id}`}
+                    to={`${basePath}/departments/${departmentId}/staff/${member.id}`}
                     className="font-extrabold text-slate-800 hover:text-indigo-700"
                   >
                     {member.name}

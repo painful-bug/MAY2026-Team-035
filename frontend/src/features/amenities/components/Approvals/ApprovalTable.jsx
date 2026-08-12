@@ -12,9 +12,13 @@ const TABLE_COLUMNS = [
   'Actions',
 ];
 
+// One row per REQUEST, not per day — `GET /amenities/{id}/approvals` groups the
+// series and sends its first day plus `dayCount` and `dates`. Which is why the
+// busy row is keyed by `approvingSeriesId`: one decision covers every day of
+// the request, so there is no per-day id to spin.
 export default function ApprovalTable({
   bookings,
-  approvingBookingId,
+  approvingSeriesId,
   onApprove,
   onReject,
   emptyMessage,
@@ -51,9 +55,9 @@ export default function ApprovalTable({
         <tbody>
           {bookings.map((booking) => (
             <ApprovalRow
-              key={booking.id}
+              key={booking.bookingSeriesId ?? booking.id}
               booking={booking}
-              isApproving={approvingBookingId === booking.id}
+              isApproving={approvingSeriesId === booking.bookingSeriesId}
               onApprove={onApprove}
               onReject={onReject}
             />

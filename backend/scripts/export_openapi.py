@@ -209,6 +209,13 @@ _TAGS: tuple[tuple[str, str], ...] = (
         "participation is a property of the thread.",
     ),
     (
+        "complaint-routing",
+        "Which department owns a complaint. Decided when it is raised -- the "
+        "category first, the resident's own guess second, the admin's triage "
+        "queue third -- and corrected afterwards by an admin allotting, a "
+        "manager moving, or a supervisor asking their manager to.",
+    ),
+    (
         "work-orders",
         "Turning a triaged complaint into a scheduled visit by a named person. "
         "The role guard is coarse because a supervisor is a rank on a roster "
@@ -225,6 +232,15 @@ _TAGS: tuple[tuple[str, str], ...] = (
         "The gate: posts, shifts, the two registers, incidents, credential "
         "verification and the CSV exports. The one surface in this feature "
         "scoped to a single community, because a gate belongs to one society.",
+    ),
+    (
+        "skills",
+        "Authoring the global trade catalogue, and saying which trades a "
+        "department needs. Reading the catalogue is `service-providers`' "
+        "`GET /skills`, because that endpoint exists for the registration "
+        "screen and any signed-in person may call it; everything here is "
+        "admin-or-manager only. The catalogue is global and a department's "
+        "claim on it is not.",
     ),
     ("system", "Liveness."),
 )

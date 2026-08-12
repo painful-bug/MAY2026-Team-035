@@ -41,8 +41,27 @@ export const hiringApi = {
   // --- finding people --------------------------------------------------------
   candidates: (departmentId, params = {}) =>
     api(`/departments/${departmentId}/candidates${query(params)}`),
+  /**
+   * Offer somebody a place. `{ serviceProviderId, jobTitle?, message? }`.
+   *
+   * **No `rank` and no `shift`** since 2026-08-11. Everyone hired through this
+   * path joins as a team member — leadership is provisioned by email on the
+   * department screen and never registered as a service provider — and there is
+   * no shift system: work reaches a worker through the dispatch sweep or a
+   * supervisor, and a guard's rota is a different table entirely.
+   */
   invite: (departmentId, payload) =>
     post(`/departments/${departmentId}/invitations`, payload),
+  /**
+   * One service person, by provider id.
+   *
+   * Not `staffMember` below, and the difference is the whole reason this
+   * exists: that one reads a `staff_assignments` row and 404s for anybody not
+   * already on the roster — which is everybody the hiring screens are about.
+   * Narrower than the provider's own profile read: no coordinates, no profile
+   * id.
+   */
+  candidate: (providerId) => api(`/service-providers/${providerId}`),
 
   // --- the roster ------------------------------------------------------------
   /**
@@ -60,6 +79,17 @@ export const hiringApi = {
     const page = await api('/departments?pageSize=100');
     return (page.items || []).find((entry) => entry.id === departmentId) || null;
   },
+  /**
+   * One department in full, by id.
+   *
+   * `GET /departments/{id}` was admin-only and had no caller at all until the
+   * manager portal needed it; it is now admin **or** the department's own
+   * manager, with `can_manage_department` narrowing it in Postgres. Use this
+   * rather than `department()` above wherever the caller might be a manager —
+   * that one reads the admin-only list and 403s for them.
+   */
+  departmentDetail: (departmentId) => api(`/departments/${departmentId}`),
+
   /** Off the roster, reapplication still open. */
   removeMember: (departmentId, staffId, reason) =>
     post(`/departments/${departmentId}/members/${staffId}/remove`, { reason: reason || null }),

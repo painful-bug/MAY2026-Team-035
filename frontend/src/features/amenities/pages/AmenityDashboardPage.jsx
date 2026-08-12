@@ -1,68 +1,133 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CalendarDays } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOutletContext } from 'react-router-dom';
 import { longDate, todayISO } from '../../../lib/dates.js';
+import { amenitiesApi } from '../amenitiesApi.js';
 import BlockTimeModal from '../components/BlockTimeModal/index.jsx';
 import BookingTimeline from '../components/BookingTimeline.jsx';
 import CancelBookingDialog from '../components/CancelBookingDialog/index.jsx';
 import CreateBookingModal from '../components/CreateBookingModal/index.jsx';
-import EditBookingModal from '../components/EditBookingModal/index.jsx';
 import TimelineActions from '../components/TimelineActions.jsx';
 import TimelineLegend from '../components/TimelineLegend.jsx';
 import TimelineSelectionCard from '../components/TimelineSelectionCard.jsx';
 import { BOOKING_TIMELINE_STATE } from '../constants/bookingTimelineStates.js';
-import { useAmenityBookingWorkflow } from '../hooks/useAmenityBookingWorkflow.js';
-import { useBookingTimelineSelection } from '../hooks/useBookingTimelineSelection.js';
-import { useAmenityBookingsStore } from '../store/useAmenityBookingsStore.js';
+
+// The day timeline, over `GET /amenities/{id}/bookings` and the three writes a
+// timeline can perform.
+//
+// **No availability check happens here any more.** `validateBookingSlot` walked
+// a cached array before every create, which is a check-then-act that loses the
+// race between two admins booking the last place. Overlap is guarded by the
+// database in two places — an `EXCLUDE USING gist` constraint and a `BEFORE`
+// trigger holding an advisory lock — so a taken slot comes back as a `409` with
+// the message the form already renders, and the answer is true at the moment it
+// is given rather than at the moment the page loaded.
+//
+// The cleaning buffer is still drawn client-side from each booking's end and
+// the amenity's buffer: the API deliberately does not send buffers as blocks,
+// because one block with two sources is one block that can disagree with itself.
+//
+// **There is no edit path**, and that is an API fact rather than a layout
+// choice — see `TimelineActions`.
 
 export default function AmenityDashboardPage() {
   const { amenity } = useOutletContext();
+  const queryClient = useQueryClient();
   const selectedDate = todayISO();
-  const bookings = useAmenityBookingsStore((state) => state.bookings);
-  const requestKey = useAmenityBookingsStore((state) => state.requestKey);
-  const isLoading = useAmenityBookingsStore((state) => state.isLoading);
-  const error = useAmenityBookingsStore((state) => state.error);
-  const fetchBookings = useAmenityBookingsStore(
-    (state) => state.fetchBookings
-  );
-  const expectedRequestKey = `${amenity.id}:${selectedDate}`;
-  const hasBookings = bookings.some(
-    (booking) => booking.state === BOOKING_TIMELINE_STATE.BOOKED
-  );
-  const {
-    selectedSlot,
-    selectedBooking,
-    selectedState,
-    selectSlot,
-    selectBooking,
-    clearSelection,
-  } = useBookingTimelineSelection();
-  const canCreateBooking =
-    Boolean(selectedSlot) &&
-    selectedState === BOOKING_TIMELINE_STATE.AVAILABLE;
-  const {
-    residents,
-    isResidentsLoading,
-    isSubmitting,
-    modalError,
-    isBookingModalOpen,
-    isEditBookingModalOpen,
-    isCancelBookingDialogOpen,
-    isMaintenanceModalOpen,
-    openBookingModal,
-    openMaintenanceModal,
-    closeModal,
-    openCancelBookingDialog,
-    closeCancelBookingDialog,
-    createBooking,
-    createBlockedSlot,
-    updateBooking,
-    cancelBooking,
-  } = useAmenityBookingWorkflow();
+
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [selectedState, setSelectedState] = useState(null);
+  const [openModal, setOpenModal] = useState(null);
+
+  const bookings = useQuery({
+    queryKey: ['amenities', amenity.id, 'bookings', selectedDate],
+    queryFn: () =>
+      amenitiesApi.bookings(amenity.id, {
+        date: selectedDate,
+        pageSize: 200,
+      }),
+  });
+
+  // Only fetched once a modal that needs it is open. It is a read of the
+  // ADMIN-guarded dashboard snapshot, and a timeline nobody is booking against
+  // has no reason to ask for the whole community.
+  const residents = useQuery({
+    queryKey: ['amenities', 'bookable-residents'],
+    queryFn: () => amenitiesApi.bookableResidents(),
+    enabled: openModal === 'create',
+  });
+
+  const clearSelection = () => {
+    setSelectedSlot(null);
+    setSelectedBooking(null);
+    setSelectedState(null);
+  };
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['amenities', amenity.id] });
+    setOpenModal(null);
+    clearSelection();
+  };
+
+  const createBooking = useMutation({
+    mutationFn: (payload) => amenitiesApi.createBooking(amenity.id, payload),
+    onSuccess: invalidate,
+  });
+  const blockSlot = useMutation({
+    mutationFn: (payload) => amenitiesApi.blockSlot(amenity.id, payload),
+    onSuccess: invalidate,
+  });
+  const cancelBooking = useMutation({
+    mutationFn: (payload) => amenitiesApi.cancelDays(payload),
+    onSuccess: invalidate,
+  });
+
+  const isSubmitting =
+    createBooking.isPending || blockSlot.isPending || cancelBooking.isPending;
+
+  const closeModal = () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    createBooking.reset();
+    blockSlot.reset();
+    cancelBooking.reset();
+    setOpenModal(null);
+  };
 
   useEffect(() => {
-    fetchBookings(amenity.id, selectedDate);
-  }, [amenity.id, selectedDate, fetchBookings]);
+    clearSelection();
+    setOpenModal(null);
+  }, [amenity.id]);
+
+  const items = bookings.data?.items || [];
+  const hasBookings = items.some(
+    (booking) => booking.state === BOOKING_TIMELINE_STATE.BOOKED
+  );
+  const canCreateBooking =
+    Boolean(selectedSlot) && selectedState === BOOKING_TIMELINE_STATE.AVAILABLE;
+  // A block is cancelled the same way a booking is — `POST
+  // /amenity-bookings/cancel` takes occurrence ids and does not care which kind
+  // of occupancy they are — but the cleaning buffer is a render-time artefact
+  // with no row behind it, so it is not offered.
+  const canCancelBooking =
+    Boolean(selectedBooking) &&
+    selectedState !== BOOKING_TIMELINE_STATE.CLEANING_BUFFER;
+
+  const handleSelectSlot = (slot) => {
+    setSelectedSlot(slot);
+    setSelectedBooking(null);
+    setSelectedState(BOOKING_TIMELINE_STATE.AVAILABLE);
+  };
+
+  const handleSelectBooking = (booking) => {
+    setSelectedSlot(null);
+    setSelectedBooking(booking);
+    setSelectedState(booking.state);
+  };
 
   return (
     <>
@@ -90,17 +155,28 @@ export default function AmenityDashboardPage() {
 
         <TimelineActions
           canCreateBooking={canCreateBooking}
-          onCreateBooking={openBookingModal}
-          onBlockTime={openMaintenanceModal}
+          canCancelBooking={canCancelBooking}
+          onCreateBooking={() => setOpenModal('create')}
+          onBlockTime={() => setOpenModal('block')}
+          onCancelBooking={() => setOpenModal('cancel')}
         />
 
-        {requestKey !== expectedRequestKey || isLoading ? (
+        {bookings.isPending ? (
           <div className="rounded-xl bg-slate-50 px-4 py-10 text-center text-xs font-semibold text-slate-400">
             Loading booking schedule...
           </div>
-        ) : error ? (
-          <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-10 text-center text-xs font-bold text-rose-700">
-            {error}
+        ) : bookings.error ? (
+          <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-10 text-center">
+            <p role="alert" className="text-xs font-bold text-rose-700">
+              {bookings.error.message}
+            </p>
+            <button
+              type="button"
+              onClick={() => bookings.refetch()}
+              className="mt-3 rounded-xl border border-rose-100 bg-white px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
+            >
+              Try again
+            </button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -110,7 +186,7 @@ export default function AmenityDashboardPage() {
               </p>
             )}
             <BookingTimeline
-              bookings={bookings}
+              bookings={items}
               openingTime={amenity.openingTime}
               closingTime={amenity.closingTime}
               cleaningBuffer={amenity.cleaningBuffer}
@@ -118,8 +194,8 @@ export default function AmenityDashboardPage() {
               selectedDate={selectedDate}
               selectedSlot={selectedSlot}
               selectedBooking={selectedBooking}
-              onSelectSlot={selectSlot}
-              onSelectBooking={selectBooking}
+              onSelectSlot={handleSelectSlot}
+              onSelectBooking={handleSelectBooking}
             />
             <TimelineSelectionCard
               amenityName={amenity.name}
@@ -132,54 +208,85 @@ export default function AmenityDashboardPage() {
         )}
       </section>
 
-      {isBookingModalOpen && selectedSlot && (
+      {openModal === 'create' && selectedSlot && (
         <CreateBookingModal
           amenity={amenity}
           selectedSlot={selectedSlot}
-          residents={residents}
-          isResidentsLoading={isResidentsLoading}
-          isSubmitting={isSubmitting}
-          submissionError={modalError}
+          residents={residents.data || []}
+          isResidentsLoading={residents.isPending}
+          isSubmitting={createBooking.isPending}
+          submissionError={
+            createBooking.error?.message || residents.error?.message
+          }
           onClose={closeModal}
-          onSubmit={createBooking}
+          onSubmit={(values) =>
+            createBooking.mutateAsync({
+              // The MEMBERSHIP id: the form's resident list is keyed by it, and
+              // the flat is resolved from that residency rather than sent.
+              membershipId: values.residentId,
+              bookingTitle: values.bookingTitle,
+              bookingType: values.bookingType,
+              date: values.date,
+              startTime: values.startTime,
+              endTime: values.endTime,
+              isPrivateBooking: values.isPrivateBooking,
+              guestCount: Number(values.guestCount) || 0,
+              guests: (values.guests || [])
+                .filter((guest) => guest.name?.trim())
+                .map((guest) => ({
+                  name: guest.name.trim(),
+                  phone: guest.contactNumber?.trim() || null,
+                })),
+              notes: values.notes,
+              // `null` is "use the amenity's fee" and `0` is "free". They are
+              // different answers and the API keeps them different, so an empty
+              // field must not collapse to zero.
+              chargeOverride:
+                values.chargeOverride === '' || values.chargeOverride == null
+                  ? null
+                  : Number(values.chargeOverride),
+            }).catch(() => null)
+          }
         />
       )}
 
-      {isMaintenanceModalOpen && (
+      {openModal === 'block' && (
         <BlockTimeModal
           amenity={amenity}
           selectedDate={selectedDate}
           selectedSlot={selectedSlot}
-          isSubmitting={isSubmitting}
-          submissionError={modalError}
+          isSubmitting={blockSlot.isPending}
+          submissionError={blockSlot.error?.message}
           onClose={closeModal}
-          onSubmit={createBlockedSlot}
+          onSubmit={(values) =>
+            blockSlot.mutateAsync({
+              reason: values.reason.trim(),
+              date: values.date,
+              startTime: values.startTime,
+              endTime: values.endTime,
+              department: values.department || null,
+              notes: values.notes?.trim() || null,
+            }).catch(() => null)
+          }
         />
       )}
 
-      {isEditBookingModalOpen &&
-        !isCancelBookingDialogOpen &&
-        selectedBooking && (
-          <EditBookingModal
-            amenity={amenity}
-            booking={selectedBooking}
-            residents={residents}
-            isResidentsLoading={isResidentsLoading}
-            isSubmitting={isSubmitting}
-            submissionError={modalError}
-            onClose={closeModal}
-            onSubmit={updateBooking}
-            onCancelBooking={openCancelBookingDialog}
-          />
-        )}
-
-      {isCancelBookingDialogOpen && selectedBooking && (
+      {openModal === 'cancel' && selectedBooking && (
         <CancelBookingDialog
           booking={selectedBooking}
-          isSubmitting={isSubmitting}
-          submissionError={modalError}
-          onClose={closeCancelBookingDialog}
-          onConfirm={cancelBooking}
+          isSubmitting={cancelBooking.isPending}
+          submissionError={cancelBooking.error?.message}
+          onClose={closeModal}
+          onConfirm={(bookingId, cancellation) =>
+            cancelBooking.mutateAsync({
+              // One day, by occurrence id. The call is all-or-nothing across the
+              // ids it is given, and an admin cancelling from the timeline is
+              // cancelling the day they clicked.
+              occurrenceIds: [bookingId],
+              reasonCode: cancellation.reason,
+              reason: cancellation.details?.trim() || null,
+            }).catch(() => null)
+          }
         />
       )}
     </>

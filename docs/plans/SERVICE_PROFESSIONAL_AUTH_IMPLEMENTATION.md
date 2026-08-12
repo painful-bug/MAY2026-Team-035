@@ -8,6 +8,11 @@ provider, hiring, notification and PostGIS modules.
 - `/register?intent=service-provider` reuses the existing Google/email page.
   Intent changes navigation only; session membership remains authoritative.
 - Existing resident/admin/manager identities are told to use a separate account.
+  **Bidirectional since `20260812113000` (PO ruling 2026-08-12):** the reverse path is refused
+  too — `enforce_professional_membership_mode` raises `HBSEP` (409
+  `professional_account_separate`) when a registered professional's profile is offered a
+  resident/manager/admin membership. The database is the enforcement point; the
+  `authRoutes.js` guard is one of two halves.
 - `POST /service-providers` atomically writes the profile, mandatory coordinates,
   1–500 km radius and at least one active skill. Legacy partial profiles render
   the same form as a repair path.

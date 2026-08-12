@@ -30,6 +30,7 @@ from app.domain.hiring_schemas import (
     DecideDepartureRequest,
     HireableProvider,
     InviteRequest,
+    InviteStaffRequest,
     ReassignItemRequest,
     RemoveMemberRequest,
     RequestDepartureRequest,
@@ -37,7 +38,9 @@ from app.domain.hiring_schemas import (
     ServiceApplication,
     StaffDeparture,
     StaffDepartureDetail,
+    StaffInvitation,
     StaffMemberDetail,
+    UpdateStaffInvitationRequest,
 )
 from app.services import hiring_service as service
 from supabase import Client
@@ -128,12 +131,17 @@ async def invite(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> ServiceApplication:
-    """Offer someone a place on the roster.
+    """Offer someone a place on the roster, as a team member.
 
-    An invitation carries its **terms** — `rank`, `jobTitle`, `shift` — because
-    the person accepting has to know what they are accepting. They cannot change
-    them: `POST .../decide` ignores those fields on an invitation, so a provider
-    cannot accept themselves in as a manager.
+    **Rank is not a parameter and neither is shift** (product-owner ruling,
+    2026-08-11). A service person hired through this surface joins as a
+    `member`; managers and supervisors are provisioned by email through
+    `POST .../staff-invitations` and never registered as providers in the first
+    place. `staff_assignments.shift` describes nothing the system reads — work
+    reaches a worker through the dispatch sweep or a supervisor's assignment,
+    and a guard's rota is `security_shifts`.
+
+    `jobTitle` is the one term on offer, and the person accepting sees it.
 
     **The invited person is notified**, which they were not until `0041`. This
     docstring used to say the opposite, and gave the schema as the reason:
@@ -171,9 +179,10 @@ async def decide(
     hires `security`, everything else hires `worker`. Both values have been in
     `membership_role` since the baseline and nothing has ever issued either.
 
-    The terms are supplied *here* rather than at application time, because on an
-    application nobody has offered any yet. Omitting `rank` hires them as a
-    `member`.
+    **Always at rank `member`.** This request carries no `rank` and no `shift`
+    (ruling of 2026-08-11 — see `POST .../invitations`), so the RPC's own
+    default applies. `jobTitle` is supplied here rather than at application
+    time, because on an application nobody has offered one yet.
 
     Three distinct refusals share the `409`: the row was **already decided**
     (two managers clicked accept, the row is locked, and the second one loses);
@@ -519,3 +528,156 @@ async def get_departure_coverage(
     return service.departure_coverage(
         client, service_client=service_client, departure_id=departure_id
     )
+
+
+# ---------------------------------------------------------------------------
+# Leadership provisioning (0049)
+#
+# The other way into a department, and it is not the one above. Everything
+# earlier in this file is about a service person who registered themselves and
+# negotiated their way onto a roster. These three are about somebody who did
+# neither: an administrator types a name and an email, and that person is a
+# manager the first time they sign in with that address.
+#
+# There is no token and no acceptance step -- that is the ruling, not an
+# omission. Servicemen are the only role in the service section with a
+# registration flow of their own.
+#
+# The guard is `can_manage_department` inside the RPC, which is what lets a
+# MANAGER create a SUPERVISOR without being an administrator.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{department_id}/staff-invitations",
+    response_model=list[StaffInvitation],
+    summary="Leadership created for this department",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
+)
+async def list_staff_invitations(
+    department_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+    status_filter: str | None = Query(None, alias="status", max_length=20),
+) -> list[StaffInvitation]:
+    """Managers and supervisors created here, whether or not they have arrived.
+
+    **Claimed ones are kept in the list.** An administrator needs to know that
+    the manager they created has actually signed in, and a list that dropped
+    each person at the moment they arrived would answer a different question --
+    it would look identical whether somebody was still expected or had been
+    working for a month.
+
+    `claimedAt` is null until their first sign-in. A `pending` row that is weeks
+    old is usually a mistyped address, and this list is the only place that is
+    visible: nothing else fails when an email is wrong, because there is nothing
+    to deliver.
+    """
+    return service.list_staff_invitations(
+        client, department_id=department_id, status=status_filter
+    )
+
+
+@router.post(
+    "/{department_id}/staff-invitations",
+    response_model=StaffInvitation,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a manager or supervisor",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
+)
+async def invite_staff_member(
+    body: InviteStaffRequest,
+    department_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> StaffInvitation:
+    """Provision leadership by email. **No invitation is sent and none is needed.**
+
+    The email is not a delivery address, it is the **matching key**: whoever
+    signs in with it is admitted to this department at that rank. Nothing is
+    mailed, so a wrong address produces no bounce and no error -- only an
+    invitation that stays `pending` forever, which is why the list above exists.
+
+    `rank` is `manager` or `supervisor`. `member` is refused: that rank is
+    reached only by hiring a registered service provider, which is the whole
+    point of removing typed-in technicians from the department form.
+
+    The membership role is **derived at sign-in**, not stored -- a manager
+    becomes `manager`, a supervisor becomes `security` or `worker` depending on
+    the department's kind. Deriving it late means a department that changes kind
+    between now and then cannot mint a membership pointing at the wrong portal.
+
+    Returns 409 when that address already belongs to this community, because the
+    claim would fail on the same check and offering the invitation would be
+    offering a dead end.
+    """
+    return service.invite_staff_member(
+        client, department_id=department_id, body=body
+    )
+
+
+@router.patch(
+    "/{department_id}/staff-invitations/{invitation_id}",
+    response_model=StaffInvitation,
+    summary="Correct an unclaimed invitation",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
+)
+async def update_staff_invitation(
+    body: UpdateStaffInvitationRequest,
+    department_id: str = Path(...),
+    invitation_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> StaffInvitation:
+    """Fix a mistyped address before anybody claims it.
+
+    This exists because of how the endpoint above fails. Nothing is mailed, so a
+    wrong email does not bounce -- the invitation simply sits `pending` and the
+    person never arrives. The pending list is what makes that visible; this is
+    what the admin does about it.
+
+    **Omitted means unchanged.** Only the fields present in the body move, so a
+    form that patches the email cannot blank the job title by not sending it.
+    `phone` and `jobTitle` accept `""` to clear; `email`, `name` and `rank` do
+    not, because an invitation without them binds nothing, names nobody, or
+    admits at no rank.
+
+    **`departmentId` is not in the body, and that is the point.** The department
+    is what `can_manage_department` authorizes this call against, so allowing it
+    to move would let the manager of one department mint staff into another
+    without that department's manager being asked. Moving an invitation is
+    revoke-and-reissue, under the authority of wherever it is going.
+
+    Returns 409 once it has been claimed -- by then the address has already
+    admitted somebody and editing it here would change nothing about who got in
+    -- and 409 if the new address already belongs to the community or already
+    has an open invitation.
+    """
+    return service.update_staff_invitation(
+        client,
+        department_id=department_id,
+        invitation_id=invitation_id,
+        body=body,
+    )
+
+
+@router.delete(
+    "/{department_id}/staff-invitations/{invitation_id}",
+    response_model=MessageResult,
+    summary="Withdraw an unclaimed invitation",
+    dependencies=_MANAGEMENT_DEPENDENCIES,
+)
+async def revoke_staff_invitation(
+    department_id: str = Path(...),
+    invitation_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> MessageResult:
+    """Withdraw leadership that has not signed in yet.
+
+    **Revoked, not deleted**: who created an invitation and when is worth
+    keeping, and a mistyped address that was noticed and withdrawn is exactly
+    the history somebody will want later.
+
+    Returns 409 once it has been claimed. Removing somebody who has already
+    started is a departure, not a withdrawal, and has its own five routes above
+    for the good reason that their work has to go somewhere.
+    """
+    service.revoke_staff_invitation(client, invitation_id=invitation_id)
+    return MessageResult(message="Invitation withdrawn.")

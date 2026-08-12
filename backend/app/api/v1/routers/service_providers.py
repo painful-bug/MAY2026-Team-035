@@ -18,13 +18,14 @@ routes resolve the provider from ``auth.uid()`` themselves, and
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.api.admin_deps import require_csrf_unsafe
+from app.api.admin_deps import require_admin_or_manager, require_csrf_unsafe
 from app.api.deps import get_current_user, get_request_client
 from app.domain.schemas import Principal
 from app.domain.service_provider_schemas import (
     AvailabilityResult,
+    CandidateProfile,
     SaveServiceProviderRequest,
     ServiceProviderProfile,
     SetAvailabilityRequest,
@@ -34,6 +35,7 @@ from app.domain.service_provider_schemas import (
     UpdateServiceProviderRequest,
 )
 from app.services import service_providers_service as service
+from app.services import skills_service
 from supabase import Client
 
 router = APIRouter(
@@ -47,10 +49,30 @@ router = APIRouter(
     summary="The global catalogue of trades",
 )
 async def list_skills(
+    query: str | None = Query(
+        None,
+        max_length=80,
+        alias="q",
+        description=(
+            "Closest-match filter. Omit for the whole catalogue, which is what "
+            "the registration screen's chip grid wants."
+        ),
+    ),
+    limit: int = Query(10, ge=1, le=50),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> list[Skill]:
-    """Every active skill, alphabetically.
+    """Every active skill, alphabetically -- or the closest matches to ``q``.
+
+    **Without ``q`` this is exactly the endpoint it has always been**: the whole
+    catalogue, alphabetical, unpaginated, which is what the service person's
+    registration grid renders. ``limit`` is ignored in that mode on purpose --
+    a truncated catalogue would silently hide trades from somebody choosing
+    theirs.
+
+    With ``q`` it is the suggestion box behind the department form's skill
+    field: exact match first, then prefix, then trigram similarity. Use
+    ``POST /skills`` to add one that is not there.
 
     **Global, not per-community**, which is the asymmetry the whole feature rests
     on: `complaint_categories` is a community's own vocabulary and carries a
@@ -62,6 +84,16 @@ async def list_skills(
     A retired trade is filtered out here rather than deleted, so a provider who
     has held it for two years keeps the row that says so.
     """
+    if query is not None and query.strip():
+        return [
+            Skill(
+                id=row.id,
+                name=row.name,
+                category=row.category,
+                description=row.description,
+            )
+            for row in skills_service.search(client, query=query, limit=limit)
+        ]
     return service.list_skills(client)
 
 
@@ -140,6 +172,59 @@ async def update_mine(
     `communityCount` are not the caller's to set.
     """
     return service.save_mine(client, profile_id=principal.user_id, body=body)
+
+
+# ---------------------------------------------------------------------------
+# The one route on this router that is not about the caller themselves.
+#
+# Declared LAST on purpose. FastAPI matches in declaration order, so
+# `/service-providers/me` above must be seen before `/service-providers/{id}`
+# or the literal `me` arrives here as a provider id and 404s.
+#
+# It is also the one route with a role guard. Everything above is "authenticated
+# only, no membership required", because a service person registering has no
+# membership to require. This one reads about *somebody else*, so it takes the
+# hiring surface's guard instead -- which is a narrowing rather than a widening:
+# the row is already readable by any signed-in caller under
+# `service_providers_read`, and the guard here is what stops that being a
+# directory of every tradesperson in the country to anybody with an account.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/service-providers/{provider_id}",
+    response_model=CandidateProfile,
+    summary="One service person, for a hiring manager",
+    dependencies=[Depends(require_admin_or_manager)],
+)
+async def get_candidate(
+    provider_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> CandidateProfile:
+    """The person behind a candidate tile, an application, or a notification.
+
+    **All three of those lead here, because all three are about somebody who is
+    not yet on a roster.** `GET /departments/{id}/staff/{staffId}` is the
+    employee page and it needs a `staff_assignments` row; nobody being
+    *considered* has one. Without this route the hiring screens could list
+    people and never open one.
+
+    Narrower than `GET /service-providers/me`: no coordinates and no profile id.
+    `distanceKm` on the candidate list already answers where they are, from the
+    community's own point, and `serviceRadiusKm` here is a statement they
+    published about how far they travel. A home coordinate is neither.
+
+    Not scoped to a department, and it does not need to be — the row is the
+    person's own registration and carries no community's business. The search
+    that surfaced them has already applied this department's blacklist and
+    roster rules.
+
+    | Status | Code | Cause |
+    |---|---|---|
+    | 403 | `forbidden` | You are neither an admin nor a manager |
+    | 404 | `service_provider_not_found` | No provider with that id |
+    """
+    return service.get_candidate(client, provider_id=provider_id)
 
 
 @router.put(

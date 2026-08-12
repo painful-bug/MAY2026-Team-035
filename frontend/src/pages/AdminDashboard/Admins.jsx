@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
-import { ShieldCheck, Plus, User, Mail, Phone } from 'lucide-react';
+import { ShieldCheck, Plus, User, Mail, Phone, Users as UsersIcon } from 'lucide-react';
+import { peopleApi } from '../../features/people/peopleApi';
+import { getDashboardSnapshot } from '../../lib/dashboard/dashboardApi';
 
 export default function Admins() {
-  const { users, addAdmin } = useApp();
+  const { users, hydrateDashboard, showToast } = useApp();
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -13,16 +16,32 @@ export default function Admins() {
 
   const admins = users.filter(u => u.role === 'Admin');
 
+  // `POST /admins` *promotes* an existing member -- it does not invite one.
+  // The response is the promoted `AdminSummary`, but the source of truth for
+  // this screen's list is the dashboard snapshot (`GET /admins` has no route
+  // of its own; the directory is served by `users[]`), so success re-pulls the
+  // snapshot rather than splicing the response in locally.
+  const promote = useMutation({
+    mutationFn: (payload) => peopleApi.promoteAdmin(payload),
+    onSuccess: async (admin) => {
+      const snapshot = await getDashboardSnapshot();
+      hydrateDashboard(snapshot);
+      showToast(`${admin.name || admin.email} is now an admin`, 'success');
+      setName('');
+      setEmail('');
+      setPhone('');
+      setFlat('');
+      setModalOpen(false);
+    },
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name || !email) return;
-    addAdmin({ name, email, phone, tower, flat });
-    // Reset Form
-    setName('');
-    setEmail('');
-    setPhone('');
-    setFlat('');
-    setModalOpen(false);
+    if (!name || !email || promote.isPending) return;
+    // `name`, `phone`, `tower`, `flat` travel with the request but the server
+    // ignores all four -- the member already has them on their profile, and a
+    // promotion must not silently rewrite where somebody lives.
+    promote.mutate({ email: email.trim(), name: name.trim(), phone, tower, flat });
   };
 
   return (
@@ -42,6 +61,15 @@ export default function Admins() {
       </div>
 
       {/* Admins Grid */}
+      {admins.length === 0 ? (
+        <div className="bg-white border border-slate-100 rounded-2xl p-12 text-center shadow-sm">
+          <UsersIcon className="w-6 h-6 text-slate-300 mx-auto" />
+          <p className="mt-3 text-sm font-bold text-slate-500">No administrators yet.</p>
+          <p className="mt-1 text-xs font-semibold text-slate-400">
+            Promote an existing member to give them admin access.
+          </p>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {admins.map((adm) => (
           <div key={adm.id} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-4 hover:shadow-md transition-shadow">
@@ -72,20 +100,30 @@ export default function Admins() {
           </div>
         ))}
       </div>
+      )}
 
       {/* Add Admin Modal */}
       {modalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl border border-slate-100 max-w-md w-full p-6 space-y-6 animate-slide-up">
             <div className="flex justify-between items-center">
-              <h3 className="text-lg font-extrabold text-slate-900">Add Society Admin</h3>
-              <button 
-                onClick={() => setModalOpen(false)}
+              <h3 className="text-lg font-extrabold text-slate-900">Promote to Admin</h3>
+              <button
+                onClick={() => { promote.reset(); setModalOpen(false); }}
                 className="text-xs font-bold text-slate-400 hover:text-slate-650"
               >
                 Cancel
               </button>
             </div>
+
+            {/* This promotes an existing member; it does not invite one. Only
+                the email is used to find them -- name, phone, tower and flat
+                below are accepted but ignored, because the member already has
+                all four on their own profile and residency. */}
+            <p className="text-[11px] font-semibold text-slate-400 -mt-2">
+              Promotes an existing member to admin by email. If they haven&apos;t
+              joined the community yet, invite them first.
+            </p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1">
@@ -159,12 +197,23 @@ export default function Admins() {
                 </div>
               </div>
 
+              {promote.error ? (
+                <p role="alert" className="text-xs font-semibold text-rose-600">
+                  {promote.error.status === 404
+                    ? 'No member in this community uses that email yet. Invite them first, then promote once they have joined.'
+                    : promote.error.status === 409
+                      ? 'That member is already an administrator.'
+                      : promote.error.message}
+                </p>
+              ) : null}
+
               <button
                 type="submit"
-                className="w-full py-3 bg-indigo-650 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-100 mt-2 text-xs flex items-center justify-center gap-1.5"
+                disabled={promote.isPending}
+                className="w-full py-3 bg-indigo-650 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-100 mt-2 text-xs flex items-center justify-center gap-1.5 disabled:opacity-60"
               >
                 <Plus className="w-4 h-4" />
-                Register Admin Account
+                {promote.isPending ? 'Promoting…' : 'Promote to Admin'}
               </button>
             </form>
           </div>

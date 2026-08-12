@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from fastapi import Response
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from postgrest.exceptions import APIError
@@ -39,6 +40,29 @@ def test_google_and_email_password_are_supported_configured_methods() -> None:
     settings = _settings()
     settings.validate_auth_configuration()
     assert settings.enabled_auth_methods == ["google", "email_password"]
+
+
+@pytest.mark.parametrize(
+    "establisher", ["establish_session", "establish_recovery_session"]
+)
+def test_establishing_a_session_clears_the_preauth_csrf_cookie(
+    monkeypatch: pytest.MonkeyPatch, establisher: str
+) -> None:
+    from app.core import web_session
+
+    monkeypatch.setattr(web_session, "get_settings", lambda: _settings())
+    response = Response()
+    getattr(web_session, establisher)(
+        response,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_in=60,
+    )
+
+    assert any(
+        cookie.startswith("hb_preauth_csrf=") and "Max-Age=0" in cookie
+        for cookie in response.headers.getlist("set-cookie")
+    )
 
 
 def test_unsupported_auth_method_fails_closed() -> None:

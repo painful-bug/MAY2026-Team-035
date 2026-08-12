@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Briefcase,
@@ -9,6 +9,7 @@ import {
   MapPinned,
   Menu,
   MessageSquare,
+  MessageSquareWarning,
   Settings,
   UserRound,
   Wrench,
@@ -17,7 +18,9 @@ import {
 import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useAuthStore } from '../store/authStore';
 import { workerApi } from '../features/worker/workerApi';
+import { isProviderProfileComplete } from '../features/worker/providerProfile';
 import NotificationBell from '../components/notifications/NotificationBell';
+import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
 
 // Modelled on SecurityLayout.jsx, with two deliberate differences.
 //
@@ -37,6 +40,12 @@ const NAV = [
   { name: 'Calendar', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/calendar`, icon: CalendarDays },
   { name: 'Availability', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/availability`, icon: Clock },
   { name: 'Communities', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/communities`, icon: MapPinned },
+  // Supervisors only in practice — the page itself checks the roster rank the
+  // worker snapshot already carries, and tells a technician plainly that their
+  // work arrives as jobs instead. It is in the nav for everyone because the
+  // session carries no rank, and putting one there would mean editing the auth
+  // owner's file so a menu item could be hidden.
+  { name: 'Complaints', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/complaints`, icon: MessageSquareWarning },
   { name: 'Messages', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/messages`, icon: MessageSquare },
   { name: 'Profile', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/profile`, icon: UserRound },
   { name: 'Settings', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/settings`, icon: Settings },
@@ -80,13 +89,68 @@ export default function WorkerLayout() {
   const sessionContext = useAuthStore((state) => state.sessionContext);
   const logout = useAuthStore((state) => state.logout);
   const navigate = useNavigate();
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const name = sessionContext?.identity?.full_name || sessionContext?.identity?.email || 'Service partner';
+
+  // The registration gate lives here, not in Dashboard.jsx, so that an
+  // unregistered professional never sees the portal chrome at all: no sidebar
+  // of tabs that all render broken screens, no "form inside the Dashboard
+  // tab". Same key as AvailabilityToggle's query, so react-query deduplicates
+  // the fetch.
+  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
 
   const handleLogout = () => {
     void logout();
     navigate(AUTH_ROUTES.LOGIN);
   };
+
+  // Hold a neutral full-screen state while the snapshot is in flight, so the
+  // chrome never flashes and then swaps to the registration screen (or the
+  // reverse). Same pattern as App.jsx's "Restoring your session…".
+  if (snapshot.isPending) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
+        Preparing your workspace…
+      </div>
+    );
+  }
+
+  if (snapshot.isError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center">
+        <p className="rounded-2xl bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+          {snapshot.error?.message || 'Could not load your workspace.'}
+        </p>
+        <button
+          type="button"
+          onClick={() => snapshot.refetch()}
+          className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  // The predicate (completeness, not existence — see providerProfile.js) is
+  // shared with ChatDock, which hides the floating bubble on the same test.
+  const provider = snapshot.data?.provider;
+  const profileComplete = isProviderProfileComplete(provider);
+
+  if (!profileComplete) {
+    // Deep links like /worker/settings redirect to /worker rather than
+    // rendering the form under a sub-path, so the URL always matches what is
+    // on screen.
+    if (location.pathname.replace(/\/+$/, '') !== AUTH_ROUTES.WORKER_DASHBOARD) {
+      return <Navigate to={AUTH_ROUTES.WORKER_DASHBOARD} replace />;
+    }
+    return (
+      <div className="min-h-screen bg-slate-50 px-4 py-10 sm:px-6">
+        <RegisterProvider provider={provider} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-slate-50">

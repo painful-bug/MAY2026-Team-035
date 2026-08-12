@@ -18,6 +18,7 @@ export const AUTH_ROUTES = Object.freeze({
   RESIDENT_DASHBOARD: '/resident',
   SECURITY_DASHBOARD: '/security',
   SECURITY_MANAGER_DASHBOARD: '/security-manager',
+  MANAGER_DASHBOARD: '/manager',
   WORKER_DASHBOARD: '/worker',
   ACCOUNT: '/account',
 });
@@ -49,6 +50,14 @@ export const authIntentFromSearch = (search = '') => (
 const PORTAL_ROUTES = Object.freeze({
   admin: AUTH_ROUTES.ADMIN_DASHBOARD,
   'security-manager': AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD,
+  // The plumbing manager's portal. `_portal_for` has returned `'manager'` for a
+  // non-security department's manager since the security work, and this key did
+  // not exist — so that person fell through to `/account`, which is the same
+  // failure `SecurityManager` had before it was fixed, one role along. It was
+  // unreachable in practice because nothing minted a `manager` membership;
+  // `staff_provisioning` mints them now, so the route has to be here before the first one
+  // signs in.
+  manager: AUTH_ROUTES.MANAGER_DASHBOARD,
   security: AUTH_ROUTES.SECURITY_DASHBOARD,
   worker: AUTH_ROUTES.WORKER_DASHBOARD,
   resident: AUTH_ROUTES.RESIDENT_DASHBOARD,

@@ -78,6 +78,12 @@ export function applicationUser(context) {
     id: identity.id, name: identity.full_name || identity.email || 'HomeBandhu member',
     email: identity.email || '', phone: identity.phone || '', role, accessRole,
     communityId: membership.community_id, apartmentId: membership.unit_id, flat: '—', tower: '—', status: 'Active',
+    // Which department this person runs. `GET /auth/session` has always carried
+    // it and nothing copied it across, which was harmless while no screen was
+    // scoped to a department — the manager portal is the first, and it has no
+    // other way to know: `GET /departments` is admin-only, so a manager cannot
+    // look themselves up.
+    departmentId: membership.department_id || null,
     portal: context.portal || null,
   };
 }

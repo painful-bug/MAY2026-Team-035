@@ -72,7 +72,9 @@ export default function RejectBookingDialog({
       return;
     }
 
-    const rejectedBooking = await onReject(booking.id, {
+    // The series id, not the row's: rejecting decides the whole request and
+    // releases every day of it. `POST /amenity-bookings/{seriesId}/reject`.
+    const rejectedBooking = await onReject(booking.bookingSeriesId, {
       reason,
       otherReason,
       notifyResident,

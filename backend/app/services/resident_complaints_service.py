@@ -359,6 +359,7 @@ def raise_complaint(
         category=body.category.strip(),
         priority=priority,
         location=body.location.strip(),
+        department_id=body.department_id,
     )
     return get_mine(client, membership_id=membership_id, complaint_id=complaint_id)
 

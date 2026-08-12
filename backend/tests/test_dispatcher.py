@@ -3,8 +3,8 @@
 What is covered, stated plainly because it is easy to overclaim: **this
 exercises the loop, not the engine.** Every decision the dispatcher causes --
 who is free, who gets the offer, what the resident is told -- happens inside
-``0037``, and no migration in this project has ever been applied to a database,
-so none of it can run here. What is tested is the part written in Python:
+``0037``, which this suite has no database to run, so none of it can run here.
+What is tested is the part written in Python:
 claiming, per-task isolation, the failure path, and the lifecycle.
 
 The rule these tests exist to protect is the inverse of the push sender's, and

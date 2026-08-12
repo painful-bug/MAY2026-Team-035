@@ -14,7 +14,7 @@ from app.core.supabase_client import (
     get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
-from app.domain.schemas import MembershipContext, Principal, SessionContext
+from app.domain.schemas import MembershipContext, Principal, Profile, SessionContext
 from app.repositories import profiles_repository
 from supabase import Client
 
@@ -94,11 +94,23 @@ def confirmation_redirect_url(intent: str | None = None) -> str:
     ``docs/SUPABASE_AUTH_SETUP.md``.  A template left on GoTrue's default
     ``{{ .ConfirmationURL }}`` redirects to this page with no hash to spend,
     which is what leaves the confirm button with nothing to do.
+
+    **The intent is appended as a query parameter, not concatenated with a
+    literal ``?``.** A base URL that already carries a query -- which is what a
+    ``frontend_base_url`` with one, or any future caller passing a richer
+    landing page, would produce -- would otherwise yield ``…?a=b?intent=…``.
+    That is not a URL with two parameters: ``URLSearchParams`` reads the whole
+    tail as one value, so the *other* parameter silently disappears. The page
+    this lands on parses ``token_hash`` out of exactly that query string, so
+    the failure mode is a confirmation link that cannot be confirmed.
     """
     from app.config import get_settings
 
     base = f"{get_settings().frontend_base_url.rstrip('/')}/auth/confirm-email"
-    return f"{base}?intent=service-provider" if intent == "service-provider" else base
+    if intent != "service-provider":
+        return base
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{urlencode({'intent': intent})}"
 
 
 def _unconfirmed_email() -> AuthenticationError:
@@ -288,6 +300,72 @@ def _portal_for(membership: dict, role: str) -> str:
     return role
 
 
+def _active_memberships(profile_id: str) -> list[dict]:
+    """The caller's default membership, or nothing.
+
+    Extracted so the claim below can re-read after writing one, without the two
+    reads drifting into asking slightly different questions.
+    """
+    return (
+        get_service_client().table("community_memberships")
+        .select("id, community_id, role, department_id, is_default_community")
+        .eq("profile_id", profile_id)
+        .eq("status", "active")
+        .is_("ended_at", None)
+        .order("is_default_community", desc=True)
+        .limit(1)
+        .execute().data
+        or []
+    )
+
+
+def _claim_staff_invitations(
+    profile: Profile, principal: Principal, access_token: str
+) -> bool:
+    """Admit a manager or supervisor whose invitation names this email.
+
+    Returns whether anything was claimed, so the caller knows to re-read.
+
+    **`profile` is the :class:`~app.domain.schemas.Profile` model, not a table
+    row.** The only caller is `get_session_context`, and both branches it can
+    arrive from -- `profiles_repository.get_profile` and
+    `profiles_repository.upsert_profile` -- return the model; the repository's
+    `_to_profile` is what maps the `profiles.display_email` column onto
+    `Profile.email`, so there is no second spelling to fall back to here. This
+    parameter was annotated `dict` and read with `.get()` while every caller
+    passed the model, which raised `AttributeError` before the `try` below and
+    so failed the whole session read rather than the claim.
+
+    **The email is taken from the verified identity, never from the profile row
+    alone.** `profiles.display_email` is written by `upsert_profile` from the
+    same GoTrue identity, so on the sign-in path the two agree -- but the
+    profile is an ordinary table, and treating a table as the authority on who
+    somebody is would make a row a credential. `verified_identity` asks GoTrue.
+
+    A failure here is swallowed. Claiming is an *enhancement* to a session that
+    is otherwise valid: somebody who has been provisioned and hits a database
+    error should land on the account page and be admitted on their next
+    sign-in, not be refused a session they are entitled to.
+    """
+    email = profile.email
+    try:
+        email = verified_identity(access_token).email or email
+    except Exception:  # noqa: BLE001 - see the docstring: never fail the session
+        pass
+    if not email:
+        return False
+    try:
+        claimed = get_service_client().rpc(
+            "claim_staff_invitations",
+            {"p_profile_id": principal.user_id, "p_email": email},
+        ).execute().data
+    except Exception:  # noqa: BLE001
+        return False
+    if isinstance(claimed, dict):
+        return True
+    return bool(claimed)
+
+
 def get_session_context(
     client: Client,
     principal: Principal,
@@ -302,17 +380,25 @@ def get_session_context(
             get_service_client(), user_id=identity.user_id, full_name=identity.full_name,
             phone=None, email=identity.email,
         )
-    rows = (
-        get_service_client().table("community_memberships")
-        .select("id, community_id, role, department_id, is_default_community")
-        .eq("profile_id", principal.user_id)
-        .eq("status", "active")
-        .is_("ended_at", None)
-        .order("is_default_community", desc=True)
-        .limit(1)
-        .execute().data
-        or []
-    )
+    rows = _active_memberships(principal.user_id)
+    if not rows:
+        # Leadership does not register (0049). An admin creating a manager has
+        # no profile to attach a membership to -- that person has never signed
+        # in -- so the provisioning waits on their email and is claimed here, on
+        # the one path that has already established there is no membership.
+        #
+        # The email comes from `verified_identity`, never from anything a client
+        # sent: the email IS the authorization, so a caller who could choose it
+        # could admit themselves to any department. `claim_staff_invitations` is
+        # revoked from `authenticated` for the same reason and runs on the
+        # service client.
+        #
+        # Idempotent, so re-running it on every membership-less session read
+        # costs one query and changes nothing. A profile that claims something
+        # is re-read rather than assumed: the claim writes both a membership and
+        # a roster row, and `_portal_for` below needs the membership row itself.
+        if _claim_staff_invitations(profile, principal, access_token):
+            rows = _active_memberships(principal.user_id)
     if not rows:
         # A member of nothing is usually somebody about to register a society --
         # but it is also a service person who has registered and not yet been

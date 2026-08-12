@@ -29,4 +29,5 @@ CSRF cookie echoed as `X-CSRF-Token`: `hb_preauth_csrf` before authentication,
 `__Host-hb_csrf` in production sessions (`hb_csrf` over local HTTP), or
 `hb_recovery_csrf` during password recovery. The browser client obtains the
 pre-authentication cookie from `GET /auth/csrf` automatically before its first
-unsafe request.
+unsafe request. Establishing a session clears the pre-authentication cookie so
+subsequent writes use only the session- or recovery-bound token.

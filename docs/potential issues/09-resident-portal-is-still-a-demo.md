@@ -4,6 +4,31 @@
 **Found:** 2026-08-11, by the end-to-end compatibility sweep
 **Urgency:** Before any demo that involves a resident, and before the resident backend is called done
 
+> **✅ Resolved 2026-08-12**, by the suggested fix in the suggested order: `GET /resident/snapshot`
+> first into `DashboardHome`, then page by page, react-query per page, `features/resident/residentApi.js`
+> as the one call-site module. All 24 operations now have a consumer; the sweep reads **164/199
+> reached** (the 24th, `GET /events`, is consumed via `EventSource` and is structurally invisible to
+> the sweep — see issue 10's "reached another way" table). No resident page reads a demo slice for
+> domain data anymore; `createComplaintsSlice.js` lost its resident writes outright, while the
+> visitor and payment slices keep theirs untouched because the security and admin demo screens still
+> read them — retiring those is that portal's migration, not this one.
+>
+> Point 2 of "Why it matters" resolved the way the API said it would: the guard-raised approval flow
+> `createVisitorsSlice.js` invented is **deleted**, not implemented — nothing client-side mints a
+> `Pending Approval` pass anymore, and Approve/Reject are wired to the real endpoints, which today
+> have no writer on the gate side.
+>
+> ~~**Still open, and now phase 7's first item:** `Amenities.jsx`'s "Your Bookings" table reads via
+> the admin-guarded dashboard snapshot and 403s a resident~~ **Fixed 2026-08-12, phase 7b** — the
+> table reads `residentApi.amenityBookings()`. **But the same page carries a second instance the
+> fix uncovered:** the resident *booking form's slot picker* also reads the admin-guarded snapshot
+> (`validateBookingSlot`), so its Time Slot select stays disabled for every resident — and it
+> cannot be wired, because API.md §10 is explicit that **no availability read exists**; availability
+> is decided on write under an advisory lock. The honest fix is a form that submits and renders the
+> `409`, which is a UX decision, not a wiring gap. And point 1 is only half retired: the shapes are
+> now consumed, but proven only against the repository-mocked API — nothing here has run against an
+> applied database (issue 4's boundary note).
+
 ---
 
 ## Body

@@ -39,9 +39,9 @@ Since `appStore` no longer persists tenant data, those writes are lost on refres
 | Residents | create invitation, list units | **their API** | — *(ours removed)* |
 | PendingRegistrations | list / approve / reject | **their API** | — *(ours removed)* |
 | Amenities — management | create / update / delete amenity | **their API** `/dashboard/amenities` | — *(ours removed)* |
-| Amenities — bookings | 17 service fns, **0 API calls** | ✗ dead | **kept** (step 8) |
-| Amenities — ledger | 5 service fns, **0 API calls** | ✗ dead | **kept** (step 8) |
-| Amenities — reports | `amenityReportsService`, 0 API calls | ✗ dead | **kept** (step 8) |
+| Amenities — bookings | 17 service fns, **0 API calls** | ✗ dead | **wired 2026-08-12** (phase 7b) — `amenitiesApi.js`; 14 demo fns and 4 modules deleted, Edit Booking removed (no endpoint exists) |
+| Amenities — ledger | 5 service fns, **0 API calls** | ✗ dead | **wired 2026-08-12** — ledger + summary + all five money writes |
+| Amenities — reports | `amenityReportsService`, 0 API calls | ✗ dead | **wired 2026-08-12** — `GET /amenity-reports`, service deleted |
 | Admins | `addAdmin` | ✗ dead, **no endpoint existed** | **added** `POST /admins` |
 | Complaints | `updateComplaint`, `addComplaintComment` | ✗ dead | **kept** (step 5) |
 | Departments | `createDepartment`, `updateDepartment`, `deleteDepartment`, `setDepartmentStatus`, `removeStaffMember` | ✗ dead | **kept** (step 6) |
@@ -50,9 +50,14 @@ Since `appStore` no longer persists tenant data, those writes are lost on refres
 | Maintenance | filter only — read-only | snapshot | — *(ours removed)* |
 | Settings | 4 toggles, `handleSave` only toasts | ✗ dead | **kept** (step 9) |
 
-Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartment` (Profile) are also dead.
+Resident side, for completeness: `payInvoice` (Payments) and `addPhoneToApartment` (Profile) were also dead.
+**Closed 2026-08-12 by phase 6**: the whole resident portal — home, complaints, visitors, payments, notices,
+profile, and the amenities browse list — now reads and writes the API through
+`frontend/src/features/resident/residentApi.js`; the demo slices' resident data writes are deleted. Issue 09
+carries the page-by-page record; the one residual (the Amenities "Your Bookings" table) is named there.
 
-**`payInvoice` must not be wired to `POST /invoices/{id}/payments`.** That endpoint marks money as *received* and
+**`payInvoice` must not be wired to `POST /invoices/{id}/payments`** — and it was not: the resident pages use
+`POST /invoices/{id}/pay`, the resident-scoped simulator. The admin-side endpoint marks money as *received* and
 settles the invoice, so exposing it to the payer would let a resident clear their own dues by asserting they had
 paid. It stays admin-only. Resident self-service needs a payment gateway whose webhook calls it — unbuilt, though
 the baseline's `payments.provider` and `unique(community_id, idempotency_key)` now support it.
@@ -69,7 +74,7 @@ the baseline's `payments.provider` and `unique(community_id, idempotency_key)` n
 | `GET /registrations`, `POST /registrations/{id}/approve\|reject` | Duplicated their `/admin/access-requests` trio, which the frontend already calls. |
 | `GET /notices` | Snapshot `notices[]`. |
 | `GET /complaints`, `GET /complaints/{id}` | Snapshot `complaints[]`, with comments and history embedded. |
-| `GET /complaint-categories` | `CreateDepartment.jsx` collects categories as **free-text inputs** (`useState([''])`), not from a vocabulary, and `Departments.jsx` reads `department.categories` off the department. Nothing fetches a category list. |
+| ~~`GET /complaint-categories`~~ | ~~`CreateDepartment.jsx` collects categories as **free-text inputs** (`useState([''])`), not from a vocabulary, and `Departments.jsx` reads `department.categories` off the department. Nothing fetches a category list.~~ **Reinstated 2026-08-11 by `skills_and_categories`** — both premises expired. `CreateDepartment.jsx` was deleted in `38927e5`, and the department form's category field is now a combobox that exists to prevent duplicate categories, which it cannot do without the list. The reinstated path is not the retired one: it carries each category's linked skill, so the form can warn about categories that match no trade and therefore reach no service person in any hiring search. |
 | `POST /complaints/{id}/attachments` | No upload control on any admin screen, and the Storage bucket is still unbuilt (F2). |
 | `POST /complaints/{id}/read` | No read-receipt UI exists. |
 | `GET /amenities`, `GET /amenities/{id}` | Snapshot `amenities[]`. |
@@ -118,10 +123,22 @@ via `POST /invoices`, and no screen calls that either — it survives solely so 
 something to pay. The Settings toggle *"Automated Monthly Maintenance"* therefore still switches a flag that no
 code reads. That was already logged as A22 and it has not improved.
 
+> **Half of that expired on 2026-08-12.** `Maintenance.jsx:46` calls `POST /invoices` and `:201` calls
+> `POST /invoices/{id}/payments`, so one bill at a time is now a thing a screen does rather than a thing only the
+> resident path implies. What has *not* improved is the sentence's actual subject: nothing runs a **cycle**, and
+> *"Automated Monthly Maintenance"* still switches a flag no scheduler reads. A22 stands unchanged.
+
 **The admin write surface is not reachable from the UI yet.** Every endpoint kept in §2 exists because a frontend
 handler wants it, but that handler currently calls a Zustand action instead. Wiring them up is frontend work that
 we are not permitted to do. Until then these endpoints are correct, tested, and uncalled — which is the honest
 status, and the first item for the joint meeting.
+
+> **Overtaken between 2026-08-11 and 2026-08-12, and the freeze it rests on was lifted.** Phases 6 and 7 wired the
+> resident portal, the amenity admin surface, the money writes and the work-order triage screen — §2's table above
+> carries the per-row dates. `frontend_api_sweep.py` now reports **186 of 195 live operations reached by a call
+> site**, and the nine it does not reach are the four OAuth redirects, `POST /auth/refresh`, the two SSE streams,
+> `GET /worker/unavailability` and `/health` — none of them a screen's missing call. "Correct, tested and
+> uncalled" is no longer the honest status; it was for two weeks, and this paragraph is why the wiring happened.
 
 **The schema they need now exists.** An earlier draft of this section reported that 3 of our 35 endpoints could
 run, because `0018_settings_on_baseline.sql` had rebuilt the settings *tables* but neither the views nor the RPCs.

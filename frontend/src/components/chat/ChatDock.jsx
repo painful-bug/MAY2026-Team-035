@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -9,6 +10,9 @@ import {
   X,
 } from 'lucide-react';
 import { messagesApi } from '../../features/messages/messagesApi';
+import { workerApi } from '../../features/worker/workerApi';
+import { isProviderProfileComplete } from '../../features/worker/providerProfile';
+import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 
 // The floating chat dock — mounted once in App.jsx, outside <Routes>, so
@@ -295,6 +299,7 @@ function ThreadView({ threadId, myProfileId, onBack }) {
 
 export default function ChatDock() {
   const sessionContext = useAuthStore((state) => state.sessionContext);
+  const location = useLocation();
   const [open, setOpen] = useState(false);
   // 'list' | 'compose' | a thread id.
   const [view, setView] = useState('list');
@@ -303,6 +308,22 @@ export default function ChatDock() {
 
   const signedIn = Boolean(sessionContext?.identity);
   const myProfileId = sessionContext?.identity?.id || sessionContext?.identity?.user_id || '';
+
+  // On the worker surface the dock defers to the same registration gate as
+  // WorkerLayout: an unregistered (or incomplete-profile) professional sees a
+  // bare registration screen, and a floating bubble over it would be the one
+  // piece of portal chrome that leaked through. A REGISTERED but not-yet-hired
+  // provider keeps the dock — hiring conversations happen here. `enabled`
+  // keeps admins and residents from ever calling /worker/snapshot; the query
+  // key matches WorkerLayout's, so on the worker surface react-query
+  // deduplicates rather than double-fetching.
+  const onWorkerSurface = location.pathname === AUTH_ROUTES.WORKER_DASHBOARD
+    || location.pathname.startsWith(`${AUTH_ROUTES.WORKER_DASHBOARD}/`);
+  const workerSnapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    enabled: signedIn && onWorkerSurface,
+  });
 
   const threads = useQuery({
     queryKey: ['dm-threads'],
@@ -348,6 +369,17 @@ export default function ChatDock() {
   }, [sessionContext, threads.data, composeCommunity]);
 
   if (!signedIn) return null;
+  // While the snapshot is unresolved (pending or error) the dock stays hidden
+  // too — the layout is showing a full-screen neutral state, and a bubble
+  // popping in and out of it would be the flash the gate exists to prevent.
+  if (
+    onWorkerSurface
+    && (workerSnapshot.isPending
+      || workerSnapshot.isError
+      || !isProviderProfileComplete(workerSnapshot.data?.provider))
+  ) {
+    return null;
+  }
 
   const latest = (threads.data || []).reduce(
     (max, thread) => (thread.lastMessageAt && thread.lastMessageAt > max ? thread.lastMessageAt : max),

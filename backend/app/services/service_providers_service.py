@@ -21,6 +21,7 @@ from typing import Any
 from app.core.exceptions import NotFoundError
 from app.domain.service_provider_schemas import (
     AvailabilityResult,
+    CandidateProfile,
     ServiceProviderProfile,
     SetSkillsRequest,
     Skill,
@@ -119,6 +120,41 @@ def register_mine(
         skill_ids=body.skill_ids,
     )
     return get_mine(client, profile_id=profile_id)
+
+
+def get_candidate(client: Client, *, provider_id: str) -> CandidateProfile:
+    """One service person, as a hiring manager sees them.
+
+    The read behind every "open this person" click on the hiring surface --
+    from the candidate list, from an application, and from the dashboard
+    notification. All three lead here because all three are about somebody who
+    is **not yet on a roster**: ``GET /departments/{id}/staff/{staffId}`` needs
+    a ``staff_assignments`` row, and none exists until they are hired.
+
+    Not scoped to a department, and it does not need to be. The row carries no
+    community's business -- it is the person's own published registration, and
+    the search that surfaced them already applied this department's blacklist
+    and roster rules.
+    """
+    row = repo.get_by_id(client, provider_id=provider_id)
+    if row is None:
+        raise NotFoundError(
+            "No such service provider.", code="service_provider_not_found"
+        )
+    return CandidateProfile(
+        id=row["id"],
+        display_name=_text(row.get("display_name")),
+        headline=_text(row.get("headline")),
+        bio=_text(row.get("bio")),
+        phone=_text(row.get("phone_e164")),
+        service_radius_km=float(row.get("service_radius_km") or 0),
+        status=_text(row.get("status")) or "active",
+        is_available=bool(row.get("is_available")),
+        skill_ids=[str(value) for value in (row.get("skill_ids") or [])],
+        skill_names=[str(value) for value in (row.get("skill_names") or [])],
+        community_count=int(row.get("community_count") or 0),
+        registered_at=row["created_at"],
+    )
 
 
 def list_skills(client: Client) -> list[Skill]:

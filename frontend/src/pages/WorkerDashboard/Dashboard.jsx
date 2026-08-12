@@ -6,17 +6,17 @@ import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
 import JobDetailModal from './JobDetailModal';
-import RegisterProvider from './RegisterProvider';
 
 const when = new Intl.DateTimeFormat(undefined, {
   weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
 });
 
 // One request fills this whole screen. `GET /worker/snapshot` is the worker's
-// half of the same pattern `GET /resident/snapshot` set, and its two null cases
-// are the two empty states -- so the "you have not registered" and "nobody has
-// hired you" screens are answered by the same call that draws the dashboard,
-// rather than by a client trying two endpoints and interpreting a 404.
+// half of the same pattern `GET /resident/snapshot` set. Its "you have not
+// registered" case is handled upstream: WorkerLayout gates on the same
+// snapshot and renders the registration screen full-page, with no chrome, so
+// by the time this component mounts the provider profile is complete. The
+// "nobody has hired you" empty state still lives here.
 
 function JobCard({ job, onOpen }) {
   const colour = communityColor(job.communityId);
@@ -112,16 +112,9 @@ export default function WorkerDashboardHome() {
 
   const { provider, communities = [], pendingOffers = [], today = [], nextJob } = snapshot.data ?? {};
 
-  // Empty state one: signed in, never registered as a service person. This is
-  // the screen `applicationUser()` returning null used to hide, because a
-  // provider with no membership had no `currentUser` and was bounced to login.
-  const profileComplete = provider?.latitude != null
-    && provider?.longitude != null
-    && (provider?.skillIds?.length ?? 0) > 0;
-  if (!profileComplete) return <RegisterProvider provider={provider} />;
-
-  // Empty state two: registered, hired nowhere. Plan point 6 -- a join prompt,
-  // not an empty calendar.
+  // Registered, hired nowhere. Plan point 6 -- a join prompt, not an empty
+  // calendar. (The unregistered case never reaches this component: the
+  // WorkerLayout gate renders RegisterProvider instead of the Outlet.)
   if (communities.length === 0) {
     return (
       <Empty
@@ -142,7 +135,7 @@ export default function WorkerDashboardHome() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-extrabold text-slate-900">
-          {provider.displayName?.split(' ')[0] || 'Hello'}, here is your day
+          {provider?.displayName?.split(' ')[0] || 'Hello'}, here is your day
         </h1>
         <p className="mt-1 text-sm font-medium text-slate-500">
           {communities.length} {communities.length === 1 ? 'community' : 'communities'} ·{' '}

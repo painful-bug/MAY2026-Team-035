@@ -19,7 +19,6 @@ from app.domain.department_schemas import (
     StaffMember,
     StaffMemberInput,
     UpdateDepartmentRequest,
-    UpdateStaffMemberRequest,
 )
 from app.domain.vocabularies import (
     department_status_to_storage,
@@ -65,6 +64,11 @@ def _to_summary(row: dict) -> DepartmentSummary:
         # up positionally as well as by content (R23).
         categories=list(row.get("category_names") or []),
         category_ids=[str(value) for value in (row.get("category_ids") or [])],
+        # Same positional pairing, from the same view (0048). Empty for a
+        # department that has chosen no skills, which is every department until
+        # somebody picks some -- they are never inherited from categories.
+        skills=list(row.get("skill_names") or []),
+        skill_ids=[str(value) for value in (row.get("skill_ids") or [])],
         head=row.get("head_name"),
         head_staff_id=row.get("head_staff_id"),
         email=row.get("contact_email"),
@@ -195,11 +199,18 @@ def list_departments(
 def get_department(
     client: Client, user_id: str, department_id: str
 ) -> DepartmentDetail:
-    """One department with its active roster."""
+    """One department with its active roster, and whether this caller may hire.
+
+    ``canHire`` is only filled in here. The list leaves it ``None`` because the
+    answer is per department and per caller, so a list of twelve would be twelve
+    extra round trips for a screen with no control that needs one.
+    """
     community_id = tenancy_repo.get_caller_community_id(client, user_id)
     row = repo.get_department(client, community_id, department_id)
     staff = repo.list_staff(client, community_id, [department_id])
-    return _to_detail(row, staff)
+    detail = _to_detail(row, staff)
+    detail.can_hire = repo.can_hire(client, department_id)
+    return detail
 
 
 def create_department(
@@ -297,102 +308,5 @@ def delete_department(client: Client, user_id: str, department_id: str) -> None:
     """Delete a department. Refuses (409) while it owns open complaints."""
     tenancy_repo.get_caller_community_id(client, user_id)
     repo.delete_department(client, department_id)
-
-
-def replace_staff(
-    client: Client, user_id: str, department_id: str, members: list[StaffMemberInput]
-) -> list[StaffMember]:
-    """Replace a department's roster wholesale, as the department form submits it."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    for member in members:
-        _validate_shift(member.shift)
-        _validate_staff_status(member.status)
-
-    repo.update_department(client, department_id, {"staff": _staff_payload(members)})
-    return [
-        _to_staff(row) for row in repo.list_staff(client, community_id, [department_id])
-    ]
-
-
-def add_staff_member(
-    client: Client, user_id: str, department_id: str, member: StaffMemberInput
-) -> StaffMember:
-    """Add one person to a roster."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    _validate_shift(member.shift)
-    _validate_staff_status(member.status)
-    # Existence and tenancy first: RLS would reject a cross-community insert, but
-    # as a policy failure, which reads as a permission error rather than "no such
-    # department".
-    repo.get_department(client, community_id, department_id)
-
-    staff_id = repo.insert_staff_member(
-        client,
-        community_id,
-        department_id,
-        {
-            "display_name": member.name.strip(),
-            "phone_e164": (member.phone or "").strip() or None,
-            "job_title": (member.role or "").strip() or None,
-            "shift": member.shift,
-            "status": member.status or "active",
-        },
-    )
-    return _to_staff(repo.get_staff_member(client, community_id, staff_id))
-
-
-def update_staff_member(
-    client: Client,
-    user_id: str,
-    department_id: str,
-    staff_id: str,
-    body: UpdateStaffMemberRequest,
-) -> StaffMember:
-    """Patch one roster entry.
-
-    ``rank`` is deliberately not patchable here: a department has at most one
-    head, and naming it through ``PATCH /departments/{id}`` with a ``head`` field
-    is the single path that demotes the incumbent in the same transaction.
-    """
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    _validate_shift(body.shift)
-    _validate_staff_status(body.status)
-
-    existing = repo.get_staff_member(client, community_id, staff_id)
-    if existing.get("department_id") != department_id:
-        raise ValidationError(
-            "That staff member belongs to a different department.",
-            code="wrong_department",
-        )
-
-    supplied = body.model_dump(exclude_unset=True)
-    fields: dict = {}
-    if "name" in supplied and body.name:
-        fields["display_name"] = body.name.strip()
-    if "phone" in supplied:
-        fields["phone_e164"] = (body.phone or "").strip() or None
-    if "role" in supplied:
-        fields["job_title"] = (body.role or "").strip() or None
-    if "shift" in supplied:
-        fields["shift"] = body.shift
-    if "status" in supplied and body.status:
-        fields["status"] = body.status
-
-    repo.update_staff_member(client, community_id, staff_id, fields)
-    return _to_staff(repo.get_staff_member(client, community_id, staff_id))
-
-
-def remove_staff_member(
-    client: Client, user_id: str, department_id: str, staff_id: str
-) -> None:
-    """Take a member off the active roster. Deactivation, not deletion (A7)."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    existing = repo.get_staff_member(client, community_id, staff_id)
-    if existing.get("department_id") != department_id:
-        raise ValidationError(
-            "That staff member belongs to a different department.",
-            code="wrong_department",
-        )
-    repo.remove_staff_member(client, staff_id)
 
 

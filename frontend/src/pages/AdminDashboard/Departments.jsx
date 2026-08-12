@@ -19,52 +19,64 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../../store/useApp';
-import { JOB_TITLES, STAFF_RANKS } from '../../lib/staffVocabulary';
+import { departmentsApi } from '../../features/departments/departmentsApi';
+import CategoryPicker from '../../features/departments/components/CategoryPicker';
+import SkillPicker from '../../features/departments/components/SkillPicker';
 
-const CATEGORY_OPTIONS = [
-  'Plumbing',
-  'Electrical',
-  'Infrastructure',
-  'Cleaning',
-  'Security',
-  'Others',
-];
+// **This form no longer adds technicians, and that is the point.**
+//
+// It used to carry a "Team members" block of typed-in names with a rank and a
+// job title, which was the only way anybody got onto a roster. Technicians are
+// now outside people: they register themselves (`service_providers`), apply or
+// are invited, and a manager decides — the whole hiring surface at
+// `/admin/departments/:id/hiring`. A second, quieter way to invent one here
+// would produce roster rows with no account, no skills and no way to be
+// dispatched, which is what the old block did.
+//
+// What remains is **leadership**, and it is a different kind of thing. A
+// manager or supervisor is created by typing an email; that person signs in
+// with it and is admitted (`staff_provisioning`). Nothing is sent, so the pending list below
+// the form is the only place a mistyped address is ever visible.
 
+/** A `{ id, name }` pair for the pickers, from the API's parallel arrays (R23). */
+const pairsFrom = (names = [], ids = []) =>
+  names.map((name, index) => ({ id: ids[index] ?? name, name }));
 
-const emptyStaffMember = () => ({
-  id: '',
+const emptyLeader = (rank) => ({
+  key: `${rank}-${Math.random().toString(36).slice(2, 9)}`,
   name: '',
+  email: '',
   phone: '',
-  // Where they sit, and what they do. Two fields, because they are two
-  // questions -- see lib/staffVocabulary.js for why one list answered neither.
-  rank: 'member',
-  role: '',
+  rank,
 });
 
 const emptyDepartment = () => ({
   name: '',
   description: '',
   categories: [],
+  skills: [],
   head: '',
   email: '',
   phone: '',
   operatingHours: { start: '09:00', end: '18:00' },
   slaHours: 24,
   status: 'Active',
-  staff: [emptyStaffMember()],
+  leaders: [emptyLeader('manager')],
 });
 
 const getDepartmentForm = (department) => ({
   ...emptyDepartment(),
   ...department,
-  categories: [...(department.categories ?? [])],
+  categories: pairsFrom(department.categories, department.categoryIds),
+  skills: pairsFrom(department.skills, department.skillIds),
   operatingHours: {
     start: department.operatingHours?.start ?? '09:00',
     end: department.operatingHours?.end ?? '18:00',
   },
-  staff: department.staff?.length
-    ? department.staff.map((member) => ({ ...member }))
-    : [emptyStaffMember()],
+  // Editing an existing department does not re-provision anybody: its
+  // leadership is whoever has already been invited, shown by the pending list
+  // rather than re-entered here.
+  leaders: [],
 });
 
 const getDepartmentComplaints = (department, complaints) =>
@@ -94,6 +106,8 @@ export default function Departments() {
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(null);
   const [deleteDepartmentId, setDeleteDepartmentId] = useState(null);
   const [form, setForm] = useState(emptyDepartment);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const selectedDepartment = departments.find(
     (department) => department.id === selectedDepartmentId
@@ -180,9 +194,22 @@ export default function Departments() {
     (complaint) => complaint.status !== 'Resolved'
   ).length;
 
+  // The community's own categories, for the "unassigned types" tile. The same
+  // read the category picker uses, so the tile and the field can never disagree
+  // about which categories exist.
+  const categories = useQuery({
+    queryKey: ['complaint-categories'],
+    queryFn: departmentsApi.categories,
+    staleTime: 60_000,
+  });
+  const unassignedCategoryCount = (categories.data || []).filter(
+    (category) => (category.departmentCount ?? 0) === 0
+  ).length;
+
   const openCreate = () => {
     setSelectedDepartmentId(null);
     setForm(emptyDepartment());
+    setSaveError('');
     setModalMode('create');
   };
 
@@ -201,47 +228,98 @@ export default function Departments() {
     setSelectedDepartmentId(null);
   };
 
-  const toggleCategory = (category) => {
+  const setLeaderField = (key, field, value) => {
     setForm((current) => ({
       ...current,
-      categories: current.categories.includes(category)
-        ? current.categories.filter((item) => item !== category)
-        : [...current.categories, category],
-    }));
-  };
-
-  const setStaffField = (index, field, value) => {
-    setForm((current) => ({
-      ...current,
-      staff: current.staff.map((member, memberIndex) =>
-        memberIndex === index ? { ...member, [field]: value } : member
+      leaders: current.leaders.map((leader) =>
+        leader.key === key ? { ...leader, [field]: value } : leader
       ),
     }));
   };
 
-  const removeStaffMember = (index) => {
+  const removeLeader = (key) => {
     setForm((current) => ({
       ...current,
-      staff:
-        current.staff.length === 1
-          ? [emptyStaffMember()]
-          : current.staff.filter((_, memberIndex) => memberIndex !== index),
+      leaders: current.leaders.filter((leader) => leader.key !== key),
     }));
   };
 
-  const handleSubmit = (event) => {
+  /**
+   * Save the department, then its skills, then its leadership.
+   *
+   * **Three calls, in that order, because the last two need an id the first one
+   * mints.** They are deliberately not folded into `POST /departments`: skills
+   * are a relationship to a global catalogue and leadership provisioning writes
+   * to a table with its own authorization, and putting either inside the
+   * department create would mean one endpoint doing three jobs with three
+   * different failure modes.
+   *
+   * A failure after the department is created leaves the department created.
+   * That is stated to the operator rather than hidden — they are on the edit
+   * screen for a department that now exists, and re-saving is the fix. Rolling
+   * back a create because a supervisor's email was rejected would be the worse
+   * outcome.
+   *
+   * `await` also fixes something that was quietly broken: `createDepartment` is
+   * async, so `if (result) closeModal()` used to close the modal on a Promise —
+   * which is always truthy — and a failed create looked like a successful one.
+   */
+  const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.name.trim() || form.categories.length === 0) return;
+    if (!form.name.trim() || form.categories.length === 0 || saving) return;
 
-    const departmentData = {
-      ...form,
-      staff: form.staff.filter((member) => member.name.trim()),
-    };
-    const result =
-      modalMode === 'edit' && selectedDepartmentId
-        ? updateDepartment(selectedDepartmentId, departmentData)
-        : createDepartment(departmentData);
-    if (result) closeModal();
+    setSaving(true);
+    setSaveError('');
+    try {
+      const departmentData = {
+        ...form,
+        // The department wire takes category *names*: `upsert_category_names`
+        // creates any it has not seen in this community, so choosing a new one
+        // and saving is what creates it. There is no create-category endpoint
+        // and none is needed.
+        categories: form.categories.map((entry) => entry.name),
+        // `staff` is deliberately omitted, not sent as `[]`. On a create there
+        // is no roster yet, so the two are equivalent -- but on an *edit*,
+        // `PATCH /departments/{id}` treats key presence as "replace the whole
+        // roster": an explicit `staff: []` was reaching the API on every save
+        // (this form never collects roster entries; that field died with the
+        // hiring rework) and silently deactivating every member of the
+        // department being edited. Omitting the key is what "leave the roster
+        // alone" actually means.
+      };
+
+      const saved =
+        modalMode === 'edit' && selectedDepartmentId
+          ? await updateDepartment(selectedDepartmentId, departmentData)
+          : await createDepartment(departmentData);
+      if (!saved) return;
+
+      const departmentId = saved.id;
+      await departmentsApi.setDepartmentSkills(
+        departmentId,
+        form.skills.map((entry) => entry.id)
+      );
+
+      const leaders = form.leaders.filter(
+        (leader) => leader.name.trim() && leader.email.trim()
+      );
+      for (const leader of leaders) {
+        await departmentsApi.inviteStaffMember(departmentId, {
+          email: leader.email.trim(),
+          name: leader.name.trim(),
+          rank: leader.rank,
+          phone: leader.phone.trim() || null,
+        });
+      }
+
+      closeModal();
+    } catch (error) {
+      setSaveError(
+        error?.message || 'The department was saved but something after it failed.'
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const selectedSummary = departmentSummaries.find(
@@ -305,16 +383,14 @@ export default function Departments() {
           icon={BriefcaseBusiness}
           tone="amber"
         />
+        {/* Counted from the community's real categories rather than a hardcoded
+            six, which is what this tile used to do — so a category somebody
+            invented could never be reported as unassigned, however unassigned
+            it was. `departmentCount` comes from the same read the category
+            picker uses. */}
         <SummaryCard
           label="Unassigned Types"
-          value={
-            CATEGORY_OPTIONS.filter(
-              (category) =>
-                !departments.some((department) =>
-                  department.categories?.includes(category)
-                )
-            ).length
-          }
+          value={unassignedCategoryCount}
           helper="Categories without an owner"
           icon={AlertTriangle}
           tone="rose"
@@ -515,18 +591,20 @@ export default function Departments() {
               <DepartmentForm
                 form={form}
                 setForm={setForm}
-                toggleCategory={toggleCategory}
-                setStaffField={setStaffField}
-                removeStaffMember={removeStaffMember}
-                onAddStaff={() =>
+                departmentId={modalMode === 'edit' ? selectedDepartmentId : null}
+                setLeaderField={setLeaderField}
+                removeLeader={removeLeader}
+                onAddLeader={(rank) =>
                   setForm((current) => ({
                     ...current,
-                    staff: [...current.staff, emptyStaffMember()],
+                    leaders: [...current.leaders, emptyLeader(rank)],
                   }))
                 }
                 onCancel={closeModal}
                 onSubmit={handleSubmit}
                 isEditing={modalMode === 'edit'}
+                saving={saving}
+                saveError={saveError}
               />
             )}
           </div>
@@ -644,19 +722,21 @@ function StatusBadge({ status }) {
 function DepartmentForm({
   form,
   setForm,
-  toggleCategory,
-  setStaffField,
-  removeStaffMember,
-  onAddStaff,
+  departmentId,
+  setLeaderField,
+  removeLeader,
+  onAddLeader,
   onCancel,
   onSubmit,
   isEditing,
+  saving,
+  saveError,
 }) {
   const inputClass =
     'w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none';
   const isSecurityDepartment =
     form.name.toLowerCase().includes('security') ||
-    form.categories.includes('Security');
+    form.categories.some((entry) => entry.name === 'Security');
   return (
     <form onSubmit={onSubmit} className="mt-6 space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -700,33 +780,35 @@ function DepartmentForm({
         />
       </Field>
 
-      <Field label="Complaint categories" required>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {CATEGORY_OPTIONS.map((category) => (
-            <label
-              key={category}
-              className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-[10px] font-bold transition-colors ${
-                form.categories.includes(category)
-                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                  : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={form.categories.includes(category)}
-                onChange={() => toggleCategory(category)}
-                className="accent-indigo-600"
-              />
-              {category}
-            </label>
-          ))}
-        </div>
-        {form.categories.length === 0 && (
-          <p className="mt-1 text-[10px] font-semibold text-rose-500">
-            Select at least one complaint category.
-          </p>
-        )}
-      </Field>
+      {/* A combobox over the community's real categories, replacing a hardcoded
+          six-item checkbox grid. The grid could not express a category anybody
+          invented, while the backend has accepted arbitrary names since 0019 —
+          so a society with a lift or a swimming pool had no way to say so. */}
+      <CategoryPicker
+        required
+        selected={form.categories}
+        onChange={(categories) => setForm((current) => ({ ...current, categories }))}
+      />
+      {form.categories.length === 0 && (
+        <p className="-mt-3 text-[10px] font-semibold text-rose-500">
+          Select at least one complaint category.
+        </p>
+      )}
+
+      {/* Skills, which this form has never had. A department needs them
+          explicitly: nothing is inherited from the categories above, because
+          the two answer different questions and inheriting one from the other
+          would give every department a list nobody chose. */}
+      <SkillPicker
+        departmentId={departmentId}
+        selected={form.skills}
+        onChange={(skills) => setForm((current) => ({ ...current, skills }))}
+      />
+      <p className="-mt-3 text-[10px] font-semibold text-slate-400">
+        Who this department can hire depends on these. A skill that is not in
+        the list yet is created when you add it — the catalogue is shared by
+        every community.
+      </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Department manager">
@@ -831,87 +913,112 @@ function DepartmentForm({
         </div>
       </Field>
 
+      {/* **Leadership, not staff.** The block this replaces added typed-in
+          technicians with a rank and a job title, and it was the only way onto
+          a roster. Technicians are outside people now — they register, apply or
+          are invited, and a manager decides, all at
+          `/admin/departments/:id/hiring`. Inventing one here would produce a
+          roster row with no account, no skills and nothing that can dispatch to
+          it.
+
+          A manager or supervisor is a different thing and has no registration
+          flow at all: type an email, and that person is admitted the first time
+          they sign in with it. */}
       <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-extrabold text-slate-700">Team members</p>
-            <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
-              {isSecurityDepartment
-                ? 'Each member can sign in through the Community Portal using the phone number entered here.'
-                : 'Add staff who can be assigned to complaints.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onAddStaff}
-            className="flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-[10px] font-bold text-indigo-600 shadow-sm"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add member
-          </button>
+        <div>
+          <p className="text-xs font-extrabold text-slate-700">
+            Manager and supervisors
+          </p>
+          <p className="mt-0.5 text-[10px] font-semibold leading-relaxed text-slate-400">
+            They sign in with the email address entered here — nothing is sent,
+            so a wrong address simply never arrives. Technicians are hired from
+            the department&rsquo;s hiring screen instead.
+          </p>
         </div>
-        {/* Suggestions, not a closed set: `job_title` has no check constraint,
-            so a society with a gardener should not need a migration to hire one. */}
-        <datalist id="hb-job-titles">
-          {JOB_TITLES.map((title) => (
-            <option key={title} value={title} />
-          ))}
-        </datalist>
-        {form.staff.map((member, index) => (
+
+        {form.leaders.length === 0 && (
+          <p className="rounded-xl border border-dashed border-slate-300 px-3 py-4 text-center text-[10px] font-semibold text-slate-400">
+            {isEditing
+              ? 'Leadership already invited is listed on the department card.'
+              : 'No manager yet. A department can be created without one and given one later.'}
+          </p>
+        )}
+
+        {form.leaders.map((leader) => (
           <div
-            key={member.id || `new-staff-${index}`}
-            className="grid gap-2 rounded-xl border border-slate-100 bg-white p-3 sm:grid-cols-[1.2fr_1fr_1fr_1fr_auto]"
+            key={leader.key}
+            className="grid gap-2 rounded-xl border border-slate-100 bg-white p-3 sm:grid-cols-[1fr_1.2fr_1fr_auto_auto]"
           >
             <input
-              value={member.name}
-              onChange={(event) =>
-                setStaffField(index, 'name', event.target.value)
-              }
+              value={leader.name}
+              onChange={(event) => setLeaderField(leader.key, 'name', event.target.value)}
               placeholder="Full name"
               className={inputClass}
             />
             <input
-              required={isSecurityDepartment && Boolean(member.name.trim())}
-              value={member.phone}
-              onChange={(event) =>
-                setStaffField(index, 'phone', event.target.value)
-              }
+              type="email"
+              required={Boolean(leader.name.trim())}
+              value={leader.email}
+              onChange={(event) => setLeaderField(leader.key, 'email', event.target.value)}
+              placeholder="Email for sign-in"
+              className={inputClass}
+            />
+            <input
+              value={leader.phone}
+              onChange={(event) => setLeaderField(leader.key, 'phone', event.target.value)}
               placeholder="Phone"
               className={inputClass}
             />
-            {/* Two controls, because `rank` and `job_title` are two questions.
-                One `STAFF_ROLES` list used to answer both and could answer
-                neither: it mixed Manager and Supervisor (ranks) with Technician
-                and Gate Officer (trades), which is why the three copies of it
-                never agreed. See lib/staffVocabulary.js. */}
             <select
-              value={member.rank || 'member'}
-              onChange={(event) => setStaffField(index, 'rank', event.target.value)}
+              value={leader.rank}
+              onChange={(event) => setLeaderField(leader.key, 'rank', event.target.value)}
               className={inputClass}
             >
-              {STAFF_RANKS.map((entry) => (
-                <option key={entry.value} value={entry.value}>
-                  {entry.label}
-                </option>
-              ))}
+              {/* Two values, and the closed set is the database's:
+                  `staff_invitations_rank_check`. `member` is deliberately not
+                  offered — that rank comes from hiring. */}
+              <option value="manager">Manager</option>
+              <option value="supervisor">Supervisor</option>
             </select>
-            <input
-              value={member.role}
-              list="hb-job-titles"
-              placeholder="Job title"
-              onChange={(event) => setStaffField(index, 'role', event.target.value)}
-              className={inputClass}
-            />
             <button
               type="button"
-              onClick={() => removeStaffMember(index)}
+              onClick={() => removeLeader(leader.key)}
               className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-              aria-label="Remove team member"
+              aria-label={`Remove ${leader.name || 'this person'}`}
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         ))}
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onAddLeader('manager')}
+            className="flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-[10px] font-bold text-indigo-600 shadow-sm"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add manager
+          </button>
+          {/* Optional, and offered as its own button so it reads that way: a
+              department goes through without one. */}
+          <button
+            type="button"
+            onClick={() => onAddLeader('supervisor')}
+            className="flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-[10px] font-bold text-slate-500 shadow-sm"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add supervisor (optional)
+          </button>
+        </div>
       </div>
+
+      {saveError ? (
+        <p
+          role="alert"
+          className="rounded-xl border border-rose-100 bg-rose-50 px-3.5 py-3 text-[10px] font-semibold leading-relaxed text-rose-700"
+        >
+          {saveError}
+        </p>
+      ) : null}
 
       <div className="flex gap-3 pt-1">
         <button
@@ -923,10 +1030,10 @@ function DepartmentForm({
         </button>
         <button
           type="submit"
-          disabled={!form.name.trim() || form.categories.length === 0}
+          disabled={saving || !form.name.trim() || form.categories.length === 0}
           className="flex-1 rounded-xl bg-indigo-600 py-3 text-xs font-bold text-white shadow-md shadow-indigo-100 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
-          {isEditing ? 'Save Changes' : 'Create Department'}
+          {saving ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Department'}
         </button>
       </div>
     </form>

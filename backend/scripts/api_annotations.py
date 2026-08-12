@@ -306,6 +306,26 @@ NO_STORY = {
         " an interviewee describing an unread count is describing a screen, not a"
         " problem. Serves a resident, so Feature rather than Non-functional.",
     ),
+    "department_options": (
+        "Master data",
+        "Id and name of each department, so a destination can be picked from a"
+        " list. It exists because of a control that could not be drawn, not"
+        " because anyone asked for it: GET /departments is admin-only and"
+        " carries roster counts, categories, hours and skills, so the only way"
+        " for a manager or supervisor to name a department was to type a UUID."
+        " Widening that read to serve a dropdown would have been the worse"
+        " trade.",
+    ),
+    "complaint_transfer": (
+        "Feature",
+        "A supervisor telling their manager a complaint belongs to another"
+        " department, and the manager's answer. Entirely inside the staff side of"
+        " the wall: no interviewee described it because no resident ever sees it,"
+        " and the complaint stories are about what happens to *their* complaint,"
+        " not about who ends up holding it. It exists because the routing rule in"
+        " 0050 is a rule and rules are wrong sometimes -- and the alternative to a"
+        " request is a supervisor who can silently empty their own queue.",
+    ),
     "complaint_read_state": (
         "Feature",
         "Clearing the seen marker on one complaint. US-2.6 asks to *track* a"
@@ -383,6 +403,18 @@ NO_STORY = {
         " modest one -- claiming a share of US-2.7 here would make the matrix"
         " say this endpoint notifies a resident about their complaint, and it"
         " does not.",
+    ),
+    "leadership": (
+        "Master data",
+        "Creating the manager who runs a department and the supervisor who"
+        " helps. Upstream of every service story the way hiring is, and one"
+        " step further back: hiring needs somebody to do the hiring. The"
+        " ruling is that leadership has NO registration flow -- an"
+        " administrator types a name and an email and that person is admitted"
+        " on first sign-in -- so unlike the service person's path there is no"
+        " story here to serve, only a precondition to satisfy. Nobody"
+        " interviewed described appointing their own manager, because in every"
+        " society interviewed the manager was already there.",
     ),
     "departure": (
         "Feature",
@@ -1387,28 +1419,6 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
-    ("put", "/api/v1/departments/{department_id}/staff"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[("US-2.9", "Replaces the roster wholesale")],
-    ),
-    ("post", "/api/v1/departments/{department_id}/staff"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[
-            (
-                "US-2.9",
-                "Adds one person; membership_id stays null because staff have no "
-                "login"
-            ),
-        ],
-    ),
-    ("patch", "/api/v1/departments/{department_id}/staff/{staff_id}"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[("US-2.9", "Corrects a roster entry's role or contact details")],
-    ),
-    ("delete", "/api/v1/departments/{department_id}/staff/{staff_id}"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[("US-2.9", "Removes a person from the roster")],
-    ),
     # -- money -------------------------------------------------------------
     ("get", "/api/v1/billing-settings"): op(
         errors=["401", "403", "404", "500"],
@@ -1595,6 +1605,46 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         errors=["401", "500"],
         no_story=NO_STORY["skill_catalogue"],
     ),
+    # -- authoring the catalogue (0048) -------------------------------------
+    # The five below are admin-or-manager guarded, so all of them can 403 on the
+    # membership check as well as on the CSRF pair. The four department-scoped
+    # ones can 403 a second way, from `can_manage_department` inside the RPC --
+    # which is the one that matters, because the router guard only asks whether
+    # the caller manages *something*.
+    ("post", "/api/v1/skills"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["skill_catalogue"],
+    ),
+    # No 404 and no 422: the RPC resolves the community from the caller's own
+    # membership, so there is no id in the request to be wrong about.
+    ("get", "/api/v1/complaint-categories"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.9",
+                "The vocabulary the directory's departments are described in,"
+                " and which of it reaches nobody",
+            )
+        ],
+    ),
+    ("get", "/api/v1/departments/{department_id}/skills"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["skill_catalogue"],
+    ),
+    ("put", "/api/v1/departments/{department_id}/skills"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["skill_catalogue"],
+    ),
+    ("post", "/api/v1/departments/{department_id}/skills"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["skill_catalogue"],
+    ),
+    # No 404 on the delete: detaching a skill the department does not have is a
+    # no-op, because the caller's intent is already satisfied.
+    ("delete", "/api/v1/departments/{department_id}/skills/{skill_id}"): op(
+        errors=["401", "403", "422", "500"],
+        no_story=NO_STORY["skill_catalogue"],
+    ),
     ("post", "/api/v1/service-providers"): op(
         errors=["401", "403", "422", "500"],
         no_story=NO_STORY["service_provider"],
@@ -1617,6 +1667,14 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
     ("patch", "/api/v1/service-providers/me/availability"): op(
         errors=["401", "403", "404", "422", "500"],
         no_story=NO_STORY["service_provider"],
+    ),
+    # The one read on that router about somebody other than the caller, and so
+    # the one with a `403`: it carries `require_admin_or_manager` while its
+    # neighbours are identity-only. Story-mapped to hiring rather than to
+    # `service_provider`, because it exists for the person doing the hiring.
+    ("get", "/api/v1/service-providers/{provider_id}"): op(
+        errors=["401", "403", "404", "422", "500"],
+        no_story=NO_STORY["hiring"],
     ),
     ("post", "/api/v1/telemetry/service-signup"): op(
         errors=["403", "422", "500"],
@@ -1705,6 +1763,96 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
     # already decided. (Until 2026-08-10 an approval with items outstanding
     # was the fourth; that refusal is overturned -- approval now releases.)
     # None of them is a 422 -- nothing the caller sent was wrong.
+    # -- leadership provisioning (0049) -------------------------------------
+    # No 409 on the list or the delete-by-a-different-name; the POST carries one
+    # because an address that already belongs to the community cannot be
+    # claimed, and the DELETE carries one because a claimed invitation is a
+    # person who has started work -- removing them is a departure, not a
+    # withdrawal.
+    # Complaint department routing (0050). The reads and the allot are pinned to
+    # US-2.8 because the story is accountability, and a complaint that belongs to
+    # no department is precisely a complaint nobody is accountable for.
+    ("get", "/api/v1/department-options"): op(
+        errors=["401", "403", "500"],
+        no_story=NO_STORY["department_options"],
+    ),
+    ("get", "/api/v1/unassigned-complaints"): op(
+        errors=["401", "403", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "The queue of complaints no category and no resident guess could "
+                "route. Before this they were owned by nobody and looked "
+                "identical to the ones that were"
+            ),
+        ],
+    ),
+    ("patch", "/api/v1/complaints/{complaint_id}/department"): op(
+        errors=["401", "403", "404", "422", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "Puts a name on who is answerable for a complaint, and lets that "
+                "be corrected when the routing rule gets it wrong"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/department-requests"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["complaint_transfer"],
+    ),
+    (
+        "patch",
+        "/api/v1/complaints/{complaint_id}/department-requests/{request_id}",
+    ): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["complaint_transfer"],
+    ),
+    ("get", "/api/v1/departments/{department_id}/complaints"): op(
+        errors=["401", "403", "404", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "The department's own queue, which is where the status a resident "
+                "tracks is actually moved"
+            ),
+            (
+                "US-2.8",
+                "One department holds it and can see everything it holds, so "
+                "'who is dealing with this' has an answer that is not a person's "
+                "memory"
+            ),
+        ],
+    ),
+    (
+        "get",
+        "/api/v1/departments/{department_id}/complaint-department-requests",
+    ): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["complaint_transfer"],
+    ),
+    ("get", "/api/v1/departments/{department_id}/staff-invitations"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["leadership"],
+    ),
+    ("post", "/api/v1/departments/{department_id}/staff-invitations"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["leadership"],
+    ),
+    (
+        "patch",
+        "/api/v1/departments/{department_id}/staff-invitations/{invitation_id}",
+    ): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["leadership"],
+    ),
+    (
+        "delete",
+        "/api/v1/departments/{department_id}/staff-invitations/{invitation_id}",
+    ): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["leadership"],
+    ),
     ("get", "/api/v1/departments/{department_id}/departures"): op(
         errors=["401", "403", "500"],
         no_story=NO_STORY["departure"],

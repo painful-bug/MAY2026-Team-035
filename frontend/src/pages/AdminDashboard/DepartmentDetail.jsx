@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Building2,
   CheckCircle2,
+  ClipboardList,
   Clock3,
   Filter,
   MapPin,
@@ -16,7 +17,11 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
+import { hiringApi } from '../../features/hiring/hiringApi';
+import { departmentsApi } from '../../features/departments/departmentsApi';
+import PendingInvitations from '../../features/departments/components/PendingInvitations';
 
 const STATUS_STYLES = {
   Pending: 'border-amber-100 bg-amber-50 text-amber-700',
@@ -172,6 +177,37 @@ export default function DepartmentDetail() {
     };
   }, [selectedComplaint]);
 
+  // **The roster comes from the API, not from the snapshot.**
+  //
+  // This screen used to read `department.staff`, and that list has been empty
+  // the whole time: `GET /dashboard/snapshot` builds every department as
+  // `{ staff: [], categories: [] }` (dashboard_service.py:203), so the
+  // "assign technician" control has been offering a choice of nobody. It was
+  // invisible because the typed-in staff the department form used to collect
+  // were written optimistically into the same local array, so the demo looked
+  // right until a reload.
+  //
+  // Those typed-in names are gone — technicians are hired now — so the list has
+  // to be the real one. `hiringApi.department` reads it from the departments
+  // list endpoint, which carries `staff[]` for real, including
+  // `serviceProviderId` since 0042.
+  const rosterQuery = useQuery({
+    queryKey: ['departments', departmentId, 'roster'],
+    queryFn: () => hiringApi.department(departmentId),
+    enabled: Boolean(departmentId),
+  });
+  const roster = useMemo(
+    () => (rosterQuery.data?.staff ?? []).filter((member) => member.status !== 'inactive'),
+    [rosterQuery.data]
+  );
+
+  const invitationsQuery = useQuery({
+    queryKey: ['departments', departmentId, 'staff-invitations'],
+    queryFn: () => departmentsApi.staffInvitations(departmentId, { status: 'pending' }),
+    enabled: Boolean(departmentId),
+  });
+  const pendingLeaders = invitationsQuery.data ?? [];
+
   if (!department) {
     return <Navigate to="/admin/departments" replace />;
   }
@@ -198,9 +234,7 @@ export default function DepartmentDetail() {
   // because five other demo screens render `complaint.assignee` directly, and
   // renaming a field across all of them buys a demo nothing.
   const assignTechnician = (complaint, staffId) => {
-    const staffMember = (department.staff ?? []).find(
-      (member) => member.id === staffId
-    );
+    const staffMember = roster.find((member) => member.id === staffId);
     if (!staffMember) {
       updateComplaint(complaint.id, {
         assigneeStaffId: '',
@@ -283,13 +317,28 @@ export default function DepartmentDetail() {
               {/* The one door from the demo half into the live one. Everything
                   on this page is zustand; everything behind that link is the
                   real API. */}
-              <Link
-                to={`/admin/departments/${department.id}/hiring`}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Hire service partners
-              </Link>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  to={`/admin/departments/${department.id}/hiring`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Hire service partners
+                </Link>
+                {/* The second door into the live half. Assignment on this page
+                    is still the demo's optimistic local field — whether it
+                    should become a work order is the open fork in
+                    `COMPLAINT_ENGINE_HANDOFF.md` §8, and this link deliberately
+                    does not answer it. It goes to where work orders are their
+                    own resource. */}
+                <Link
+                  to={`/admin/departments/${department.id}/work-orders`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  Work orders
+                </Link>
+              </div>
             </div>
           </div>
           <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs shadow-sm">
@@ -398,7 +447,7 @@ export default function DepartmentDetail() {
                   <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-[1.2fr_0.8fr_auto]">
                     <label className="space-y-1">
                       <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                        Assign technician
+                        Assign to staff
                       </span>
                       <select
                         value={getAssignedStaffId(complaint)}
@@ -408,9 +457,10 @@ export default function DepartmentDetail() {
                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-600 focus:border-indigo-500 focus:outline-none"
                       >
                         <option value="">Unassigned</option>
-                        {(department.staff ?? []).map((member) => (
+                        {roster.map((member) => (
                           <option key={member.id} value={member.id}>
-                            {member.name} · {member.role}
+                            {member.name}
+                            {member.role ? ` · ${member.role}` : ''}
                           </option>
                         ))}
                       </select>
@@ -461,19 +511,43 @@ export default function DepartmentDetail() {
         </section>
 
         <aside className="h-fit space-y-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          {/* **Leadership who have not signed in yet.**
+              Nothing is emailed when a manager is created — the address is the
+              matching key, not a delivery address — so a typo produces no
+              bounce and no error, only a row that waits forever. This panel is
+              the only place anyone ever finds out, and since 2026-08-12 it is
+              also where the address gets corrected. Same component as the
+              manager's Team screen: one fix, not two that drift. */}
+          <PendingInvitations
+            departmentId={departmentId}
+            invitations={pendingLeaders}
+          />
+
           <div>
             <h2 className="text-sm font-extrabold text-slate-800">Department team</h2>
             <p className="mt-1 text-[10px] font-semibold text-slate-400">
-              Available for complaint assignment.
+              Hired into this department. Available for complaint assignment.
             </p>
           </div>
-          {(department.staff ?? []).length === 0 ? (
-            <p className="rounded-xl bg-slate-50 p-4 text-xs font-semibold text-slate-400">
-              No technicians have been added.
-            </p>
+          {roster.length === 0 ? (
+            <div className="rounded-xl bg-slate-50 p-4 text-xs font-semibold text-slate-400">
+              {rosterQuery.isLoading ? (
+                'Loading the roster…'
+              ) : (
+                <>
+                  No one has been hired into this department yet.{' '}
+                  <Link
+                    to={`/admin/departments/${departmentId}/hiring`}
+                    className="font-bold text-indigo-600 hover:underline"
+                  >
+                    Find people
+                  </Link>
+                </>
+              )}
+            </div>
           ) : (
             <div className="space-y-2">
-              {department.staff.map((member) => {
+              {roster.map((member) => {
                 // The second of the two string comparisons B2 named. A prefix
                 // match credits "Ravi Kumar" with "Ravi Kumaran"'s complaints.
                 const assignmentCount = departmentComplaints.filter(

@@ -11,6 +11,8 @@ import {
   ScanLine,
   ShieldAlert,
   ShieldCheck,
+  UserPlus,
+  Wrench,
   X,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
@@ -35,9 +37,61 @@ export default function SecurityLayout() {
         { name: 'Registers', path: `${basePath}/registers`, icon: ClipboardList },
         { name: 'Incidents', path: `${basePath}/incidents`, icon: ShieldAlert },
         { name: 'Exports', path: `${basePath}/exports`, icon: Download },
-        // No "Manage Staff" entry: hiring, ranks and departures live in the
-        // admin portal's department screens, which are the real roster. The
-        // demo's local staff array here was a second, disagreeing copy.
+        // Hiring, added 2026-08-11. The comment that stood here said staffing
+        // "lives in the admin portal's department screens" — which was true and
+        // was the bug: a security department's manager holds
+        // `membership_role = 'manager'`, passes `require_admin_or_manager` and
+        // `can_manage_department`, and had no screen for either. Same gap as
+        // the plumbing manager's, one role along (`docs/potential issues/14`).
+        //
+        // **Gated on `accessRole`, not on `role`.** Two different people reach
+        // this portal: the department's manager, and a senior guard —
+        // `membership_role = 'security'` with a manager-or-supervisor roster
+        // rank, whom `_portal_for` routes here so their gate permissions have
+        // screens. `role` is `SecurityManager` for both, so it cannot tell them
+        // apart; `accessRole` is the membership role.
+        //
+        // **Both are admitted now, and until 2026-08-12 only the first was.**
+        // `can_hire_for_department` counts *either* a `manager` membership on
+        // the department *or* an active `staff_assignments` row of rank
+        // `manager` — and a security department's roster manager holds
+        // `membership_role = 'security'`, so the old gate hid the tab from
+        // somebody who has the permission. That is `docs/potential issues/14`
+        // exactly, recreated by a change to the predicate.
+        //
+        // Which leaves the *supervisor*, who reaches the screen and may not
+        // hire. That is deliberate rather than sloppy: the screen asks
+        // `can_hire_for_department` for this department and says who does, so
+        // the cost of showing it is one click and an explanation. The cost of
+        // hiding it is a permission with nowhere to spend it, which is the
+        // more expensive mistake and the one this file has made before.
+        ...(['MANAGER', 'SECURITY'].includes(currentUser?.accessRole) && currentUser?.departmentId
+          ? [{
+            name: 'Hiring',
+            path: `${basePath}/departments/${currentUser.departmentId}/hiring`,
+            icon: UserPlus,
+          }]
+          : []),
+        // Work orders, added 2026-08-12. **The same gate as Hiring above, on
+        // purpose** — same two people reach this portal, and `accessRole` is
+        // still the only thing that tells the department's manager from the
+        // senior guard.
+        //
+        // The one difference is that the paragraph above about admitting
+        // somebody who may look and not act does not apply here. Hiring is
+        // `can_hire_for_department`, which a supervisor fails; every one of the
+        // eight work-order RPCs checks `can_supervise_department`, which a
+        // supervisor *passes*. So this entry is not a permission with an
+        // explanation attached — it is the screen for a permission all three of
+        // these people already hold, and which none of them had a way to spend
+        // until now.
+        ...(['MANAGER', 'SECURITY'].includes(currentUser?.accessRole) && currentUser?.departmentId
+          ? [{
+            name: 'Work orders',
+            path: `${basePath}/departments/${currentUser.departmentId}/work-orders`,
+            icon: Wrench,
+          }]
+          : []),
         { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },
       ]
     : [

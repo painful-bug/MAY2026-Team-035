@@ -37,6 +37,13 @@ _CUSTOM = {
     "HB409": (ConflictError, "conflict"),
     "HBLOC": (ValidationError, "provider_location_required"),
     "HBUSE": (ConflictError, "pass_already_used"),
+    # The separate-account rule, refused from the membership side
+    # (`20260812113000_professional_membership_symmetry.sql`). A 409 like
+    # `HB409`, because it is the same answer as the registration-time refusal it
+    # mirrors -- but its own code, because "this account is the wrong kind of
+    # account" and "you already belong here" are two different things to tell a
+    # user, and an HTTP status cannot tell them apart.
+    "HBSEP": (ConflictError, "professional_account_separate"),
 }
 
 # Postgres classes worth distinguishing from a generic failure.
@@ -80,6 +87,31 @@ def _extract_code(exc: Exception) -> str | None:
         if isinstance(value, dict) and isinstance(value.get("code"), str):
             return value["code"]
     return None
+
+
+def custom_error(exc: Exception) -> AppError | None:
+    """The caller-facing error *our own* functions raised, or ``None``.
+
+    For call sites that already have a good generic answer for "the database
+    refused this" and only need our own refusals -- the ones whose message was
+    written for the caller -- to pass through it rather than be flattened into
+    it. ``access_request_service.approve`` is the case: every failure there was
+    reported as "this access request cannot be approved", which is true of a
+    request somebody else already decided and misleading about an applicant the
+    separate-account rule refuses.
+
+    Returns ``None`` for a standard SQLSTATE, for an unknown code, and for one
+    of ours that arrived without a message, so a caller can always fall back.
+    """
+    code = _extract_code(exc)
+    mapping = _CUSTOM.get(code or "")
+    if mapping is None:
+        return None
+    message = getattr(exc, "message", None)
+    if not isinstance(message, str) or not message.strip():
+        return None
+    error_class, error_code = mapping
+    return error_class(message, code=error_code)
 
 
 def translate(exc: Exception, *, default_message: str) -> AppError:

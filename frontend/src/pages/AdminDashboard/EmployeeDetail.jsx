@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { hiringApi } from '../../features/hiring/hiringApi';
+import { usePortalScope } from '../../features/hiring/usePortalScope';
 import { openChatDock } from '../../features/messages/messagesApi';
 import { rankLabel } from '../../lib/staffVocabulary';
 import { useAuthStore } from '../../store/authStore';
@@ -168,7 +169,12 @@ function ApproveModal({ departure, busy, onApprove, onClose }) {
 }
 
 export default function EmployeeDetail() {
-  const { departmentId, staffId } = useParams();
+  // `staffId` still comes from the URL; the department and the portal base come
+  // from `usePortalScope`, because this page is mounted under /admin, /manager
+  // and /security-manager and the one link out of it has to lead back into
+  // whichever of them the reader is in.
+  const { staffId } = useParams();
+  const { base: basePath, departmentId } = usePortalScope();
   const queryClient = useQueryClient();
   const communityId = useAuthStore(
     (state) => state.sessionContext?.membership?.community_id
@@ -244,7 +250,7 @@ export default function EmployeeDetail() {
     <div className="space-y-6">
       <div>
         <Link
-          to={`/admin/departments/${departmentId}/hiring?tab=roster`}
+          to={`${basePath}/departments/${departmentId}/hiring?tab=roster`}
           className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-indigo-600"
         >
           <ArrowLeft className="h-4 w-4" />Back to the roster
