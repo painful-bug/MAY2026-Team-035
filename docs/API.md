@@ -517,6 +517,21 @@ The heading is kept so the section numbering below does not shift; renumbering w
 reference into §7–§17 for no gain. It has since acquired a second job: §5.1–§5.3 are the three delivery
 layers of one design, and keeping them together is worth more than a heading that names only one of them.
 
+**`GET /dashboard/snapshot` → `weeklyNew`** — the one snapshot field documented here rather than in the
+inherited contract, because it was added by this workstream. The dashboard's trend chips ("+2 this week")
+were hardcoded in the frontend; the snapshot now carries the real numbers:
+
+```json
+"weeklyNew": { "residents": 2, "complaints": 1, "visitorRequests": 0, "bookings": 3 }
+```
+
+Each key is the count of rows **created in the trailing 7 days** (`created_at >= now() - 7 days`, UTC):
+`residents` counts active resident memberships started in the window, `complaints` complaints raised,
+`visitorRequests` visitor requests created, and `bookings` amenity bookings created. Integer values, always
+present, `0` when none. They are computed as head-only Postgres count queries
+(`dashboard_repository.weekly_new_counts`), never by tallying the capped lists elsewhere in the same
+response — so the chips stay honest even when a list is truncated at its row limit.
+
 ### 5.1 Live updates — `GET /events`
 
 One stream for every portal. It is how every write in §7–§12 reaches an open screen without a matching read

@@ -77,7 +77,11 @@ def list_complaints(client: Client, community_id: str, *, legacy: bool) -> list[
 
 def list_visitors(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
     if legacy:
-        columns = "id,visitor_name,visitor_phone_e164,purpose,status,requested_by_membership_id,unit_id,expected_from,expected_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events(event_type,note,occurred_at)"
+        # The legacy event log was renamed to `legacy_visitor_events` when
+        # `0032_visitor_passes.sql` claimed the `visitor_events` name for the
+        # baseline table. The new `visitor_events` has no FK to
+        # `visitor_access_requests`, so embedding it here is PGRST200.
+        columns = "id,visitor_name,visitor_phone_e164,purpose,status,requested_by_membership_id,unit_id,expected_from,expected_until,checked_in_at,checked_out_at,created_at,updated_at,legacy_visitor_events(event_type,note,occurred_at)"
         table = "visitor_access_requests"
     else:
         columns = "id,visitor_name,visitor_phone_e164,status,requested_by_membership_id,valid_from,valid_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events(event_type,created_at)"
@@ -104,15 +108,18 @@ def list_amenities(client: Client, community_id: str, *, legacy: bool) -> list[d
 
 def list_bookings(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
     if legacy:
+        # `0023_amenities_on_baseline.sql` renamed the legacy series tables to
+        # `legacy_amenity_booking_series` / `legacy_amenity_booking_occurrences`
+        # when it claimed the booking namespace for `amenity_bookings`.
         series = (
-            client.table("amenity_booking_series")
+            client.table("legacy_amenity_booking_series")
             .select("id,amenity_id,booked_by_membership_id,status")
             .eq("community_id", community_id).execute().data
             or []
         )
         series_by_id = {row["id"]: row for row in series}
         rows = (
-            client.table("amenity_booking_occurrences")
+            client.table("legacy_amenity_booking_occurrences")
             .select("id,booking_series_id,amenity_id,starts_at,ends_at,status,cancellation_reason,created_at,updated_at")
             .order("starts_at", desc=True).limit(500).execute().data
             or []
@@ -128,6 +135,46 @@ def list_bookings(client: Client, community_id: str, *, legacy: bool) -> list[di
         .execute().data
         or []
     )
+
+
+def weekly_new_counts(
+    client: Client, community_id: str, *, legacy: bool, since_iso: str
+) -> dict[str, int]:
+    """Rows created since `since_iso`, one integer per dashboard trend chip.
+
+    Four head-only counts (`count="exact", head=True`): PostgREST returns the
+    `Content-Range` total and no rows, so this costs four index scans rather
+    than four page fetches. Keys are the wire names `DashboardSnapshot.weeklyNew`
+    promises the frontend.
+    """
+
+    def _count(table: str, extra: dict[str, str] | None = None) -> int:
+        query = (
+            client.table(table)
+            .select("id", count="exact", head=True)
+            .eq("community_id", community_id)
+            .gte("created_at", since_iso)
+        )
+        for column, value in (extra or {}).items():
+            query = query.eq(column, value)
+        return int(query.execute().count or 0)
+
+    return {
+        # Memberships are soft-ended, so "started in the window" is a row
+        # created in the window that is still an active resident membership.
+        "residents": _count(
+            "community_memberships", {"role": "resident", "status": "active"}
+        ),
+        "complaints": _count("complaints"),
+        "visitorRequests": _count(
+            "visitor_access_requests" if legacy else "visitor_requests"
+        ),
+        # One legacy series row is one booking request (the occurrences hang
+        # off it and carry no community_id of their own).
+        "bookings": _count(
+            "legacy_amenity_booking_series" if legacy else "amenity_bookings"
+        ),
+    }
 
 
 def list_invoices(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:

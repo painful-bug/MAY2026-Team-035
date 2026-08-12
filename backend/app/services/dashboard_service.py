@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.exceptions import NotFoundError
@@ -106,7 +106,11 @@ def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, l
             "date": _iso_date(starts_at or row.get("created_at")), "expectedDate": _iso_date(starts_at),
             "expectedTime": _time(starts_at), "eta": _time(starts_at), "validUntil": ends_at,
             "checkedInAt": row.get("checked_in_at"), "checkedOutAt": row.get("checked_out_at"),
-            "createdAt": row.get("created_at"), "events": row.get("visitor_events") or [],
+            # The legacy embed key follows the hosted table name: `0032` renamed
+            # the old event log to `legacy_visitor_events` when the baseline
+            # claimed `visitor_events` for `visitor_requests`.
+            "createdAt": row.get("created_at"),
+            "events": (row.get("legacy_visitor_events") if legacy else row.get("visitor_events")) or [],
         })
     return result
 
@@ -209,12 +213,20 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
         if membership.role == "admin"
         else []
     )
+    # The trend chips: rows created in the trailing 7 days, counted in Postgres
+    # (head-only count queries), never derived from the capped lists above.
+    weekly_new = dashboard_repository.weekly_new_counts(
+        client,
+        membership.community_id,
+        legacy=legacy,
+        since_iso=(datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
+    )
     if membership.role == "resident":
         current_profile_id = users_by_membership.get(membership.id, {}).get("id")
         complaints = [row for row in complaints if row.get("userId") == current_profile_id]
         visitors = [row for row in visitors if row.get("userId") == current_profile_id]
         payments = [row for row in payments if row.get("isMine")]
-    return DashboardSnapshot(users=users, complaints=complaints, visitors=visitors, amenities=amenities, bookings=bookings, payments=payments, notices=notices, departments=departments, activities=activities, pendingRequests=pending_requests)
+    return DashboardSnapshot(users=users, complaints=complaints, visitors=visitors, amenities=amenities, bookings=bookings, payments=payments, notices=notices, departments=departments, activities=activities, pendingRequests=pending_requests, weeklyNew=weekly_new)
 
 
 def save_amenity(

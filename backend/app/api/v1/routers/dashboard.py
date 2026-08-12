@@ -18,7 +18,14 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 async def get_dashboard_snapshot(
     membership: MembershipContext = Depends(get_active_membership),
 ) -> DashboardSnapshot:
-    """Return the caller's current, tenant-authorized dashboard records."""
+    """Return the caller's current, tenant-authorized dashboard records.
+
+    `weeklyNew` carries the dashboard's trend counts: rows created in the
+    trailing 7 days for `residents` (active resident memberships started in
+    the window), `complaints`, `visitorRequests` and `bookings`. Integer
+    values, always present, `0` when none -- computed as head-only count
+    queries, never derived from the capped lists in the same response.
+    """
     return await run_in_threadpool(dashboard_service.snapshot, membership)
 
 

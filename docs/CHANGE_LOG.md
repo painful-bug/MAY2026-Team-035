@@ -17,7 +17,47 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-12 — Session 72: the seven migrations landed, and the complaints engine got its map
+## 2026-08-12 — Session 73: the snapshot 500, and the trend chips get real numbers
+
+### docs/API.md §5 — `GET /dashboard/snapshot` gains `weeklyNew`
+
+`DERIVED` (the fix for the live snapshot 500 shipped alongside the field the dashboard chips
+needed). The hosted project is a legacy database with every repository migration applied on top,
+so `0032` renamed its visitor event log to `legacy_visitor_events` and `0023` renamed its booking
+series tables to `legacy_amenity_booking_*` — but `dashboard_repository.py`'s legacy branch still
+read the old names, and PostgREST's PGRST200 on the `visitor_events` embed 500'd the whole
+snapshot. The projections now read the renamed tables. While there, the snapshot response gained a
+top-level `weeklyNew` object — `{residents, complaints, visitorRequests, bookings}`, integer
+counts of rows created in the trailing 7 days, always present, `0` when none, computed as
+head-only count queries — replacing the frontend's hardcoded "+2 this week" chips. Documented in
+§5 because the rest of the snapshot's contract predates this workstream.
+
+### docs/openapi.yaml, docs/api_yaml_mapper.md — regenerated
+
+`DERIVED`. The spec picked up `WeeklyNewCounts` and the snapshot description; the mapper re-run
+re-resolved handler line numbers in `dashboard.py` and the `API.md` line references that moved
+below the new §5 block.
+
+### Frontend shell — a portal error boundary, and the header chip tells the truth
+
+`PO` (the owner's first live admin walk surfaced all four defects; the fixes are `DERIVED`).
+Three shell-level decisions worth recording beyond the bug fixes themselves:
+
+- **Every portal layout now wraps its `<Outlet />` in `PortalErrorBoundary`**
+  (`components/common/PortalErrorBoundary.jsx`). The trigger was a missing `useQuery` import in
+  `Departments.jsx` unmounting the entire app to a blank page; the boundary contains any future
+  render crash to a "Something went wrong here" panel with a retry, self-resetting on navigation.
+  Five layouts, five one-line wraps — they share no common shell to mount it once.
+- **The header residency chip reads the snapshot's `users` projection, not the session.**
+  `currentUser.flat`/`tower` were hard-coded `'—'` placeholders in `applicationUser()` and never
+  real; the chip now finds the signed-in member's own row (unit_residencies → units → buildings)
+  and **hides entirely when there is no unit** — an admin with no residency gets no chip, not
+  dashes. The `'—'` placeholders stay on `applicationUser()` because two demo-era slices still
+  stringify them; nothing user-facing reads them any more.
+- **Trend chips render only from `weeklyNew`.** The hardcoded "+2 this week" strings are gone;
+  a chip renders `+N this week` only for a finite count > 0, so a missing field, a zero, or a
+  down snapshot all render nothing rather than an invented number. The landing page's fake
+  "12 new this month" stays — it is inside the marketing illustration, not a data surface.
 
 ### The hosted database caught up with the repository
 

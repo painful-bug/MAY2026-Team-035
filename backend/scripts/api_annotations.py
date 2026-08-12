@@ -971,6 +971,8 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
     # -- dashboard ---------------------------------------------------------
     ("get", "/api/v1/dashboard/snapshot"): op(
         errors=["401", "403", "500"],
+        # `weeklyNew` is documented in the route docstring, which is what the
+        # exporter emits; a description here would be ignored beside it.
         stories=[
             (
                 "US-1.3",

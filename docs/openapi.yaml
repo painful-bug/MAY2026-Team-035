@@ -2957,6 +2957,8 @@ components:
             type: object
           title: Visitors
           type: array
+        weeklyNew:
+          $ref: '#/components/schemas/WeeklyNewCounts'
       title: DashboardSnapshot
       type: object
     DecideApplicationRequest:
@@ -9686,6 +9688,34 @@ components:
       - arrivedAt
       title: WaterTankerLog
       type: object
+    WeeklyNewCounts:
+      description: 'Rows created in the trailing 7 days -- the dashboard''s trend chips.
+
+
+        Integer counts, always present, `0` when nothing was created. Computed by
+
+        `dashboard_repository.weekly_new_counts` as head-only count queries, so the
+
+        values are whole-community truth rather than a tally of the capped lists.'
+      properties:
+        bookings:
+          default: 0
+          title: Bookings
+          type: integer
+        complaints:
+          default: 0
+          title: Complaints
+          type: integer
+        residents:
+          default: 0
+          title: Residents
+          type: integer
+        visitorRequests:
+          default: 0
+          title: Visitorrequests
+          type: integer
+      title: WeeklyNewCounts
+      type: object
     WorkOrder:
       description: A scheduled piece of work against a complaint.
       properties:
@@ -14490,7 +14520,18 @@ paths:
         title: Real-time sync across modules
   /api/v1/dashboard/snapshot:
     get:
-      description: Return the caller's current, tenant-authorized dashboard records.
+      description: 'Return the caller''s current, tenant-authorized dashboard records.
+
+
+        `weeklyNew` carries the dashboard''s trend counts: rows created in the
+
+        trailing 7 days for `residents` (active resident memberships started in
+
+        the window), `complaints`, `visitorRequests` and `bookings`. Integer
+
+        values, always present, `0` when none -- computed as head-only count
+
+        queries, never derived from the capped lists in the same response.'
       operationId: get_dashboard_snapshot_api_v1_dashboard_snapshot_get
       responses:
         '200':
