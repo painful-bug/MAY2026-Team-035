@@ -42,7 +42,9 @@ def test_google_and_email_password_are_supported_configured_methods() -> None:
     assert settings.enabled_auth_methods == ["google", "email_password"]
 
 
-@pytest.mark.parametrize("establisher", ["establish_session", "establish_recovery_session"])
+@pytest.mark.parametrize(
+    "establisher", ["establish_session", "establish_recovery_session"]
+)
 def test_establishing_a_session_clears_the_preauth_csrf_cookie(
     monkeypatch: pytest.MonkeyPatch, establisher: str
 ) -> None:
@@ -51,7 +53,10 @@ def test_establishing_a_session_clears_the_preauth_csrf_cookie(
     monkeypatch.setattr(web_session, "get_settings", lambda: _settings())
     response = Response()
     getattr(web_session, establisher)(
-        response, access_token="access-token", refresh_token="refresh-token", expires_in=60
+        response,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_in=60,
     )
 
     assert any(
