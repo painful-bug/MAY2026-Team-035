@@ -216,17 +216,6 @@ class UpdateDepartmentRequest(CamelModel):
     staff: list[StaffMemberInput] | None = None
 
 
-class ReplaceStaffRequest(CamelModel):
-    """The whole roster, as the department form submits it.
-
-    Members not listed are deactivated rather than deleted (A7) -- a complaint's
-    ``assignee`` records staff by name, so a deleted row turns a past assignment
-    into an unexplained string.
-    """
-
-    staff: list[StaffMemberInput] = Field(default_factory=list)
-
-
 class SetDepartmentSkillsRequest(CamelModel):
     """The department's whole skill set, as the form submits it.
 
@@ -249,15 +238,5 @@ class AddDepartmentSkillRequest(CamelModel):
     """
 
     name: str = Field(min_length=1, max_length=80)
-
-
-class UpdateStaffMemberRequest(CamelModel):
-    """Patch one roster entry."""
-
-    name: str | None = Field(None, min_length=1, max_length=120)
-    phone: str | None = Field(None, max_length=32)
-    role: str | None = Field(None, max_length=60)
-    shift: str | None = Field(None, description="Day | Evening | Night")
-    status: str | None = Field(None, description="active | inactive")
 
 

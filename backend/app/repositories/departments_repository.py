@@ -128,22 +128,6 @@ def list_staff(
     return response.data or []
 
 
-def get_staff_member(client: Client, community_id: str, staff_id: str) -> dict:
-    """Fetch one roster entry, or raise."""
-    response = (
-        client.table(_STAFF)
-        .select(_STAFF_SELECT)
-        .eq("community_id", community_id)
-        .eq("id", staff_id)
-        .limit(1)
-        .execute()
-    )
-    rows = response.data or []
-    if not rows:
-        raise NotFoundError("Staff member not found.")
-    return rows[0]
-
-
 def create_department(client: Client, community_id: str, payload: dict) -> str:
     """Create a department, its category claims, its roster and its head (RPC)."""
     try:
@@ -188,49 +172,6 @@ def delete_department(client: Client, department_id: str) -> None:
         ) from exc
 
 
-def insert_staff_member(
-    client: Client, community_id: str, department_id: str, fields: dict
-) -> str:
-    """Add one person to a roster.
-
-    A plain insert rather than an RPC, unlike everything else that writes here:
-    it touches one table, so there is no partial state to protect against. The
-    composite FK ``(department_id, community_id) -> departments`` still makes a
-    cross-tenant row impossible, and RLS still requires an admin of that
-    community.
-    """
-    row = {**fields, "community_id": community_id, "department_id": department_id}
-    try:
-        response = client.table("staff_assignments").insert(row).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(exc, default_message="Could not add the staff member.") from exc
-
-    rows = response.data or []
-    if not rows:
-        raise NotFoundError("Staff member was not created.")
-    return rows[0]["id"]
-
-
-def update_staff_member(
-    client: Client, community_id: str, staff_id: str, fields: dict
-) -> None:
-    """Patch one roster entry. No-op when ``fields`` is empty."""
-    if not fields:
-        return
-    try:
-        (
-            client.table("staff_assignments")
-            .update(fields)
-            .eq("id", staff_id)
-            .eq("community_id", community_id)
-            .execute()
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise translate(
-            exc, default_message="Could not update the staff member."
-        ) from exc
-
-
 def can_hire(client: Client, department_id: str) -> bool:
     """Ask ``can_hire_for_department`` the question the hiring RPCs ask.
 
@@ -251,13 +192,3 @@ def can_hire(client: Client, department_id: str) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return bool(response.data)
-
-
-def remove_staff_member(client: Client, staff_id: str) -> None:
-    """Take a member off the active roster (RPC). Deactivation, not deletion (A7)."""
-    try:
-        client.rpc("remove_department_staff", {"p_staff_id": staff_id}).execute()
-    except Exception as exc:  # noqa: BLE001
-        raise translate(
-            exc, default_message="Could not remove the staff member."
-        ) from exc

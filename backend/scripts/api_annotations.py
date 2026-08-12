@@ -1419,28 +1419,6 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
-    ("put", "/api/v1/departments/{department_id}/staff"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[("US-2.9", "Replaces the roster wholesale")],
-    ),
-    ("post", "/api/v1/departments/{department_id}/staff"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[
-            (
-                "US-2.9",
-                "Adds one person; membership_id stays null because staff have no "
-                "login"
-            ),
-        ],
-    ),
-    ("patch", "/api/v1/departments/{department_id}/staff/{staff_id}"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[("US-2.9", "Corrects a roster entry's role or contact details")],
-    ),
-    ("delete", "/api/v1/departments/{department_id}/staff/{staff_id}"): op(
-        errors=["401", "403", "404", "422", "500"],
-        stories=[("US-2.9", "Removes a person from the roster")],
-    ),
     # -- money -------------------------------------------------------------
     ("get", "/api/v1/billing-settings"): op(
         errors=["401", "403", "404", "500"],

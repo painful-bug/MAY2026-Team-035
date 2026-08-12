@@ -6641,23 +6641,6 @@ components:
       - reason
       title: ReopenComplaintRequest
       type: object
-    ReplaceStaffRequest:
-      description: 'The whole roster, as the department form submits it.
-
-
-        Members not listed are deactivated rather than deleted (A7) -- a complaint''s
-
-        ``assignee`` records staff by name, so a deleted row turns a past assignment
-
-        into an unexplained string.'
-      properties:
-        staff:
-          items:
-            $ref: '#/components/schemas/StaffMemberInput'
-          title: Staff
-          type: array
-      title: ReplaceStaffRequest
-      type: object
     ReportJobFailureRequest:
       description: The visit did not happen.
       properties:
@@ -9257,42 +9240,6 @@ components:
           - type: 'null'
           title: Rank
       title: UpdateStaffInvitationRequest
-      type: object
-    UpdateStaffMemberRequest:
-      description: Patch one roster entry.
-      properties:
-        name:
-          anyOf:
-          - maxLength: 120
-            minLength: 1
-            type: string
-          - type: 'null'
-          title: Name
-        phone:
-          anyOf:
-          - maxLength: 32
-            type: string
-          - type: 'null'
-          title: Phone
-        role:
-          anyOf:
-          - maxLength: 60
-            type: string
-          - type: 'null'
-          title: Role
-        shift:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Day | Evening | Night
-          title: Shift
-        status:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: active | inactive
-          title: Status
-      title: UpdateStaffMemberRequest
       type: object
     UpdateTankerRequest:
       description: Record the departure, or correct the volume.
@@ -16265,117 +16212,6 @@ paths:
           communities need my skills' search has to run before the person holds a membership anywhere.
         status: Not covered by user story
       x-user-stories: []
-  /api/v1/departments/{department_id}/staff:
-    post:
-      description: 'Add one person to a roster.
-
-
-        A staff member needs no account: name is the only required field, matching
-
-        what the department form actually collects.'
-      operationId: add_staff_member_api_v1_departments__department_id__staff_post
-      parameters:
-      - description: Department id, scoped to the caller's community.
-        in: path
-        name: department_id
-        required: true
-        schema:
-          title: Department Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StaffMemberInput'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StaffMember'
-          description: Successful Response
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      security:
-      - HTTPBearer: []
-      summary: Add a staff member
-      tags:
-      - departments
-      x-user-stories:
-      - coverage: partial
-        id: US-2.9
-        role: Adds one person; membership_id stays null because staff have no login
-        title: Verified management contact directory
-    put:
-      description: 'Reconcile the whole roster in one transaction.
-
-
-        Entries carrying an ``id`` are updated in place, entries without one are
-
-        added, and active members the payload omits are **deactivated, not deleted**
-
-        -- a complaint''s ``assignee`` records staff by name, so removing the row
-
-        would turn a past assignment into an unattributable string.
-
-
-        PUT rather than POST because this replaces a collection: sending the same
-
-        roster twice leaves the same result.'
-      operationId: replace_staff_api_v1_departments__department_id__staff_put
-      parameters:
-      - description: Department id, scoped to the caller's community.
-        in: path
-        name: department_id
-        required: true
-        schema:
-          title: Department Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReplaceStaffRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/StaffMember'
-                title: Response Replace Staff Api V1 Departments  Department Id  Staff Put
-                type: array
-          description: Successful Response
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      security:
-      - HTTPBearer: []
-      summary: Replace a department's roster
-      tags:
-      - departments
-      x-user-stories:
-      - coverage: partial
-        id: US-2.9
-        role: Replaces the roster wholesale
-        title: Verified management contact directory
   /api/v1/departments/{department_id}/staff-invitations:
     get:
       description: 'Managers and supervisors created here, whether or not they have arrived.
@@ -16700,58 +16536,6 @@ paths:
         status: Not covered by user story
       x-user-stories: []
   /api/v1/departments/{department_id}/staff/{staff_id}:
-    delete:
-      description: 'Take a member off the active roster.
-
-
-        **Not a delete.** The row is marked inactive so past assignments recorded
-
-        against their name stay explainable. Removing the head also frees the head
-
-        slot in the same statement.'
-      operationId: remove_staff_member_api_v1_departments__department_id__staff__staff_id__delete
-      parameters:
-      - description: Department id, scoped to the caller's community.
-        in: path
-        name: department_id
-        required: true
-        schema:
-          title: Department Id
-          type: string
-      - description: Staff assignment id. Must belong to `departmentId`, or the answer is 422.
-        in: path
-        name: staff_id
-        required: true
-        schema:
-          title: Staff Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MessageResult'
-          description: Successful Response
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      security:
-      - HTTPBearer: []
-      summary: Remove a staff member
-      tags:
-      - departments
-      x-user-stories:
-      - coverage: partial
-        id: US-2.9
-        role: Removes a person from the roster
-        title: Verified management contact directory
     get:
       description: 'The employee page''s identity read.
 
@@ -16820,64 +16604,6 @@ paths:
           which US-2.7 already credits.'
         status: Not covered by user story
       x-user-stories: []
-    patch:
-      description: 'Patch one roster entry.
-
-
-        Promotion to head is not done here: ``PATCH /departments/{id}`` with a
-
-        ``head`` name is the only path, because promoting one person has to demote
-
-        the incumbent in the same transaction.'
-      operationId: update_staff_member_api_v1_departments__department_id__staff__staff_id__patch
-      parameters:
-      - description: Department id, scoped to the caller's community.
-        in: path
-        name: department_id
-        required: true
-        schema:
-          title: Department Id
-          type: string
-      - description: Staff assignment id. Must belong to `departmentId`, or the answer is 422.
-        in: path
-        name: staff_id
-        required: true
-        schema:
-          title: Staff Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateStaffMemberRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StaffMember'
-          description: Successful Response
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      security:
-      - HTTPBearer: []
-      summary: Update a staff member
-      tags:
-      - departments
-      x-user-stories:
-      - coverage: partial
-        id: US-2.9
-        role: Corrects a roster entry's role or contact details
-        title: Verified management contact directory
   /api/v1/departments/{department_id}/staff/{staff_id}/schedule:
     get:
       description: 'The schedule half of the employee page.

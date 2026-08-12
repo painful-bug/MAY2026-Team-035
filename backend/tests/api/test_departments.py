@@ -233,23 +233,27 @@ def test_api_186_the_whole_guard_table_holds_for_a_manager(
     `departments.py` used to carry `require_admin` at the router level. The
     manager portal needs to read its own department, and FastAPI cannot remove a
     router dependency for one route -- so the router now carries the *looser*
-    `require_admin_or_manager` and eight routes carry `require_admin`
+    `require_admin_or_manager` and four routes carry `require_admin`
     explicitly.
 
     That inverts the failure mode. Before, forgetting a guard on a new route was
     harmless because the router caught it; now, forgetting one leaves it open to
     every manager in the community. So the table is asserted whole rather than
     per route, and a new endpoint added without `ADMIN_ONLY` fails here.
+
+    **The four `.../staff` routes this table used to cover are gone.**
+    `PUT`/`POST /departments/{id}/staff` and `PATCH`/`DELETE
+    /departments/{id}/staff/{staffId}` were retired: nothing had called them
+    since the `0035` hiring flow replaced roster writes with applications,
+    invitations, `POST .../members/{staffId}/remove` and `POST .../blacklist`
+    (`department_hiring.py`), and `Departments.jsx` had not sent a non-empty
+    `staff` array since. See the money-and-admins staff-writes verdict.
     """
     refused = [
         ("get", DEPARTMENTS, None),
         ("post", DEPARTMENTS, {"name": "X", "categories": []}),
         ("patch", ONE, {"name": "X"}),
         ("delete", ONE, None),
-        ("put", f"{ONE}/staff", {"staff": []}),
-        ("post", f"{ONE}/staff", {"name": "X"}),
-        ("patch", f"{ONE}/staff/staff-id", {"name": "X"}),
-        ("delete", f"{ONE}/staff/staff-id", None),
     ]
     for method, path, body in refused:
         call = getattr(manager_api_client, method)

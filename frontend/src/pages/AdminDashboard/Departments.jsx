@@ -278,7 +278,14 @@ export default function Departments() {
         // and saving is what creates it. There is no create-category endpoint
         // and none is needed.
         categories: form.categories.map((entry) => entry.name),
-        staff: [],
+        // `staff` is deliberately omitted, not sent as `[]`. On a create there
+        // is no roster yet, so the two are equivalent -- but on an *edit*,
+        // `PATCH /departments/{id}` treats key presence as "replace the whole
+        // roster": an explicit `staff: []` was reaching the API on every save
+        // (this form never collects roster entries; that field died with the
+        // hiring rework) and silently deactivating every member of the
+        // department being edited. Omitting the key is what "leave the roster
+        // alone" actually means.
       };
 
       const saved =
