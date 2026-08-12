@@ -14,6 +14,11 @@ the branch today. If you change none of them the system is coherent. What we are
 handing over is the *reasoning*, so that when you do change one you know what it
 was holding up.
 
+**If you are new to the complaints engine, read
+[`COMPLAINT_ENGINE_STATE.md`](COMPLAINT_ENGINE_STATE.md) first** — it is the
+orientation document (what exists, the workflow, every endpoint and screen, and
+the consolidated worklist). This file is the argument behind each open question.
+
 ---
 
 ## 0. The one fact that frames all seven
@@ -296,6 +301,12 @@ status, a visibility or a priority, add it there rather than in a service.
 been applied to any database** — including `0001_baseline.sql`. Every predicate
 described here is unexecuted. What is written down is what the SQL says, checked
 by reading and by `pglast`, not what a database has been observed doing.
+
+> **Update 2026-08-12: the caveat above is no longer true.** The entire chain —
+> `0001_baseline.sql` through `20260812160000_legacy_status_defaults.sql`,
+> including the complaint routing file — is applied to the hosted Supabase
+> project and verified with per-file post-checks. The sections above are left
+> as written; only this deployment claim changed.
 
 ---
 

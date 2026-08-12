@@ -17,6 +17,45 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 72: the seven migrations landed, and the complaints engine got its map
+
+### The hosted database caught up with the repository
+
+`PO` (the owner applied every file personally, per the standing rule). The seven pending
+migrations — `20260812090000` through `20260812160000` — were applied to the hosted Supabase
+project in filename order via the SQL Editor, each verified with a post-check before the next.
+The migration ledger was repaired by hand (the CLI is unlinked; seven `insert … on conflict do
+nothing` rows, count now 47), and the Database Advisors run came back with an empty Errors tab —
+the three new tables are RLS-clean, and the 296 warnings are the linter flagging the
+security-definer-RPC architecture itself plus 14 pre-existing baseline helpers, none from these
+files. The original defect — `create_founder_community` tripping `communities_status_canonical`
+on the legacy title-cased default — is fixed at the root.
+
+### docs/COMPLAINT_ENGINE_STATE.md — new
+
+`PO` (the owner asked for a detailed, teammate-facing account of everything implemented in the
+complaints engine so far, frontend and backend, including the workflow, origins and assignment).
+The handoff document holds the *open questions*; nothing held the *orientation* — what exists,
+how a complaint moves, which endpoints and screens are wired to what. The new file carries the
+lifecycle diagram, the routing and assignment rules, the full API and frontend surface tables,
+and a consolidated eleven-item worklist that cross-references the handoff's argued sections.
+
+### docs/COMPLAINT_ENGINE_HANDOFF.md — deployment caveat corrected, pointer added
+
+`DERIVED`. §7's caveat ("no migration has ever been applied to any database") became false when
+the owner applied the chain; a dated update note now says so without rewriting the sections that
+relied on it. The header points newcomers at the state document first.
+
+### docs/plans/MIGRATION_APPLY_RUNBOOK.md — the file-1 post-check anchored on call sites
+
+`AUDIT` (found live, during the apply). The §1 post-check searched `prosrc` for the bare old
+function name, which survives in the deliberate `-- CHANGED: was notify_community_staff` comment
+inside the `$$…$$` body — comments in a function body are part of `prosrc`, so the check failed
+on a database that was actually correct. Both patterns now match `perform public.…` call sites,
+with the gotcha recorded inline.
+
+---
+
 ## 2026-08-12 — Session 71: the portal that existed before its user did
 
 The owner restarted their end-to-end registration test and hit it immediately: an unregistered
