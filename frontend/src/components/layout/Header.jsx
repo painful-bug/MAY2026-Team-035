@@ -213,15 +213,20 @@ export default function Header({ onMenuClick }) {
                   {notices.slice(0, 3).map((notice) => (
                     <div key={notice.id} className="bg-slate-50 border border-slate-100 rounded-xl p-4 space-y-1.5 hover:bg-slate-100/50 transition-colors">
                       <div className="flex items-center justify-between">
-                        <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                          notice.urgency === 'High' 
-                            ? 'bg-rose-50 text-rose-600' 
-                            : notice.urgency === 'Medium' 
-                            ? 'bg-amber-50 text-amber-600' 
-                            : 'bg-indigo-50 text-indigo-600'
-                        }`}>
-                          {notice.urgency}
-                        </span>
+                        {/* API urgency is lowercase (info/important/urgent);
+                            demo rows said High/Medium — accept both, and hide
+                            the chip when the snapshot carries no urgency. */}
+                        {notice.urgency && (
+                          <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            ['urgent', 'high'].includes(notice.urgency.toLowerCase())
+                              ? 'bg-rose-50 text-rose-600'
+                              : ['important', 'medium'].includes(notice.urgency.toLowerCase())
+                              ? 'bg-amber-50 text-amber-600'
+                              : 'bg-indigo-50 text-indigo-600'
+                          }`}>
+                            {notice.urgency}
+                          </span>
+                        )}
                         <span className="text-[10px] text-slate-400 font-semibold">{notice.date}</span>
                       </div>
                       <h4 className="text-xs font-bold text-slate-800 line-clamp-1">{notice.title}</h4>
