@@ -389,6 +389,14 @@ comment on function public.raise_complaint(
   'admins and the owning department''s manager -- not every manager, who cannot '
   'all open it.';
 
+-- 0031 granted the old 6-arg function to authenticated explicitly. The drop
+-- above took that grant with it; restate it on the new signature so the
+-- function does not depend on the default PUBLIC execute privilege staying in
+-- place (no posture change: PUBLIC execute was never revoked on the old one
+-- either, and the authorization is the membership check inside the body).
+grant execute on function public.raise_complaint(
+  uuid, text, text, text, text, text, uuid) to authenticated;
+
 -- ---------------------------------------------------------------------------
 -- 4. Allotting and moving
 --

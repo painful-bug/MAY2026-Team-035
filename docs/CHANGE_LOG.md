@@ -40,6 +40,39 @@ snapshot failure gets a minimal retry screen instead of a blank page. The old in
 deleted, not shadowed. The transition needs no reload: the form's submit already awaits the
 snapshot invalidation before navigating, so the portal appears the moment registration lands.
 
+### The pre-apply conflict sweep over the seven pending migrations
+
+`PO` (the owner chose the full migration over a one-file unblock and asked for a conflict test
+first) — a specialist ran seven static checks over the seven pending files: cross-file collisions
+(none — no object is defined in more than one pending file), diffs of all 14 `create or replace`
+bodies against their true last-applied predecessors (every diff is exactly the stated change; no
+security-posture flip anywhere), dependency closure (zero unresolved names; file 7's independence
+from files 1–6 verified), hosted-data hazards (file 5's pre-existing-violation block is
+notice-only; file 7's units update can disturb nothing — no triggers, no status constraint, RLS
+does not bind the SQL-editor role), backend compatibility (today's broken-by-design list enumerated;
+zero signature/shape mismatches after apply; no between-file seam where the running app is worse
+off mid-sequence), the static suites, and a line-level runbook audit. **Verdict: safe to apply in
+filename order.** Fallout fixed on the branch:
+
+- `test_work_order_notification_urls.py` asserted the url-repoint file is the *last* migration —
+  a proxy for last-writer-wins that file 7's arrival falsified without touching the property.
+  Re-pinned to the real property: sorts after `0037`/`0039` and no later file re-declares any of
+  the six functions. 46/46 migration tests green.
+- `DERIVED` — file 4's drop of the 6-arg `raise_complaint` discarded 0031's explicit authenticated
+  grant, leaving the new 7-arg function callable only via the default PUBLIC execute privilege
+  (effective callability unchanged, but convention-breaking and fragile against any future
+  default-privileges revoke). The unapplied file now restates the grant on the new signature —
+  explicitly no posture change, and commented as such.
+- The `units_member` mechanism claim in file 7's comment and the runbook was half-wrong (that
+  policy filters the *membership's* status; the unit-status filter that hides title-cased units
+  lives in the baseline's belongs-to-community check) — both corrected. Runbook stale counts fixed
+  (six→seven throughout; file 2 has nine function groups, not six; file 1 has two comments; file 4
+  is "most DDL surface", not "only").
+
+Recorded, not fixed (pre-existing, outside this pass): the `push_unconfigured` test fixture can't
+neutralize `.env`-sourced VAPID settings, so two push-503 tests fail on any machine with keys in
+`backend/.env` — flagged for its own session.
+
 ### fix(db) — community creation has been impossible on the hosted database
 
 `AUDIT` (from the owner's live failure: admin onboarding's "Create community" step died with

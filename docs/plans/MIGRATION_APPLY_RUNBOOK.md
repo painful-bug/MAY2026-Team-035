@@ -7,7 +7,7 @@ Supabase dashboard and/or a `supabase` CLI linked to the project
 (`project_id = "homebandhu"`, see `backend/supabase/config.toml`), and general
 competence with Postgres and Supabase, but no context on this branch's work.
 
-**Static verification of all six files — parsing, statement-by-statement
+**Static verification of the original six files — parsing, statement-by-statement
 idempotence, and cross-file dependency order — was done before this runbook was
 written and is summarized at the bottom, in "What was checked before this was
 written." Nothing here was run against a database; that verification is
@@ -37,10 +37,12 @@ If the project is on a plan with Point-in-Time Recovery, confirm it is enabled
 and note the current timestamp before you begin (Dashboard → Database →
 Backups → Point in Time Recovery). If it is not, take a manual backup now
 (Dashboard → Database → Backups → "Create a backup now", or `pg_dump` against
-the connection string). None of the six files contains a `drop table`,
+the connection string). None of the seven files contains a `drop table`,
 `drop column`, or `delete` — see §5 below — so the realistic risk this backup
-covers is an interrupted mid-file apply on file 4, the only one with real
-DDL surface (a new column, two new tables, one dropped-and-rebuilt function).
+covers is an interrupted mid-file apply on file 4, the one with the most
+DDL surface (a new column, two new tables, one dropped-and-rebuilt function;
+files 2 and 3 also create tables, but nothing they touch is dropped-then-
+recreated).
 
 ### 0.2 Confirm what is already applied
 
@@ -54,7 +56,7 @@ select version
 
 Confirm the highest version present is `0047` or one of the three
 `20260811…` timestamps (`162409`, `163408`, `192511`) — i.e. confirm none of
-the six files below already has a row here. If any of the six is already
+the seven files below already has a row here. If any of the seven is already
 listed, stop and re-read `backend/supabase/migrations/README.md`'s boundary
 paragraph before proceeding; this runbook assumes a clean start from exactly
 that boundary.
@@ -81,8 +83,8 @@ Two options, either is fine:
 
 The per-file sections below assume the SQL Editor / one-at-a-time path, since
 that is what lets you read each file's `raise notice` output and run its
-post-check before moving on. If you use `supabase db push`, run all six in one
-shot, then work through every post-check in §1–§6 afterward, and separately
+post-check before moving on. If you use `supabase db push`, run all seven in one
+shot, then work through every post-check in §1–§7 afterward, and separately
 scroll the CLI output for the `NOTICE` text described in §5 — `db push` prints
 notices from every file it runs, not just file 5's.
 
@@ -101,9 +103,12 @@ and immutable, so this is a `create or replace` on each, not an edit to the
 original file).
 
 **What to expect.** No table or index changes — this file is two
-`create or replace function` statements, a `comment on function`, and one
-`grant execute`. It should run silently with `CREATE FUNCTION` /
-`COMMENT` / `GRANT` acknowledgements and nothing else.
+`create or replace function` statements, two `comment on function`
+statements, and one `grant execute` (the second function,
+`record_security_incident`, gets a comment but deliberately no grant —
+it is service_role-only and this file restates nothing about that). It
+should run silently with `CREATE FUNCTION` / `COMMENT` / `GRANT`
+acknowledgements and nothing else.
 
 **Post-check.**
 
@@ -142,7 +147,7 @@ department can hire for are now the union of its category-derived skills and
 its own directly-claimed skills, rather than the category path alone.
 
 **What to expect.** `CREATE TABLE`, two `CREATE INDEX`, `ALTER TABLE`,
-`CREATE POLICY`, `GRANT`, `DROP VIEW` + `CREATE VIEW`, `GRANT`, then six
+`CREATE POLICY`, `GRANT`, `DROP VIEW` + `CREATE VIEW`, `GRANT`, then nine
 `CREATE FUNCTION` + `COMMENT` + `GRANT` groups. No notices, no errors expected.
 
 **Post-check.**
@@ -181,7 +186,7 @@ person is admitted on first Google sign-in by matching the verified email.
 Adds `invite_staff_member`, `revoke_staff_invitation`,
 `update_staff_invitation`, `department_staff_invitations` (all callable by
 authenticated users, gated by `can_manage_department`), and
-`claim_staff_invitations` — the one function in the whole six-file set that is
+`claim_staff_invitations` — the one function in the whole seven-file set that is
 **revoked from `authenticated`**: it is called only by the backend's service
 role, from `resolve_session`, because the email is the entire authorization
 and must never come from a client-supplied value.
@@ -238,7 +243,7 @@ out), the "this isn't ours" flow
 (`department_complaints`, `unassigned_complaints`, `community_departments`,
 `department_change_requests`), and rebuilds `raise_complaint` (dropped by its
 old 6-argument signature first, then recreated with a 7th `p_department_id`
-argument — this is the one deliberate signature change in the six files) plus
+argument — this is the one deliberate signature change in the seven files) plus
 full-body replacements of `reopen_complaint`, `confirm_complaint_resolution`
 and `add_complaint_comment` so their notifications stop going to every
 manager too.
@@ -253,8 +258,11 @@ block, `CREATE INDEX`, `COMMENT`, then a long run of `CREATE FUNCTION` /
 `COMMENT` / `GRANT` groups (`resolve_complaint_department`,
 `notify_complaint_staff`), a `DROP FUNCTION` (for the old 6-arg
 `raise_complaint` — this may say `DROP FUNCTION` or, if for any reason it does
-not exist under that exact signature, silently do nothing), `CREATE FUNCTION`
-for the new 7-arg `raise_complaint`, `CREATE FUNCTION` +
+not exist under that exact signature, print a `NOTICE ... skipping` line
+instead), `CREATE FUNCTION` + `COMMENT` + `GRANT`
+for the new 7-arg `raise_complaint` (the grant restates 0031's
+authenticated grant on the new signature, since the drop discarded the old
+one), `CREATE FUNCTION` +
 `CREATE TABLE`/`CREATE INDEX`/`ALTER TABLE`/`CREATE POLICY` for the
 department-change-request flow, and finally three more `CREATE FUNCTION`
 groups for `reopen_complaint`, `confirm_complaint_resolution` and
@@ -310,7 +318,7 @@ above zero you have existing accounts that will now fail on their next
 membership-status update until someone resolves which identity they keep. In
 the SQL Editor this appears as a yellow "NOTICE" line in the output pane, not
 an error; in `psql` or `supabase db push` it appears on stderr, easy to miss
-in a long combined run. If you used `db push` for all six files at once, this
+in a long combined run. If you used `db push` for all seven files at once, this
 is one of the things to specifically scroll back for.
 
 Expected count going in: zero (the state has been reachable for about a day,
@@ -438,10 +446,11 @@ left the column *default* untouched, so any insert relying on the default —
 ever since. This file sets `communities.status` default to `'active'`, and
 does the same for `units` (same legacy tooling, same RPC insert path, but no
 constraint to make the failure loud: a title-cased unit is silently invisible
-to the baseline's unit-belongs-to-community check and the `units_member` RLS
-policy, both of which filter on `status = 'active'`) — including a row
-normalization for units, which the 2026-07-30 file never covered. On a
-database created from the baseline every statement is a no-op.
+to the baseline's unit-belongs-to-community check at `0001_baseline.sql:217`,
+which filters on the unit's `status = 'active'` when a resident invite or
+access request names a unit) — including a row normalization for units, which
+the 2026-07-30 file never covered. On a database created from the baseline
+every statement is a no-op.
 
 **Order note.** This file is independent of files 1–6 (it touches only column
 defaults and unit rows; nothing in 1–6 reads or writes them). Applying it
@@ -474,13 +483,13 @@ it should now complete.
 
 ## 5x. If a file fails partway through
 
-None of the six files wraps its own statements in an explicit
+None of the seven files wraps its own statements in an explicit
 `begin`/`commit`. When you run a whole file's text as one submission through
 the SQL Editor or `psql -f`, Postgres treats it as one implicit transaction —
 if any statement errors, everything that file did is rolled back and you are
 back to the state before that file started. This is the common case and the
 safe one: re-running the same file from the top is exactly correct, because
-every statement in every one of the six files is written to be safe to run
+every statement in every one of the seven files is written to be safe to run
 twice (see "What was checked before this was written" below) — `create table
 if not exists`, `create index if not exists`, `create or replace function`,
 `drop policy if exists` before `create policy`, and the one `drop function`
@@ -503,7 +512,7 @@ transaction. If you did that and stopped mid-file:
   pair. If you stopped **between** the drop and the create, `raise_complaint`
   does not exist at all — the API's `POST /complaints` (or whatever endpoint
   calls it) will fail with "function does not exist" until you resume and run
-  the `create` statement. Nothing else in the six files depends on
+  the `create` statement. Nothing else in the seven files depends on
   `raise_complaint`, so this is contained to that one endpoint and safe to
   leave mid-state briefly. Resuming from the `create or replace` statement
   (or re-running the whole file) fixes it.
@@ -534,7 +543,7 @@ out), not something a retry alone fixes.
    between the two, that job's two verification steps are what "the two
    integration suites" in this directory means). Both need a local Supabase
    (`npx supabase start --workdir backend`, then `npx supabase db reset
-   --workdir backend` to apply every migration including these six) and
+   --workdir backend` to apply every migration including these seven) and
    `RUN_SUPABASE_INTEGRATION=1`:
 
    ```sh
@@ -546,8 +555,8 @@ out), not something a retry alone fixes.
    ```
 
    Note this resets a **local** database by replaying every migration from
-   scratch — it does not touch the hosted project you just applied these six
-   files to. It is a way to double-check the same six files against a clean
+   scratch — it does not touch the hosted project you just applied these seven
+   files to. It is a way to double-check the same seven files against a clean
    instance, not a step that needs to happen against the hosted project
    itself.
 
@@ -555,7 +564,7 @@ out), not something a retry alone fixes.
    (`.github/workflows/ci.yml`) — it does the same local reset-and-verify,
    plus a PostGIS query-plan assertion and a full Playwright browser smoke
    pass, against a fresh instance built from every migration in the repo,
-   these six included.
+   these seven included.
 
 ---
 

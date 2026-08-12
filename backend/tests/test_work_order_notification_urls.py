@@ -64,11 +64,32 @@ def test_the_migration_parses_as_postgresql() -> None:
 
 
 def test_it_sorts_after_every_migration_it_supersedes() -> None:
-    """Filename order is apply order: last declaration of a name wins."""
-    names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == REPOINT.name
+    """Filename order is apply order: last declaration of a name wins.
+
+    Being the last file in the directory was only ever a proxy for the property
+    that matters (`20260812160000` broke the proxy without touching the
+    property): the repoint must sort after both files it supersedes, and no
+    migration sorting after it may re-declare any of the six functions --
+    otherwise that later file's body, not this one's, is what runs.
+    """
     assert REPOINT.name > DISPATCH.name
     assert REPOINT.name > WORKER.name
+
+    redeclared = [
+        (path.name, function)
+        for path in MIGRATIONS.glob("*.sql")
+        if path.name > REPOINT.name
+        for function in EXTRACTED
+        if re.search(
+            r"^create or replace function public\." + function + r"\(",
+            path.read_text(encoding="utf-8"),
+            re.M,
+        )
+    ]
+    assert not redeclared, (
+        "a migration sorting after the repoint re-declares a repointed "
+        f"function, so its body wins instead: {redeclared}"
+    )
 
 
 def test_every_emission_of_the_dead_url_is_accounted_for() -> None:

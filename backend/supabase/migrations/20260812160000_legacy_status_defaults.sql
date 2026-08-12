@@ -19,9 +19,10 @@ alter table public.communities
 -- units shares both the legacy tooling and the founder-RPC insert path, but
 -- got neither the row normalization nor a canonical constraint on 2026-07-30.
 -- A title-cased unit status fails silently instead of loudly: the baseline's
--- unit-belongs-to-community check and the units_member RLS policy both filter
--- on status = 'active', so an 'Active' unit is invisible to resident
--- onboarding. Normalize any such rows and fix the default the same way.
+-- unit-belongs-to-community check (0001_baseline.sql, resident invites and
+-- access requests) filters on the unit's status = 'active', so an 'Active'
+-- unit is invisible to resident onboarding. Normalize any such rows and fix
+-- the default the same way.
 update public.units
 set status = lower(btrim(status))
 where status is distinct from lower(btrim(status));
