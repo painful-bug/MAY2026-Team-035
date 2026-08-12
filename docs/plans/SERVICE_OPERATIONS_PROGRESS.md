@@ -88,13 +88,16 @@ ruled "build it" — the gate gets its own build phase (Phase 3, §6.24), sized 
 §4.25 recommended. Task #93 closes when Phase 3 does.*
 
 **Everything else is built.** Steps 1 through 9 plus the unnumbered 8b and 9b are
-complete, verified and documented — §5.2 through §5.19. `0034`–`0047` exist,
-**179 operations across 150 paths, 860 tests**, and five portals render against
-the live API: `/worker`, `/admin/departments/:id/hiring`, `/admin/messages`,
-`/security` and `/security-manager`. *(This paragraph said `0034`–`0043`, 170
-operations, 143 paths, 835 tests, three portals until 2026-08-11 — stale by two
-sessions. It is the resume section, so it is the paragraph most expensive to get
-wrong; see §5.34, where it was one of six.)*
+complete, verified and documented — §5.2 through §5.19. `0034`–`0047` exist plus
+the forward-only `20260812…` corrections, **195 operations across 164 paths, 976
+tests**, and the resident portal and the work-order triage surface have joined the
+five that already rendered against the live API: `/worker`,
+`/admin/departments/:id/hiring`, `/admin/messages`, `/security` and
+`/security-manager`. *(This paragraph said `0034`–`0043`, 170 operations, 143
+paths, 835 tests, three portals until 2026-08-11 and `0034`–`0047`, 179
+operations, 150 paths, 860 tests, five portals until 2026-08-12 — stale by two
+sessions on both occasions. It is the resume section, so it is the paragraph most
+expensive to get wrong; see §5.34, where it was one of six.)*
 
 **Eight things Step 10 inherits and should not rediscover.**
 

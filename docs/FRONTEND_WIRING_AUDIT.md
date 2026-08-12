@@ -123,10 +123,22 @@ via `POST /invoices`, and no screen calls that either — it survives solely so 
 something to pay. The Settings toggle *"Automated Monthly Maintenance"* therefore still switches a flag that no
 code reads. That was already logged as A22 and it has not improved.
 
+> **Half of that expired on 2026-08-12.** `Maintenance.jsx:46` calls `POST /invoices` and `:201` calls
+> `POST /invoices/{id}/payments`, so one bill at a time is now a thing a screen does rather than a thing only the
+> resident path implies. What has *not* improved is the sentence's actual subject: nothing runs a **cycle**, and
+> *"Automated Monthly Maintenance"* still switches a flag no scheduler reads. A22 stands unchanged.
+
 **The admin write surface is not reachable from the UI yet.** Every endpoint kept in §2 exists because a frontend
 handler wants it, but that handler currently calls a Zustand action instead. Wiring them up is frontend work that
 we are not permitted to do. Until then these endpoints are correct, tested, and uncalled — which is the honest
 status, and the first item for the joint meeting.
+
+> **Overtaken between 2026-08-11 and 2026-08-12, and the freeze it rests on was lifted.** Phases 6 and 7 wired the
+> resident portal, the amenity admin surface, the money writes and the work-order triage screen — §2's table above
+> carries the per-row dates. `frontend_api_sweep.py` now reports **186 of 195 live operations reached by a call
+> site**, and the nine it does not reach are the four OAuth redirects, `POST /auth/refresh`, the two SSE streams,
+> `GET /worker/unavailability` and `/health` — none of them a screen's missing call. "Correct, tested and
+> uncalled" is no longer the honest status; it was for two weeks, and this paragraph is why the wiring happened.
 
 **The schema they need now exists.** An earlier draft of this section reported that 3 of our 35 endpoints could
 run, because `0018_settings_on_baseline.sql` had rebuilt the settings *tables* but neither the views nor the RPCs.

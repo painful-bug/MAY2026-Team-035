@@ -337,7 +337,11 @@ So there are two ideas of "who is on this" and nothing reconciles them:
 | `complaint.assigneeStaffId` + `assignee` label | zustand, this screen | an admin using the dropdown |
 | `work_order_assignments.staff_assignment_id` | Postgres | `create_work_order`, and the dispatch engine |
 
-Three ways this could go, and **none of them is ours to choose**:
+Three ways this could go, and **none of them is ours to choose**. *(The two "has no caller"
+statements below were true when written and are not now — the triage screen calls both
+`POST /complaints/{id}/work-orders` and `POST /work-orders/{id}/assign`, at
+`frontend/src/features/workOrders/workOrdersApi.js:61` and `:110`. It calls them about a **work
+order**, not about `complaint.assigneeStaffId`, so the fork itself is untouched; see §10.)*
 
 1. **The dropdown creates a work order.** Assignment stops being a complaint
    field; `POST /complaints/{id}/work-orders` already exists and has no caller.

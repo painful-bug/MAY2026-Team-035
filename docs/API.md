@@ -1,15 +1,17 @@
 # HomeBandhu API reference
 
-**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-11
+**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-12
 
 > ## Where the numbers stand
 >
-> The live surface is **179 operations across 150 paths**, all of them in
+> The live surface is **195 operations across 164 paths**, all of them in
 > [`openapi.yaml`](openapi.yaml), all carrying a user-story verdict (§16). Every `###` heading below
 > corresponds to an operation that exists; that is checked mechanically rather than by eye.
 >
-> *(This banner read **163 across 138** until 2026-08-11 — three sessions and sixteen operations
-> stale. It was one of seven hand-maintained totals found drifting in a sweep on that date, in
+> *(This banner read **163 across 138** until 2026-08-11 and **179 across 150** until 2026-08-12 —
+> the second time it drifted, and by the same mechanism: Sessions 67–68 added the work-order,
+> amenity-admin and money operations and retired the four `…/staff` writes, and no hand-maintained
+> total moves on its own. It was one of seven such totals found drifting in a sweep on 2026-08-11, in
 > documents whose per-endpoint contents were correct throughout; see `CHANGE_LOG` Session 58. What
 > **is** checked mechanically is the sentence after this one, and the `--check` that regenerates the
 > spec. A count in prose is not.)*
@@ -1396,7 +1398,8 @@ Partial update. **Requires `ADMIN`.** Omitted fields are left unchanged; an expl
 **200** — the department as it now stands.
 
 Two fields have **collection semantics**: sending `categories` replaces the claim set, and sending
-`staff` replaces the roster (identical to `PUT …/staff` below). Omitting either leaves it untouched.
+`staff` replaces the roster. Omitting either leaves it untouched. (The `PUT …/staff` this line once
+pointed at was retired 2026-08-12 — see below; the typed `staff` field on this request survives.)
 
 > **Deactivating is not blocked by open complaints.** Only `DELETE` is. The dashboard offers
 > deactivation *as the escape hatch* when deletion is refused, so guarding both would leave an admin
@@ -1577,9 +1580,19 @@ The last six fields were added by build step 9 (`0017`) and are the two switches
 the short version is **nothing runs billing on a schedule and nothing charges a late fee**.
 
 **`defaultMaintenanceAmount` is `null` until an admin sets one, and there is nothing to migrate from.**
-The maintenance amount does not exist anywhere in this product: `createPendingRequestsSlice.js`
-hardcodes `4250` in the middle of an approval handler, `data/payments.js` repeats it, no screen
-configures it, and the ERD has no rate field either. This is agenda item 12.
+The maintenance amount existed nowhere in this product when this section was written:
+`createPendingRequestsSlice.js` hardcoded `4250` in the middle of an approval handler,
+`data/payments.js` repeated it, no screen configured it, and the ERD has no rate field either. This
+was agenda item 12.
+
+> **Two thirds of that is false as of 2026-08-12, and the last third is the interesting one.** The
+> **Settings** screen now reads and writes this endpoint —
+> `frontend/src/pages/AdminDashboard/Settings.jsx:75` and `:137-144`, over
+> `moneyApi.getBillingSettings` / `updateBillingSettings` — so a community configures its own rate,
+> and `frontend/src/data/payments.js` was deleted with the rest of the demo store. What survives is
+> `createPendingRequestsSlice.js:43`, still minting a `4250` invoice inside the demo approval
+> handler, and the ERD still has no rate field. So the number an admin now chooses and the number the
+> demo still invents are two different numbers, and only one of them is stored.
 
 A community that has never saved settings gets the defaults back with `200` rather than a `404` — the
 row is created lazily on first write, and a screen asking what the settings are should not have to
@@ -3866,8 +3879,20 @@ downloadable report — the same export gap as US-1.6.
 
 ### 16.6 Endpoints that serve no story, and why that is fine
 
-**106 of the 179 operations map to no story in the document.** Not a defect — the team wrote stories
+**122 of the 195 operations map to no story in the document.** Not a defect — the team wrote stories
 about pain points in an existing product, not about the plumbing every product needs.
+
+> **~~106 of the 179~~ — recounted 2026-08-12, and the table below rebuilt from the spec a second
+> time.** Sessions 67–68 added sixteen net operations and four whole `x-no-user-story` groups the
+> table had no rows for at all — department-scoped skills, staff invitations, the complaint
+> department-request loop, and the department options list — while the hiring row gained two
+> operations it had been under-counting (`/service-providers/{id}` and `/worker/communities/search`,
+> both already live on 2026-08-11) and the telemetry write arrived on its own. The rebuild is
+> mechanical rather than editorial: every row below is one
+> `x-no-user-story` group in [`openapi.yaml`](openapi.yaml), so the diff is the finding. **The one
+> thing that changed in kind:** the skills row used to be a single `/skills` entry worth one
+> operation; the four department-scoped skill writes belong to the same rationale and now sit with
+> it, which is why `Master data` moves 11 → 21 while nothing was reclassified.
 
 > **~~90 of the 163~~ — recounted 2026-08-11, and the table below was rebuilt rather than
 > patched.** The old table's rows were a hand-made grouping that had stopped matching the spec: four
@@ -3881,17 +3906,20 @@ about pain points in an existing product, not about the plumbing every product n
 | Group | Ops | API type | Why no story |
 |---|---|---|---|
 | `/auth/*` | 16 | Functional | Nobody writes a user story about signing in until it breaks |
-| `/departments/{id}/{applications,candidates,invitations,blacklist,members}`, `/worker/{applications,communities}` | 11 | Feature | Applying, inviting, hiring, removing and barring. It *enables* US-2.7, US-2.8 and US-3.3–US-3.6 without serving any of them — none can begin until somebody has been hired |
+| `/departments/{id}/{applications,candidates,invitations,blacklist,members}`, `/worker/{applications,communities}`, `/service-providers/{id}` | 13 | Feature | Applying, inviting, hiring, removing and barring. It *enables* US-2.7, US-2.8 and US-3.3–US-3.6 without serving any of them — none can begin until somebody has been hired |
 | `/access-requests/*`, `/admin/access-requests/*`, `/invitations/*`, `/admin/invitations` | 10 | Feature | Joining a community; the interviews were with people already in one |
 | `/departments/{id}/departures/*`, `/departments/{id}/staff/{staffId}`, `/worker/communities/{staffId}/departure` | 10 | Feature | Leaving: a dated request the manager decides, releasing booked work back to the pool. Everybody described being hired and nobody described quitting — the person who quits is not in the room when the society is interviewed |
 | `/security/{posts,roster,shifts}` | 7 | Master data | Where a guard stands and who is standing there. All four gate stories assume it exists and none describes creating it; the security manager was not in the room either |
+| `/skills`, `/departments/{id}/skills` | 6 | Master data | The global list of trades a service person can offer. The complaint stories assume somebody competent turns up; something still has to say what competent means. Global rather than per-community on purpose — the "which communities need my skills" search runs before the person holds a membership anywhere |
 | `/worker/{availability-rules,calendar,unavailability}` | 6 | Feature | A service person's own calendar, leave and working week. The dispatch sweep reads these to decide who can be offered a job, so a wrong answer is a resident told nobody is available — but nobody described their own availability as a problem with their society |
 | `/work-orders/{id}`, `/departments/{id}/work-orders`, `/complaints/{id}/{work-orders,schedule}` | 5 | Feature | The supervisor's queue, the job record, the edit. **Three operations on this surface *do* map** — proposing a time, assigning a person, moving or cancelling a visit. Claiming US-2.8 for a screen only the department can open would make the matrix say a resident sees something they cannot |
 | `/messages/*` | 5 | Feature | The chat dock, from the PO's 2026-08-10 instruction. No interviewee asked for chat; the PO did, and the thread-lock clause is theirs verbatim |
 | `/service-providers*` | 5 | Feature | A service person registering themselves. The stories were collected from residents and committee members; **nobody interviewed the plumber** |
 | `/conversations/*` | 4 | Feature | The chat between a department and a service person. Every hiring decision is made after somebody asked a question; today that happens on a phone nobody logs |
+| `/departments/{id}/staff-invitations*` | 4 | Master data | Creating the manager who runs a department and the supervisor who helps — hiring needs somebody to do the hiring. Leadership has **no** registration flow by ruling: an administrator types a name and an email. Nobody described appointing their own manager, because in every society interviewed the manager was already there |
 | `/worker/jobs*`, `/worker/snapshot` | 4 | Feature | The worker's own queue and the aggregate behind it. **Four operations on this surface *do* map** — accepting, starting, completing and reporting a failed visit all reach the resident |
 | `/communities/*`, `/onboarding/community` | 3 | Feature | Founding a community — a once-per-community act |
+| `/complaints/{id}/department-requests*`, `/departments/{id}/complaint-department-requests` | 3 | Feature | A supervisor telling their manager a complaint belongs to another department, and the manager's answer. Entirely inside the staff side of the wall — no resident ever sees it, and the complaint stories are about what happens to *their* complaint, not who ends up holding it |
 | `/dashboard/amenities` `POST` · `PUT` · `DELETE` | 3 | Master data | Amenity catalogue upkeep; the stories assume amenities already exist |
 | `/push/{vapid-key,subscriptions}` | 3 | Non-functional | Web Push plumbing. A resident experiences US-2.1; nobody experiences a VAPID key |
 | `/settings` `PUT`, `/billing-settings` | 2 | Configuration | Configuration behind other features |
@@ -3902,17 +3930,18 @@ about pain points in an existing product, not about the plumbing every product n
 | `/amenities/available` | 1 | Feature | Reading the catalogue. The booking stories assume a resident already knows which amenity they are booking |
 | `/complaints/{id}/read` | 1 | Feature | Bookkeeping the unread badge US-2.6 and US-2.8 imply. Nobody narrates having read an update when asked what is wrong with complaints |
 | `/invoices/{id}/payments` | 1 | Feature | The admin's record of a maintenance payment taken outside the app. **Moved here from `US-2.12` on 2026-08-04** — see the note below |
-| `/skills` | 1 | Master data | The global catalogue of trades. The hiring stories assume a plumber can say they are a plumber |
+| `/department-options` | 1 | Master data | Id and name of each department, so a destination can be picked from a list. It exists because of a control that could not be drawn: `GET /departments` is admin-only, so the only way for a manager or supervisor to name a department was to type a UUID |
+| `/telemetry/service-signup` | 1 | Non-functional | Privacy-minimal launch-funnel measurement for operators: one allowlisted event name against a random first-party visitor id. No interviewed user experiences this write as a feature |
 | `/health` | 1 | Non-functional | Platform liveness, deliberately outside `/api/v1` |
 
 **The API type is the point of this table, not the absence.** Each of these operations carries
 `x-no-user-story` in [`openapi.yaml`](openapi.yaml), stating `Not covered by user story` and then
 what the operation *is*. `Functional`, `Configuration`, `Master data` and `Non-functional` are
-plumbing, and their absence from the story set is expected. **`Feature` is not**: 72 operations here
-are user-facing capability nobody wrote a story for. That is a finding about the story set, not
-about the API, and §16.7 is where it turns into work.
+plumbing, and their absence from the story set is expected. **`Feature` is not**: ~~72~~ **77**
+operations here are user-facing capability nobody wrote a story for. That is a finding about the
+story set, not about the API, and §16.7 is where it turns into work.
 
-**Twenty-five of those ~~47~~ 72 arrived together, and they say something the earlier ones did not.** The
+**Twenty-five of those ~~47~~ ~~72~~ 77 arrived together, and they say something the earlier ones did not.** The
 service-operations surface — registration, hiring, conversations, and the supervisor's half of
 dispatch — maps to no story because the interviews were conducted with people who *live* in a
 society and people who *run* one. The service person is the third party in every complaint the
@@ -3949,7 +3978,17 @@ nothing let a resident learn an amenity id, which is a defect no amount of readi
 would surface. **A `Feature` row is not always a story someone forgot to write; sometimes it is one
 nobody could have written.**
 
-> **Recount, 2026-08-11 — the current figures, and the last three lines of history behind them.**
+> **Recount, 2026-08-12 — the current figures.** Straight out of `x-user-stories` in the generated
+> spec: **73 operations serve at least one story, 122 serve none, 73 + 122 = 195.** By API type the
+> 122 are `Feature` 77, `Master data` 21, `Functional` 16, `Non-functional` 5, `Configuration` 3.
+> **The mapped count did not move at all** across Sessions 67–68 — twenty new operations arrived
+> (work-order triage, the amenity admin surface, the money three, `POST /admins`, telemetry,
+> department options, the department-request loop) and four `…/staff` writes were retired, and not
+> one of the twenty maps to a story. That is the same finding the paragraphs above make, made once
+> more and larger: this branch has spent two sessions building the machinery behind outcomes the
+> story set already names, and the story set still has nothing to say about the machinery.
+>
+> **Recount, 2026-08-11 — the figures then, and the last three lines of history behind them.**
 > Straight out of `x-user-stories` in the generated spec: **73 operations serve at least one story,
 > 106 serve none, 73 + 106 = 179.** By API type the 106 are `Feature` 72, `Functional` 16,
 > `Master data` 11, `Non-functional` 4, `Configuration` 3. The three steps since the count below:

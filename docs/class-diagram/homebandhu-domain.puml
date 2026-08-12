@@ -346,6 +346,42 @@ package "Roles, Staff & Skills  (gold)" #FFF8E1 {
   }
   note bottom of StaffAssignment : {invariant} one active staff assignment per membership
 
+  class StaffInvitation <<aggregate root>> {
+    - id : UUID {PK}
+    - inviteeEmail : String {required}
+    - inviteeName : String {required}
+    - inviteePhoneE164 : String [0..1]
+    - rank : StaffRank
+    - jobTitle : String [0..1]
+    - status : StaffInvitationStatus
+    - claimedAt : DateTime [0..1]
+    - createdAt : DateTime
+    - updatedAt : DateTime
+    + claim(p : Profile) : CommunityMembership
+    + amendEmail(next : String) : void
+    + revoke(by : CommunityMembership) : void
+    + /isClaimable() : Boolean
+  }
+  note bottom of StaffInvitation
+    <b>{no token, and that is the design}</b>
+    (`20260812090200`). Leadership has no registration flow to
+    present a token in, so the EMAIL ADDRESS IS THE
+    AUTHORIZATION: first sign-in matches on it and mints the
+    membership. That is a SINGLE FACTOR, deliberately, and it
+    is not what ResidentInvite does — that one keeps a token
+    digest as a mandatory second factor, which is exactly why
+    widening it was the obvious move and the wrong one.
+    `rank` is MANAGER or SUPERVISOR only. MEMBER is reachable
+    solely by hiring a registered ServiceProvider, which is the
+    point of taking typed-in technicians off the department
+    form.
+    {invariant} one PENDING invitation per (community, email)
+    {invariant} claimedAt and the claimant are set iff CLAIMED
+    The department is NOT amendable: it is what the caller was
+    authorized against, so moving one would let the manager of
+    department A mint staff into B. Moving is revoke-and-reissue.
+  end note
+
   class Skill <<entity>> {
     ' global scope
     - id : UUID {PK}
@@ -368,6 +404,24 @@ package "Roles, Staff & Skills  (gold)" #FFF8E1 {
     + verify(by : CommunityMembership) : void
     + /isVerified() : Boolean
   }
+
+  class DepartmentSkill <<association class>> {
+    - createdAt : DateTime
+  }
+  note bottom of DepartmentSkill
+    <b>{what a DEPARTMENT needs, not what a PERSON has}</b>
+    (`20260812090100`). StaffSkill and ServiceProviderSkill say
+    what somebody can do; this says what somebody wants done,
+    and hiring is the join between them. Empty by default — a
+    department inherits nothing from its categories, and the
+    two paths are a UNION rather than a replacement (see the
+    SkillCategory note in the amber package).
+    Retiring a skill is `isActive = false`, never a delete, so
+    the link from a department that has needed a trade for two
+    years survives; the department end cascades, because the
+    skill list of a deleted department is not information
+    about anything.
+  end note
 
   class WorkerAvailabilityRule <<entity>> {
     - id : UUID {PK}
@@ -630,13 +684,44 @@ package "Service Personnel  (amber)" #FFF3E0 {
     - complaintCategoryId : UUID {PK, FK}
   }
   note bottom of SkillCategory
-    <b>{there is no department_skills table}</b> A department
-    declares complaint categories; a skill maps to categories;
-    so "this department needs this skill" is DERIVABLE by a
-    join rather than stored. One table not written.
+    <b>{the derivable half}</b> A department declares complaint
+    categories; a skill maps to categories; so one answer to
+    "this department needs this skill" is a join, and this class
+    is that join.
+    <b>OVERTURNED 2026-08-12</b> — this note used to read "there
+    is no department_skills table", and there is one now
+    (`20260812090100`). The derivation is not WRONG, it is
+    INCOMPLETE: a department can need a trade that no complaint
+    category names, and under a pure join it could never say so.
+    So hiring reads the UNION of this path and DepartmentSkill,
+    not one or the other — which is also why a department that
+    has declared no skills hires exactly as it did before that
+    table existed. See DepartmentSkill in the gold package.
     Note: this model carries a complaint's category as a String
     on Complaint, so the far end of this link is the
     complaint_categories table rather than a class here.
+  end note
+
+  class ServiceSignupFunnelEvent <<entity>> {
+    ' global scope, and unattached on purpose -- see the note
+    - visitorId : UUID {PK}
+    - eventName : String {PK}
+    - occurredAt : DateTime
+  }
+  note bottom of ServiceSignupFunnelEvent
+    <b>{the class with no associations, deliberately}</b>
+    (`20260811163408`). The launch funnel for ServiceProvider
+    registration: CTA_IMPRESSION, CTA_CLICKED, AUTH_COMPLETED,
+    PROVIDER_PROFILE_COMPLETED, FIRST_APPLICATION_SUBMITTED.
+    `visitorId` is a BROWSER COOKIE, not a Profile, and nothing
+    links it to one — a funnel joinable to a person would be a
+    record of what a named individual did before they had an
+    account. Drawing an edge here is the mistake this table was
+    shaped to prevent, so there is none.
+    The composite key is the whole design: one row per visitor
+    per step, so twenty reloads of the landing page are one
+    CTA_IMPRESSION and the funnel counts people, not page
+    loads. Not an experiment framework and not analytics.
   end note
 
   class ServiceApplication <<entity>> {
@@ -1358,6 +1443,11 @@ package "Enumerations" #FAFAFA {
     FRI_5
     SAT_6
   }
+  enum StaffInvitationStatus {
+    PENDING
+    CLAIMED
+    REVOKED
+  }
   enum InviteStatus {
     ISSUED
     SENT
@@ -1370,6 +1460,11 @@ package "Enumerations" #FAFAFA {
     APPROVED
     REJECTED
     WITHDRAWN
+  }
+  enum RequestStatus {
+    PENDING
+    ACCEPTED
+    REJECTED
   }
   enum ComplaintStatus {
     OPEN
@@ -1634,6 +1729,14 @@ StaffAssignment "1" - "0..*" StaffSkill
 Skill "1" - "0..*" StaffSkill
 (StaffAssignment, Skill) .. StaffSkill
 CommunityMembership "0..1" -- "0..*" StaffSkill : verifiedBy
+Department "1" - "0..*" DepartmentSkill
+Skill "1" - "0..*" DepartmentSkill
+(Department, Skill) .. DepartmentSkill
+Community "1" -- "0..*" StaffInvitation : provisioning
+Department "1" -- "0..*" StaffInvitation : forDepartment
+CommunityMembership "1" -- "0..*" StaffInvitation : createdBy
+Profile "0..1" -- "0..*" StaffInvitation : claimedBy
+StaffInvitation "0..1" ..> "0..1" CommunityMembership : claiming mints
 StaffAssignment "1" *-- "0..*" WorkerAvailabilityRule : availability
 StaffAssignment "1" *-- "0..*" WorkerUnavailability : timeOff
 
@@ -1643,6 +1746,8 @@ ServiceProvider "1" -- "0..*" ServiceProviderSkill
 Skill "1" -- "0..*" ServiceProviderSkill
 (ServiceProvider, Skill) .. ServiceProviderSkill
 Skill "1" -- "0..*" SkillCategory
+' ServiceSignupFunnelEvent has no association, and that is the modelling
+' statement -- see its note. Nothing joins a funnel row to a person.
 ServiceProvider "0..1" -- "0..*" StaffAssignment : hiredAs
 ServiceProvider "1" -- "0..*" ServiceApplication : negotiations
 Department "1" -- "0..*" ServiceApplication : inbox

@@ -17,6 +17,61 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 69: the coherence pass — diagrams, docs, and the apply runbook
+
+Three specialists, one question: after Sessions 67–68, does everything still agree with everything?
+Mostly yes; where not, fixed the same day. The app was also run end to end for the first time this
+branch: backend healthy on :8000, frontend on :5173, and the telemetry writes returned 200 —
+a real round trip into the hosted database.
+
+### `docs/plans/MIGRATION_APPLY_RUNBOOK.md` — new
+
+`DERIVED` — the six unapplied `20260812…` migrations verified five ways (parse, order, retry
+safety, code↔schema closure over all 124 RPC call sites — zero unresolved — and the notice
+handling) and turned into the owner's step-by-step apply guide. Two honest limits recorded in it:
+files 1–4 have no dedicated static test suite (verified by hand for this pass), and
+`complaint_department_routing`'s `raise_complaint` drop/create pair is the one transient gap a
+mid-file interruption can leave.
+
+### The diagrams — reconciled after fourteen migrations of drift
+
+`AUDIT` — `docs/diagrams/homebandhu_submission_erd.dbml` gains the four missing tables
+(`service_signup_funnel_events`, `department_skills`, `staff_invitations`,
+`complaint_department_requests`) and five corrections; `erd.svg` re-rendered (determinism proved
+first — the untouched source reproduced the committed SVG byte-for-byte), old render archived per
+the 2026-08-10 precedent. `HomeBandhu-Architecture-Classes.puml` gains the entire
+service-operations half it had never modelled and loses five methods that never existed plus the
+four retired staff writes. `docs/erd/homebandhu.dbml` **did not parse at all** (`''` escapes DBML
+does not have) — fixed, two tables added, and its README now says plainly it records intent, not
+schema. `homebandhu-domain.puml`: the note arguing `department_skills` into non-existence replaced
+with the overturn (the join was incomplete, not wrong), the three missing entities added, and the
+`RequestStatus` enum `ComplaintDepartmentRequest` had referenced since Session 65 finally defined.
+
+`AUDIT` — **the five-gate rule now names its canonical pair**: `docs/diagrams/` is what tracks the
+implementation; Session 65's gate pass had updated the intent draft and the domain model while the
+tracking pair drifted for fourteen migrations. Recorded here and in the orchestrator's standing
+notes so the next gate pass checks the right files.
+
+### The documentation cross-check
+
+`AUDIT` — one real deviation: `api_yaml_mapper.md` was 94 rows stale against Session 68's final
+docs commit — every diff a line number, none a route. Regenerated; the lesson is that a docs-only
+last commit still needs a mapper regen. All 20 `api_map_scan` findings re-verified as recorded
+verdicts (none new across +20/−4 operations); all 24 user-story verdicts agree across the index,
+§16 and the spec; zero dead anchors across eight documents. Stale prose fixed in eight files —
+API.md's banner and §16.6 (rebuilt, four groups had gone missing), the wiring audit, the agenda
+(item 17 closed, item 12 three-quarters closed), `DECISIONS_NEEDED` (B14, B15, B17 closed, B12
+part), both build plans, and the handoff's two "has no caller" notes (both now have callers; the
+fork stays the owner's). Dated finding-blocks were left as records, per convention.
+
+### The server
+
+`AUDIT` — `.claude/launch.json`'s backend entry used `sh`, which does not spawn on this machine —
+now PowerShell. `/health` answers ok; the signed-out 401 pair is the session probe working as
+designed; a stray 773 KB `nul` redirect artifact was removed from the repo root.
+
+---
+
 ## 2026-08-12 — Session 68: phase 7, the symmetry ruling, and the end of the orphan list
 
 Six specialist assignments (three new charters, three follow-ups to standing agents), same

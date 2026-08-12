@@ -1487,3 +1487,125 @@ Table offline_reconcile_log [headercolor: #2C7A7B] {
   Note: 'WHY THE OFFLINE BUNDLE IS NOT SIGNED, WHICH PLAN D13 SAID IT WOULD BE. A signature the device verifies against a key the device holds is theatre -- the same person who can edit localStorage can delete the check beside it, because both are JavaScript on their machine. What is actually load-bearing is that an offline admission is PROVISIONAL UNTIL RECONCILED: reconcile_offline_entry re-runs the real verification and records the servers own verdict beside the devices claim, so a fabricated entry becomes a flagged row in an audit log rather than an admitted guest. This table is also why the replay branch cannot just re-verify: a second scan of one credential is a DEPARTURE, so replaying an admission twice would check the visitor out. The recorded verdict is returned untouched instead. Read policy is is_community_admin ALONE, not gate staff: the person whose entries are being checked is not the person the check is for.'
 }
 // ---------------------------------------------------------------------------
+
+// ===========================================================================
+// AFTER THE DEPLOYMENT BOUNDARY (20260811-20260812)
+//
+// The hosted Supabase project was verified on 2026-08-11 with every numbered
+// migration through 0047 applied. From that moment the file names stop being
+// numbers and become timestamps, and nothing above this line may be corrected
+// in place -- see backend/supabase/migrations/README.md.
+//
+// Four tables, one column that finally has a writer, two views replaced.
+// Everything else in these seven files is functions, which a diagram of tables
+// cannot show.
+// ===========================================================================
+
+Table service_signup_funnel_events [headercolor: #718096] {
+  visitor_id uuid [pk, note: '20260811163408 - the browser cookie id, NOT a profile. There is no foreign key in this table and that is the design']
+  event_name text [pk, note: '20260811163408 - cta_impression | cta_clicked | auth_completed | provider_profile_completed | first_application_submitted']
+  occurred_at timestamptz [not null]
+  Note: 'The service-professional launch funnel, and deliberately not an experiment or a generic analytics framework. THE PRIMARY KEY IS THE WHOLE DESIGN: (visitor_id, event_name) is one row per visitor per step, so somebody who reloads the landing page twenty times is one cta_impression and the funnel counts people rather than page loads. Nothing joins it to a profile, because a funnel that could be joined to one would be a record of what a named person did before they had an account. RLS enabled with NO policy and every grant revoked including anon: the only writer is record_service_signup_funnel_event(), a definer function the unauthenticated endpoint calls.'
+}
+
+Table department_skills [headercolor: #B7791F] {
+  department_id uuid [pk, ref: > departments.id, note: '20260812090100 - on delete cascade. The skill list of a deleted department is not information about anything']
+  skill_id uuid [pk, ref: > skills.id, note: '20260812090100 - on delete RESTRICT, matching service_provider_skills. A skill somebody holds is retired with is_active = false, never deleted']
+  created_at timestamptz [not null]
+  indexes {
+    (skill_id) [name: 'department_skills_skill_idx']
+  }
+  Note: 'The skills a department needs, chosen explicitly by an administrator or its manager. EMPTY BY DEFAULT -- a department inherits nothing from its categories. Inside search_hireable_service_providers the two paths are a UNION rather than a replacement, so a department that has picked no skills hires exactly as it did before this table existed. complaint_categories.skill_id (0034) remains the other half of the join between what a person can do and what a community needs done; this is the half somebody can curate directly.'
+}
+
+Table staff_invitations [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [not null, ref: > departments.id, note: '20260812090200 - deliberately NOT editable by update_staff_invitation: it is what can_manage_department authorizes the call against, so a move would let the manager of one department mint staff into another. Moving an invitation is revoke-and-reissue']
+  invitee_email citext [not null]
+  invitee_name text [not null, note: '20260812090200 - CHECK length(btrim(...)) between 1 and 120']
+  invitee_phone_e164 varchar(20)
+  rank text [not null, note: '20260812090200 - manager | supervisor. member is NOT valid here, on purpose: that rank is reached only by hiring a registered service provider, which is the point of removing typed-in technicians from the department form']
+  job_title text
+  status text [not null, default: 'pending', note: '20260812090200 - pending | claimed | revoked']
+  claimed_by_profile_id uuid [ref: > profiles.id, note: '20260812090200 - on delete set null']
+  claimed_at timestamptz [note: '20260812090200 - CHECK: this and claimed_by_profile_id are both set iff status = claimed. Without it a half-written claim is indistinguishable from a live invitation and would be claimed again by the next sign-in']
+  created_by_membership_id uuid [not null, ref: > community_memberships.id, note: '20260812090200 - on delete restrict']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  indexes {
+    (community_id, invitee_email) [unique, name: 'staff_invitations_one_open_email', note: 'Partial: status = pending. Mirrors invites_one_open_email on resident_invites -- two pending rows for one address would both be claimed by one sign-in, and the second would fail having already half-run']
+    (invitee_email) [name: 'staff_invitations_pending_email_idx', note: 'Partial: status = pending. The claim lookup at sign-in']
+    (department_id) [name: 'staff_invitations_department_idx']
+  }
+  Note: 'A manager or supervisor an administrator has created but who has not signed in yet. THERE IS NO TOKEN AND NO REGISTRATION FLOW FOR LEADERSHIP: claim_staff_invitations matches on the email address at first sign-in, so the address IS the authorization. That is a single factor and it is stated rather than softened in docs/design/STAFF_PROVISIONING_DESIGN.md -- widening resident_invites, whose token stays a mandatory second factor, was the obvious move and the wrong one. update_staff_invitation is the typo recovery path the product owner chose over a claim code; it makes the accident recoverable and does nothing about the security case.'
+}
+
+Table complaint_department_requests [headercolor: #C53030] {
+  id uuid [pk]
+  complaint_id uuid [not null, ref: > complaints.id, note: '20260812090300 - on delete cascade']
+  from_department_id uuid [ref: > departments.id, note: '20260812090300 - on delete set null']
+  to_department_id uuid [ref: > departments.id, note: '20260812090300 - NULLABLE on purpose. This is not plumbing is a useful thing for a supervisor to say even when they have no idea whose it is; the manager accepts it into the triage queue by deciding with no destination']
+  requested_by_membership_id uuid [not null, ref: > community_memberships.id]
+  reason text
+  status text [not null, default: 'pending', note: '20260812090300 - pending | accepted | rejected']
+  decided_by_membership_id uuid [ref: > community_memberships.id]
+  decided_at timestamptz
+  created_at timestamptz [not null]
+  indexes {
+    (complaint_id) [unique, name: 'complaint_department_requests_one_open', note: 'Partial: status = pending. Two supervisors disagreeing about where a complaint belongs is a conversation, not two rows racing a manager inbox']
+    (from_department_id, status, created_at) [name: 'complaint_department_requests_from_idx']
+  }
+  Note: 'A supervisor saying a complaint belongs to another department, and the answer from their manager. A REQUEST IS A ROW RATHER THAN AN UPDATE because somebody who could push work out of their own department could empty it, and the department receiving it would have no say either way. Answered by the manager of from_department_id, never to_department_id -- authorizing on the destination would let the manager of B decide what A gives away. Read policy is can_supervise_department(from_department_id); there is no INSERT or UPDATE policy, so both writes are RPCs, the 0031 posture.'
+}
+
+// ---------------------------------------------------------------------------
+// WHAT THESE FILES CHANGED ON THE TABLES ABOVE
+//
+//   complaints.department_id   NOT a new column -- 0019 added it, and this
+//     diagram has carried it since. What changed is that something finally
+//     WRITES it. Routing happened only when dispatch built a work order, so
+//     before that moment a complaint belonged to nobody and every notification
+//     about one went to every manager in the community. The precedence rule is
+//     category, then the resident own guess, then nothing: an ambiguous
+//     category routes to nothing, because department_categories has a
+//     COMPOSITE primary key and one category may belong to several
+//     departments. NULL is a real state rather than a gap -- it is the
+//     administrator triage queue. docs/API.md 7.1.
+//
+//   complaints_department_idx  Redefined as (department_id, status,
+//     created_at desc). The department own queue and the admin triage queue
+//     are the same index read two ways: where department_id = $1, and where
+//     department_id is null.
+//
+//   skills_name_trgm           A gin trigram index on lower(name), PARTIAL on
+//     is_active, for the skill suggestion box. Partial for the same reason
+//     GET /skills filters on is_active: a retired trade must not be offered as
+//     a suggestion, and an index that held it would rank it.
+//
+// VIEWS REPLACED (both still security_invoker)
+//
+//   community_settings_overview (20260811162409) gains communities.latitude
+//     and longitude, so the settings screen can show and move the map pin that
+//     search_serviceable_communities reads.
+//
+//   department_overview (20260812090100) -- two changes. The head lateral now
+//     matches rank = manager: 0035 renamed the rank and this read still said
+//     head, so it had been matching nothing and every department reported no
+//     head. And the view carries skill_ids and skill_names (active skills
+//     only), on the view rather than fetched per card, because a per-card round
+//     trip turns a list of twelve departments into thirteen requests.
+//
+// FUNCTIONS ONLY, no table, view or column of their own:
+//   20260811162409  service-professional registration, the professional
+//                   membership mode trigger, can_hire_for_department, and both
+//                   halves of the search.
+//   20260812090000  the amenity and incident notification audiences, declared
+//                   in full because the applied files that held them can no
+//                   longer be corrected in place.
+//   20260812113000  the separate-account rule, now enforced in BOTH
+//                   directions by the membership trigger (HBSEP).
+//   20260812120000  the seven ?job= notification urls repointed at the
+//                   work-order triage screen.
+//   0047            security_roster, and its header says so explicitly.
+// ---------------------------------------------------------------------------

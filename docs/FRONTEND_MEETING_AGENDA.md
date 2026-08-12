@@ -5,13 +5,16 @@
 **Purpose:** seventeen things the backend cannot resolve on its own. Everything else has been absorbed
 by the API layer and needs no frontend change.
 
-**Items 8, 13, 15 and 17 are live bugs.** The rest are design mismatches. Items 9 and 10 were added
+**Items 8, 13, 15 and ~~17~~ are live bugs** (17 closed 2026-08-12). The rest are design mismatches. Items 9 and 10 were added
 while building the departments endpoints and items 11 to 13 while building the money endpoints
 (2026-07-29); **items 14 to 16 while building the amenity endpoints, and item 17 while building the
 settings endpoints** (2026-07-30).
 
-**Item 12 is the largest single gap in the product**, and it is not a mismatch: there is no screen
-that can bill anybody. **Item 14 is the largest open question**: there appear to be two unrelated
+**Item 12 was the largest single gap in the product**, and it was not a mismatch: there was no screen
+that could bill anybody. *(Three of its four bullets closed 2026-08-12 — an invoice can be raised, an
+offline payment recorded and the rate configured; the recurring monthly cycle is still nobody's. Item
+17 closed the same day; items 8, 13 and 15 were not re-checked in that pass.)* **Item 14 is the largest open
+question**: there appear to be two unrelated
 amenity products in the codebase, and we can only serve one of them. **Item 17 is the one where your
 answer changes our field names**, so it is worth ten minutes now rather than after something depends
 on them.
@@ -265,10 +268,21 @@ invoices. Nothing breaks today — it is simply available and unused.
 
 ---
 
-## 12. There is no way to bill anybody *(found 2026-07-29 — the biggest gap we have found)*
+## 12. There is no way to bill anybody *(found 2026-07-29 — the biggest gap we have found)* — ◐ three of four closed 2026-08-12
 
-**Today:** the Maintenance screen lists invoices and shows three tiles. That is all of it. There is
-**no screen** that:
+> **Closed by the phase-7 money wiring, except the recurring cycle.** `Maintenance.jsx:46` calls
+> `moneyApi.createInvoice` (`POST /invoices`) and `:201` calls `moneyApi.recordPayment`
+> (`POST /invoices/{id}/payments`), so an invoice can be raised and an offline payment recorded from
+> a screen; `Settings.jsx:137-144` writes `defaultMaintenanceAmount` through
+> `PUT /billing-settings`, so the rate is a choice rather than a constant. **The third bullet is
+> still open** — nothing runs a monthly maintenance cycle, because `POST /maintenance-runs` was
+> removed by the wiring audit and nothing schedules anything (`DECISIONS_NEEDED.md` A22). The
+> hardcoded `4250` in `createPendingRequestsSlice.js:43` also survives, in the demo approval handler.
+>
+> The description below is left as raised, per this file's convention.
+
+**Today (2026-07-29):** the Maintenance screen lists invoices and shows three tiles. That is all of
+it. There is **no screen** that:
 
 - creates an invoice,
 - records a payment that arrived by cash or cheque,
@@ -410,10 +424,20 @@ it is, the row is honest about its date and quiet about its scope.
 
 ---
 
-## 17. The Settings screen tells admins it saved, and saves nothing *(found 2026-07-30 — a live bug, and the one where your answer changes our field names)*
+## 17. The Settings screen tells admins it saved, and saves nothing *(found 2026-07-30 — a live bug, and the one where your answer changes our field names)* — ✅ closed 2026-08-12
 
-**Today:** [`Settings.jsx`](../frontend/src/pages/AdminDashboard/Settings.jsx) is 135 lines. Four
-`useState` toggles, and:
+> **The save button is no longer a lie.** [`Settings.jsx`](../frontend/src/pages/AdminDashboard/Settings.jsx)
+> is 389 lines and its `handleSave` (`:93`) writes both endpoints this item names: `PUT /settings`
+> for `requireVisitorPreapproval` and `noticeSmsBroadcastEnabled` (`:130-131`) and
+> `PUT /billing-settings` for the money pair and the amounts behind them (`:137-144`), reading them
+> back at `:62-63` and `:75-81`. **Ask 1 was never answered**, so the four field names in the table
+> below are still ours by default rather than by agreement — which is the part of this item that is
+> closed by shipping rather than by deciding, and the distinction is worth keeping.
+>
+> The description below is left as raised, per this file's convention.
+
+**Today (2026-07-30):** [`Settings.jsx`](../frontend/src/pages/AdminDashboard/Settings.jsx) is 135
+lines. Four `useState` toggles, and:
 
 ```js
 const handleSave = () => {

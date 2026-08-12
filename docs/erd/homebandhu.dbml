@@ -382,6 +382,23 @@ Table staff_skills [headercolor: #B7791F] {
   Note: 'Composite PK: (staff_assignment_id, skill_id). This is where "technician" lives.'
 }
 
+// NEW 2026-08-12 (`20260812090100_skills_and_categories.sql`): the skills a
+// department needs, chosen explicitly by an administrator or its manager.
+//
+// The counterpart of `staff_skills` above, one level up: that table says what a
+// PERSON can do, this one says what a DEPARTMENT needs done, and hiring is the
+// join between them. Empty by default — a department inherits nothing from its
+// categories, and the category path and this one are a UNION inside
+// `search_hireable_service_providers` rather than a replacement, so a department
+// that has picked no skills hires exactly as it did before this table existed.
+Table department_skills [headercolor: #B7791F] {
+  department_id uuid [pk, not null, ref: > departments.id]
+  skill_id uuid [pk, not null, ref: > skills.id]
+  created_at timestamptz [not null]
+
+  Note: 'Composite PK: (department_id, skill_id). `on delete cascade` on the department — the skill list of a deleted department is not information about anything. `on delete restrict` on the skill, matching the person-side table: a trade is retired with is_active = false, never deleted, so a department that has needed "Air Conditioning" for two years keeps the row that says so. No write policy: every write is a definer function that checks can_manage_department first.'
+}
+
 Table worker_availability_rules [headercolor: #B7791F] {
   id uuid [pk]
   community_id uuid [not null, ref: > communities.id]
@@ -441,6 +458,39 @@ Table resident_invites [headercolor: #102A43] {
   updated_at timestamptz [not null]
 
   Note: 'RLS tenant boundary. Partial UQ: one active invitation per recipient/unit. CHANGED: v1 modelled Supabase email magic-link invites (recipient_email NN) while every implemented screen is phone OTP plus a typable code — and the v1 note said "do not store plaintext tokens" with no digest column to store them in. Now: phone NN, email optional, both credentials held as digests. Redemption is a compare-and-set (UPDATE ... WHERE accepted_at IS NULL RETURNING) inside redeem_invite(), so a concurrent double-redeem cannot both win. attempt_count backs a hard cap on code guesses. DECIDED: one membership per redemption — the prototype behaviour of activating every phone on the flat is not carried forward.'
+}
+
+// NEW 2026-08-12 (`20260812090200_staff_provisioning.sql`): a manager or
+// supervisor an administrator has created but who has not signed in yet.
+//
+// Deliberately NOT a widening of `resident_invites` above, which was the obvious
+// move and the wrong one: that table's `token_digest` is a mandatory second
+// factor, and leadership has no registration flow to present a token in. Here
+// the email address IS the authorization — `claim_staff_invitations` matches on
+// it at first sign-in. That is a single factor and the trade-off is stated
+// rather than softened in docs/design/STAFF_PROVISIONING_DESIGN.md.
+Table staff_invitations [headercolor: #B7791F] {
+  id uuid [pk]
+  community_id uuid [not null, ref: > communities.id]
+  department_id uuid [not null, ref: > departments.id]
+  invitee_email citext [not null]
+  invitee_name text [not null]
+  invitee_phone_e164 varchar(20)
+  rank text [not null]
+  job_title text
+  status text [not null]
+  claimed_by_profile_id uuid [ref: > profiles.id]
+  claimed_at timestamptz
+  created_by_membership_id uuid [not null, ref: > community_memberships.id]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (community_id, invitee_email) [unique, name: 'staff_invitations_one_open_email']
+    (department_id) [name: 'staff_invitations_department_idx']
+  }
+
+  Note: 'rank: manager | supervisor. The third rank — `worker` in this file, `member` in the migration, which is one more place the two vocabularies disagree — is NOT valid here, on purpose: that rank is reached only by hiring a registered service provider, which is the point of removing typed-in technicians from the department form. status: pending | claimed | revoked, with a CHECK that claimed_by_profile_id and claimed_at are both set iff status = claimed: a half-written claim would otherwise be indistinguishable from a live invitation and be claimed again by the next sign-in. The unique index is PARTIAL on status = pending, mirroring resident_invites — two pending rows for one address would both be claimed by one sign-in. department_id is deliberately NOT editable by update_staff_invitation: it is what can_manage_department authorizes the call against, so a move would let the manager of one department mint staff into another. Moving an invitation is revoke-and-reissue.'
 }
 
 Table access_requests [headercolor: #102A43] {
@@ -546,7 +596,7 @@ Table complaint_department_requests [headercolor: #C53030] {
     complaint_id [unique, name: 'complaint_department_requests_one_open']
   }
 
-  Note: 'status: pending | accepted | rejected. to_department_id is NULLABLE on purpose — "this is not ours" is worth saying without knowing whose it is, and accepting such a request returns the complaint to the admin triage queue (department_id = null). The unique index is PARTIAL, on status = pending: two supervisors disagreeing about where a complaint belongs is a conversation, not two rows racing a manager''s inbox. Answered by the manager of from_department_id, never to_department_id — authorizing on the destination would let the manager of B take A''s work.'
+  Note: '''status: pending | accepted | rejected. to_department_id is NULLABLE on purpose — "this is not ours" is worth saying without knowing whose it is, and accepting such a request returns the complaint to the admin triage queue (department_id = null). The unique index is PARTIAL, on status = pending: two supervisors disagreeing about where a complaint belongs is a conversation, not two rows racing a manager's inbox. Answered by the manager of from_department_id, never to_department_id — authorizing on the destination would let the manager of B take A's work.'''
 }
 
 // NEW: design-of-components.md §6 — comments between residents and the management team.
@@ -1347,6 +1397,8 @@ TableGroup gold_people_operations {
   staff_assignments
   skills
   staff_skills
+  department_skills
+  staff_invitations
   worker_availability_rules
   worker_unavailability
 }
