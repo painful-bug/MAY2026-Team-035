@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsPage from './Settings';
 
@@ -14,14 +15,42 @@ const LOADED = {
   billing: { autoBillingEnabled: false, lateFeeEnabled: false },
 };
 
+// The billing card now reads `GET /billing-settings` through react-query, the
+// endpoint's own writable shape rather than the read-only copy `/settings`
+// echoes -- both go through the same mocked `api`, distinguished by path.
+const BILLING_SETTINGS = {
+  communityId: 'c1',
+  currency: 'INR',
+  invoiceNumberPrefix: 'INV',
+  defaultMaintenanceAmount: null,
+  maintenanceDueDay: 15,
+  defaultTaxPercent: 0,
+  autoBillingEnabled: false,
+  autoBillingDay: 1,
+  lateFeeEnabled: false,
+  lateFeeAmount: null,
+  lateFeeGraceDays: 10,
+  lateFeePeriod: 'weekly',
+  updatedAt: '2026-07-29T18:00:00+00:00',
+};
+
 beforeEach(() => {
-  mocks.api.mockReset().mockResolvedValue(LOADED);
+  mocks.api.mockReset().mockImplementation((path) => {
+    if (path === '/billing-settings') return Promise.resolve(BILLING_SETTINGS);
+    return Promise.resolve(LOADED);
+  });
   mocks.showToast.mockReset();
 });
 
+function renderWithProviders(ui) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
 async function renderLoaded() {
-  render(<SettingsPage />);
+  renderWithProviders(<SettingsPage />);
   await waitFor(() => expect(screen.getByLabelText('Latitude')).toHaveValue(22.572645));
+  await waitFor(() => expect(screen.queryByText(/loading billing settings/i)).not.toBeInTheDocument());
   mocks.api.mockClear();
 }
 

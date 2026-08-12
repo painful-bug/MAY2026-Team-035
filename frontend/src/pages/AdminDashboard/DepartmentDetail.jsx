@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Building2,
   CheckCircle2,
+  ClipboardList,
   Clock3,
   Filter,
   MapPin,
@@ -316,13 +317,28 @@ export default function DepartmentDetail() {
               {/* The one door from the demo half into the live one. Everything
                   on this page is zustand; everything behind that link is the
                   real API. */}
-              <Link
-                to={`/admin/departments/${department.id}/hiring`}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Hire service partners
-              </Link>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  to={`/admin/departments/${department.id}/hiring`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Hire service partners
+                </Link>
+                {/* The second door into the live half. Assignment on this page
+                    is still the demo's optimistic local field — whether it
+                    should become a work order is the open fork in
+                    `COMPLAINT_ENGINE_HANDOFF.md` §8, and this link deliberately
+                    does not answer it. It goes to where work orders are their
+                    own resource. */}
+                <Link
+                  to={`/admin/departments/${department.id}/work-orders`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  Work orders
+                </Link>
+              </div>
             </div>
           </div>
           <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs shadow-sm">

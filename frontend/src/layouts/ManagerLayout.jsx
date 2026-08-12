@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Building2,
+  ClipboardList,
   LayoutDashboard,
   LogOut,
   MessageSquareWarning,
@@ -61,6 +62,22 @@ export default function ManagerLayout() {
         name: 'Hiring',
         path: `${base}/departments/${departmentId}/hiring`,
         icon: UserPlus,
+      }]
+      : []),
+    // Work-order triage: the hand path behind the dispatch engine. The eight
+    // endpoints have admitted a department's supervisors since `0036` and had
+    // no screen at all, which is the same gap hiring had — an endpoint that
+    // works and a portal with no way in.
+    //
+    // The id-shaped URL, for the reason above it: one path shape under every
+    // base. `/manager/work-orders` is also a route, so a link that predates a
+    // department still lands somewhere honest, but the nav names the id when it
+    // knows one.
+    ...(departmentId
+      ? [{
+        name: 'Work orders',
+        path: `${base}/departments/${departmentId}/work-orders`,
+        icon: ClipboardList,
       }]
       : []),
   ];

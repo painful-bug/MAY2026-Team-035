@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   UserPlus,
+  Wrench,
   X,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
@@ -69,6 +70,26 @@ export default function SecurityLayout() {
             name: 'Hiring',
             path: `${basePath}/departments/${currentUser.departmentId}/hiring`,
             icon: UserPlus,
+          }]
+          : []),
+        // Work orders, added 2026-08-12. **The same gate as Hiring above, on
+        // purpose** — same two people reach this portal, and `accessRole` is
+        // still the only thing that tells the department's manager from the
+        // senior guard.
+        //
+        // The one difference is that the paragraph above about admitting
+        // somebody who may look and not act does not apply here. Hiring is
+        // `can_hire_for_department`, which a supervisor fails; every one of the
+        // eight work-order RPCs checks `can_supervise_department`, which a
+        // supervisor *passes*. So this entry is not a permission with an
+        // explanation attached — it is the screen for a permission all three of
+        // these people already hold, and which none of them had a way to spend
+        // until now.
+        ...(['MANAGER', 'SECURITY'].includes(currentUser?.accessRole) && currentUser?.departmentId
+          ? [{
+            name: 'Work orders',
+            path: `${basePath}/departments/${currentUser.departmentId}/work-orders`,
+            icon: Wrench,
           }]
           : []),
         { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },

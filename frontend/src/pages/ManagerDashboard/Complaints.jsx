@@ -1,5 +1,6 @@
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ClipboardList } from 'lucide-react';
 
 import ChangeRequests from '../../features/complaints/components/ChangeRequests';
 import DepartmentComplaintList from '../../features/complaints/components/DepartmentComplaintList';
@@ -49,6 +50,20 @@ export default function ManagerComplaints() {
             ? `Everything routed to ${department.name}`
             : 'Everything routed to your department'
         }
+        // Where a complaint stops being a status and becomes somebody
+        // arriving at an hour. Deliberately a link out rather than a panel
+        // here: this screen is about *whose* a complaint is, and nothing on
+        // the triage screen writes `complaints.status` — the two state
+        // machines stay uncoupled until the complaint engine says otherwise.
+        action={(
+          <Link
+            to={`/manager/departments/${departmentId}/work-orders`}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-[11px] font-bold text-indigo-700"
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            Work orders
+          </Link>
+        )}
       />
 
       <ChangeRequests departmentId={departmentId} />

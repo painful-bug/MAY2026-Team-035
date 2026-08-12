@@ -35,6 +35,7 @@ import CandidateDetail from './pages/AdminDashboard/CandidateDetail';
 import DepartmentHiring from './pages/AdminDashboard/DepartmentHiring';
 import EmployeeDetail from './pages/AdminDashboard/EmployeeDetail';
 import AdminMessages from './pages/AdminDashboard/Messages';
+import WorkOrderTriage from './pages/AdminDashboard/WorkOrderTriage';
 import JoinPage from './pages/Join/JoinPage';
 import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
@@ -138,6 +139,26 @@ const HIRING_ROUTES = (
         links to, and where the candidate page's Message button lands. */}
     <Route path="messages" element={<AdminMessages />} />
   </>
+);
+
+// Work-order triage, mounted under the admin and the department-manager bases.
+//
+// **The same idiom as `HIRING_ROUTES` and for the same reason.** The eight
+// endpoints behind this screen guard on `can_supervise_department` inside
+// Postgres and admit every kind of staff at the router, so a department manager
+// has always been allowed to call them — and had no screen. One fragment rather
+// than a copy per portal is what keeps that from happening again the next time
+// a base is added.
+//
+// The `:departmentId` stays in the path under every base, so the component has
+// no per-portal branch. It is not a permission: `can_supervise_department`
+// refuses somebody else's id in the database, which is the whole posture of
+// `work_orders.py`.
+const WORK_ORDER_ROUTES = (
+  <Route
+    path="departments/:departmentId/work-orders"
+    element={<WorkOrderTriage />}
+  />
 );
 
 // Protected Route Guard Simulation
@@ -389,6 +410,16 @@ export default function App() {
                 database returned, which is a truthful answer, and duplicating
                 the role test here would be a second place for it to drift. */}
             {HIRING_ROUTES}
+            {/* Work-order triage, on the reasoning one line up and with one
+                difference worth stating. Hiring admits the senior guard to a
+                screen they may not always act on, and pays one click and an
+                explanation for it. Here there is no such gap:
+                `can_supervise_department` is what every work-order RPC checks,
+                and a supervisor satisfies it — so this surface is theirs to
+                use rather than merely to look at. A security department is a
+                department, and hiding its queue from one of two permitted
+                roles is `docs/potential issues/14` a third time. */}
+            {WORK_ORDER_ROUTES}
           </Route>
 
           {/* Department manager portal.
@@ -413,6 +444,14 @@ export default function App() {
                 happened. */}
             <Route path="complaints" element={<ManagerComplaints />} />
             {HIRING_ROUTES}
+            {WORK_ORDER_ROUTES}
+            {/* The one shape that is *not* the admin's, and it is here rather
+                than in the fragment above because only this portal can answer
+                it: a manager's session names their department, so
+                `usePortalScope` fills the id in when the URL has not. An admin
+                has no such default, which is why `/admin/work-orders` is not a
+                route. */}
+            <Route path="work-orders" element={<WorkOrderTriage />} />
           </Route>
 
           {/* Service Partner (worker) portal.
@@ -459,6 +498,7 @@ export default function App() {
               element={<AdminDepartmentDetail />}
             />
             {HIRING_ROUTES}
+            {WORK_ORDER_ROUTES}
             <Route
               path="department/new"
               element={<Navigate to="/admin/departments?create=1" replace />}
