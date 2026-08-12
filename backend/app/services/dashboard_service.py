@@ -106,7 +106,7 @@ def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, l
             "date": _iso_date(starts_at or row.get("created_at")), "expectedDate": _iso_date(starts_at),
             "expectedTime": _time(starts_at), "eta": _time(starts_at), "validUntil": ends_at,
             "checkedInAt": row.get("checked_in_at"), "checkedOutAt": row.get("checked_out_at"),
-            "createdAt": row.get("created_at"), "events": row.get("visitor_events") or [],
+            "createdAt": row.get("created_at"), "events": row.get("legacy_visitor_events") or row.get("visitor_events") or [],
         })
     return result
 

@@ -78,7 +78,7 @@ def _to_summary(row: dict) -> DepartmentSummary:
             end=clock_time(row.get("closes_at")),
         ),
         sla_hours=row.get("sla_hours"),
-        kind=row.get("kind", "service"),
+        kind=row.get("kind") or "service",
         status=department_status_to_wire(row.get("status")),
         staff_count=row.get("staff_count") or 0,
         active_complaint_count=row.get("active_complaint_count") or 0,
