@@ -79,6 +79,20 @@ Three shell-level decisions worth recording beyond the bug fixes themselves:
   down snapshot all render nothing rather than an invented number. The landing page's fake
   "12 new this month" stays — it is inside the marketing illustration, not a data surface.
 
+### Both snapshots read concurrently — wall time drops from sum-of-RTTs to max
+
+`PO` (the owner reported the amenities tab "takes a long time"; the mechanism is `DERIVED`).
+The admin snapshot issued 15–16 synchronous PostgREST round trips in strict sequence, the
+resident snapshot 6 — wall time was the *sum* of the RTTs to the hosted project. Nothing except
+legacy payments (which filters by the invoice ids just fetched) depends on another read, so both
+services now fan the reads out over a bounded `ThreadPoolExecutor` (invoices→payments chained
+inside one worker) and assemble identically — ~8× in simulation. The shared supabase client was
+verified thread-safe for this fan-out against the installed sources: `table()` builds a fresh
+request builder per call, httpx's session is documented thread-safe, and the lazily-initialised
+`client.postgrest` is forced on the calling thread by the schema probe before any worker starts.
+Wire shape unchanged (`export_openapi.py --check` untouched); a failing read still fails the
+whole request with its own exception, never a partial snapshot.
+
 ### Departments form — one manager entry, and modals escape the fade-in trap
 
 `PO` (the owner found the create form carrying two generations of manager entry and the modal

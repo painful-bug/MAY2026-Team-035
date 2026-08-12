@@ -14,11 +14,16 @@ the benefit is that **the home screen and the screen it links to cannot disagree
 which for a screen whose entire job is to summarise the others is the only property
 that matters.
 
-**Sequential reads, one honest timestamp.** Six reads, not one transaction, so the
-dues could be a heartbeat older than the visitors. `generatedAt` is therefore the
-moment the payload was assembled and not the moment any part of it was true. The
-admin snapshot works the same way and for the same reason: a resident refreshing a
-home screen is not asking for a consistent cut of the database.
+**Concurrent reads, one honest timestamp.** Six reads on a small thread pool, not
+one transaction, so the dues could be a heartbeat older than the visitors.
+`generatedAt` is therefore the moment the payload was assembled and not the moment
+any part of it was true. The admin snapshot works the same way and for the same
+reason: a resident refreshing a home screen is not asking for a consistent cut of
+the database -- but they are asking for it faster than the sum of six sequential
+PostgREST round trips, which is what running the independent reads concurrently
+buys. The client is safe to share across the workers: each `.table()` call builds
+a fresh request builder and the underlying `httpx.Client` is thread-safe; the
+caller's JWT was attached once, before this service was entered.
 
 **`activity` is the notification feed, and §5.7 says it should not be.** §5.7
 reserved `member_activity` for this, reasoning that a second activity table would
@@ -35,6 +40,7 @@ unused and unread, and §5.7 is corrected rather than obeyed.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -137,22 +143,41 @@ def snapshot(
     request parameter — §5.2, and the reason this endpoint takes no arguments at
     all. There is nothing a caller could pass that would widen it.
     """
-    complaint_page = complaints.list_mine(
-        client, membership_id=membership_id, page_size=_COMPLAINTS
-    )
-    notices = home.list_notices(client, community_id=community_id, page_size=_NOTICES)
-    # The feed is the person's, not the membership's (0041). For the ordinary
-    # resident those are the same rows; for a resident who also works in another
-    # society it is one activity list rather than a partial one, and it matches
-    # what the bell shows on every other screen.
-    feed = notifications_service.list_feed(
-        client, profile_id=profile_id, page_size=_ACTIVITY
-    )
+    # Five independent reads (the feed task carries two queries inside the
+    # service it delegates to), all keyed off identifiers resolved before this
+    # function was entered -- so they run concurrently and the wall time is
+    # the slowest read, not the sum. `Future.result()` re-raises a failing
+    # read's own exception, so error semantics match the sequential version.
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="res-snapshot") as pool:
+        complaints_f = pool.submit(
+            complaints.list_mine,
+            client, membership_id=membership_id, page_size=_COMPLAINTS,
+        )
+        notices_f = pool.submit(
+            home.list_notices, client, community_id=community_id, page_size=_NOTICES
+        )
+        # The feed is the person's, not the membership's (0041). For the
+        # ordinary resident those are the same rows; for a resident who also
+        # works in another society it is one activity list rather than a
+        # partial one, and it matches what the bell shows on every other
+        # screen.
+        feed_f = pool.submit(
+            notifications_service.list_feed,
+            client, profile_id=profile_id, page_size=_ACTIVITY,
+        )
+        dues_f = pool.submit(_dues, client, community_id=community_id)
+        visitors_f = pool.submit(_visitors, client, membership_id=membership_id)
+
+        complaint_page = complaints_f.result()
+        notices = notices_f.result()
+        feed = feed_f.result()
+        dues = dues_f.result()
+        visitor_digest = visitors_f.result()
 
     return ResidentSnapshot(
         unread_notifications=feed.unread,
-        dues=_dues(client, community_id=community_id),
-        visitors=_visitors(client, membership_id=membership_id),
+        dues=dues,
+        visitors=visitor_digest,
         complaints=ComplaintDigest(
             total=complaint_page.total, recent=complaint_page.items
         ),

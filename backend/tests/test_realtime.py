@@ -748,3 +748,124 @@ def test_weekly_new_counts_on_the_baseline_schema():
     assert [q["table"] for q in client.queries] == [
         "community_memberships", "complaints", "visitor_requests", "amenity_bookings",
     ]
+
+
+def test_weekly_new_counts_on_an_executor_ask_the_same_four_tables():
+    """The snapshot hands its pool down so the counts join the concurrent
+    batch; the executor path must be the sequential path, only faster."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    # One worker keeps the shared recorder's bookkeeping deterministic.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        counts = dashboard_repository.weekly_new_counts(
+            client, ALPHA, legacy=False,
+            since_iso="2026-08-05T00:00:00+00:00", executor=pool,
+        )
+
+    assert counts == {
+        "residents": 0, "complaints": 0, "visitorRequests": 0, "bookings": 0,
+    }
+    assert sorted(q["table"] for q in client.queries) == [
+        "amenity_bookings", "community_memberships", "complaints", "visitor_requests",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The reads run concurrently; the assembly must not care
+# ---------------------------------------------------------------------------
+
+
+def _stub_reads(monkeypatch, **overrides):
+    """Stub every repository read the snapshot performs, `overrides` winning."""
+    from app.services import dashboard_service
+
+    reads = {
+        "list_memberships": lambda *a, **k: [],
+        "list_complaints": lambda *a, **k: [],
+        "list_visitors": lambda *a, **k: [],
+        "list_amenities": lambda *a, **k: [],
+        "list_bookings": lambda *a, **k: [],
+        "list_invoices": lambda *a, **k: [],
+        "list_payments": lambda *a, **k: [],
+        "list_notices": lambda *a, **k: [],
+        "list_departments": lambda *a, **k: [],
+        "list_activity": lambda *a, **k: [],
+        "list_pending_access_requests": lambda *a, **k: [],
+        "weekly_new_counts": lambda *a, **k: dict(_WEEKLY),
+    }
+    reads.update(overrides)
+    for name, stub in reads.items():
+        monkeypatch.setattr(
+            dashboard_service.dashboard_repository, name, stub, raising=True
+        )
+    monkeypatch.setattr(
+        dashboard_service.dashboard_repository, "schema_generation", lambda: "current"
+    )
+    monkeypatch.setattr(dashboard_service, "get_service_client", lambda: object())
+
+
+def test_the_snapshot_assembles_correctly_when_reads_finish_out_of_order(monkeypatch):
+    """The earliest-submitted reads finish last here, so any assembly that
+    depended on completion order (rather than on which future is which) would
+    scramble the payload."""
+    import time
+
+    from app.domain.schemas import MembershipContext
+    from app.services import dashboard_service
+
+    def slow(value, delay):
+        def read(*args, **kwargs):
+            time.sleep(delay)
+            return value
+        return read
+
+    _stub_reads(
+        monkeypatch,
+        # Submitted first, resolves last.
+        list_memberships=slow([{
+            "id": "m1", "profile_id": "p1", "role": "admin", "status": "active",
+            "department_id": None, "profiles": {"full_name": "Asha"},
+            "unit_residencies": [],
+        }], 0.05),
+        list_notices=slow([{"id": "n1", "title": "Water", "body": "off at noon",
+                            "published_at": "2026-08-11T00:00:00Z",
+                            "created_at": "2026-08-11T00:00:00Z"}], 0.02),
+        # Submitted late, resolves first.
+        list_departments=lambda *a, **k: [
+            {"id": "d1", "name": "Gate", "description": "", "is_active": True}
+        ],
+    )
+
+    snap = dashboard_service.snapshot(
+        MembershipContext(id="m1", community_id=ALPHA, role="admin")
+    )
+
+    assert [u["name"] for u in snap.users] == ["Asha"]
+    assert [n["id"] for n in snap.notices] == ["n1"]
+    assert [d["name"] for d in snap.departments] == ["Gate"]
+    assert snap.weeklyNew.model_dump() == _WEEKLY
+
+
+def test_a_failing_read_fails_the_snapshot_with_its_own_exception(monkeypatch):
+    """Concurrency must not soften errors into a partial payload: the read's
+    own exception type propagates, exactly as it did sequentially."""
+    import pytest
+
+    from app.domain.schemas import MembershipContext
+    from app.services import dashboard_service
+
+    class VisitorReadError(RuntimeError):
+        pass
+
+    def boom(*args, **kwargs):
+        raise VisitorReadError("PGRST200")
+
+    _stub_reads(monkeypatch, list_visitors=boom)
+
+    with pytest.raises(VisitorReadError):
+        dashboard_service.snapshot(
+            MembershipContext(id="m1", community_id=ALPHA, role="admin")
+        )

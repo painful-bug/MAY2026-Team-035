@@ -12,6 +12,7 @@ also constrained by the resolved community id.
 from __future__ import annotations
 
 import re
+from concurrent.futures import Executor
 from functools import lru_cache
 from typing import Any
 
@@ -138,7 +139,12 @@ def list_bookings(client: Client, community_id: str, *, legacy: bool) -> list[di
 
 
 def weekly_new_counts(
-    client: Client, community_id: str, *, legacy: bool, since_iso: str
+    client: Client,
+    community_id: str,
+    *,
+    legacy: bool,
+    since_iso: str,
+    executor: Executor | None = None,
 ) -> dict[str, int]:
     """Rows created since `since_iso`, one integer per dashboard trend chip.
 
@@ -146,6 +152,12 @@ def weekly_new_counts(
     `Content-Range` total and no rows, so this costs four index scans rather
     than four page fetches. Keys are the wire names `DashboardSnapshot.weeklyNew`
     promises the frontend.
+
+    With an `executor` the four counts are submitted to it and run
+    concurrently (the snapshot passes its own bounded pool, so the counts join
+    the batch instead of adding four round trips after it); without one they
+    run in sequence. Either way the call returns the completed dict, and a
+    failing count raises its own exception -- `Future.result()` re-raises.
     """
 
     def _count(table: str, extra: dict[str, str] | None = None) -> int:
@@ -159,22 +171,29 @@ def weekly_new_counts(
             query = query.eq(column, value)
         return int(query.execute().count or 0)
 
-    return {
+    jobs: dict[str, tuple[str, dict[str, str] | None]] = {
         # Memberships are soft-ended, so "started in the window" is a row
         # created in the window that is still an active resident membership.
-        "residents": _count(
+        "residents": (
             "community_memberships", {"role": "resident", "status": "active"}
         ),
-        "complaints": _count("complaints"),
-        "visitorRequests": _count(
-            "visitor_access_requests" if legacy else "visitor_requests"
+        "complaints": ("complaints", None),
+        "visitorRequests": (
+            "visitor_access_requests" if legacy else "visitor_requests", None
         ),
         # One legacy series row is one booking request (the occurrences hang
         # off it and carry no community_id of their own).
-        "bookings": _count(
-            "legacy_amenity_booking_series" if legacy else "amenity_bookings"
+        "bookings": (
+            "legacy_amenity_booking_series" if legacy else "amenity_bookings", None
         ),
     }
+    if executor is not None:
+        futures = {
+            key: executor.submit(_count, table, extra)
+            for key, (table, extra) in jobs.items()
+        }
+        return {key: future.result() for key, future in futures.items()}
+    return {key: _count(table, extra) for key, (table, extra) in jobs.items()}
 
 
 def list_invoices(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
