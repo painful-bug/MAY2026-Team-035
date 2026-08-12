@@ -24,7 +24,7 @@ from app.core.web_session import (
     csrf_token,
 )
 from app.core.supabase_client import get_service_client, get_user_client
-from app.domain.schemas import MembershipContext, Principal
+from app.domain.schemas import MembershipContext, MembershipSet, Principal
 from supabase import Client
 
 # auto_error=False so we can raise our own AppError (consistent JSON shape).
@@ -100,10 +100,16 @@ def require_csrf(request: Request) -> None:
         raise AuthorizationError("CSRF token is invalid.", code="csrf_invalid")
 
 
-def get_active_membership(
+def get_membership_set(
     principal: Principal = Depends(get_current_user),
-) -> MembershipContext:
-    """Resolve tenancy from Postgres, never from an identity JWT claim."""
+) -> MembershipSet:
+    """Resolve every active membership from Postgres, default first.
+
+    This is the query ``get_active_membership`` used to run with ``limit 1``.
+    Dropping the limit costs nothing -- the caller has one row in almost every
+    case -- and it means a service person's cross-community dashboard needs one
+    request-scoped read rather than a second resolver of its own.
+    """
     rows = (
         get_service_client().table("community_memberships")
         .select("id, community_id, role, department_id")
@@ -111,7 +117,7 @@ def get_active_membership(
         .eq("status", "active")
         .is_("ended_at", None)
         .order("is_default_community", desc=True)
-        .limit(1)
+        .order("created_at")
         .execute()
         .data
         or []
@@ -121,13 +127,60 @@ def get_active_membership(
             "An active community membership is required.",
             code="active_membership_required",
         )
-    row = rows[0]
-    return MembershipContext(
-        id=row["id"],
-        community_id=row["community_id"],
-        role=str(row["role"]).lower(),
-        department_id=row.get("department_id"),
+    return MembershipSet(
+        memberships=[
+            MembershipContext(
+                id=row["id"],
+                community_id=row["community_id"],
+                role=str(row["role"]).lower(),
+                department_id=row.get("department_id"),
+            )
+            for row in rows
+        ]
     )
+
+
+def get_active_membership(
+    principal: Principal = Depends(get_current_user),
+) -> MembershipContext:
+    """Resolve tenancy from Postgres, never from an identity JWT claim.
+
+    The default membership, which is what every handler written before service
+    personnel existed already meant by "the caller's community".
+
+    **It keeps taking a ``Principal``, and that is not incidental.** Declaring
+    ``Depends(get_membership_set)`` here would read identically to FastAPI and
+    break every direct call -- ``tests/api/test_session_flow.py`` calls this
+    function positionally to prove the role comes from ``community_memberships``
+    rather than from a token claim, and a handful of services do the same. The
+    seam this feature needed was additive; a changed parameter type is not
+    additive, it just looks like it from inside the framework.
+
+    The cost is that a handler depending on *both* this and
+    ``get_membership_set`` would read twice. None does: a handler wants either
+    one community or all of them.
+    """
+    return get_membership_set(principal).default
+
+
+def require_community_role(
+    community_id: str, memberships: MembershipSet, *roles: str
+) -> MembershipContext:
+    """The caller's membership in one named community, or 403.
+
+    For handlers whose community comes from the *resource* -- a job, an
+    application, a department -- rather than from whichever membership happens
+    to be the caller's default. Never reads a community id from a request body:
+    see ``docs/design/ADMIN_DASHBOARD_DESIGN.md`` 10.
+    """
+    membership = memberships.for_community(community_id)
+    allowed = {role.lower() for role in roles}
+    if membership is None or (allowed and membership.role not in allowed):
+        raise AuthorizationError(
+            "You do not have permission for this community action.",
+            code="community_role_required",
+        )
+    return membership
 
 
 def require_membership_role(*roles: str) -> Callable[[MembershipContext], MembershipContext]:

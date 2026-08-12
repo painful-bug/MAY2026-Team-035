@@ -15,7 +15,9 @@ import {
   ShieldCheck,
   X,
   Calendar,
-  Building2
+  Building2,
+  Inbox,
+  MessageSquare
 } from 'lucide-react';
 
 export default function AdminLayout() {
@@ -35,8 +37,16 @@ export default function AdminLayout() {
     { name: 'Admins', path: '/admin/admins', icon: ShieldCheck },
     { name: 'Departments', path: '/admin/departments', icon: Building2 },
     { name: 'Amenities Management', path: '/admin/amenities', icon: Calendar },
+    { name: 'Messages', path: '/admin/messages', icon: MessageSquare },
     { name: 'Notices Board', path: '/admin/notices', icon: Megaphone },
     { name: 'Complaints Management', path: '/admin/complaints', icon: AlertOctagon },
+    // Complaints the routing rule in `complaint_department_routing` could not place — an "Other"
+    // category, a category mapped to two departments, or a resident who said
+    // "Not sure". Its own entry rather than a tab on the screen above, because
+    // it asks a different question: not how a complaint is going, but whose it
+    // is. Without a nav entry the queue is reachable only from a notification,
+    // which is the failure mode `docs/potential issues/14` was written about.
+    { name: 'Complaint Triage', path: '/admin/complaint-triage', icon: Inbox },
     { name: 'Maintenance Payments', path: '/admin/maintenance', icon: Wrench },
     { name: 'Settings', path: '/admin/settings', icon: Settings },
   ];

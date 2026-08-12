@@ -47,15 +47,26 @@ package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
 
 package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
   class AuthRouter <<router>> {
+    + auth_methods()
+    + csrf()
     + oauth_start(provider, next)
     + oauth_callback(provider, code)
     + password_sign_up()
     + password_sign_in()
     + verify_email()
-    + password_reset()
+    + resend_email()
+    + password_reset_request()
+    + password_reset_verify()
+    + password_reset_complete()
     + session()
     + refresh()
     + logout()
+    .. sign-up carries an INTENT. A service ..
+    .. professional and a resident enter by ..
+    .. the same door and leave by different ..
+    .. ones, computed once in ..
+    .. destinationAfterAuth so the two ..
+    .. paths cannot drift ..
   }
   class CommunitiesRouter <<router>> {
     + search(query)
@@ -64,9 +75,15 @@ package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
   class AccessRequestsRouter <<router>> {
     + create()
     + mine()
+    + withdraw()
+    + admin_access_requests()
     + approve()
     + reject()
     + blacklist()
+    .. create() refuses a registered service ..
+    .. professional (HBSEP): the separate- ..
+    .. account rule looks both ways since ..
+    .. 20260812113000 ..
   }
   class InvitationsRouter <<router>> {
     + prepare()
@@ -311,18 +328,25 @@ AppError <|-- NotFoundError
 ' ===========================================================================
 package "Presentation / API — admin dashboard" #F1F5F9 {
   class ComplaintsRouter <<router>> {
-    + patch_complaint()
+    + update_complaint()
     + add_comment()
   }
   class DepartmentsRouter <<router>> {
     + list_departments()
     + create_department()
+    + get_department()
     + update_department()
     + delete_department()
-    + replace_staff()
-    + add_staff_member()
-    + update_staff_member()
-    + remove_staff_member()
+    .. THE FOUR DIRECT STAFF WRITES ARE ..
+    .. RETIRED. replace_staff, add_, update_ ..
+    .. and remove_staff_member were each ..
+    .. superseded by the 0035 hiring flow ..
+    .. before they ever gained a caller; the ..
+    .. roster is written by ..
+    .. decide_service_application and read ..
+    .. through department_staff_overview. ..
+    .. get_department carries canHire, which ..
+    .. is computed by asking the database ..
   }
   class MoneyRouter <<router>> {
     + create_invoice()
@@ -331,24 +355,40 @@ package "Presentation / API — admin dashboard" #F1F5F9 {
     + update_billing_settings()
   }
   class AmenitiesRouter <<router>> {
-    + list_amenities()
-    + save_amenity()
+    + list_amenity_bookings()
+    + create_admin_booking()
     + request_booking()
+    + block_slot()
+    + list_approvals()
     + approve_booking()
     + reject_booking()
-    + cancel_occurrences()
-    + ledger()
-    + reports()
+    + cancel_bookings()
+    + force_cancel_booking()
+    + list_ledger()
+    + get_ledger_summary()
+    + record_payment()
+    + refund_deposit()
+    + deduct_damage()
+    + add_charge()
+    + get_report()
+    .. the amenity RECORD itself is created ..
+    .. and edited on DashboardRouter; this ..
+    .. router owns its calendar and its money ..
+    .. There is deliberately no update- ..
+    .. booking operation, so no Edit Booking ..
+    .. modal ..
   }
   class SettingsRouter <<router>> {
     + get_settings()
-    + save_settings()
+    + update_settings()
   }
   class NoticesRouter <<router>> {
     + create_notice()
   }
   class AdminsRouter <<router>> {
-    + add_admin()
+    + promote_admin()
+    .. it promotes an existing member. ..
+    .. "Add admin" was never what it did ..
   }
 }
 
@@ -385,7 +425,11 @@ package "Admin dashboard schema (0018-0023)" #FAFAFA {
   class "views
 (security_invoker)" as AdminViews {
     department_overview
+    .. replaced by 20260812090100: ..
+    .. head is rank = manager, and it ..
+    .. carries the skill arrays ..
     department_staff_overview
+    .. replaced by 0042/0043/0045 ..
     invoice_overview
     payment_overview
     community_settings_overview
@@ -536,6 +580,15 @@ package "Presentation / API — resident" #F1F5F9 {
     + get_household()
     + add_household_phone()
     + list_contacts()
+  }
+  class ResidentSchedulingRouter <<router>> {
+    + get_schedule_request()
+    + respond_to_schedule()
+    .. the RESIDENT half of a work-order ..
+    .. reschedule. Served by ..
+    .. WorkOrdersService below, because the ..
+    .. rule about what a job may do belongs ..
+    .. to the job, not to the portal asking ..
   }
   class ResidentSnapshotRouter <<router>> {
     + resident_snapshot()
@@ -771,6 +824,394 @@ ResidentHomeService ..> ResidentHomeRepository
 ResidentHomeRepository ..> ResidentViews : notices, household, directory
 ResidentHomeRepository ..> ResidentRpcs : add_unit_contact resolves the\nflat from the residency
 ResidentRpcs ..> UnitContacts
+
+' ===========================================================================
+' SERVICE OPERATIONS (0034-0047, and the 20260811-20260812 files)
+'
+' The fourth section of this diagram, and the first whose principal is not
+' already inside a community: a service professional registers themselves, is hired by
+' communities afterwards, and goes on existing when every one of them drops
+' them. Same three-layer shape -- a router does HTTP and authorization, a
+' service holds the rule, a repository is the only thing that speaks to
+' Postgres -- with two structural additions:
+'
+'   1. A THIRD background worker. Dispatcher claims timers out of
+'      dispatch_tasks with a LEASE and fires them, at-LEAST-once, which is the
+'      opposite of what PushSender chose. A dropped push is a missed buzz; a
+'      dropped resident_timeout is a complaint left waiting forever with
+'      nobody coming. So every firing function is idempotent instead.
+'   2. AUTHORITY IS ASKED OF THE DATABASE, not inferred from a membership
+'      role. can_hire_for_department, can_manage_department,
+'      can_supervise_department and gate_admin_community_for each answer for
+'      ONE department, because the same admin may hire for one and not the
+'      next, and because rank and role are separate axes -- a security
+'      department's roster manager holds membership_role = security.
+'      /admin, /manager, /security-manager and /worker are four SURFACES over
+'      these same routers, not four permission models.
+' ===========================================================================
+package "Presentation / API — service operations" #F1F5F9 {
+  class ServiceProvidersRouter <<router>> {
+    + list_skills()
+    + register()
+    + get_mine()
+    + update_mine()
+    + get_candidate()
+    + set_skills()
+    + set_availability()
+    .. get_candidate is deliberately ..
+    .. narrower than the provider's own ..
+    .. profile: no coordinates and no ..
+    .. profile id. The route exists at all ..
+    .. because service_providers_read is ..
+    .. auth.uid() is not null, so Postgres ..
+    .. would give the row to any caller ..
+  }
+  class DepartmentHiringRouter <<router>> {
+    + list_applications()
+    + list_candidates()
+    + invite()
+    + decide()
+    + remove_member()
+    + blacklist()
+    + get_staff_member()
+    + get_staff_schedule()
+    + list_departures()
+    + get_departure()
+    + open_departure()
+    + get_departure_coverage()
+    + reassign_item()
+    + decide_departure()
+    + list_staff_invitations()
+    + invite_staff_member()
+    + update_staff_invitation()
+    + revoke_staff_invitation()
+  }
+  class WorkerCommunitiesRouter <<router>> {
+    + list_my_communities()
+    + search_communities()
+    + list_my_applications()
+    + apply()
+    + withdraw()
+    + decide_invitation()
+    + request_departure()
+    + cancel_departure()
+    .. the SAME negotiation as ..
+    .. DepartmentHiringRouter, opened from ..
+    .. the other end. One table, so ..
+    .. accepting does the same three writes ..
+    .. either way, in one transaction ..
+  }
+  class WorkerJobsRouter <<router>> {
+    + worker_snapshot()
+    + list_jobs()
+    + get_job()
+    + accept_job()
+    + decline_job()
+    + start_job()
+    + complete_job()
+    + report_job_failure()
+  }
+  class WorkerScheduleRouter <<router>> {
+    + get_calendar()
+    + list_unavailability()
+    + add_unavailability()
+    + delete_unavailability()
+    + list_availability_rules()
+    + set_availability_rules()
+  }
+  class WorkOrdersRouter <<router>> {
+    + create_work_order()
+    + list_complaint_work_orders()
+    + list_department_work_orders()
+    + get_work_order()
+    + update_work_order()
+    + assign_work_order()
+    + reschedule_work_order()
+    + cancel_work_order()
+    .. one triage screen mounted on three ..
+    .. portals, at ..
+    .. /{portal}/departments/:id/work-orders ..
+  }
+  class SkillsRouter <<router>> {
+    + create_skill()
+    + list_categories()
+    + list_department_skills()
+    + set_department_skills()
+    + add_department_skill()
+    + remove_department_skill()
+  }
+  class ComplaintRoutingRouter <<router>> {
+    + unassigned_complaints()
+    + department_options()
+    + assign_department()
+    + request_department_change()
+    + decide_department_change()
+    + department_complaints()
+    + department_change_requests()
+  }
+  class ConversationsRouter <<router>> {
+    + list_conversations()
+    + open_conversation()
+    + get_conversation()
+    + post_message()
+    .. department <-> provider. One thread ..
+    .. per pair, forever -- so the open is ..
+    .. an upsert rather than read-then-write ..
+  }
+  class MessagesRouter <<router>> {
+    + list_recipients()
+    + list_threads()
+    + open_thread()
+    + get_thread()
+    + post_message()
+    .. person <-> person, the dock on every ..
+    .. portal. NOT an extension of ..
+    .. conversations, which is structurally ..
+    .. a department<->provider channel ..
+  }
+  class SecurityOperationsRouter <<router>> {
+    + list_posts()
+    + create_post()
+    + update_post()
+    + list_shifts()
+    + create_shift()
+    + update_shift()
+    + list_roster()
+    + list_movements()
+    + record_movement()
+    + return_movement()
+    + list_tankers()
+    + record_tanker()
+    + update_tanker()
+    + list_incidents()
+    + record_incident()
+    + update_incident()
+    + verify_credential()
+    + offline_bundle()
+    + offline_reconcile()
+    + export_dataset()
+    - require_gate_membership()
+    .. its OWN guard rather than ..
+    .. require_membership_role: the gate is ..
+    .. run by people whose authority is a ..
+    .. roster rank, and only the database ..
+    .. knows that ..
+  }
+  class TelemetryRouter <<router>> {
+    + record_service_signup_event()
+    .. UNAUTHENTICATED, and the only router ..
+    .. that calls a repository directly -- ..
+    .. there is no rule to put in a service ..
+  }
+}
+
+package "Application services — service operations" #FFF3E0 {
+  class ServiceProvidersService <<service>>
+  class HiringService <<service>> {
+    .. owns BOTH inboxes, because they are ..
+    .. one table. Accepting mints the ..
+    .. membership, the roster row and the ..
+    .. decision in ONE transaction, so a ..
+    .. hire cannot be half-done ..
+  }
+  class SkillsService <<service>>
+  class WorkOrdersService <<service>>
+  class WorkerService <<service>>
+  class ConversationsService <<service>>
+  class MessagesService <<service>>
+  class SecurityService <<service>>
+  class ComplaintRoutingService <<service>>
+}
+
+package "Persistence adapters — service operations" #E2E8F0 {
+  class ServiceProvidersRepository <<repository>>
+  class HiringRepository <<repository>>
+  class SkillsRepository <<repository>>
+  class WorkOrdersRepository <<repository>>
+  class WorkerRepository <<repository>>
+  class ConversationsRepository <<repository>>
+  class MessagesRepository <<repository>>
+  class SecurityRepository <<repository>>
+  class ComplaintRoutingRepository <<repository>>
+  class DispatchRepository <<repository>>
+  class ServiceSignupTelemetryRepository <<repository>>
+}
+
+package "Infrastructure — dispatch" #F3F4F6 {
+  class Dispatcher <<dispatch worker>> {
+    - _task : asyncio.Task
+    + start()
+    + stop()
+    + running : bool
+    - _claim()
+    - _fire(row)
+    .. at-LEAST-once, the OPPOSITE of ..
+    .. PushSender. Takes a LEASE instead of ..
+    .. marking a row done, and every firing ..
+    .. function re-reads the world and ..
+    .. returns without writing if it has ..
+    .. already moved on. Holds no timers in ..
+    .. memory: dispatch_tasks.due_at IS the ..
+    .. schedule ..
+  }
+}
+
+package "Service operations schema (0034-0047, 20260811-20260812)" #FAFAFA {
+  class "views
+(security_invoker)" as ServiceViews {
+    service_provider_overview
+    service_application_overview
+    service_engagement_overview
+    department_staff_overview
+    staff_departure_overview
+    work_order_overview
+    work_order_assignment_overview
+    my_worker_job
+    my_worker_availability_rule
+    my_worker_unavailability
+    conversation_overview
+    conversation_message_overview
+    dm_thread_overview
+    dm_message_overview
+    security_shift_overview
+    material_movement_overview
+    water_tanker_log_overview
+    security_incident_overview
+  }
+  class "authority predicates
+(security definer)" as AuthorityFns {
+    can_hire_for_department
+    can_manage_department
+    can_supervise_department
+    gate_admin_community_for
+    is_conversation_participant
+    dm_pair_allowed
+    --
+    one department at a time, never
+    a role name
+  }
+  class "RPCs
+(security definer)" as ServiceRpcs {
+    register_service_provider
+    apply_to_department / invite_service_provider
+    decide_service_application
+    request_staff_departure / decide_staff_departure
+    invite_staff_member / claim_staff_invitations
+    set_department_skills
+    --
+    create_work_order / assign_work_order
+    accept_work_order_offer / decline_work_order_offer
+    start_work_order / complete_work_order
+    report_work_order_failure / reschedule_work_order
+    --
+    enqueue_dispatch_task / claim_dispatch_batch
+    dispatch_auto_assign / dispatch_resident_timeout
+    dispatch_failed_visit_escalation
+    dispatch_departure_removal
+    --
+    assign_complaint_department
+    request_complaint_department_change
+    decide_complaint_department_change
+    --
+    upsert_security_post / schedule_security_shift
+    record_material_movement / record_water_tanker
+    record_security_incident / verify_gate_credential
+    reconcile_offline_entry
+    --
+    record_service_signup_funnel_event
+  }
+  class DispatchTasks <<table>> {
+    .. written ONLY by an after-insert-or- ..
+    .. update trigger on work_orders, so no ..
+    .. future write path has to remember to ..
+    .. arm a timer, and cancelling a job ..
+    .. stops its timers without ..
+    .. cancel_work_order knowing this table ..
+    .. exists ..
+  }
+  class StaffInvitations <<table>> {
+    .. no token and no registration flow: ..
+    .. the email address IS the ..
+    .. authorization. Single factor, on the ..
+    .. record in ..
+    .. STAFF_PROVISIONING_DESIGN.md ..
+  }
+}
+
+ServiceProvidersRouter ..> ServiceProvidersService
+ServiceProvidersRouter ..> SkillsService : the shared skill catalogue
+DepartmentHiringRouter ..> HiringService
+WorkerCommunitiesRouter ..> HiringService : the same service, the other inbox
+WorkerJobsRouter ..> WorkerService
+WorkerScheduleRouter ..> WorkerService
+WorkOrdersRouter ..> WorkOrdersService
+ResidentSchedulingRouter ..> WorkOrdersService
+SkillsRouter ..> SkillsService
+ComplaintRoutingRouter ..> ComplaintRoutingService
+ConversationsRouter ..> ConversationsService
+MessagesRouter ..> MessagesService
+SecurityOperationsRouter ..> SecurityService
+TelemetryRouter ..> ServiceSignupTelemetryRepository : no service layer
+
+ServiceProvidersService ..> ServiceProvidersRepository
+HiringService ..> HiringRepository
+HiringService ..> ServiceProvidersRepository
+SkillsService ..> SkillsRepository
+WorkOrdersService ..> WorkOrdersRepository
+WorkerService ..> WorkerRepository
+WorkerService ..> HiringService
+WorkerService ..> ServiceProvidersService
+WorkerService ..> NotificationsRepository
+ConversationsService ..> ConversationsRepository
+MessagesService ..> MessagesRepository
+SecurityService ..> SecurityRepository
+ComplaintRoutingService ..> ComplaintRoutingRepository
+
+ServiceProvidersRepository ..> ServiceViews
+HiringRepository ..> ServiceViews
+WorkOrdersRepository ..> ServiceViews
+WorkerRepository ..> ServiceViews
+ConversationsRepository ..> ServiceViews
+MessagesRepository ..> ServiceViews
+SecurityRepository ..> ServiceViews
+ComplaintRoutingRepository ..> ServiceViews
+
+HiringRepository ..> ServiceRpcs
+SkillsRepository ..> ServiceRpcs
+WorkOrdersRepository ..> ServiceRpcs
+WorkerRepository ..> ServiceRpcs
+SecurityRepository ..> ServiceRpcs
+ComplaintRoutingRepository ..> ServiceRpcs
+ConversationsRepository ..> ServiceRpcs
+MessagesRepository ..> ServiceRpcs
+ServiceProvidersRepository ..> ServiceRpcs
+ServiceSignupTelemetryRepository ..> ServiceRpcs : the one unauthenticated writer
+
+HiringRepository ..> AuthorityFns : canHire is computed, not guessed
+ComplaintRoutingRepository ..> AuthorityFns
+SecurityRepository ..> AuthorityFns
+DepartmentsRepository ..> AuthorityFns : GET /departments/{id} carries canHire
+
+' Every service-operations router goes through the same dependency provider.
+ServiceProvidersRouter ..> Dependencies
+DepartmentHiringRouter ..> Dependencies
+WorkerCommunitiesRouter ..> Dependencies
+WorkerJobsRouter ..> Dependencies
+WorkerScheduleRouter ..> Dependencies
+WorkOrdersRouter ..> Dependencies
+SkillsRouter ..> Dependencies
+ComplaintRoutingRouter ..> Dependencies
+ConversationsRouter ..> Dependencies
+MessagesRouter ..> Dependencies
+SecurityOperationsRouter ..> Dependencies
+
+Dispatcher ..> DispatchRepository : claim_batch / fire / fail
+DispatchRepository ..> ServiceRpcs
+ServiceRpcs ..> DispatchTasks : the work_orders trigger arms every timer
+ServiceRpcs ..> StaffInvitations
+ServiceRpcs ..> ResidentRpcs : notify_member / notify_profile is\nstill the only way anything reaches a person
+ServiceViews ..> AdminViews : department_staff_overview is 0019's,\nreplaced three times since
+
 
 legend left
   <b>Legend</b>

@@ -41,9 +41,16 @@ export default function LedgerFilters({
                 }`}
               >
                 {filter.label}
-                <span className="ml-1.5 text-[10px] opacity-70">
-                  {counts[filter.value] ?? 0}
-                </span>
+                {/* Only the active filter has a count, because only the active
+                    filter has been asked for: the API pages and totals per
+                    `paymentStatus`, so a number beside the other tabs would be
+                    a guess. A blank badge is a question; a `0` is an answer,
+                    and it would be the wrong one. */}
+                {counts[filter.value] === undefined ? null : (
+                  <span className="ml-1.5 text-[10px] opacity-70">
+                    {counts[filter.value]}
+                  </span>
+                )}
               </button>
             );
           })}

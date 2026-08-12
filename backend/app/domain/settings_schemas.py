@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.domain.common_schemas import CamelModel
 
@@ -54,6 +54,8 @@ class CommunityProfile(CamelModel):
     community_type_label: str
     status: str
     created_at: datetime | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class PreferenceSettings(CamelModel):
@@ -178,6 +180,15 @@ class UpdateSettingsRequest(CamelModel):
     visitor_code_ttl_minutes: int | None = Field(default=None, ge=5, le=1440)
     require_visitor_preapproval: bool | None = None
     notice_sms_broadcast_enabled: bool | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def _coordinate_pair(self) -> "UpdateSettingsRequest":
+        coordinates_supplied = bool({"latitude", "longitude"} & self.model_fields_set)
+        if coordinates_supplied and (self.latitude is None or self.longitude is None):
+            raise ValueError("latitude and longitude must be supplied together")
+        return self
 
     @field_validator("timezone")
     @classmethod
@@ -193,5 +204,3 @@ class UpdateSettingsRequest(CamelModel):
         if not stripped or any(character.isspace() for character in stripped):
             raise ValueError("A timezone must be an IANA name such as Asia/Kolkata.")
         return stripped
-
-

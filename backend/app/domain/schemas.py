@@ -42,6 +42,48 @@ class MembershipContext(BaseModel):
     unit_id: str | None = None
 
 
+class MembershipSet(BaseModel):
+    """Every active membership the caller holds, in default-first order.
+
+    A resident belongs to one community and a staff member to none, so until
+    now ``get_active_membership`` could resolve tenancy with ``limit 1`` and
+    nothing noticed. A service person belongs to as many communities as have
+    hired them, and their calendar is the union of all of them -- so the scalar
+    stopped being an implementation detail and became a wrong answer.
+
+    Only Postgres was ever right about this. ``is_community_member(uuid)`` has
+    always been an ``exists`` over every membership the caller holds, so no RLS
+    policy assumed a single community; the assumption lived entirely in the one
+    query this replaces.
+
+    ``memberships`` is never empty -- the resolver raises rather than hand back
+    a set with no default.
+    """
+
+    memberships: list[MembershipContext]
+
+    @property
+    def default(self) -> MembershipContext:
+        """The membership every single-community handler already meant."""
+        return self.memberships[0]
+
+    @property
+    def community_ids(self) -> list[str]:
+        return [membership.community_id for membership in self.memberships]
+
+    def for_community(self, community_id: str) -> MembershipContext | None:
+        """The caller's membership in one community, or ``None``.
+
+        Returns rather than raises so a service can decide whether absence is a
+        403 or a 404 -- which differ by whether the caller is allowed to learn
+        that the community exists.
+        """
+        for membership in self.memberships:
+            if membership.community_id == community_id:
+                return membership
+        return None
+
+
 class SessionContext(BaseModel):
     """Browser-safe session context; provider credentials remain HTTP-only."""
 
@@ -104,6 +146,7 @@ class PasswordSignUpRequest(StrictModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=15, max_length=256)
     captcha_token: str | None = Field(default=None, max_length=4096)
+    intent: Literal["service-provider"] | None = None
 
     @field_validator("email")
     @classmethod
@@ -130,8 +173,22 @@ class PasswordResetRequest(StrictModel):
     captcha_token: str | None = Field(default=None, max_length=4096)
 
 
+class EmailConfirmationResendRequest(PasswordResetRequest):
+    intent: Literal["service-provider"] | None = None
+
+
 class PasswordResetCompleteRequest(StrictModel):
     password: str = Field(min_length=15, max_length=256)
+
+
+class ServiceSignupTelemetryRequest(StrictModel):
+    event_name: Literal[
+        "cta_impression",
+        "cta_clicked",
+        "auth_completed",
+        "provider_profile_completed",
+        "first_application_submitted",
+    ] = Field(alias="eventName")
 
 
 # --- Invitations --------------------------------------------------------------
@@ -287,6 +344,8 @@ class CommunityOnboardingRequest(StrictModel):
     state: str = Field(min_length=2, max_length=100)
     postal_code: str = Field(min_length=3, max_length=20)
     country_code: str = Field(default="IN", min_length=2, max_length=2)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
     blocks: list[CommunityStructure] = Field(default_factory=list, max_length=10)
     villas: list[CommunityStructure] = Field(default_factory=list, max_length=50)
     block_locations: dict[str, MapPoint] = Field(default_factory=dict)

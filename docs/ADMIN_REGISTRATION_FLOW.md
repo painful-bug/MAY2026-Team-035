@@ -7,7 +7,7 @@ new build.
 is named where the flows diverge and is documented separately.
 **Audience:** backend team.
 
-**Companion documents:** [`BACKEND_PLAN.md`](BACKEND_PLAN.md) §6 (auth model),
+**Companion documents:** [`BACKEND_PLAN.md`](plans/BACKEND_PLAN.md) §6 (auth model),
 [`CHANGE_LOG.md`](CHANGE_LOG.md) (why each design artifact changed),
 [`erd/homebandhu.dbml`](erd/homebandhu.dbml) (schema), [`class-diagram/`](class-diagram/) (domain
 model).
@@ -538,13 +538,13 @@ Items 1–8 predate this decision and remain open. Items 9–12 arise from it.
 | Step 2 | [`pages/MapConfiguration/MapConfigurationPage.jsx`](../frontend/src/pages/MapConfiguration/MapConfigurationPage.jsx) |
 | Step 3 | [`pages/FeatureConfiguration/FeatureConfigurationPage.jsx`](../frontend/src/pages/FeatureConfiguration/FeatureConfigurationPage.jsx) |
 | Step 4 | [`pages/AdminProfile/AdminProfilePage.jsx`](../frontend/src/pages/AdminProfile/AdminProfilePage.jsx) |
-| Step 5 | [`pages/OnboardingOtp/OnboardingOtpPage.jsx`](../frontend/src/pages/OnboardingOtp/OnboardingOtpPage.jsx) — to be replaced |
+| Step 5 | `pages/OnboardingOtp/OnboardingOtpPage.jsx` — **deleted since; it was the OTP screen this document already marked "to be replaced"**. The step is now `pages/OnboardingReview/` |
 | Success + dashboard hand-off | [`pages/OnboardingSuccess/OnboardingSuccessPage.jsx`](../frontend/src/pages/OnboardingSuccess/OnboardingSuccessPage.jsx) |
 | Draft state, persistence | [`store/onboardingStore.js`](../frontend/src/store/onboardingStore.js) |
 | Step-4 fields, editable whitelist | [`store/slices/createOnboardingAdminProfileSlice.js`](../frontend/src/store/slices/createOnboardingAdminProfileSlice.js) |
 | Step-5 submit | [`store/slices/createOnboardingCompletionSlice.js`](../frontend/src/store/slices/createOnboardingCompletionSlice.js) |
 | **The single API seam** | [`services/onboardingRegistrationService.js`](../frontend/src/services/onboardingRegistrationService.js) |
-| Route guards | [`routes/OnboardingFlowRoute.jsx`](../frontend/src/routes/OnboardingFlowRoute.jsx), [`routes/AuthFlowRoute.jsx`](../frontend/src/routes/AuthFlowRoute.jsx) |
+| Route guards | [`routes/OnboardingFlowRoute.jsx`](../frontend/src/routes/OnboardingFlowRoute.jsx). `routes/AuthFlowRoute.jsx` was deleted with the OTP flow; the auth paths now live in [`routes/authRoutes.js`](../frontend/src/routes/authRoutes.js) |
 | Session state | [`store/authStore.js`](../frontend/src/store/authStore.js) |
 | Constants, caps, module list | [`data/onboarding.js`](../frontend/src/data/onboarding.js), [`data/onboardingModules.js`](../frontend/src/data/onboardingModules.js), [`data/adminDesignations.js`](../frontend/src/data/adminDesignations.js) |
 | Validators | [`utils/onboarding.js`](../frontend/src/utils/onboarding.js), [`utils/adminProfile.js`](../frontend/src/utils/adminProfile.js) |

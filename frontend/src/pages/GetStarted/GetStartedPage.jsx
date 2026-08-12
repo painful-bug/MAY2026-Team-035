@@ -1,8 +1,9 @@
 import { Building2, Search } from 'lucide-react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import JoinCommunityTab from '../../features/registration/components/JoinCommunityTab';
-import { homeRouteFor } from '../../lib/auth/authService';
-import { AUTH_ROUTES } from '../../routes/authRoutes';
+import {
+  AUTH_ROUTES, destinationAfterAuth, homeRouteFor, SERVICE_PROVIDER_INTENT,
+} from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
 
@@ -41,6 +42,32 @@ export default function GetStartedPage() {
             </div>
           ) : <JoinCommunityTab />}
         </div>
+        {/* The third door, and it is not a tab.
+            A service professional who signed up by email arrives here rather
+            than at their own portal: `intent=service-provider` reaches the
+            browser only when the *link* carries it, and the confirmation link
+            is a fixed URL in the Supabase email template
+            (`docs/SUPABASE_AUTH_SETUP.md`), so the intent is gone by the time
+            they confirm. `homeRouteFor` then sees an identity with no
+            membership and no portal -- a founder -- and sends them to this
+            page, which offered only Create and Join. There was no route on to
+            /worker from here at all.
+
+            The destination is computed rather than written down: it is exactly
+            what `destinationAfterAuth` gives the OAuth path for this same
+            context, so the two cannot drift apart. That lands on the worker
+            portal, whose own snapshot decides whether to show the registration
+            form or the dashboard -- which is the point, since somebody who
+            arrived this way has not run the registration RPC yet. */}
+        <p className="mt-7 border-t border-slate-100 pt-5 text-center text-xs font-semibold text-slate-500">
+          Here to work rather than to live here?{' '}
+          <Link
+            to={destinationAfterAuth(context, SERVICE_PROVIDER_INTENT)}
+            className="font-bold text-indigo-600 hover:underline"
+          >
+            Register as a service professional
+          </Link>
+        </p>
       </section>
     </main>
   );

@@ -2,7 +2,7 @@
 
 This document describes the implementation committed in `94556e5`. It replaces
 the pre-implementation “current state” assessment in
-`AUTH_REGISTRATION_IMPLEMENTATION_PLAN.md` as the architecture reference.
+`plans/AUTH_REGISTRATION_IMPLEMENTATION_PLAN.md` as the architecture reference.
 
 The detailed, source-backed class diagram is available as editable
 [PlantUML source](diagrams/HomeBandhu-Architecture-Classes.puml) and a rendered
@@ -31,9 +31,11 @@ flowchart LR
         Registration["Community, onboarding,\naccess-request, invitation routers/services"]
         Dashboard["Dashboard router/service\nsnapshot and SSE"]
         Repositories["Repository layer\nSupabase/PostgREST and RPC adapters"]
+        Workers["Background workers\npush sender, job dispatcher"]
         Auth --> Repositories
         Registration --> Repositories
         Dashboard --> Repositories
+        Workers --> Repositories
     end
 
     UI -->|"fetch with HttpOnly cookies\nCSRF on unsafe methods"| Auth
@@ -47,7 +49,19 @@ flowchart LR
     Repositories --> DB["Supabase Postgres\n0001_baseline.sql"]
     DB --> Outbox["sse_events\ndashboard.refresh outbox"]
     Outbox --> Dashboard
+    DB --> Queue["dispatch_tasks\ndue-time queue"]
+    Queue -->|"claim under a lease,\nthen fire_dispatch_task"| Workers
 ```
+
+**The workers have no arrow from the browser, and that is what they are for.**
+Both run on a timer with no request behind them, on the service client rather
+than a caller's — the push sender to reach a resident with nothing open, the job
+dispatcher to act at a time nobody is present for. Neither decides anything: the
+sender sends what `claim_push_batch` hands it, and the dispatcher calls
+`fire_dispatch_task` and records what happened. **Every decision either of them
+causes is made in SQL**, which is not a stylistic preference — every notification
+in this system is written inside the transaction that caused it, and a worker
+deciding things in Python would have to give that up.
 
 ## Runtime sequence for authenticated dashboards
 
@@ -207,13 +221,24 @@ over one record:
 
 | Layer | Where | Lifetime | Reaches |
 | --- | --- | --- | --- |
-| Record | `notifications` + `notify_member()` (`0030`) | until read and pruned | anyone, later |
+| Record | `notifications` + `notify_member()` / `notify_profile()` (`0030`, `0041`) | until read and pruned | anyone, later |
 | In-app live | the SSE frame above | the connection | an open tab |
 | Out-of-app | Web Push, `app/core/push.py` | one delivery attempt | a closed tab, a locked phone |
 
 The row is written **first, inside the transaction that caused it**, and both
 transports carry it. A notification that can exist without its cause, or a cause
 without its notification, is a bug that cannot be reproduced.
+
+**The recipient is a person, not a membership** (`0041`; see
+[`design/AUTH_AND_SESSION_DESIGN.md`](design/AUTH_AND_SESSION_DESIGN.md) §4).
+`0030` addressed every layer of this to a `community_memberships` row, which is
+correct and invisible for a resident and a closed door for a service person who
+has registered and not yet been hired — they hold no membership anywhere, and the
+thing they are waiting for is an answer. `recipient_membership_id` survives and
+still says which community a notification was *about*; `recipient_profile_id`
+says who it is *for*. `notify_profile()` is the writer for the membership-less
+case, and it produces **no SSE frame**, because `sse_events.community_id` is
+`not null` and there is no community for the frame to belong to.
 
 **Transport: standards Web Push (RFC 8291/8292) over our own VAPID keypair.**
 No vendor account, no SDK in the frontend bundle, and the relays carry
@@ -251,18 +276,48 @@ never starts, `GET /push/vapid-key` and `POST /push/subscriptions` answer `503
 push_not_configured`, and everything else works normally — the same shape as
 `0024` scheduling under `pg_cron` when the extension is present.
 
-**Not yet observable end to end.** `frontend/public/` has no service worker and
-no manifest, and no resident page opens a connection, so nothing can receive a
-push today. See `docs/design/RESIDENT_BACKEND_DESIGN.md` §10.6 for what the
-frontend must add.
+**Observable end to end since 2026-08-10.** This paragraph read *"not yet
+observable — `frontend/public/` has no service worker … nothing can receive a
+push today"* from the resident build until the worker portal shipped one.
+`frontend/public/sw.js` handles `push` and `notificationclick`;
+`src/lib/push/pushClient.js` registers it, asks for permission, reads
+`GET /push/vapid-key` and posts `PushSubscription.toJSON()` unchanged. `main.jsx`
+registers the worker on load — **registering is not subscribing**, and only the
+second needs a permission prompt.
+
+The client drops any existing subscription before taking a new one, which is the
+client half of the rotation hazard above: a subscription is bound to the key
+that created it, and re-subscribing is the only way a browser recovers from a
+rotated keypair.
+
+**The same file also carries a small offline claim, and only a small one.** It
+caches successful same-origin GETs as they happen and reads that cache only when
+the network fails, so a reload during an outage still boots the application.
+There is no precache manifest and no Workbox: Vite emits content-hashed asset
+names, so a hand-written manifest is wrong on the next build and a generated one
+is a versioning problem nobody asked to have. `/api/` is excluded outright — an
+API response served from cache would show a worker yesterday's jobs and call
+them today's.
+
+Still open: the subscribe control exists on one screen (the service partner's
+profile), so a resident cannot yet turn push on from their own dashboard. That
+is placement, not capability — `enablePush()` is one call from anywhere.
 
 ### Who writes into it
 
-`notify_member()` is the only writer, and it is called from inside the RPC that
-makes the change — never from Python, and never from a trigger. The distinction
-matters: a trigger fires on a row change and knows nothing about *who* should
-hear about it or what it should say, and Python writing a second statement after
-the first can fail between them.
+`notify_member()` and `notify_profile()` are the only writers, and they are
+called from inside the RPC that makes the change — never from Python. The
+distinction matters: Python writing a second statement after the first can fail
+between them.
+
+**One exception, and it proves the rule rather than bending it.**
+`notices_notify_residents` (`0041`) is an `after insert` trigger, because
+`POST /notices` has no RPC to call from — `insert_notice` is a plain
+single-statement PostgREST write, and its docstring defends that. The objection
+to triggers is that one "knows nothing about *who* should hear about it or what
+it should say". Here it does: the audience is every resident of the notice's own
+community, and the words are the notice's own title and body. Where that is not
+true, the rule stands.
 
 `notify_community_roles()` (`0032`) is the fan-out for the other direction: one
 event, every active member of the community holding one of the given roles.
@@ -289,12 +344,68 @@ notifies people who have left the community.
 | `settle_resident_payment` (`0033`) | `payment.succeeded`, `.failed` | the resident whose invoice it was |
 | `settle_amenity_booking_payment` (`0033`) | `payment.succeeded`, `.failed`, `amenity.booking_paid` | the resident, and — on success only — the community's admins and managers |
 
+| `create_work_order`, `respond_to_work_order_schedule`, `assign_work_order`, `reschedule_work_order`, `cancel_work_order` (`0036`) | `work_order.schedule_requested`, `.resident_confirmed`, `.resident_declined`, `.assigned`, `.rescheduled`, `.cancelled` | the resident whose complaint it is, the worker holding it, or the supervisor who proposed it — one named person each time, not a broadcast |
+| `dispatch_ping_candidates`, `dispatch_auto_assign`, `dispatch_resident_timeout`, `dispatch_failed_visit_escalation` (`0037`) | `work_order.offered`, `.assigned`, `.proceeding`, `.no_candidates`, `.escalated` | the shortlisted workers; then the assignee and the resident; `no_candidates` and `escalated` go up the chain — the supervisor for the first, the department's manager or the community's admins for the second |
+| `accept_work_order_offer`, `start_work_order`, `complete_work_order`, `report_work_order_failure` (`0039`) | `work_order.accepted`, `.assigned`, `.started`, `.completed`, `.failed` | the resident, whose complaint it is, and the supervisor who raised the job — never the worker, who is the one writing |
+| `schedule_security_shift` (`0040`) | `shift.scheduled` | the guard put on the roster — **when they have an account**; a roster name typed in by an admin has no membership and therefore no address, the same wall `0035` met with rejected applications |
+| `record_security_incident` (`0040`) | `security.incident` | the community's admins and managers, and **only at `high` or `critical`** |
+| `verify_gate_credential` (`0040`) | `visitor.checked_in` | the resident who issued the pass |
+
 Two rules the complaint emitters establish for every later one. **A status change
 notifies; an assignee or a progress bar does not** — a resident notified about
 everything stops reading notifications, which costs more than the ones they miss.
 And **an internal comment notifies nobody**, because a notification leading to a
 thread where nothing new is visible tells someone they were discussed and refuses
 to say how.
+
+**The work-order emitters amend the first of those rules, and the amendment is
+narrower than it looks.** A dispatch offer is not a passive field change: it
+expires, it requires an action, and a worker who is not told about it is a worker
+the job silently was not given to. `US-2.7` names reassignment explicitly for the
+same reason. So offers, acceptances, schedule changes and cancellations notify —
+and `work_orders.progress_percent` and a supervisor editing an internal note
+still do not. The distinction the original rule was drawing was never
+*status versus field*; it was **something is being asked of you** versus
+*something changed near you*, and the offer is the first case where those two
+came apart.
+
+**`work_order.no_candidates` is the one emitter here that reports an absence**,
+and it exists because the alternative is silence that looks identical to success.
+A department where nobody was free produces no offer, no assignment and no
+notification at all unless something says so; the supervisor is told once, and
+the job stays where a human can place it by hand.
+
+**`work_order.escalated` is the second of those, one level up.** A failed visit
+already notifies the supervisor immediately, so the escalation two hours later is
+not about the failure — it is about *nobody having done anything about it*, which
+nothing else in the system would ever say out loud. It goes to the department's
+manager, or to the community's admins where the department has no manager on its
+roster, which is every department created through the departments form before
+anybody was hired.
+
+**Three emitters are deliberately absent from `0039`.** Declining an offer
+notifies nobody: the job is still open, the other offers still stand, and telling
+a supervisor that one of five people said no is the notification that trains
+people to stop reading them. Neither does a worker get told about their own
+write — the four kinds above all travel away from whoever caused them.
+
+**`0040`'s three emitters are where the first rule finally gets a threshold
+rather than a category.** Everywhere above, whether something notifies is decided
+by *what kind of thing happened*. A gate register cannot be sorted that way: a
+tanker arriving and a fire alarm at 02:00 are the same kind of row in the same
+table, written by the same person on the same screen. So `record_security_incident`
+branches on **severity** — `high` and `critical` reach the community's admins and
+managers, `low` and `medium` are a record — and that is the only place in this
+system where the notification decision is a field's value rather than the
+operation's identity.
+
+The two registers notify nobody at all, which is the same rule read the other way:
+nobody is waiting to be told that twelve bags of cement came through the gate.
+
+**And a gate check-in notifies the resident**, which is the one emitter in `0040`
+that travels to somebody outside the department. It is the arrival a resident is
+actually waiting for, and until now the pass they issued went quiet the moment
+they issued it.
 
 **The payment emitters add the case the rule above does not cover: a failure
 notifies too.** A decline nobody is told about leaves a resident believing they
@@ -336,9 +447,9 @@ transaction, so `generatedAt` is when the payload was assembled and not when any
 part of it was true — a resident refreshing a home screen is not asking for a
 consistent cut of the database.
 
-A notice emitter is still missing: `POST /notices` publishes and fires the SSE
-trigger but does not call `notify_member`, so `US-2.4` stays partial. It is one
-line inside a write the admin workstream owns.
+~~A notice emitter is still missing.~~ Closed 2026-08-10 by `0041`: publishing a
+notice now fans out to every active resident of its community through
+`notices_notify_residents`, excluding the author. `US-2.4` is served.
 
 ## Responsibilities
 

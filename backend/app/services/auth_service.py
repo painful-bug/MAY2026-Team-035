@@ -14,7 +14,7 @@ from app.core.supabase_client import (
     get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
-from app.domain.schemas import MembershipContext, Principal, SessionContext
+from app.domain.schemas import MembershipContext, Principal, Profile, SessionContext
 from app.repositories import profiles_repository
 from supabase import Client
 
@@ -87,17 +87,30 @@ def refresh_session(refresh_token: str) -> SupabaseSession:
     return _session_from_result(result.session)
 
 
-def confirmation_redirect_url() -> str:
+def confirmation_redirect_url(intent: str | None = None) -> str:
     """Where a confirmation link must land: the page that spends the token hash.
 
     The Supabase email template has to point here *carrying* ``token_hash``; see
     ``docs/SUPABASE_AUTH_SETUP.md``.  A template left on GoTrue's default
     ``{{ .ConfirmationURL }}`` redirects to this page with no hash to spend,
     which is what leaves the confirm button with nothing to do.
+
+    **The intent is appended as a query parameter, not concatenated with a
+    literal ``?``.** A base URL that already carries a query -- which is what a
+    ``frontend_base_url`` with one, or any future caller passing a richer
+    landing page, would produce -- would otherwise yield ``…?a=b?intent=…``.
+    That is not a URL with two parameters: ``URLSearchParams`` reads the whole
+    tail as one value, so the *other* parameter silently disappears. The page
+    this lands on parses ``token_hash`` out of exactly that query string, so
+    the failure mode is a confirmation link that cannot be confirmed.
     """
     from app.config import get_settings
 
-    return f"{get_settings().frontend_base_url.rstrip('/')}/auth/confirm-email"
+    base = f"{get_settings().frontend_base_url.rstrip('/')}/auth/confirm-email"
+    if intent != "service-provider":
+        return base
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{urlencode({'intent': intent})}"
 
 
 def _unconfirmed_email() -> AuthenticationError:
@@ -125,12 +138,13 @@ def _discard_session(client: Client) -> None:
         client.auth.sign_out({"scope": "local"})
 
 
-def sign_up_with_password(*, email: str, password: str, full_name: str, captcha_token: str | None) -> None:
+def sign_up_with_password(*, email: str, password: str, full_name: str, captcha_token: str | None, intent: str | None = None) -> None:
     """Create an email identity. The caller intentionally gets no existence signal."""
-    options: dict[str, object] = {
-        "data": {"full_name": full_name},
-        "email_redirect_to": confirmation_redirect_url(),
-    }
+    from app.config import get_settings
+
+    options: dict[str, object] = {"data": {"full_name": full_name}}
+    if get_settings().auth_email_confirmation_required:
+        options["email_redirect_to"] = confirmation_redirect_url(intent)
     if captcha_token:
         options["captcha_token"] = captcha_token
     try:
@@ -139,7 +153,7 @@ def sign_up_with_password(*, email: str, password: str, full_name: str, captcha_
         raise AuthenticationError("Account creation could not be started.", code="password_signup_failed") from exc
 
 
-def resend_confirmation_email(*, email: str, captcha_token: str | None) -> None:
+def resend_confirmation_email(*, email: str, captcha_token: str | None, intent: str | None = None) -> None:
     """Send the sign-up confirmation link again, revealing nothing about the address.
 
     The recovery path for a confirmation link that expired, never arrived, or was
@@ -147,7 +161,7 @@ def resend_confirmation_email(*, email: str, captcha_token: str | None) -> None:
     :func:`send_password_recovery` swallows them: the caller gets one fixed
     answer either way, so this cannot be used to discover who has registered.
     """
-    options: dict[str, object] = {"email_redirect_to": confirmation_redirect_url()}
+    options: dict[str, object] = {"email_redirect_to": confirmation_redirect_url(intent)}
     if captcha_token:
         options["captcha_token"] = captcha_token
     with suppress(Exception):
@@ -157,16 +171,8 @@ def resend_confirmation_email(*, email: str, captcha_token: str | None) -> None:
 
 
 def sign_in_with_password(*, email: str, password: str, captcha_token: str | None) -> SupabaseSession:
-    """Exchange credentials for a session, but only for a confirmed email address.
-
-    Two different things stand between a password and a session, and both end up
-    as ``email_not_confirmed`` here.  With Supabase's **Confirm email** setting
-    on, GoTrue refuses the grant itself.  With it off, GoTrue returns a perfectly
-    valid session for an address nobody has ever proven they own, and this
-    function is the last thing that can say no -- which is the state that
-    produced the reported bypass.  Checking both means the answer stops depending
-    on a dashboard toggle nobody in the codebase can see.
-    """
+    """Exchange credentials, enforcing the application confirmation setting."""
+    from app.config import get_settings
     options: dict[str, object] = {}
     if captcha_token:
         options["captcha_token"] = captcha_token
@@ -181,11 +187,9 @@ def sign_in_with_password(*, email: str, password: str, captcha_token: str | Non
         raise AuthenticationError("Invalid email or password.", code="invalid_credentials") from exc
     if result.session is None:
         raise AuthenticationError("Invalid email or password.", code="invalid_credentials")
-    if not getattr(result.user, "email_confirmed_at", None):
-        # Tokens exist by the time we get to object to them, so spend them here:
-        # refusing a sign-in must not leave a live refresh token behind for an
-        # account that was never verified. A missing user object fails closed --
-        # unproven is unproven.
+    if get_settings().auth_email_confirmation_required and not getattr(
+        result.user, "email_confirmed_at", None
+    ):
         _discard_session(client)
         raise _unconfirmed_email()
     return _session_from_result(result.session)
@@ -241,6 +245,127 @@ def revoke_session(*, access_token: str, refresh_token: str) -> None:
     client.auth.sign_out({"scope": "local"})
 
 
+def _portal_for(membership: dict, role: str) -> str:
+    """Which portal this membership lands in.
+
+    Two of the five portals are the membership role spelled straight through.
+    `security-manager` is the one that is not, and it has two spellings because
+    **rank and role are separate axes** (D3):
+
+    * a `manager` membership whose department is a security department. Nothing
+      writes a `manager` membership today -- `hire_service_applicant`
+      (`0035:918`) mints `security` or `worker` and there is no other minter --
+      so this branch is currently unreachable. It stays because `manager` is a
+      real `membership_role` value and an admin surface may yet write one, and
+      because a *plumbing* manager must keep landing in their own portal: the
+      `departments.kind` question is the whole point of the branch.
+    * a `security` membership whose active roster row ranks `manager` or
+      `supervisor`. This is the spelling real people have, and it is not a new
+      policy -- it is `gate_admin_community_for` (`0040:589`), the live guard on
+      posts CRUD and shift scheduling, asked from the other side. A portal that
+      disagreed with that predicate could only be wrong in one of two ways:
+      unreachable, which is what it was, or full of screens whose writes 403.
+
+    `supervisor` is included for the same reason: `gate_admin_community_for`
+    grants supervisors the manager's writes, so routing them to the guard portal
+    would hand somebody permissions with no screen to spend them on.
+
+    One extra read, and only on the path that needs it.
+    """
+    if role == "manager" and membership.get("department_id"):
+        kind = (
+            get_service_client().table("departments")
+            .select("kind")
+            .eq("id", membership["department_id"])
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if kind and str(kind[0].get("kind") or "") == "security":
+            return "security-manager"
+        return role
+    if role == "security":
+        senior = (
+            get_service_client().table("staff_assignments")
+            .select("id")
+            .eq("membership_id", membership["id"])
+            .eq("status", "active")
+            .in_("rank", ["manager", "supervisor"])
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if senior:
+            return "security-manager"
+    return role
+
+
+def _active_memberships(profile_id: str) -> list[dict]:
+    """The caller's default membership, or nothing.
+
+    Extracted so the claim below can re-read after writing one, without the two
+    reads drifting into asking slightly different questions.
+    """
+    return (
+        get_service_client().table("community_memberships")
+        .select("id, community_id, role, department_id, is_default_community")
+        .eq("profile_id", profile_id)
+        .eq("status", "active")
+        .is_("ended_at", None)
+        .order("is_default_community", desc=True)
+        .limit(1)
+        .execute().data
+        or []
+    )
+
+
+def _claim_staff_invitations(
+    profile: Profile, principal: Principal, access_token: str
+) -> bool:
+    """Admit a manager or supervisor whose invitation names this email.
+
+    Returns whether anything was claimed, so the caller knows to re-read.
+
+    **`profile` is the :class:`~app.domain.schemas.Profile` model, not a table
+    row.** The only caller is `get_session_context`, and both branches it can
+    arrive from -- `profiles_repository.get_profile` and
+    `profiles_repository.upsert_profile` -- return the model; the repository's
+    `_to_profile` is what maps the `profiles.display_email` column onto
+    `Profile.email`, so there is no second spelling to fall back to here. This
+    parameter was annotated `dict` and read with `.get()` while every caller
+    passed the model, which raised `AttributeError` before the `try` below and
+    so failed the whole session read rather than the claim.
+
+    **The email is taken from the verified identity, never from the profile row
+    alone.** `profiles.display_email` is written by `upsert_profile` from the
+    same GoTrue identity, so on the sign-in path the two agree -- but the
+    profile is an ordinary table, and treating a table as the authority on who
+    somebody is would make a row a credential. `verified_identity` asks GoTrue.
+
+    A failure here is swallowed. Claiming is an *enhancement* to a session that
+    is otherwise valid: somebody who has been provisioned and hits a database
+    error should land on the account page and be admitted on their next
+    sign-in, not be refused a session they are entitled to.
+    """
+    email = profile.email
+    try:
+        email = verified_identity(access_token).email or email
+    except Exception:  # noqa: BLE001 - see the docstring: never fail the session
+        pass
+    if not email:
+        return False
+    try:
+        claimed = get_service_client().rpc(
+            "claim_staff_invitations",
+            {"p_profile_id": principal.user_id, "p_email": email},
+        ).execute().data
+    except Exception:  # noqa: BLE001
+        return False
+    if isinstance(claimed, dict):
+        return True
+    return bool(claimed)
+
+
 def get_session_context(
     client: Client,
     principal: Principal,
@@ -255,18 +380,46 @@ def get_session_context(
             get_service_client(), user_id=identity.user_id, full_name=identity.full_name,
             phone=None, email=identity.email,
         )
-    rows = (
-        get_service_client().table("community_memberships")
-        .select("id, community_id, role, department_id, is_default_community")
-        .eq("profile_id", principal.user_id)
-        .eq("status", "active")
-        .is_("ended_at", None)
-        .order("is_default_community", desc=True)
-        .limit(1)
-        .execute().data
-        or []
-    )
+    rows = _active_memberships(principal.user_id)
     if not rows:
+        # Leadership does not register (0049). An admin creating a manager has
+        # no profile to attach a membership to -- that person has never signed
+        # in -- so the provisioning waits on their email and is claimed here, on
+        # the one path that has already established there is no membership.
+        #
+        # The email comes from `verified_identity`, never from anything a client
+        # sent: the email IS the authorization, so a caller who could choose it
+        # could admit themselves to any department. `claim_staff_invitations` is
+        # revoked from `authenticated` for the same reason and runs on the
+        # service client.
+        #
+        # Idempotent, so re-running it on every membership-less session read
+        # costs one query and changes nothing. A profile that claims something
+        # is re-read rather than assumed: the claim writes both a membership and
+        # a roster row, and `_portal_for` below needs the membership row itself.
+        if _claim_staff_invitations(profile, principal, access_token):
+            rows = _active_memberships(principal.user_id)
+    if not rows:
+        # A member of nothing is usually somebody about to register a society --
+        # but it is also a service person who has registered and not yet been
+        # hired anywhere, and they have a portal of their own. Without this the
+        # second sign-in lands them on the account page with no route back to
+        # /worker, which is the screen holding their applications.
+        #
+        # One extra read, and only on the path that already has no membership to
+        # read anything else from.
+        provider = (
+            get_service_client().table("service_providers")
+            .select("id")
+            .eq("profile_id", principal.user_id)
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if provider:
+            return SessionContext(
+                identity=profile, portal="worker", capabilities=["worker"]
+            )
         return SessionContext(identity=profile, onboarding_eligible=True)
     membership = rows[0]
     residency = (
@@ -279,11 +432,7 @@ def get_session_context(
         or []
     )
     role = str(membership["role"]).lower()
-    portal = (
-        "security-manager"
-        if role == "manager" and membership.get("department_id")
-        else role
-    )
+    portal = _portal_for(membership, role)
     capabilities = [role]
     if role == "admin":
         capabilities.append("resident")

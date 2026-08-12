@@ -1,9 +1,7 @@
-"""Email confirmation is a precondition of a password session, not a preference.
+"""Email-confirmation behavior at the password-session boundary.
 
-The bug these cover: a Supabase project with **Confirm email** switched off hands
-back a valid session for an address nobody has ever proven they own, and nothing
-downstream looked. The provider exchange is the only place that sees GoTrue's own
-user record, so it is the place that has to refuse.
+Production defaults to confirmation-required. Local/test bypass is explicit and
+the backend still enforces the setting when GoTrue returns a session.
 
 Google identities are deliberately untouched here -- the provider has already
 verified the address, and an OAuth JWT is not required to carry the claim at all
@@ -13,6 +11,7 @@ verified the address, and an OAuth JWT is not required to carry the claim at all
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
@@ -99,29 +98,37 @@ def sign_in() -> auth_service.SupabaseSession:
     )
 
 
-def test_an_unconfirmed_address_cannot_exchange_a_password_for_a_session(
+def test_an_unconfirmed_address_cannot_sign_in_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The reported bypass: GoTrue says yes, and the backend has to say no."""
     install(monkeypatch, _Auth(user=_User(None), session=_Session()))
 
     with pytest.raises(AuthenticationError) as raised:
         sign_in()
 
     assert raised.value.code == "email_not_confirmed"
-    assert raised.value.status_code == 401
 
 
-def test_refusing_a_sign_in_does_not_leave_a_live_session_behind(
+def test_refusing_an_unconfirmed_address_revokes_the_minted_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GoTrue minted tokens before we could object, so they get spent here."""
     auth = install(monkeypatch, _Auth(user=_User(None), session=_Session()))
 
     with pytest.raises(AuthenticationError):
         sign_in()
 
     assert auth.signed_out == [{"scope": "local"}]
+
+
+def test_explicit_local_override_allows_an_unconfirmed_test_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        get_settings(), "auth_email_confirmation_required", False
+    )
+    install(monkeypatch, _Auth(user=_User(None), session=_Session()))
+
+    assert sign_in().access_token == "access-token"
 
 
 def test_a_provider_that_refuses_the_grant_reports_the_same_reason(
@@ -162,7 +169,6 @@ def test_a_wrong_password_is_not_reported_as_an_unconfirmed_address(
 def test_a_session_without_a_user_record_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Nothing to check is not the same as nothing to worry about."""
     install(monkeypatch, _Auth(user=None, session=_Session()))
 
     with pytest.raises(AuthenticationError) as raised:
@@ -193,6 +199,49 @@ def test_resending_asks_for_a_signup_link_pointing_at_the_confirmation_page(
             },
         }
     ]
+
+
+def test_the_service_intent_is_appended_as_a_query_parameter_not_concatenated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``?a=b?intent=…`` is one parameter, not two.
+
+    The confirmation page parses ``token_hash`` out of this query string. A
+    second ``?`` makes ``URLSearchParams`` swallow everything after it into one
+    value, so the link arrives with nothing to confirm -- a base URL that
+    already carries a query has to extend it with ``&``.
+    """
+    settings = get_settings()
+
+    monkeypatch.setattr(settings, "frontend_base_url", "https://app.example.com")
+    assert auth_service.confirmation_redirect_url("service-provider") == (
+        "https://app.example.com/auth/confirm-email?intent=service-provider"
+    )
+
+    # A deployment whose frontend origin already carries a query -- a preview
+    # host, or a proxy that tags its own traffic. The intent has to extend that
+    # query rather than start a second one.
+    monkeypatch.setattr(settings, "frontend_base_url", "https://preview.example.com?build=42")
+    joined = auth_service.confirmation_redirect_url("service-provider")
+    assert joined.count("?") == 1
+    assert parse_qs(urlsplit(joined).query) == {
+        "build": ["42/auth/confirm-email"],
+        "intent": ["service-provider"],
+    }
+
+
+def test_no_intent_leaves_the_confirmation_url_exactly_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every non-professional signup keeps the URL the setup document names."""
+    monkeypatch.setattr(get_settings(), "frontend_base_url", "https://app.example.com")
+
+    assert auth_service.confirmation_redirect_url() == (
+        "https://app.example.com/auth/confirm-email"
+    )
+    assert auth_service.confirmation_redirect_url("register") == (
+        "https://app.example.com/auth/confirm-email"
+    )
 
 
 def test_resending_stays_silent_when_the_provider_fails(

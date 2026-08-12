@@ -35,9 +35,9 @@ export async function verifyEmailToken(token_hash, verification_type = 'email') 
   return api('/auth/email/verify', { method: 'POST', body: JSON.stringify({ token_hash, verification_type }) }, { retry: false });
 }
 
-export async function resendEmailConfirmation(email) {
+export async function resendEmailConfirmation(email, intent = null) {
   await prepareAnonymousCsrf();
-  return api('/auth/email/resend', { method: 'POST', body: JSON.stringify({ email }) }, { retry: false });
+  return api('/auth/email/resend', { method: 'POST', body: JSON.stringify({ email, intent }) }, { retry: false });
 }
 
 export async function requestPasswordReset(email) {
@@ -66,29 +66,28 @@ export function applicationUser(context) {
   const { identity, membership } = context;
   if (!membership) return null;
   const accessRole = String(membership.role || '').toUpperCase();
-  const role = ROLE_LABELS[accessRole] || 'Resident';
+  // The portal wins over the membership role, and only ever narrows it. A
+  // security department's manager holds `role = 'manager'`, and four screens
+  // (Header, SecurityLayout, SecurityDashboard and the /security-manager route
+  // guard) branch on the label `SecurityManager` — a value nothing had ever
+  // produced, which is why that whole portal was unreachable.
+  const role = context.portal === 'security-manager'
+    ? 'SecurityManager'
+    : ROLE_LABELS[accessRole] || 'Resident';
   return {
     id: identity.id, name: identity.full_name || identity.email || 'HomeBandhu member',
     email: identity.email || '', phone: identity.phone || '', role, accessRole,
     communityId: membership.community_id, apartmentId: membership.unit_id, flat: '—', tower: '—', status: 'Active',
+    // Which department this person runs. `GET /auth/session` has always carried
+    // it and nothing copied it across, which was harmless while no screen was
+    // scoped to a department — the manager portal is the first, and it has no
+    // other way to know: `GET /departments` is admin-only, so a manager cannot
+    // look themselves up.
+    departmentId: membership.department_id || null,
     portal: context.portal || null,
   };
 }
 
-export function homeRouteFor(contextOrUser) {
-  const context = contextOrUser?.identity ? contextOrUser : null;
-  if (context) {
-    if (!context.membership && context.onboarding_eligible) return '/get-started';
-    const role = String(context.membership?.role || '').toLowerCase();
-    if (role === 'admin') return '/admin';
-    if (context.portal === 'security-manager') return '/security-manager';
-    if (role === 'security') return '/security';
-    if (role === 'resident') return '/resident';
-    return '/account';
-  }
-  if (contextOrUser?.accessRole === 'ADMIN') return '/admin';
-  if (contextOrUser?.portal === 'security-manager') return '/security-manager';
-  if (contextOrUser?.accessRole === 'SECURITY') return '/security';
-  if (contextOrUser?.accessRole === 'RESIDENT') return '/resident';
-  return '/account';
-}
+// `homeRouteFor` used to live here and is now the single resolver in
+// `routes/authRoutes.js`, next to the constants it returns. See the comment
+// there for what the two functions were and why one of them was always wrong.

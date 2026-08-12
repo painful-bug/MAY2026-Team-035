@@ -184,8 +184,15 @@ def raise_complaint(
     category: str,
     priority: str,
     location: str,
+    department_id: str | None = None,
 ) -> str:
-    """Create a complaint (RPC). Returns its id."""
+    """Create a complaint (RPC). Returns its id.
+
+    ``department_id`` is the resident's guess at whose job this is, and it is
+    only ever a fallback: the RPC resolves the category first and uses this
+    when the category names no department. Passing ``None`` -- which is what
+    "Not sure" sends -- is the ordinary case, not an error.
+    """
     try:
         response = client.rpc(
             "raise_complaint",
@@ -196,6 +203,7 @@ def raise_complaint(
                 "p_category": category,
                 "p_priority": priority,
                 "p_location": location,
+                "p_department_id": department_id,
             },
         ).execute()
     except Exception as exc:  # noqa: BLE001

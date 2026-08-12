@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev, services-and-security]
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: uv sync --project backend --extra dev --locked
+      - run: npm run test -w frontend
+      - run: npm run lint
+      - run: npm run build
+      - run: uv run --project backend python -m compileall -q backend/app
+      - run: uv run --project backend pytest -q
+      - run: uv run --project backend python backend/scripts/export_openapi.py --check
+      - run: uv run --project backend python backend/scripts/api_map_scan.py --max-findings 20
+      - run: git diff --check
+
+  database-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: uv sync --project backend --extra dev --locked
+      - name: Apply every migration to local Supabase
+        run: |
+          npx supabase start --workdir backend
+          npx supabase db reset --workdir backend
+      - name: Export local Supabase credentials
+        run: |
+          eval "$(npx supabase status --workdir backend -o env)"
+          echo "SUPABASE_URL=$API_URL" >> "$GITHUB_ENV"
+          echo "SUPABASE_ANON_KEY=$ANON_KEY" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY" >> "$GITHUB_ENV"
+          echo "SUPABASE_JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
+          echo "SUPABASE_DB_URL=$DB_URL" >> "$GITHUB_ENV"
+      - name: Real JWT and RPC integration tests
+        env:
+          RUN_SUPABASE_INTEGRATION: "1"
+        run: uv run --project backend pytest -q backend/tests/integration
+      - name: Verify representative PostGIS query plan
+        run: psql "$SUPABASE_DB_URL" -f backend/tests/integration/assert_service_proximity_plan.sql
+      - run: npx playwright install --with-deps chromium
+      - name: Browser smoke tests
+        env:
+          AUTH_EMAIL_CONFIRMATION_REQUIRED: "false"
+          BACKEND_BASE_URL: http://127.0.0.1:8000
+          COOKIE_SECURE: "false"
+          COOKIE_SIGNING_SECRET: ci-only-cookie-signing-secret-0123456789
+          CORS_ORIGINS: http://127.0.0.1:4173
+          FRONTEND_BASE_URL: http://127.0.0.1:4173
+          RUN_FULL_STACK_E2E: "1"
+        run: |
+          (cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000) &
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:8000/health && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/health
+          npm run test:e2e -w frontend
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7

@@ -419,6 +419,39 @@ decision. It models operator review of a founding application (`reviewed_by_oper
 with OAuth and the community is created immediately, with no review queue and no OTP. Tag it
 `Superseded by self-serve founding` rather than deleting it, in case moderated onboarding returns.
 
+**Amended 2026-08-10 — seven of the twelve are no longer parked.** The service-operations feature
+(`0034`–`0043`) built the dispatch subsystem R16 said to build nothing against. That ruling is
+overturned rather than quietly worked around, and this is the list, because without it the next
+reader cannot tell an un-parked table from an overlooked one.
+
+| Table | Now | Where |
+|---|---|---|
+| `work_orders` | **live** — extended additively with a department, a supervisor, a schedule, a status vocabulary and a failed-attempt count | `0036` §1 |
+| `work_order_assignments` | **live** — extended with an offer/response lifecycle and the GiST exclusion constraint the design ERD had already drawn | `0036` §2 |
+| `worker_availability_rules` | **live** — activated by a nullable `service_provider_id` beside the existing `staff_assignment_id` | `0036` §3 |
+| `worker_unavailability` | **live** — same | `0036` §3 |
+| `skills` | **live** — plus `service_provider_skills` and `skill_categories`, which is what makes "communities that need my trades" a query | `0034` |
+| `staff_skills` | **superseded** by `service_provider_skills` (D2). Skills belong to the *person*, because the search that matters runs before anybody has hired them — keyed to a roster row, it returns nothing for exactly the people who need it | `0034` |
+| `vendors` | **superseded** by `service_providers` (D1). A service person is a `profiles` row with a global provider record and a `worker` membership per community, not a company outside the tenancy model | `0034` |
+
+**Still parked, and the reasoning is unchanged:** the two policy tables — nothing references them yet
+— and `community_registration_requests`, still superseded by self-serve founding. The three
+work-order tables that were never in R16's five (`work_order_proposals`, and the two verification
+tables in the design ERD) are design-ERD-only and have no migration behind them either way.
+
+**The two superseded tables are deleted in Step 12** of `plans/SERVICE_OPERATIONS_PLAN.md`, not here;
+a `CHANGE_LOG.md` line will say what replaced each. **Done 2026-08-10:**
+`0044_retire_dead_tables.sql` drops both, plus `staff_assignments.vendor_id`,
+the one live reference `vendors` ever had.
+
+**What R16 got right, and is worth keeping in view.** *"Deleting them would discard design work that
+is probably right"* — it was right. `work_order_assignments` needed an offer lifecycle and an
+exclusion constraint bolted on, and nothing else; the shape held for two years of nobody using it.
+The part that did not hold is `staff_skills`, and it did not hold for a reason no audit could have
+seen from the schema: the question the product actually asks is *which communities need my trades*,
+which is asked by somebody who is on no roster at all.
+
+
 **Owner:** ERD (notes only). **Cost:** zero structural change.
 
 ---

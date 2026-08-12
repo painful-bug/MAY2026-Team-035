@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CalendarClock,
-  Camera,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -11,7 +11,6 @@ import {
   HelpCircle,
   MapPin,
   MessageSquare,
-  Paperclip,
   Plus,
   RotateCcw,
   Search,
@@ -21,8 +20,29 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { useApp } from '../../store/useApp';
+import { residentApi } from '../../features/resident/residentApi';
+import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
 import { residentFaqs } from '../../data/residentFaqs';
+
+// The resident's complaints, over the live API: `GET /complaints`,
+// `GET /complaints/{id}`, and the four writes that belong to the person who
+// raised it — read, reopen, resolution, and the answer to a proposed visit.
+//
+// It replaces a zustand slice that computed the product's rules in the browser:
+// the SLA deadline, the reopen's restarted clock, the timeline entries. All
+// three are the database's now (API.md §7), which is why nothing here derives a
+// date or writes a timeline row — a client that recomputes a rule the server
+// also applies is a client that will one day disagree with it.
+//
+// **Two things the demo did that this deliberately does not.**
+//
+//   Attachments — the form collected up to three photos and there is no upload
+//   endpoint. `RaiseComplaintRequest` does not accept them, so collecting them
+//   would be promising a resident their photo reached somebody.
+//
+//   Filtering by urgency and free text — neither is a query parameter, so both
+//   narrow the page that was fetched rather than pretending to search the lot.
+//   Status and category *are* parameters and are sent.
 
 const CATEGORIES = [
   'Plumbing',
@@ -33,10 +53,16 @@ const CATEGORIES = [
   'Others',
 ];
 
+// The four words a complaint displays as, which is also what `?status=` matches
+// on: two stored statuses render as `Resolved` and two as `In Progress`, so
+// filtering by the word on the row returns every row shown under it.
+const STATUSES = ['Pending', 'In Progress', 'Resolved', 'Cancelled'];
+
 const STATUS_STYLES = {
   Pending: 'border-amber-100 bg-amber-50 text-amber-700',
   'In Progress': 'border-blue-100 bg-blue-50 text-blue-700',
   Resolved: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+  Cancelled: 'border-slate-200 bg-slate-100 text-slate-500',
 };
 
 const URGENCY_STYLES = {
@@ -45,14 +71,14 @@ const URGENCY_STYLES = {
   Low: 'bg-slate-100 text-slate-600',
 };
 
-const COMPLAINT_FAQS = residentFaqs.filter(
-  (faq) => faq.category === 'Complaints'
-);
+const COMPLAINT_FAQS = residentFaqs.filter((faq) => faq.category === 'Complaints');
+
+const PAGE_SIZE = 20;
 
 const formatDateTime = (value) => {
   if (!value) return 'Not available';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return String(value);
   return new Intl.DateTimeFormat('en-IN', {
     day: 'numeric',
     month: 'short',
@@ -62,180 +88,805 @@ const formatDateTime = (value) => {
   }).format(date);
 };
 
-const getCreatedAt = (complaint) =>
-  complaint.createdAt ?? `${complaint.date}T09:00:00.000Z`;
-
-const getExpectedResolutionAt = (complaint) => {
-  if (complaint.expectedResolutionAt) {
-    return complaint.expectedResolutionAt;
-  }
-
-  const expectedAt = new Date(getCreatedAt(complaint));
-  const hours = { High: 24, Medium: 48, Low: 72 }[complaint.urgency] ?? 48;
-  expectedAt.setHours(expectedAt.getHours() + hours);
-  return expectedAt.toISOString();
+const emptyForm = {
+  title: '',
+  description: '',
+  category: 'Plumbing',
+  urgency: 'Medium',
+  location: '',
+  departmentId: '',
 };
 
-const getComplaintTimeline = (complaint) => {
-  if (complaint.timeline?.length) {
-    return complaint.timeline;
-  }
-
-  const createdAt = getCreatedAt(complaint);
-  const events = [
-    {
-      id: `${complaint.id}-raised`,
-      type: 'raised',
-      label: 'Complaint raised',
-      message: 'Complaint submitted to the management team.',
-      actor: complaint.raisedBy,
-      createdAt,
-    },
-  ];
-
-  if (complaint.assignee && complaint.assignee !== 'Unassigned') {
-    events.push({
-      id: `${complaint.id}-assigned`,
-      type: 'assigned',
-      label: 'Technician assigned',
-      message: `${complaint.assignee} was assigned to this complaint.`,
-      actor: 'Management',
-      createdAt,
-    });
-  }
-
-  if (complaint.status === 'In Progress' || complaint.status === 'Resolved') {
-    events.push({
-      id: `${complaint.id}-progress`,
-      type: 'in-progress',
-      label: 'Work started',
-      message: 'The assigned team started working on the issue.',
-      actor: complaint.assignee || 'Management',
-      createdAt,
-    });
-  }
-
-  if (complaint.status === 'Resolved') {
-    events.push({
-      id: `${complaint.id}-resolved`,
-      type: 'resolved',
-      label: 'Marked resolved',
-      message: 'Management marked the complaint as resolved.',
-      actor: complaint.assignee || 'Management',
-      createdAt,
-    });
-  }
-
-  return events;
-};
-
-const getLatestUpdate = (complaint) => {
-  const updates = [
-    ...getComplaintTimeline(complaint),
-    ...(complaint.comments ?? []),
-  ].sort((first, second) =>
-    (second.createdAt ?? '').localeCompare(first.createdAt ?? '')
+function Field({ label, children }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </label>
+      {children}
+    </div>
   );
-  return updates[0]?.createdAt ?? complaint.updatedAt ?? getCreatedAt(complaint);
-};
+}
 
-const readAttachment = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolve({
-        id: `${file.name}-${file.lastModified}`,
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        dataUrl: reader.result,
-      });
-    reader.onerror = () => reject(new Error('Unable to read the selected file.'));
-    reader.readAsDataURL(file);
+const inputClass =
+  'w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none';
+const selectClass =
+  'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:outline-none';
+
+/**
+ * The visit the department proposed, and the resident's answer to it.
+ *
+ * A `404` here is *nothing proposed*, which is the ordinary case and not an
+ * error on screen — most complaints never get a scheduled visit, and a red box
+ * on every one of them would teach a resident to ignore the box.
+ */
+function ProposedVisit({ complaintId }) {
+  const queryClient = useQueryClient();
+  const [note, setNote] = useState('');
+
+  const request = useQuery({
+    queryKey: residentKeys.schedule(complaintId),
+    queryFn: () => residentApi.scheduleRequest(complaintId),
+    // A 404 is an answer, not a failure to get one; retrying it three times
+    // would only delay the empty state.
+    retry: false,
   });
 
+  const respond = useMutation({
+    mutationFn: (response) =>
+      residentApi.schedule(complaintId, { response, note: note.trim() || null }),
+    onSuccess: (visit) => {
+      queryClient.setQueryData(residentKeys.schedule(complaintId), visit);
+      queryClient.invalidateQueries({ queryKey: residentKeys.complaint(complaintId) });
+      queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+      setNote('');
+    },
+  });
+
+  if (request.isLoading) return null;
+  if (request.error) {
+    // 404 — nothing is proposed. Anything else is worth saying out loud, since
+    // the resident may be waiting on a visit the screen cannot see.
+    if (request.error.status === 404) return null;
+    return (
+      <p role="alert" className="text-xs font-semibold text-rose-600">
+        Could not load the proposed visit. {request.error.message}
+      </p>
+    );
+  }
+
+  const visit = request.data;
+  if (!visit) return null;
+
+  const window = visit.scheduledStartAt
+    ? `${formatDateTime(visit.scheduledStartAt)}${
+        visit.scheduledEndAt
+          ? ` – ${new Intl.DateTimeFormat('en-IN', {
+              hour: 'numeric',
+              minute: '2-digit',
+            }).format(new Date(visit.scheduledEndAt))}`
+          : ''
+      }`
+    : 'A time has not been proposed yet.';
+
+  return (
+    <section className="space-y-3 rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+      <div className="flex items-start gap-2">
+        <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
+        <div>
+          <p className="text-sm font-extrabold text-indigo-900">
+            {visit.awaitingResponse ? 'A visit has been proposed' : 'Your visit'}
+          </p>
+          <p className="mt-1 text-xs font-bold text-slate-700">{window}</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
+            {[visit.departmentName, visit.skillName, visit.locationText]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+          {visit.assigneeName && (
+            <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
+              {visit.assigneeName} is booked for it.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {visit.awaitingResponse ? (
+        <div className="space-y-2">
+          {visit.respondBy && (
+            <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600">
+              Answer by {formatDateTime(visit.respondBy)} — after that the
+              association schedules it anyway.
+            </p>
+          )}
+          <textarea
+            rows={2}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Optional note for the supervisor…"
+            className="w-full resize-none rounded-xl border border-indigo-100 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-400 focus:outline-none"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => respond.mutate('confirmed')}
+              disabled={respond.isPending}
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:bg-slate-300"
+            >
+              That time works
+            </button>
+            <button
+              type="button"
+              onClick={() => respond.mutate('declined')}
+              disabled={respond.isPending}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:text-slate-300"
+            >
+              It does not
+            </button>
+          </div>
+          {/* Declining is not a counter-proposal and it clears the time: the
+              supervisor proposes again rather than the screen collecting an
+              alternative there is nowhere to put. */}
+          <p className="text-[10px] font-semibold text-slate-500">
+            Declining sends it back to the supervisor, who will propose another time.
+          </p>
+        </div>
+      ) : (
+        <p className="text-[11px] font-bold text-emerald-700">
+          {visit.status === 'cancelled'
+            ? 'This visit was cancelled.'
+            : 'You have answered this one. Nothing more to do.'}
+        </p>
+      )}
+
+      {respond.error && (
+        <p role="alert" className="text-[11px] font-semibold text-rose-600">
+          {respond.error.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ComplaintDrawer({ complaintId, onClose }) {
+  const queryClient = useQueryClient();
+  const [rating, setRating] = useState(0);
+  const [feedback, setFeedback] = useState('');
+  const [comment, setComment] = useState('');
+  const [isReopening, setIsReopening] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+
+  const detail = useQuery({
+    queryKey: residentKeys.complaint(complaintId),
+    queryFn: () => residentApi.complaint(complaintId),
+  });
+
+  const afterWrite = (complaint) => {
+    queryClient.setQueryData(residentKeys.complaint(complaintId), complaint);
+    queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+    queryClient.invalidateQueries({ queryKey: residentKeys.snapshot() });
+  };
+
+  const confirmResolution = useMutation({
+    // `{ rating, feedback }` — the rating is required and the feedback is not.
+    // Confirming is what *closes* a complaint: `Resolved` is what the
+    // association says, closed is what the resident agrees.
+    mutationFn: () => residentApi.resolveComplaint(complaintId, { rating, feedback }),
+    onSuccess: (complaint) => {
+      afterWrite(complaint);
+      setFeedback('');
+    },
+  });
+
+  // The one write on this screen that does **not** answer with the complaint:
+  // `POST /complaints/{id}/comments` is a `201` with a message, so the detail is
+  // re-read rather than replaced from the response.
+  //
+  // `visibility: 'resident'` is the wire word, not the stored one — the column,
+  // both RPCs and every read filter say `public`, and the service translates. It
+  // is sent explicitly rather than left to the default because a resident may
+  // only ever write this one, and a screen that relies on a server-side default
+  // for a permission boundary is a screen that changes meaning if the default
+  // does.
+  const addComment = useMutation({
+    mutationFn: () =>
+      residentApi.addComplaintComment(complaintId, {
+        message: comment.trim(),
+        visibility: 'resident',
+      }),
+    onSuccess: () => {
+      setComment('');
+      queryClient.invalidateQueries({ queryKey: residentKeys.complaint(complaintId) });
+      queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+    },
+  });
+
+  const reopen = useMutation({
+    mutationFn: () => residentApi.reopenComplaint(complaintId, { reason: reopenReason }),
+    onSuccess: (complaint) => {
+      afterWrite(complaint);
+      setIsReopening(false);
+      setReopenReason('');
+      setRating(0);
+    },
+  });
+
+  const complaint = detail.data;
+
+  return (
+    <div
+      className="fixed inset-0 z-[999] bg-slate-900/50 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside className="absolute inset-y-0 right-0 w-full max-w-2xl overflow-y-auto bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 px-6 py-5 backdrop-blur">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-extrabold text-slate-900">
+                {complaint?.title || 'Complaint'}
+              </h2>
+              {complaint && (
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+                    STATUS_STYLES[complaint.status] || STATUS_STYLES.Pending
+                  }`}
+                >
+                  {complaint.status}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Ticket {complaintId}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close complaint details"
+            className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {detail.isLoading ? (
+          <p className="px-6 py-16 text-center text-sm font-bold text-slate-400">Loading…</p>
+        ) : detail.error ? (
+          <div role="alert" className="space-y-3 px-6 py-16 text-center">
+            <p className="text-sm font-extrabold text-rose-700">
+              We could not open this complaint.
+            </p>
+            <p className="text-xs font-semibold text-rose-600">{detail.error.message}</p>
+          </div>
+        ) : (
+          <div className="space-y-6 p-6">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <p className="text-xs font-semibold leading-relaxed text-slate-600">
+                {complaint.description || 'No description was given.'}
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+                <div className="flex gap-2">
+                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      Location
+                    </p>
+                    <p className="mt-0.5 font-bold text-slate-700">
+                      {complaint.location || 'Not given'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      Assigned technician
+                    </p>
+                    <p className="mt-0.5 font-bold text-slate-700">
+                      {complaint.assignee || 'Awaiting assignment'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      Expected resolution
+                    </p>
+                    {/* Set by the database from the urgency on insert, not
+                        computed here — the client that recomputes an SLA is the
+                        client that eventually disagrees with the admin's. */}
+                    <p className="mt-0.5 font-bold text-slate-700">
+                      {formatDateTime(complaint.expectedResolutionAt)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      Latest update
+                    </p>
+                    <p className="mt-0.5 font-bold text-slate-700">
+                      {formatDateTime(complaint.lastActivityAt)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              {complaint.reopenedCount > 0 && (
+                <p className="mt-3 text-[10px] font-bold uppercase tracking-wide text-amber-600">
+                  Reopened {complaint.reopenedCount} time
+                  {complaint.reopenedCount === 1 ? '' : 's'}
+                </p>
+              )}
+            </div>
+
+            <ProposedVisit complaintId={complaintId} />
+
+            <section>
+              <h3 className="text-sm font-extrabold text-slate-800">Ticket timeline</h3>
+              {complaint.hasOlderEvents && (
+                <p className="mt-1 text-[10px] font-semibold text-slate-400">
+                  Earlier history is not shown.
+                </p>
+              )}
+              <div className="mt-4 space-y-0">
+                {(complaint.timeline ?? []).map((event, index, events) => (
+                  <div key={event.id} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <div
+                        className={`h-3 w-3 rounded-full ${
+                          index === events.length - 1 ? 'bg-indigo-600' : 'bg-slate-300'
+                        }`}
+                      />
+                      {index < events.length - 1 && (
+                        <div className="h-full min-h-14 w-px bg-slate-200" />
+                      )}
+                    </div>
+                    <div className="pb-5">
+                      <p className="text-xs font-extrabold text-slate-700">{event.label}</p>
+                      {event.message && (
+                        <p className="mt-1 text-[11px] font-semibold leading-relaxed text-slate-500">
+                          {event.message}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[9px] font-bold text-slate-400">
+                        {event.actor} · {formatDateTime(event.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {(complaint.timeline ?? []).length === 0 && (
+                  <p className="text-xs font-semibold text-slate-400">Nothing recorded yet.</p>
+                )}
+              </div>
+            </section>
+
+            <section>
+              <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
+                <MessageSquare className="h-4 w-4 text-indigo-500" />
+                Conversation
+              </h3>
+              {complaint.hasOlderComments && (
+                <p className="mt-1 text-[10px] font-semibold text-slate-400">
+                  Earlier messages are not shown.
+                </p>
+              )}
+              <div className="mt-3 space-y-3">
+                {(complaint.comments ?? []).length === 0 ? (
+                  <p className="rounded-xl bg-slate-50 p-4 text-xs font-semibold text-slate-400">
+                    No messages yet.
+                  </p>
+                ) : (
+                  complaint.comments.map((item) => (
+                    <div key={item.id} className="mr-6 rounded-xl bg-slate-50 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[10px] font-extrabold text-slate-700">{item.author}</p>
+                        <p className="text-[9px] font-semibold text-slate-400">
+                          {formatDateTime(item.createdAt)}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">
+                        {item.message}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+              <form
+                className="mt-3 flex gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (comment.trim()) addComment.mutate();
+                }}
+              >
+                <input
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  placeholder="Write a message…"
+                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!comment.trim() || addComment.isPending}
+                  className="rounded-xl bg-indigo-600 px-4 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  aria-label="Send message"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              </form>
+              {addComment.error && (
+                <p role="alert" className="mt-2 text-[11px] font-semibold text-rose-600">
+                  {addComment.error.message}
+                </p>
+              )}
+            </section>
+
+            {complaint.status === 'Resolved' && (
+              <section className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
+                {complaint.resolutionRating ? (
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-800">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Resolution confirmed
+                    </p>
+                    <div className="mt-2 flex gap-1">
+                      {[1, 2, 3, 4, 5].map((value) => (
+                        <Star
+                          key={value}
+                          className={`h-4 w-4 ${
+                            value <= complaint.resolutionRating
+                              ? 'fill-amber-400 text-amber-400'
+                              : 'text-slate-300'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    {complaint.residentFeedback && (
+                      <p className="mt-2 text-xs font-semibold text-slate-600">
+                        “{complaint.residentFeedback}”
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-extrabold text-emerald-800">
+                        Is the issue resolved?
+                      </p>
+                      <p className="mt-1 text-[11px] font-semibold text-emerald-700/70">
+                        Rate the work, or reopen the complaint if the issue remains.
+                      </p>
+                    </div>
+                    <div className="flex gap-1">
+                      {[1, 2, 3, 4, 5].map((value) => (
+                        <button
+                          type="button"
+                          key={value}
+                          onClick={() => setRating(value)}
+                          aria-label={`${value} stars`}
+                        >
+                          <Star
+                            className={`h-6 w-6 ${
+                              value <= rating
+                                ? 'fill-amber-400 text-amber-400'
+                                : 'text-slate-300'
+                            }`}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={feedback}
+                      onChange={(event) => setFeedback(event.target.value)}
+                      placeholder="Optional feedback…"
+                      className="w-full resize-none rounded-xl border border-emerald-100 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-emerald-400 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => confirmResolution.mutate()}
+                      disabled={rating === 0 || confirmResolution.isPending}
+                      className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {confirmResolution.isPending ? 'Sending…' : 'Confirm Resolution'}
+                    </button>
+                    {confirmResolution.error && (
+                      <p role="alert" className="text-[11px] font-semibold text-rose-600">
+                        {confirmResolution.error.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Disputing a resolution *is* reopening it: there is no second
+                    endpoint that records disagreement, and one that only said so
+                    would leave the complaint closed. */}
+                <div className="mt-4 border-t border-emerald-100 pt-4">
+                  {!isReopening ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsReopening(true)}
+                      className="flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Not fixed — reopen this complaint
+                    </button>
+                  ) : (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (reopenReason.trim()) reopen.mutate();
+                      }}
+                      className="space-y-2"
+                    >
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Why is the issue unresolved?
+                      </label>
+                      <textarea
+                        required
+                        rows={2}
+                        value={reopenReason}
+                        onChange={(event) => setReopenReason(event.target.value)}
+                        className="w-full resize-none rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-rose-400 focus:outline-none"
+                      />
+                      <p className="text-[10px] font-semibold text-slate-400">
+                        The deadline restarts and any rating you gave is cleared.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="submit"
+                          disabled={reopen.isPending}
+                          className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:bg-slate-300"
+                        >
+                          {reopen.isPending ? 'Reopening…' : 'Reopen Complaint'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsReopening(false)}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {reopen.error && (
+                        <p role="alert" className="text-[11px] font-semibold text-rose-600">
+                          {reopen.error.message}
+                        </p>
+                      )}
+                    </form>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {complaint.isOverdue && complaint.status !== 'Resolved' && (
+              <div className="flex gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                The expected resolution time has passed.
+              </div>
+            )}
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function RaiseComplaintModal({ onClose, onCreated }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState(emptyForm);
+
+  // The routing picker, served from `departments` — the admin department list
+  // 403s a resident and this is the read that does not.
+  const directory = useQuery({
+    queryKey: residentKeys.directory(),
+    queryFn: () => residentApi.directoryContacts(),
+    staleTime: 5 * 60_000,
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      residentApi.createComplaint({
+        title: form.title.trim(),
+        description: form.description.trim(),
+        category: form.category,
+        urgency: form.urgency,
+        location: form.location.trim(),
+        // "Not sure" is the default and the honest answer most of the time. It
+        // sends `null`, which lets the server route by category instead — the
+        // catalogue is curated by somebody who knows how this society is
+        // organised, and a resident's wrong guess is worse than no guess.
+        departmentId: form.departmentId || null,
+      }),
+    onSuccess: (complaint) => {
+      queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+      queryClient.invalidateQueries({ queryKey: residentKeys.snapshot() });
+      onCreated(complaint);
+    },
+  });
+
+  const set = (field) => (event) =>
+    setForm((current) => ({ ...current, [field]: event.target.value }));
+
+  return (
+    <div
+      className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-extrabold text-slate-900">Raise a Complaint</h2>
+            <p className="mt-1 text-xs font-semibold text-slate-400">
+              Add enough detail to help the team respond quickly.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close complaint form"
+            className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form
+          className="mt-6 space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!form.title.trim()) return;
+            create.mutate();
+          }}
+        >
+          <Field label="Issue title">
+            <input
+              autoFocus
+              required
+              value={form.title}
+              onChange={set('title')}
+              placeholder="e.g. Leaking tap in kitchen"
+              className={inputClass}
+            />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Category">
+              <select value={form.category} onChange={set('category')} className={selectClass}>
+                {CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Urgency">
+              <select value={form.urgency} onChange={set('urgency')} className={selectClass}>
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Who should handle this?">
+            <select
+              value={form.departmentId}
+              onChange={set('departmentId')}
+              className={selectClass}
+            >
+              <option value="">Not sure</option>
+              {(directory.data ?? []).map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.name}
+                  {contact.category ? ` — ${contact.category}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] font-semibold text-slate-400">
+              {directory.error
+                ? 'The department list could not be loaded; “Not sure” still files it correctly.'
+                : '“Not sure” is fine — the category routes it when you leave this alone.'}
+            </p>
+          </Field>
+
+          <Field label="Exact location">
+            <div className="relative">
+              <MapPin className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={form.location}
+                onChange={set('location')}
+                placeholder="e.g. Kitchen, below the sink"
+                className={`${inputClass} pl-10`}
+              />
+            </div>
+          </Field>
+
+          <Field label="Description">
+            <textarea
+              rows={4}
+              value={form.description}
+              onChange={set('description')}
+              placeholder="Describe what happened and when it started…"
+              className={`${inputClass} resize-none`}
+            />
+          </Field>
+
+          {create.error && (
+            <p role="alert" className="text-xs font-semibold text-rose-600">
+              {create.error.message}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-3 border-t border-slate-100 pt-5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={create.isPending}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 hover:bg-indigo-700 disabled:bg-slate-300"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {create.isPending ? 'Submitting…' : 'Submit Complaint'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Complaints() {
-  const {
-    complaints,
-    currentUser,
-    raiseComplaint,
-    addComplaintComment,
-    reopenComplaint,
-    confirmComplaintResolution,
-    markComplaintRead,
-  } = useApp();
+  const queryClient = useQueryClient();
+  useResidentLiveUpdates();
+
   const [isRaiseModalOpen, setIsRaiseModalOpen] = useState(false);
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
   const [statusFilter, setStatusFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [urgencyFilter, setUrgencyFilter] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
-  const [form, setForm] = useState({
-    title: '',
-    description: '',
-    category: 'Plumbing',
-    urgency: 'Medium',
-    location: '',
-    attachments: [],
-  });
-  const [attachmentError, setAttachmentError] = useState('');
-  const [comment, setComment] = useState('');
-  const [rating, setRating] = useState(0);
-  const [feedback, setFeedback] = useState('');
-  const [isReopening, setIsReopening] = useState(false);
-  const [reopenReason, setReopenReason] = useState('');
+  const [page, setPage] = useState(1);
   const [openFaqId, setOpenFaqId] = useState(COMPLAINT_FAQS[0]?.id ?? null);
 
-  const userComplaints = useMemo(
-    () =>
-      complaints.filter(
-        (complaint) => complaint.userId === currentUser?.id
-      ),
-    [complaints, currentUser?.id]
-  );
-  const selectedComplaint = userComplaints.find(
-    (complaint) => complaint.id === selectedComplaintId
+  const params = useMemo(
+    () => ({
+      status: statusFilter === 'All' ? undefined : statusFilter,
+      category: categoryFilter === 'All' ? undefined : categoryFilter,
+      page,
+      pageSize: PAGE_SIZE,
+    }),
+    [statusFilter, categoryFilter, page]
   );
 
-  const filteredComplaints = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    return userComplaints.filter((complaint) => {
-      const matchesStatus =
-        statusFilter === 'All' ||
-        (statusFilter === 'Active'
-          ? complaint.status !== 'Resolved'
-          : complaint.status === 'Resolved');
-      const matchesCategory =
-        categoryFilter === 'All' || complaint.category === categoryFilter;
-      const matchesUrgency =
-        urgencyFilter === 'All' || complaint.urgency === urgencyFilter;
-      const matchesSearch =
-        !query ||
-        [
-          complaint.title,
-          complaint.description,
-          complaint.location,
-          complaint.assignee,
-          complaint.id,
-        ].some((value) => value?.toLowerCase().includes(query));
-      return (
-        matchesStatus &&
-        matchesCategory &&
-        matchesUrgency &&
-        matchesSearch
-      );
-    });
-  }, [
-    userComplaints,
-    statusFilter,
-    categoryFilter,
-    urgencyFilter,
-    searchTerm,
-  ]);
+  const list = useQuery({
+    queryKey: residentKeys.complaints(params),
+    queryFn: () => residentApi.complaints(params),
+  });
+
+  // Per membership, so opening a thread clears the resident's own marker and
+  // nobody else's. Fired on open and never rendered — the badge going away is
+  // the whole of its user-visible effect.
+  const markRead = useMutation({
+    mutationFn: (complaintId) => residentApi.markComplaintRead(complaintId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+      queryClient.invalidateQueries({ queryKey: residentKeys.snapshot() });
+    },
+  });
 
   useEffect(() => {
     if (!isRaiseModalOpen && !selectedComplaintId) return undefined;
-
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const handleEscape = (event) => {
@@ -251,102 +902,33 @@ export default function Complaints() {
     };
   }, [isRaiseModalOpen, selectedComplaintId]);
 
-  const resetComplaintForm = () => {
-    setForm({
-      title: '',
-      description: '',
-      category: 'Plumbing',
-      urgency: 'Medium',
-      location: '',
-      attachments: [],
-    });
-    setAttachmentError('');
-  };
-
-  const handleAttachments = async (event) => {
-    const files = [...event.target.files];
-    setAttachmentError('');
-
-    if (form.attachments.length + files.length > 3) {
-      setAttachmentError('You can attach up to three images.');
-      return;
-    }
-
-    if (files.some((file) => !file.type.startsWith('image/'))) {
-      setAttachmentError('Only image attachments are supported.');
-      return;
-    }
-
-    if (files.some((file) => file.size > 700 * 1024)) {
-      setAttachmentError('Each image must be smaller than 700 KB.');
-      return;
-    }
-
-    try {
-      const attachments = await Promise.all(files.map(readAttachment));
-      setForm((current) => ({
-        ...current,
-        attachments: [...current.attachments, ...attachments],
-      }));
-    } catch (error) {
-      setAttachmentError(
-        error instanceof Error ? error.message : 'Unable to add attachments.'
-      );
-    }
-  };
-
-  const handleRaiseComplaint = (event) => {
-    event.preventDefault();
-    if (!form.title.trim() || !form.description.trim() || !form.location.trim()) {
-      return;
-    }
-
-    const complaint = raiseComplaint(form);
-    resetComplaintForm();
-    setIsRaiseModalOpen(false);
-    if (complaint) {
-      setSelectedComplaintId(complaint.id);
-    }
-  };
-
   const openComplaint = (complaintId) => {
-    markComplaintRead(complaintId);
     setSelectedComplaintId(complaintId);
-    setComment('');
-    setRating(0);
-    setFeedback('');
-    setIsReopening(false);
-    setReopenReason('');
+    markRead.mutate(complaintId);
   };
 
-  const handleComment = (event) => {
-    event.preventDefault();
-    if (!comment.trim() || !selectedComplaint) return;
-    addComplaintComment(selectedComplaint.id, comment);
-    setComment('');
-  };
+  const items = list.data?.items ?? [];
+  const query = searchTerm.trim().toLowerCase();
+  const visible = items.filter((complaint) => {
+    const matchesUrgency = urgencyFilter === 'All' || complaint.urgency === urgencyFilter;
+    const matchesSearch =
+      !query ||
+      [complaint.title, complaint.location, complaint.assignee, complaint.id].some((value) =>
+        String(value || '').toLowerCase().includes(query)
+      );
+    return matchesUrgency && matchesSearch;
+  });
 
-  const handleConfirmResolution = () => {
-    if (!selectedComplaint || rating === 0) return;
-    confirmComplaintResolution(selectedComplaint.id, { rating, feedback });
-    setFeedback('');
-  };
-
-  const handleReopen = (event) => {
-    event.preventDefault();
-    if (!selectedComplaint || !reopenReason.trim()) return;
-    reopenComplaint(selectedComplaint.id, reopenReason);
-    setIsReopening(false);
-    setReopenReason('');
+  const changeFilter = (setter) => (value) => {
+    setter(value);
+    setPage(1);
   };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
-            My Complaints
-          </h1>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">My Complaints</h1>
           <p className="mt-1 text-xs font-semibold text-slate-400">
             Report an issue and follow every update through resolution.
           </p>
@@ -368,17 +950,17 @@ export default function Complaints() {
             type="search"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search complaints, location, or technician..."
+            placeholder="Search this page of complaints…"
             className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-xs font-semibold text-slate-700 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-none"
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
-          {['All', 'Active', 'Resolved'].map((status) => (
+          {['All', ...STATUSES].map((status) => (
             <button
               type="button"
               key={status}
-              onClick={() => setStatusFilter(status)}
+              onClick={() => changeFilter(setStatusFilter)(status)}
               className={`rounded-lg px-3 py-1.5 text-[10px] font-bold transition-colors ${
                 statusFilter === status
                   ? 'bg-indigo-600 text-white'
@@ -390,7 +972,7 @@ export default function Complaints() {
           ))}
           <select
             value={categoryFilter}
-            onChange={(event) => setCategoryFilter(event.target.value)}
+            onChange={(event) => changeFilter(setCategoryFilter)(event.target.value)}
             className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600 focus:border-indigo-500 focus:outline-none"
           >
             <option value="All">All categories</option>
@@ -411,33 +993,50 @@ export default function Complaints() {
             <option value="Low">Low</option>
           </select>
           <span className="ml-auto text-[10px] font-bold text-slate-400">
-            {filteredComplaints.length} tickets
+            {list.data ? `${list.data.total} tickets` : ''}
           </span>
         </div>
       </div>
 
-      {filteredComplaints.length === 0 ? (
+      {list.isLoading ? (
+        <div className="rounded-2xl border border-slate-100 bg-white px-6 py-14 text-center text-sm font-bold text-slate-400">
+          Loading your complaints…
+        </div>
+      ) : list.error ? (
+        <div
+          role="alert"
+          className="space-y-3 rounded-2xl border border-rose-100 bg-rose-50 px-6 py-12 text-center"
+        >
+          <p className="text-sm font-extrabold text-rose-800">
+            We could not load your complaints.
+          </p>
+          <p className="text-xs font-semibold text-rose-700">{list.error.message}</p>
+          <button
+            type="button"
+            onClick={() => list.refetch()}
+            className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-700"
+          >
+            Try again
+          </button>
+        </div>
+      ) : visible.length === 0 ? (
         <div className="rounded-2xl border border-slate-100 bg-white px-6 py-14 text-center">
           <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" />
-          <p className="mt-3 text-sm font-extrabold text-slate-700">
-            No complaints found
-          </p>
+          <p className="mt-3 text-sm font-extrabold text-slate-700">No complaints found</p>
           <p className="mt-1 text-xs font-semibold text-slate-400">
-            Try changing the filters or raise a new complaint.
+            Try changing the filters, or raise a new complaint.
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredComplaints.map((complaint) => (
+          {visible.map((complaint) => (
             <article
               key={complaint.id}
               role="button"
               tabIndex={0}
               onClick={() => openComplaint(complaint.id)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  openComplaint(complaint.id);
-                }
+                if (event.key === 'Enter' || event.key === ' ') openComplaint(complaint.id);
               }}
               className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-100"
             >
@@ -447,24 +1046,28 @@ export default function Complaints() {
                     <h2 className="truncate text-sm font-extrabold text-slate-800">
                       {complaint.title}
                     </h2>
-                    {complaint.hasUnreadUpdate && (
+                    {complaint.isUnread && (
                       <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[9px] font-extrabold text-white">
                         New update
                       </span>
                     )}
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${URGENCY_STYLES[complaint.urgency]}`}
+                      className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${
+                        URGENCY_STYLES[complaint.urgency] || URGENCY_STYLES.Low
+                      }`}
                     >
                       {complaint.urgency}
                     </span>
+                    {complaint.isOverdue && (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold text-amber-700">
+                        Overdue
+                      </span>
+                    )}
                   </div>
-                  <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-500">
-                    {complaint.description}
-                  </p>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-semibold text-slate-400">
                     <span className="flex items-center gap-1">
                       <MapPin className="h-3.5 w-3.5" />
-                      {complaint.location || complaint.flat}
+                      {complaint.location || complaint.category}
                     </span>
                     <span className="flex items-center gap-1">
                       <UserRound className="h-3.5 w-3.5" />
@@ -472,13 +1075,21 @@ export default function Complaints() {
                     </span>
                     <span className="flex items-center gap-1">
                       <Clock3 className="h-3.5 w-3.5" />
-                      Updated {formatDateTime(getLatestUpdate(complaint))}
+                      Updated {formatDateTime(complaint.lastActivityAt)}
                     </span>
+                    {complaint.commentCount > 0 && (
+                      <span className="flex items-center gap-1">
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        {complaint.commentCount}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
                   <span
-                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${STATUS_STYLES[complaint.status]}`}
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+                      STATUS_STYLES[complaint.status] || STATUS_STYLES.Pending
+                    }`}
                   >
                     {complaint.status}
                   </span>
@@ -487,6 +1098,28 @@ export default function Complaints() {
               </div>
             </article>
           ))}
+
+          {(page > 1 || list.data?.hasMore) && (
+            <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white px-4 py-3">
+              <button
+                type="button"
+                disabled={page === 1}
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-600 disabled:text-slate-300"
+              >
+                Previous
+              </button>
+              <span className="text-[10px] font-bold text-slate-400">Page {page}</span>
+              <button
+                type="button"
+                disabled={!list.data?.hasMore}
+                onClick={() => setPage((value) => value + 1)}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-600 disabled:text-slate-300"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -496,9 +1129,7 @@ export default function Complaints() {
             <HelpCircle className="h-4.5 w-4.5" />
           </div>
           <div>
-            <h2 className="text-sm font-extrabold text-slate-800">
-              Complaint FAQs
-            </h2>
+            <h2 className="text-sm font-extrabold text-slate-800">Complaint FAQs</h2>
             <p className="mt-1 text-[11px] font-semibold text-slate-400">
               Quick answers about updates, resolution, and emergencies.
             </p>
@@ -516,9 +1147,7 @@ export default function Complaints() {
                   className="flex w-full items-center justify-between gap-4 py-4 text-left"
                   aria-expanded={isOpen}
                 >
-                  <span className="text-xs font-bold text-slate-700">
-                    {faq.question}
-                  </span>
+                  <span className="text-xs font-bold text-slate-700">{faq.question}</span>
                   <ChevronDown
                     className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
                       isOpen ? 'rotate-180' : ''
@@ -537,550 +1166,20 @@ export default function Complaints() {
       </section>
 
       {isRaiseModalOpen && (
-        <div
-          className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setIsRaiseModalOpen(false);
-            }
+        <RaiseComplaintModal
+          onClose={() => setIsRaiseModalOpen(false)}
+          onCreated={(complaint) => {
+            setIsRaiseModalOpen(false);
+            if (complaint?.id) setSelectedComplaintId(complaint.id);
           }}
-        >
-          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-extrabold text-slate-900">
-                  Raise a Complaint
-                </h2>
-                <p className="mt-1 text-xs font-semibold text-slate-400">
-                  Add enough detail to help the team respond quickly.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsRaiseModalOpen(false)}
-                aria-label="Close complaint form"
-                className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleRaiseComplaint} className="mt-6 space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Issue title
-                </label>
-                <input
-                  autoFocus
-                  required
-                  value={form.title}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      title: event.target.value,
-                    }))
-                  }
-                  placeholder="e.g. Leaking tap in kitchen"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    Category
-                  </label>
-                  <select
-                    value={form.category}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        category: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:outline-none"
-                  >
-                    {CATEGORIES.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    Urgency
-                  </label>
-                  <select
-                    value={form.urgency}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        urgency: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:outline-none"
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Exact location
-                </label>
-                <div className="relative">
-                  <MapPin className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    required
-                    value={form.location}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        location: event.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Kitchen, below the sink"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Description
-                </label>
-                <textarea
-                  required
-                  rows={4}
-                  value={form.description}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  placeholder="Describe what happened and when it started..."
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Photos
-                </label>
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-xs font-bold text-slate-500 transition-colors hover:border-indigo-300 hover:text-indigo-600">
-                  <Camera className="h-4 w-4" />
-                  Add up to 3 photos
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handleAttachments}
-                    className="sr-only"
-                  />
-                </label>
-                {attachmentError && (
-                  <p className="text-[10px] font-semibold text-rose-600">
-                    {attachmentError}
-                  </p>
-                )}
-                {form.attachments.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {form.attachments.map((attachment) => (
-                      <div
-                        key={attachment.id}
-                        className="relative overflow-hidden rounded-xl border border-slate-100"
-                      >
-                        <img
-                          src={attachment.dataUrl}
-                          alt={attachment.name}
-                          className="h-20 w-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setForm((current) => ({
-                              ...current,
-                              attachments: current.attachments.filter(
-                                (item) => item.id !== attachment.id
-                              ),
-                            }))
-                          }
-                          aria-label={`Remove ${attachment.name}`}
-                          className="absolute right-1 top-1 rounded-full bg-slate-900/70 p-1 text-white"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-3 border-t border-slate-100 pt-5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetComplaintForm();
-                    setIsRaiseModalOpen(false);
-                  }}
-                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 hover:bg-indigo-700"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  Submit Complaint
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        />
       )}
 
-      {selectedComplaint && (
-        <div
-          className="fixed inset-0 z-[999] bg-slate-900/50 backdrop-blur-sm"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setSelectedComplaintId(null);
-            }
-          }}
-        >
-          <aside className="absolute inset-y-0 right-0 w-full max-w-2xl overflow-y-auto bg-white shadow-2xl">
-            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 px-6 py-5 backdrop-blur">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-extrabold text-slate-900">
-                    {selectedComplaint.title}
-                  </h2>
-                  <span
-                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${STATUS_STYLES[selectedComplaint.status]}`}
-                  >
-                    {selectedComplaint.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Ticket {selectedComplaint.id}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedComplaintId(null)}
-                aria-label="Close complaint details"
-                className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-6 p-6">
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                <p className="text-xs font-semibold leading-relaxed text-slate-600">
-                  {selectedComplaint.description}
-                </p>
-                <div className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
-                  <div className="flex gap-2">
-                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-                    <div>
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                        Location
-                      </p>
-                      <p className="mt-0.5 font-bold text-slate-700">
-                        {selectedComplaint.location || selectedComplaint.flat}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-                    <div>
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                        Assigned technician
-                      </p>
-                      <p className="mt-0.5 font-bold text-slate-700">
-                        {selectedComplaint.assignee || 'Awaiting assignment'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-                    <div>
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                        Expected resolution
-                      </p>
-                      <p className="mt-0.5 font-bold text-slate-700">
-                        {formatDateTime(
-                          getExpectedResolutionAt(selectedComplaint)
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-                    <div>
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                        Latest update
-                      </p>
-                      <p className="mt-0.5 font-bold text-slate-700">
-                        {formatDateTime(getLatestUpdate(selectedComplaint))}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {(selectedComplaint.attachments ?? []).length > 0 && (
-                <section>
-                  <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-                    <Paperclip className="h-4 w-4 text-indigo-500" />
-                    Attachments
-                  </h3>
-                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {selectedComplaint.attachments.map((attachment) => (
-                      <a
-                        key={attachment.id}
-                        href={attachment.dataUrl}
-                        download={attachment.name}
-                        className="overflow-hidden rounded-xl border border-slate-100"
-                      >
-                        <img
-                          src={attachment.dataUrl}
-                          alt={attachment.name}
-                          className="h-24 w-full object-cover transition-transform hover:scale-105"
-                        />
-                      </a>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              <section>
-                <h3 className="text-sm font-extrabold text-slate-800">
-                  Ticket timeline
-                </h3>
-                <div className="mt-4 space-y-0">
-                  {getComplaintTimeline(selectedComplaint).map(
-                    (event, index, events) => (
-                      <div key={event.id} className="flex gap-3">
-                        <div className="flex flex-col items-center">
-                          <div
-                            className={`h-3 w-3 rounded-full ${
-                              index === events.length - 1
-                                ? 'bg-indigo-600'
-                                : 'bg-slate-300'
-                            }`}
-                          />
-                          {index < events.length - 1 && (
-                            <div className="h-full min-h-14 w-px bg-slate-200" />
-                          )}
-                        </div>
-                        <div className="pb-5">
-                          <p className="text-xs font-extrabold text-slate-700">
-                            {event.label}
-                          </p>
-                          <p className="mt-1 text-[11px] font-semibold leading-relaxed text-slate-500">
-                            {event.message}
-                          </p>
-                          <p className="mt-1 text-[9px] font-bold text-slate-400">
-                            {event.actor} · {formatDateTime(event.createdAt)}
-                          </p>
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-                  <MessageSquare className="h-4 w-4 text-indigo-500" />
-                  Conversation
-                </h3>
-                <div className="mt-3 space-y-3">
-                  {(selectedComplaint.comments ?? []).length === 0 ? (
-                    <p className="rounded-xl bg-slate-50 p-4 text-xs font-semibold text-slate-400">
-                      No messages yet. Ask the assigned team for an update.
-                    </p>
-                  ) : (
-                    selectedComplaint.comments.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`rounded-xl p-3 ${
-                          item.authorRole === 'Resident'
-                            ? 'ml-6 bg-indigo-50'
-                            : 'mr-6 bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-[10px] font-extrabold text-slate-700">
-                            {item.authorName}
-                          </p>
-                          <p className="text-[9px] font-semibold text-slate-400">
-                            {formatDateTime(item.createdAt)}
-                          </p>
-                        </div>
-                        <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">
-                          {item.message}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <form onSubmit={handleComment} className="mt-3 flex gap-2">
-                  <input
-                    value={comment}
-                    onChange={(event) => setComment(event.target.value)}
-                    placeholder="Write a message..."
-                    className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!comment.trim()}
-                    className="rounded-xl bg-indigo-600 px-4 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    aria-label="Send message"
-                  >
-                    <Send className="h-4 w-4" />
-                  </button>
-                </form>
-              </section>
-
-              {selectedComplaint.status === 'Resolved' && (
-                <section className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
-                  {selectedComplaint.resolutionConfirmed ? (
-                    <div>
-                      <p className="flex items-center gap-2 text-sm font-extrabold text-emerald-800">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Resolution confirmed
-                      </p>
-                      <div className="mt-2 flex gap-1">
-                        {[1, 2, 3, 4, 5].map((value) => (
-                          <Star
-                            key={value}
-                            className={`h-4 w-4 ${
-                              value <= selectedComplaint.rating
-                                ? 'fill-amber-400 text-amber-400'
-                                : 'text-slate-300'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      {selectedComplaint.residentFeedback && (
-                        <p className="mt-2 text-xs font-semibold text-slate-600">
-                          “{selectedComplaint.residentFeedback}”
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-sm font-extrabold text-emerald-800">
-                          Is the issue resolved?
-                        </p>
-                        <p className="mt-1 text-[11px] font-semibold text-emerald-700/70">
-                          Rate the work or reopen the complaint if the issue
-                          remains.
-                        </p>
-                      </div>
-                      <div className="flex gap-1">
-                        {[1, 2, 3, 4, 5].map((value) => (
-                          <button
-                            type="button"
-                            key={value}
-                            onClick={() => setRating(value)}
-                            aria-label={`${value} stars`}
-                          >
-                            <Star
-                              className={`h-6 w-6 ${
-                                value <= rating
-                                  ? 'fill-amber-400 text-amber-400'
-                                  : 'text-slate-300'
-                              }`}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                      <textarea
-                        rows={2}
-                        value={feedback}
-                        onChange={(event) => setFeedback(event.target.value)}
-                        placeholder="Optional feedback..."
-                        className="w-full resize-none rounded-xl border border-emerald-100 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-emerald-400 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleConfirmResolution}
-                        disabled={rating === 0}
-                        className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                      >
-                        Confirm Resolution
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="mt-4 border-t border-emerald-100 pt-4">
-                    {!isReopening ? (
-                      <button
-                        type="button"
-                        onClick={() => setIsReopening(true)}
-                        className="flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Reopen this complaint
-                      </button>
-                    ) : (
-                      <form onSubmit={handleReopen} className="space-y-2">
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                          Why is the issue unresolved?
-                        </label>
-                        <textarea
-                          required
-                          rows={2}
-                          value={reopenReason}
-                          onChange={(event) =>
-                            setReopenReason(event.target.value)
-                          }
-                          className="w-full resize-none rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-rose-400 focus:outline-none"
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            type="submit"
-                            className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700"
-                          >
-                            Reopen Complaint
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsReopening(false)}
-                            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    )}
-                  </div>
-                </section>
-              )}
-
-              {selectedComplaint.status !== 'Resolved' &&
-                new Date(getExpectedResolutionAt(selectedComplaint)) <
-                  new Date() && (
-                  <div className="flex gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    The expected resolution time has passed. Send a message to
-                    request an update.
-                  </div>
-                )}
-            </div>
-          </aside>
-        </div>
+      {selectedComplaintId && (
+        <ComplaintDrawer
+          complaintId={selectedComplaintId}
+          onClose={() => setSelectedComplaintId(null)}
+        />
       )}
     </div>
   );

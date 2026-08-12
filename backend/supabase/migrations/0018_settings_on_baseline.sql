@@ -17,7 +17,7 @@
 --   POST /notices              -> public.notices.category, .urgency
 --
 -- Departments, complaints, money and amenities still need their SQL rebuilt the
--- same way. That work is scoped in `docs/RECONCILIATION_ADDENDUM.md`; those
+-- same way. That work is scoped in `docs/plans/RECONCILIATION_ADDENDUM.md`; those
 -- endpoints exist and are tested at the contract level but will not run against
 -- a baseline database until it lands.
 --

@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { useApp } from '../../store/useApp';
 import { getVisitorSecurityCode } from '../../lib/visitorPasses';
-import { 
-  Search, 
-  Bell, 
-  Menu, 
-  X, 
-  Megaphone, 
-  User, 
-  AlertCircle, 
+import NotificationBell from '../notifications/NotificationBell';
+import {
+  Search,
+  Bell,
+  Menu,
+  X,
+  Megaphone,
+  User,
+  AlertCircle,
   Activity
 } from 'lucide-react';
 
@@ -70,8 +71,14 @@ export default function Header({ onMenuClick }) {
           {currentUser && (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3.5 py-1.5 rounded-full text-xs font-semibold text-slate-600">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
+              {/* `departmentName` and `staffRole` were read here and
+                  `applicationUser()` has never set either, so every gate user
+                  saw the literal "undefined • undefined". Neither is in the
+                  session; a guard's post comes from their shift. */}
               {['Security', 'SecurityManager'].includes(currentUser.role)
-                ? `${currentUser.departmentName} • ${currentUser.staffRole}`
+                ? currentUser.role === 'SecurityManager'
+                  ? 'Security management'
+                  : 'On duty'
                 : `Flat ${currentUser.flat} • Tower ${currentUser.tower}`}
             </div>
           )}
@@ -100,13 +107,18 @@ export default function Header({ onMenuClick }) {
         </div>
 
         <div className="flex items-center gap-4">
-          {/* Notification Bell */}
-          <button 
+          {/* The real notification feed (GET /notifications). The old bell here
+              was a hard-coded red dot over demo data; the demo notice board it
+              opened lives on behind the Megaphone button beside it. */}
+          <NotificationBell />
+
+          {/* Demo notice board + activity drawer */}
+          <button
             onClick={handleOpenNotifications}
             className="relative p-2.5 text-slate-600 hover:bg-slate-50 rounded-full transition-colors"
+            aria-label="Notice board"
           >
-            <Bell className="w-5 h-5" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full"></span>
+            <Megaphone className="w-5 h-5" />
           </button>
 
           {/* User profile */}
@@ -120,7 +132,7 @@ export default function Header({ onMenuClick }) {
                     : currentUser.role === 'SecurityManager'
                       ? 'Security Department Manager'
                       : currentUser.role === 'Security'
-                      ? `Security ${currentUser.staffRole || 'Staff'}`
+                      ? 'Security Staff'
                       : 'Resident Owner'}
                 </p>
               </div>
@@ -223,7 +235,7 @@ export default function Header({ onMenuClick }) {
                 <input 
                   type="text" 
                   value={searchQuery}
-                  onChange={handleSearchChange}
+                  onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="Type to filter..."
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs focus:outline-none focus:border-indigo-400 focus:bg-white transition-all text-slate-700 font-medium"
                 />

@@ -17,31 +17,46 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.api.admin_deps import require_admin, require_csrf_unsafe
+from app.api.admin_deps import (
+    require_admin,
+    require_admin_or_manager,
+    require_csrf_unsafe,
+)
 from app.api.deps import get_current_user, get_request_client
 from app.domain.common_schemas import MessageResult, Page
 from app.domain.department_schemas import (
     CreateDepartmentRequest,
     DepartmentDetail,
-    ReplaceStaffRequest,
-    StaffMember,
-    StaffMemberInput,
     UpdateDepartmentRequest,
-    UpdateStaffMemberRequest,
 )
 from app.services import departments_service
 from supabase import Client
 
+# **The router guard is the looser of the two, and every admin-only route says
+# so explicitly.** It was `require_admin` for the whole router until the manager
+# portal needed to read its own department — the one read here a manager has any
+# business making, and the only one that had no frontend caller at all.
+#
+# Widening the router and narrowing four routes, rather than the reverse, is
+# the arrangement FastAPI actually allows: router dependencies cannot be removed
+# per route. The risk it introduces is a new route added here without
+# `require_admin` and silently reachable by a manager, so
+# `tests/api/test_departments.py::test_api_186` asserts the whole table: a
+# manager is refused on all four and allowed on the read.
 router = APIRouter(
     tags=["departments"],
-    dependencies=[Depends(require_admin), Depends(require_csrf_unsafe)],
+    dependencies=[Depends(require_admin_or_manager), Depends(require_csrf_unsafe)],
 )
+
+#: Spelled once, applied to every route except the detail read.
+ADMIN_ONLY = [Depends(require_admin)]
 
 
 @router.get(
     "/departments",
     response_model=Page[DepartmentDetail],
     summary="List departments",
+    dependencies=ADMIN_ONLY,
 )
 async def list_departments(
     search: str | None = Query(
@@ -82,6 +97,7 @@ async def list_departments(
     response_model=DepartmentDetail,
     status_code=status.HTTP_201_CREATED,
     summary="Create a department",
+    dependencies=ADMIN_ONLY,
 )
 async def create_department(
     body: CreateDepartmentRequest,
@@ -116,6 +132,7 @@ async def get_department(
     "/departments/{department_id}",
     response_model=DepartmentDetail,
     summary="Update a department",
+    dependencies=ADMIN_ONLY,
 )
 async def update_department(
     body: UpdateDepartmentRequest,
@@ -143,6 +160,7 @@ async def update_department(
     "/departments/{department_id}",
     response_model=MessageResult,
     summary="Delete a department",
+    dependencies=ADMIN_ONLY,
 )
 async def delete_department(
     department_id: str = Path(...),
@@ -161,97 +179,3 @@ async def delete_department(
     """
     departments_service.delete_department(client, principal.user_id, department_id)
     return MessageResult(message="Department deleted.")
-
-
-@router.put(
-    "/departments/{department_id}/staff",
-    response_model=list[StaffMember],
-    summary="Replace a department's roster",
-)
-async def replace_staff(
-    body: ReplaceStaffRequest,
-    department_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> list[StaffMember]:
-    """Reconcile the whole roster in one transaction.
-
-    Entries carrying an ``id`` are updated in place, entries without one are
-    added, and active members the payload omits are **deactivated, not deleted**
-    -- a complaint's ``assignee`` records staff by name, so removing the row
-    would turn a past assignment into an unattributable string.
-
-    PUT rather than POST because this replaces a collection: sending the same
-    roster twice leaves the same result.
-    """
-    return departments_service.replace_staff(
-        client, principal.user_id, department_id, body.staff
-    )
-
-
-@router.post(
-    "/departments/{department_id}/staff",
-    response_model=StaffMember,
-    status_code=status.HTTP_201_CREATED,
-    summary="Add a staff member",
-)
-async def add_staff_member(
-    body: StaffMemberInput,
-    department_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> StaffMember:
-    """Add one person to a roster.
-
-    A staff member needs no account: name is the only required field, matching
-    what the department form actually collects.
-    """
-    return departments_service.add_staff_member(
-        client, principal.user_id, department_id, body
-    )
-
-
-@router.patch(
-    "/departments/{department_id}/staff/{staff_id}",
-    response_model=StaffMember,
-    summary="Update a staff member",
-)
-async def update_staff_member(
-    body: UpdateStaffMemberRequest,
-    department_id: str = Path(...),
-    staff_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> StaffMember:
-    """Patch one roster entry.
-
-    Promotion to head is not done here: ``PATCH /departments/{id}`` with a
-    ``head`` name is the only path, because promoting one person has to demote
-    the incumbent in the same transaction.
-    """
-    return departments_service.update_staff_member(
-        client, principal.user_id, department_id, staff_id, body
-    )
-
-
-@router.delete(
-    "/departments/{department_id}/staff/{staff_id}",
-    response_model=MessageResult,
-    summary="Remove a staff member",
-)
-async def remove_staff_member(
-    department_id: str = Path(...),
-    staff_id: str = Path(...),
-    principal=Depends(get_current_user),
-    client: Client = Depends(get_request_client),
-) -> MessageResult:
-    """Take a member off the active roster.
-
-    **Not a delete.** The row is marked inactive so past assignments recorded
-    against their name stay explainable. Removing the head also frees the head
-    slot in the same statement.
-    """
-    departments_service.remove_staff_member(
-        client, principal.user_id, department_id, staff_id
-    )
-    return MessageResult(message="Staff member removed.")

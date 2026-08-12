@@ -10,6 +10,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.pg_errors import custom_error
 from app.core.supabase_client import get_service_client
 from app.domain.schemas import (
     AccessRequestCommunity,
@@ -114,6 +115,31 @@ def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestR
     )
     if not community_rows:
         raise NotFoundError("Community not found.", code="community_not_found")
+
+    # The separate-account rule, at the point the person is standing in.
+    #
+    # The database refuses the membership this request would eventually create
+    # (`20260812113000_professional_membership_symmetry`), so without this the
+    # request is filed, sits in a queue for days, and fails in an
+    # administrator's hands -- who can neither see the applicant's professional
+    # registration nor do anything about it but reject. The applicant learns
+    # nothing. Same code and same wording as the refusal downstream, so the two
+    # cannot drift into two different explanations of one rule.
+    professional = (
+        service.table("service_providers")
+        .select("id")
+        .eq("profile_id", principal.user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if professional:
+        raise ConflictError(
+            "This account is registered as a service professional. Use a "
+            "separate account to join a community as a resident.",
+            code="professional_account_separate",
+        )
 
     existing_membership = (
         service.table("community_memberships")
@@ -281,11 +307,18 @@ def approve(request_id: str, body: ApproveAccessRequest, principal: Principal) -
             unit_id=body.unit_id,
             relationship=body.relationship,
         )
-    except Exception as exc:  # pragma: no cover - provider error text is unstable
-        raise ConflictError(
+    except Exception as exc:  # provider error text is unstable
+        # Our own SQLSTATEs carry a message written for the caller, and one of
+        # them now says something this fallback cannot: the applicant is a
+        # registered service professional, so the membership trigger refuses
+        # the resident row this approval would create. An administrator told
+        # only "this access request cannot be approved" would go looking at the
+        # request, where there is nothing wrong.
+        refusal = custom_error(exc) or ConflictError(
             "This access request cannot be approved.",
             code="access_request_not_pending",
-        ) from exc
+        )
+        raise refusal from exc
 
 
 def reject(request_id: str, body: RejectAccessRequest, principal: Principal) -> dict:

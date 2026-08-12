@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_router
 from app.config import get_settings
+from app.core.dispatcher import dispatcher
 from app.core.exceptions import ErrorResponse, register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.push import sender
@@ -24,9 +25,9 @@ from app.core.realtime import hub
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Run the two background workers for the life of the process.
+    """Run the three background workers for the life of the process.
 
-    They start differently, and the difference is the point. The SSE hub is
+    They start differently, and the differences are the point. The SSE hub is
     started lazily by its first subscriber, so a process that never serves a
     stream never polls at all. The push sender is started here, because it
     exists precisely to reach a resident who has *nothing* open -- a sender that
@@ -35,9 +36,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ``sender.start()`` is a no-op without a VAPID keypair, logging one line and
     returning. An environment with no push configured is an environment where
     push is off, not one that is broken (design §10.5).
+
+    ``dispatcher.start()`` has no such escape hatch, and deliberately: there is
+    no configuration for it to be missing, and a deployment that quietly did not
+    dispatch would look exactly like one where nobody happened to be free.
+
+    Stopped in reverse. The dispatcher goes first because it is the only one of
+    the three that *writes* -- letting it finish its current task before the
+    sender that delivers the resulting notification shuts down is the ordering
+    that loses the least.
     """
     await sender.start()
+    await dispatcher.start()
     yield
+    await dispatcher.stop()
     await sender.stop()
     await hub.stop()
 

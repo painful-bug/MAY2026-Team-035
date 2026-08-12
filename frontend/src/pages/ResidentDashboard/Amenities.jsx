@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CalendarDays,
@@ -21,12 +22,139 @@ import { BOOKING_STATUS_LABELS } from '../../features/amenities/constants/bookin
 import {
   cancelResidentAmenityBookingDays,
   createResidentAmenityBookingSeries,
-  getResidentAmenityBookings,
   validateBookingSlot,
 } from '../../features/amenities/services/amenityBookingsService.js';
-import { useAmenitiesStore } from '../../features/amenities/store/useAmenitiesStore.js';
+import { DEFAULT_AMENITY_SETTINGS } from '../../features/amenities/constants/amenitySettings.js';
+import { normalizeAmenityRecord } from '../../features/amenities/utils/amenitySettingsModel.js';
+import { residentApi } from '../../features/resident/residentApi.js';
 import { useAppStore } from '../../store/appStore.js';
 import { useAuthStore } from '../../store/authStore.js';
+
+// The catalogue below is wired to `GET /amenities/available`
+// (`docs/API.md` §10, `backend/app/api/v1/routers/resident_amenities.py`) —
+// this is finding 3.1's fix: the old `useAmenitiesStore` read
+// `getDashboardSnapshot()`, i.e. `GET /dashboard/snapshot`, which is
+// ADMIN/MANAGER-guarded and 403s a resident. `BookableAmenity` is a distinct,
+// narrower projection (no `pendingRequests`/`outstandingDues`), so it is
+// mapped onto the shape the existing booking UI already expects rather than
+// the admin shape it used to read.
+//
+// **Booking creation stays exactly as it was.** It already calls real
+// endpoints (`POST /amenities/{id}/bookings/request`,
+// `POST /amenity-bookings/cancel`) — that part of the demo was not invented.
+//
+// **"Your Bookings" now reads `GET /amenity-bookings/mine`.** It used to call
+// `getResidentAmenityBookings`, which filtered `GET /dashboard/snapshot` by the
+// caller's id — and that endpoint is ADMIN/MANAGER-guarded, so the table this
+// page opens with `403`d for every resident who has ever looked at it. The
+// replacement is scoped by the server to the caller's own membership, so there
+// is no resident id to pass and nothing to filter client-side.
+//
+// The two shapes are not the same, which is why `mapResidentBooking` exists:
+// `ResidentBooking` carries an instant (`startsAt`/`endsAt`) rather than the
+// wall-clock `HH:MM` pair the demo stored, groups by `bookingSeriesId` rather
+// than `bookingGroupId`, and speaks the database's status vocabulary
+// (`requested`, not `pending`) beside a display string of its own.
+const mapBookableAmenity = (item) =>
+  normalizeAmenityRecord({
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    category: item.category,
+    location: item.location,
+    image: item.image,
+    capacity: item.capacity,
+    isActive: true,
+    status: 'Active',
+    operatingHours: {
+      openingTime: item.openingTime,
+      closingTime: item.closingTime,
+      slotDurationMinutes: item.slotDurationMinutes,
+      cleaningBufferMinutes: 0,
+    },
+    bookingSettings: {
+      mode: item.bookingMode,
+      maxActiveBookingsPerResident: item.maxActiveBookingsPerResident,
+      requireAdminApproval: item.requiresApproval,
+      allowPrivateBooking: item.allowPrivateBooking,
+      allowRecurringBooking: item.allowRecurringBooking,
+      allowGuestBooking: item.allowGuestBooking,
+      allowSameDayBooking: item.allowSameDayBooking,
+      enableWaitlist: false,
+      enableAutoApproval: false,
+    },
+    paymentSettings: {
+      bookingFee: item.bookingFee,
+      securityDeposit: item.securityDeposit,
+      lateCancellationCharge: 0,
+      damageDeposit: 0,
+      refundPolicy: item.refundPolicy,
+      currency: item.currencyCode,
+    },
+    availabilitySettings: {
+      // `closedDays` is real; `maintenanceDays` / `holidayOverrides` have no
+      // resident-facing reader (admin-only fields), so they are empty rather
+      // than guessed at.
+      closedDays: item.closedDays || [],
+      maintenanceDays: [],
+      holidayOverrides: [],
+      temporaryClosure: false,
+      // `null` on the wire means "this amenity sets no limit of its own", not
+      // "there is no limit" (docs/API.md §10) — the booking RPC still applies
+      // its own rules on write. The client-side slot math needs a concrete
+      // number, so a `null` here falls back to the same defaults the admin
+      // settings form ships with, not to an invented value.
+      minimumBookingDurationMinutes:
+        item.minimumBookingDurationMinutes ??
+        DEFAULT_AMENITY_SETTINGS.availabilitySettings.minimumBookingDurationMinutes,
+      maximumBookingDurationMinutes:
+        item.maximumBookingDurationMinutes ??
+        DEFAULT_AMENITY_SETTINGS.availabilitySettings.maximumBookingDurationMinutes,
+      advanceBookingWindowDays:
+        item.advanceBookingWindowDays ??
+        DEFAULT_AMENITY_SETTINGS.availabilitySettings.advanceBookingWindowDays,
+    },
+  });
+
+// `GET /amenity-bookings/mine` → the shape the bookings table already speaks.
+//
+// Three translations, each of them a real difference rather than a rename:
+//
+//   status — the view sends the DATABASE's vocabulary in `storedStatus`
+//     (`requested | approved | rejected | cancelled | completed | no_show`) and
+//     a display string in `status`. The frontend's constant calls the first of
+//     those `pending`. Only that one word differs, so only that one is mapped;
+//     everything else passes through, and `statusLabel` keeps the server's own
+//     wording so `no_show` — which this frontend has no label for — still reads
+//     as "No Show" rather than falling back to a raw enum.
+//
+//   dates — `bookingDate` is already the calendar day in the COMMUNITY's
+//     timezone, computed in the view. `startsAt`/`endsAt` are instants, and the
+//     community's timezone is not in the response, so the clock times are
+//     rendered in the reader's own zone. For this product those are the same
+//     zone; when they are not, the resident's own is the right one to show.
+//
+//   cancellability — the demo asked `source === 'resident'`, a field that does
+//     not exist here. `isUpcoming` is the database's answer to the same
+//     question the cancel RPC enforces (`starts_at >= now()`), so the button is
+//     offered on exactly the days the write will accept.
+const mapResidentBooking = (item) => ({
+  id: item.id,
+  bookingGroupId: item.bookingSeriesId,
+  amenityId: item.amenityId,
+  amenityName: item.amenityName,
+  date: item.bookingDate ?? String(item.startsAt).slice(0, 10),
+  startsAt: item.startsAt,
+  endsAt: item.endsAt,
+  status: item.storedStatus === 'requested' ? 'pending' : item.storedStatus,
+  statusLabel: item.status,
+  isUpcoming: Boolean(item.isUpcoming),
+});
+
+const CANCELLABLE_STATUSES = ['pending', 'approved', 'confirmed'];
+
+const isCancellableDay = (booking) =>
+  booking.isUpcoming && CANCELLABLE_STATUSES.includes(booking.status);
 
 const todayISO = () => new Date().toISOString().split('T')[0];
 
@@ -76,7 +204,7 @@ const getGroupStatus = (records) => {
   const statuses = new Set(records.map((record) => record.status));
   const hasCancelled = statuses.has('cancelled');
   const hasActive = records.some((record) =>
-    ['pending', 'approved', 'confirmed'].includes(record.status)
+    CANCELLABLE_STATUSES.includes(record.status)
   );
 
   if (hasCancelled && hasActive) {
@@ -87,10 +215,15 @@ const getGroupStatus = (records) => {
   }
 
   if (statuses.size === 1) {
-    const status = records[0].status;
+    const [record] = records;
     return {
-      key: status,
-      label: BOOKING_STATUS_LABELS[status] ?? status,
+      // The server's own wording first: it is the only source that has a label
+      // for `no_show`, which this frontend's constant does not list.
+      key: record.status,
+      label:
+        record.statusLabel ??
+        BOOKING_STATUS_LABELS[record.status] ??
+        record.status,
     };
   }
 
@@ -114,6 +247,20 @@ const formatTime = (time) =>
     hour12: true,
     timeZone: 'UTC',
   }).format(new Date(`2000-01-01T${time}:00.000Z`));
+
+// For `startsAt` / `endsAt`, which are instants rather than the wall-clock
+// `HH:MM` strings above. No `timeZone`: the response does not carry the
+// community's, and the reader's own is the one a resident recognises.
+const formatInstantTime = (timestamp) => {
+  const value = new Date(timestamp);
+  return Number.isNaN(value.getTime())
+    ? '—'
+    : new Intl.DateTimeFormat('en-IN', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      }).format(value);
+};
 
 const createBookingSlots = (amenity) => {
   if (!amenity?.openingTime || !amenity?.closingTime) {
@@ -197,10 +344,23 @@ const statusClassNames = {
 };
 
 export default function Amenities() {
-  const amenities = useAmenitiesStore((state) => state.amenities);
-  const isLoading = useAmenitiesStore((state) => state.isLoading);
-  const amenitiesError = useAmenitiesStore((state) => state.error);
-  const fetchAmenities = useAmenitiesStore((state) => state.fetchAmenities);
+  const queryClient = useQueryClient();
+  const amenitiesQuery = useQuery({
+    queryKey: ['resident', 'amenities-available'],
+    queryFn: () => residentApi.availableAmenities(),
+  });
+  const amenities = useMemo(
+    () => (amenitiesQuery.data?.items || []).map(mapBookableAmenity),
+    [amenitiesQuery.data]
+  );
+  const isLoading = amenitiesQuery.isLoading;
+  const amenitiesError = amenitiesQuery.error
+    ? amenitiesQuery.error.message || 'Could not load amenities.'
+    : null;
+  const fetchAmenities = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ['resident', 'amenities-available'] }),
+    [queryClient]
+  );
   const currentUser = useAuthStore((state) => state.currentUser);
   const searchQuery = useAppStore((state) => state.searchQuery);
   const showToast = useAppStore((state) => state.showToast);
@@ -211,7 +371,6 @@ export default function Amenities() {
   const [timeSlot, setTimeSlot] = useState('');
   const [guestCount, setGuestCount] = useState(0);
   const [isPrivateBooking, setIsPrivateBooking] = useState(false);
-  const [userBookings, setUserBookings] = useState([]);
   const [availableSlotValues, setAvailableSlotValues] = useState(new Set());
   const [isCheckingSlots, setIsCheckingSlots] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -224,20 +383,27 @@ export default function Amenities() {
   const [cancellationError, setCancellationError] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
 
-  const loadUserBookings = useCallback(async () => {
-    if (!currentUser?.id) {
-      setUserBookings([]);
-      return;
-    }
-
-    const records = await getResidentAmenityBookings(currentUser.id);
-    setUserBookings(records);
-  }, [currentUser?.id]);
+  // The caller's own bookings. No resident id anywhere in this call: the server
+  // scopes it to the authenticated membership, which is the whole reason it
+  // replaced the admin snapshot read.
+  const bookingsQuery = useQuery({
+    queryKey: ['resident', 'amenity-bookings'],
+    queryFn: () => residentApi.amenityBookings({ pageSize: 100 }),
+  });
+  const userBookings = useMemo(
+    () => (bookingsQuery.data?.items || []).map(mapResidentBooking),
+    [bookingsQuery.data]
+  );
+  const loadUserBookings = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: ['resident', 'amenity-bookings'],
+      }),
+    [queryClient]
+  );
 
   useEffect(() => {
-    fetchAmenities();
-    loadUserBookings();
-
+    // No explicit initial fetch: both `useQuery` calls above fetch on mount.
     const handleRefresh = () => {
       fetchAmenities();
       loadUserBookings();
@@ -491,12 +657,7 @@ export default function Amenities() {
     (group) => group.id === managedBookingGroupId
   );
   const cancellableManagedBookings =
-    managedBookingGroup?.records.filter(
-      (booking) =>
-        booking.source === 'resident' &&
-        booking.date >= todayISO() &&
-        ['pending', 'approved', 'confirmed'].includes(booking.status)
-    ) ?? [];
+    managedBookingGroup?.records.filter(isCancellableDay) ?? [];
 
   const openCancellationModal = (groupId) => {
     setManagedBookingGroupId(groupId);
@@ -520,8 +681,9 @@ export default function Amenities() {
     try {
       const cancelledBookings =
         await cancelResidentAmenityBookingDays({
+          // No resident id: the server decides which days this caller may
+          // withdraw from the authenticated membership.
           bookingIds: selectedCancellationIds,
-          residentId: currentUser.id,
           reason: cancellationReason,
         });
       await loadUserBookings();
@@ -571,7 +733,25 @@ export default function Amenities() {
         </div>
 
         <div className="overflow-x-auto">
-          {groupedBookings.length === 0 ? (
+          {bookingsQuery.isPending ? (
+            <div className="py-12 text-center text-xs font-semibold text-slate-400">
+              Loading your bookings...
+            </div>
+          ) : bookingsQuery.error ? (
+            <div className="px-6 py-12 text-center">
+              <p role="alert" className="text-xs font-bold text-rose-700">
+                {bookingsQuery.error.message ||
+                  'Could not load your bookings.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => bookingsQuery.refetch()}
+                className="mt-3 rounded-xl border border-rose-100 bg-white px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
+              >
+                Try again
+              </button>
+            </div>
+          ) : groupedBookings.length === 0 ? (
             <div className="py-12 text-center text-xs font-semibold text-slate-400">
               You have no amenity reservations.
             </div>
@@ -591,25 +771,20 @@ export default function Amenities() {
                   const firstBooking = group.records[0];
                   const lastBooking =
                     group.records[group.records.length - 1];
-                  const amenity = amenities.find(
-                    (item) => item.id === firstBooking.amenityId
-                  );
                   const groupStatus = getGroupStatus(group.records);
-                  const cancellableBookings = group.records.filter(
-                    (booking) =>
-                      booking.source === 'resident' &&
-                      booking.date >= todayISO() &&
-                      ['pending', 'approved', 'confirmed'].includes(
-                        booking.status
-                      )
-                  );
+                  const cancellableBookings =
+                    group.records.filter(isCancellableDay);
                   return (
                     <tr
                       key={group.id}
                       className="transition-colors hover:bg-slate-50/30"
                     >
+                      {/* The name travels with the booking now, so a facility
+                          that has since been deactivated still reads as itself
+                          rather than as "Removed amenity" — the resident's own
+                          history should not be edited by an admin's toggle. */}
                       <td className="px-6 py-4 font-bold text-slate-800">
-                        {amenity?.name ?? 'Removed amenity'}
+                        {firstBooking.amenityName || 'Amenity'}
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-bold text-slate-700">
@@ -623,8 +798,8 @@ export default function Amenities() {
                         </span>
                       </td>
                       <td className="px-6 py-4 font-mono text-indigo-700">
-                        {formatTime(firstBooking.startTime)} -{' '}
-                        {formatTime(firstBooking.endTime)}
+                        {formatInstantTime(firstBooking.startsAt)} -{' '}
+                        {formatInstantTime(firstBooking.endsAt)}
                       </td>
                       <td className="px-6 py-4">
                         <span
@@ -1210,8 +1385,8 @@ export default function Amenities() {
                             {formatBookingDate(booking.date)}
                           </p>
                           <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
-                            {formatTime(booking.startTime)} -{' '}
-                            {formatTime(booking.endTime)}
+                            {formatInstantTime(booking.startsAt)} -{' '}
+                            {formatInstantTime(booking.endsAt)}
                           </p>
                         </div>
                       </div>
@@ -1221,7 +1396,8 @@ export default function Amenities() {
                           'border-slate-200 bg-slate-50 text-slate-600'
                         }`}
                       >
-                        {BOOKING_STATUS_LABELS[booking.status] ??
+                        {booking.statusLabel ??
+                          BOOKING_STATUS_LABELS[booking.status] ??
                           booking.status}
                       </span>
                     </label>

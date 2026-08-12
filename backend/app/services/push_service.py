@@ -78,9 +78,14 @@ def public_key() -> VapidPublicKey:
 
 
 def register(
-    client: Client, *, membership_id: str, body: RegisterPushSubscription
+    client: Client, *, body: RegisterPushSubscription
 ) -> PushSubscriptionResult:
-    """Register this browser against the caller's membership.
+    """Register this browser against the signed-in person.
+
+    Against the person rather than one of their memberships (``0041``), which is
+    what lets a service provider who has not been hired anywhere turn push on --
+    they are the caller most in need of it, because the thing they are waiting
+    for is an answer that arrives while the app is closed.
 
     Requires push to be configured, even though the row could be stored without
     it. A subscription created while the server has no keypair is a subscription
@@ -91,7 +96,6 @@ def register(
     _require_configured()
     repo.register_subscription(
         client,
-        membership_id=membership_id,
         endpoint=body.endpoint,
         p256dh=body.keys.p256dh,
         auth=body.keys.auth,
@@ -101,7 +105,7 @@ def register(
 
 
 def unregister(
-    client: Client, *, membership_id: str, body: UnregisterPushSubscription
+    client: Client, *, body: UnregisterPushSubscription
 ) -> PushSubscriptionResult:
     """Stop pushing to this browser.
 
@@ -111,9 +115,7 @@ def unregister(
     keypair, or erroring because the row had already gone, would leave them
     unable to complete the one action they asked for.
     """
-    repo.remove_subscription(
-        client, membership_id=membership_id, endpoint=body.endpoint
-    )
+    repo.remove_subscription(client, endpoint=body.endpoint)
     return PushSubscriptionResult(subscribed=False)
 
 

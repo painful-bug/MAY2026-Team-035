@@ -12,9 +12,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_active_membership, get_request_client
+from app.api.deps import (
+    get_active_membership,
+    get_current_user,
+    get_request_client,
+)
 from app.domain.resident_snapshot_schemas import ResidentSnapshot
-from app.domain.schemas import MembershipContext
+from app.domain.schemas import MembershipContext, Principal
 from app.services import resident_snapshot_service as service
 from supabase import Client
 
@@ -28,6 +32,7 @@ router = APIRouter(tags=["resident-home"])
 )
 async def resident_snapshot(
     membership: MembershipContext = Depends(get_active_membership),
+    principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> ResidentSnapshot:
     """Everything the resident home screen renders, in one call.
@@ -54,7 +59,9 @@ async def resident_snapshot(
     `activity` is the caller's notification feed. There is no second event log,
     and `unreadNotifications` counts the whole feed rather than the five events
     returned here — a badge drawn from the page would be wrong the moment anybody
-    scrolled.
+    scrolled. Since `0041` that feed is the **person's**, so a resident who also
+    works in another society sees one activity list here and the same number on
+    the bell everywhere else, rather than this community's share of it.
 
     **Requires an active membership.** Not resident-only: a member of staff who
     lives in the community has dues and visitors like anyone else, and the
@@ -64,4 +71,5 @@ async def resident_snapshot(
         client,
         membership_id=membership.id,
         community_id=membership.community_id,
+        profile_id=principal.user_id,
     )

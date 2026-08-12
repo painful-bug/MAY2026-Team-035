@@ -33,7 +33,7 @@ def claimed(**overrides: Any) -> dict[str, Any]:
     """One row as `claim_push_batch` returns it."""
     base: dict[str, Any] = {
         "notification_id": "notification-id",
-        "membership_id": "resident-membership-id",
+        "profile_id": "resident-profile-id",
         "kind": "visitor.approval_requested",
         "payload": {
             "title": "Ravi is at the gate",
@@ -266,7 +266,7 @@ def test_every_registered_device_is_sent_to(
     monkeypatch.setattr(
         push_repository,
         "subscriptions_for",
-        lambda client, *, membership_id: [
+        lambda client, *, profile_id: [
             subscription("https://push.example.test/phone"),
             subscription("https://push.example.test/laptop"),
         ],
@@ -293,7 +293,7 @@ def test_one_dead_device_does_not_stop_the_others(
     monkeypatch.setattr(
         push_repository,
         "subscriptions_for",
-        lambda client, *, membership_id: [
+        lambda client, *, profile_id: [
             subscription("https://push.example.test/broken"),
             subscription("https://push.example.test/fine"),
         ],
@@ -318,7 +318,7 @@ def test_a_recipient_with_no_devices_is_not_an_error(
     """The ordinary case for a resident who never granted permission. The
     notification is in the feed; there is simply no phone to reach."""
     monkeypatch.setattr(
-        push_repository, "subscriptions_for", lambda client, *, membership_id: []
+        push_repository, "subscriptions_for", lambda client, *, profile_id: []
     )
     sender = PushSender()
     monkeypatch.setattr(
@@ -336,7 +336,7 @@ def test_a_claimed_row_without_a_recipient_is_skipped(
     monkeypatch.setattr(
         push_repository,
         "subscriptions_for",
-        lambda client, *, membership_id: pytest.fail("should not be reached"),
+        lambda client, *, profile_id: pytest.fail("should not be reached"),
     )
 
-    asyncio.run(PushSender()._deliver(claimed(membership_id=None)))
+    asyncio.run(PushSender()._deliver(claimed(profile_id=None)))

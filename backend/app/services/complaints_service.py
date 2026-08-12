@@ -5,21 +5,26 @@ read path is their ``GET /dashboard/snapshot``, which already projects each
 complaint with its comments and history embedded, so the list, detail,
 read-receipt and attachment paths were removed rather than duplicated -- see
 ``docs/FRONTEND_WIRING_AUDIT.md`` §3.
+
+**Both functions take the caller's ``membership_id`` rather than resolving it.**
+They used to call a ``people_repository.get_membership_id_for_profile`` that has
+never existed in this repository -- so both writes raised ``AttributeError`` on
+their second line, and the suite never noticed because
+``tests/api/test_complaints.py`` monkeypatches this module wholesale. The fix is
+not to write the missing function: the request has already resolved the caller's
+membership by the time either route's body runs (``require_admin`` is
+``require_membership_role("admin")``, which depends on ``get_active_membership``),
+so re-deriving it here would cost two round trips to learn something the
+dependency graph computed a moment earlier.
 """
 
 from __future__ import annotations
 
 from app.core.exceptions import ValidationError
 from app.domain.complaint_schemas import AddCommentRequest, UpdateComplaintRequest
-from app.domain.vocabularies import status_to_storage
+from app.domain.vocabularies import comment_visibility_to_storage, status_to_storage
 from app.repositories import complaints_repository as repo
-from app.repositories import people_repository as people_repo
-from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
-
-
-def _caller_membership(client: Client, community_id: str, user_id: str) -> str | None:
-    return people_repo.get_membership_id_for_profile(client, community_id, user_id)
 
 
 def _actor_label(
@@ -37,12 +42,13 @@ def _actor_label(
 
 
 def update_complaint(
-    client: Client, user_id: str, complaint_id: str, body: UpdateComplaintRequest
+    client: Client,
+    user_id: str,
+    membership_id: str,
+    complaint_id: str,
+    body: UpdateComplaintRequest,
 ) -> None:
     """Apply an admin edit, with its timeline entries, atomically."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    membership_id = _caller_membership(client, community_id, user_id)
-
     stored_status = None
     if body.status is not None:
         stored_status = status_to_storage(body.status)
@@ -66,17 +72,31 @@ def update_complaint(
 
 
 def add_comment(
-    client: Client, user_id: str, complaint_id: str, body: AddCommentRequest
+    client: Client,
+    user_id: str,
+    membership_id: str,
+    complaint_id: str,
+    body: AddCommentRequest,
 ) -> None:
-    """Add a comment to a complaint."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    membership_id = _caller_membership(client, community_id, user_id)
+    """Add a comment to a complaint.
+
+    ``visibility`` is translated rather than forwarded. The wire word is
+    ``resident``; the column, both RPCs and every read filter say ``public``, and
+    ``complaint_comments_visibility_check`` rejects anything else -- so passing
+    the request through made every comment a 422, including the frontend's, which
+    hardcodes ``resident``. Same shape as ``status_to_storage`` above.
+    """
+    stored_visibility = comment_visibility_to_storage(body.visibility)
+    if stored_visibility is None:
+        raise ValidationError(
+            f"Unknown visibility '{body.visibility}'.", code="unknown_visibility"
+        )
 
     repo.add_comment(
         client,
         complaint_id=complaint_id,
         body=body.message,
-        visibility=body.visibility,
+        visibility=stored_visibility,
         author_membership=membership_id,
         author_label=_actor_label(client, user_id),
     )

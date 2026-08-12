@@ -41,9 +41,16 @@ export default function ApprovalFilters({
                 }`}
               >
                 {filter.label}
-                <span className="ml-1.5 text-[10px] opacity-70">
-                  {counts[filter.value] ?? 0}
-                </span>
+                {/* Only the active filter carries a count. `GET .../approvals`
+                    totals one status at a time, so a number on the other three
+                    would be invented — and `0` reads as "nothing is waiting",
+                    which is the one thing an approvals queue must never say
+                    without knowing. */}
+                {counts[filter.value] === undefined ? null : (
+                  <span className="ml-1.5 text-[10px] opacity-70">
+                    {counts[filter.value]}
+                  </span>
+                )}
               </button>
             );
           })}

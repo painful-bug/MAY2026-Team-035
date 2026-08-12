@@ -141,6 +141,11 @@ class PushSender:
     async def _deliver(self, row: dict[str, Any]) -> None:
         """Send one notification to every browser its recipient has registered.
 
+        The recipient is a person (``0041``), so a resident who is also a worker
+        in another society gets one push per browser rather than one per
+        membership -- and a service provider who belongs to no society at all is
+        reachable, which under the membership-keyed shape they were not.
+
         Concurrently, with each exception captured per subscription: one dead
         endpoint must not stall the rest of a resident's devices, let alone the
         batch.
@@ -148,15 +153,15 @@ class PushSender:
         from app.repositories import push_repository
         from app.services import push_service
 
-        membership_id = str(row.get("membership_id") or "")
-        if not membership_id:
+        profile_id = str(row.get("profile_id") or "")
+        if not profile_id:
             return
 
         def _read() -> list[dict[str, Any]]:
             from app.core.supabase_client import get_service_client
 
             return push_repository.subscriptions_for(
-                get_service_client(), membership_id=membership_id
+                get_service_client(), profile_id=profile_id
             )
 
         subscriptions = await asyncio.to_thread(_read)

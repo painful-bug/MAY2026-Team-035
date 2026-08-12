@@ -7,12 +7,14 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from fastapi import Response
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from postgrest.exceptions import APIError
 
 from app.config import Settings
 from app.core.exceptions import ServiceUnavailableError
+from app.repositories import service_providers_repository
 from app.domain.schemas import (
     CommunityOnboardingRequest,
     CreateAccessRequest,
@@ -40,6 +42,29 @@ def test_google_and_email_password_are_supported_configured_methods() -> None:
     assert settings.enabled_auth_methods == ["google", "email_password"]
 
 
+@pytest.mark.parametrize(
+    "establisher", ["establish_session", "establish_recovery_session"]
+)
+def test_establishing_a_session_clears_the_preauth_csrf_cookie(
+    monkeypatch: pytest.MonkeyPatch, establisher: str
+) -> None:
+    from app.core import web_session
+
+    monkeypatch.setattr(web_session, "get_settings", lambda: _settings())
+    response = Response()
+    getattr(web_session, establisher)(
+        response,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_in=60,
+    )
+
+    assert any(
+        cookie.startswith("hb_preauth_csrf=") and "Max-Age=0" in cookie
+        for cookie in response.headers.getlist("set-cookie")
+    )
+
+
 def test_unsupported_auth_method_fails_closed() -> None:
     with pytest.raises(ValueError, match="Unsupported authentication methods"):
         _settings(AUTH_ENABLED_METHODS="google,password").validate_auth_configuration()
@@ -53,6 +78,13 @@ def test_auth_methods_can_swap_primary_without_changing_enabled_order() -> None:
     settings.validate_auth_configuration()
     assert settings.auth_primary_method == "email_password"
     assert settings.enabled_auth_methods == ["email_password", "google"]
+
+
+def test_production_refuses_disabled_email_confirmation() -> None:
+    with pytest.raises(ValueError, match="Email confirmation must be enabled"):
+        _settings(
+            ENV="production", AUTH_EMAIL_CONFIRMATION_REQUIRED="false"
+        ).validate_auth_configuration()
 
 
 def test_password_signup_requires_a_long_password() -> None:
@@ -88,6 +120,40 @@ def test_community_search_reports_an_unapplied_blacklist_schema_migration(
         community_directory_service.search("Palm", 10, "profile-id")
 
     assert raised.value.code == "community_search_schema_unavailable"
+    assert raised.value.status_code == 503
+
+
+def test_service_provider_registration_reports_an_unapplied_schema_migration() -> None:
+    """Never fall back to separate profile and skill writes during rollout."""
+
+    class MissingRegistrationRpc:
+        def execute(self) -> None:
+            raise APIError(
+                {
+                    "message": "Could not find the function public.register_service_provider in the schema cache",
+                    "code": "PGRST202",
+                    "hint": None,
+                    "details": None,
+                }
+            )
+
+    class MissingRegistrationClient:
+        def rpc(self, *_: object, **__: object) -> MissingRegistrationRpc:
+            return MissingRegistrationRpc()
+
+    with pytest.raises(ServiceUnavailableError) as raised:
+        service_providers_repository.register_profile(
+            MissingRegistrationClient(),  # type: ignore[arg-type]
+            display_name="Ravi Kumar",
+            headline=None,
+            phone=None,
+            latitude=22.572645,
+            longitude=88.363892,
+            service_radius_km=15,
+            skill_ids=["00000000-0000-0000-0000-000000000001"],
+        )
+
+    assert raised.value.code == "service_provider_registration_not_deployed"
     assert raised.value.status_code == 503
 
 

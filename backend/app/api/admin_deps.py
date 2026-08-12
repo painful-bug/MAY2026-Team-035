@@ -32,6 +32,13 @@ require_admin = require_membership_role("admin")
 #: Guard for endpoints an admin or a department manager may call.
 require_admin_or_manager = require_membership_role("admin", "manager")
 
+#: Hiring also admits worker/security memberships because a department manager
+#: may be represented by an active roster row instead of membership role
+#: ``manager``. PostgreSQL still proves the caller manages the named department.
+require_hiring_actor = require_membership_role(
+    "admin", "manager", "worker", "security"
+)
+
 
 def require_csrf_unsafe(request: Request) -> None:
     """Apply ``require_csrf``, but only to state-changing methods.
