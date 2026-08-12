@@ -17,6 +17,44 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 70: the sign-in that finally met its first real caller
+
+The owner ran the app and OAuth completion failed with "Something went wrong" on every intent.
+Live-server logs pinned it in one grep: the exchange succeeded; the very next call —
+`GET /auth/session` — 500'd.
+
+### fix(auth) — `'Profile' object has no attribute 'get'`
+
+`AUDIT` — `_claim_staff_invitations` read the profile dict-style (`profile.get("email")`), but its
+only caller has always passed the Pydantic `Profile` model — **the annotation was wrong on the day
+it was written** (`5515b5d`), not broken by any merge; the initial merge-seam hypothesis did not
+survive `git log -S`. The crash sat before the function's deliberate error-swallow, so every
+authenticated session read died, and it stayed invisible because *no test anywhere called*
+`get_session_context` — the only "callers" matching the dict annotation were the seam tests that
+invented their own argument. Fixed by retyping and reading the attribute; the three seam tests now
+build the real model through the repository's own mapper; new `test_api_261` drives
+`get_session_context` end to end. A class audit over all of `app/` (two AST sweeps plus a manual
+read of the auth path) found exactly one instance. The clean-run lesson: **a mocked test suite
+proves shape agreement with its own mocks, not with the repository** — 976 tests passed around a
+bug every real sign-in hit.
+
+### The completeness check against painful-bug's history
+
+`AUDIT` — 26 of the teammate's 28 commits were already in the branch, one more byte-identically
+under a different SHA. The single true gap: `de26205` *"fix: retire preauth csrf after session
+creation"* — stranded on `codex/fix-preauth-csrf` when PR #20 was closed unmerged and only its
+sibling was hand-salvaged into PR #21. Verified live against HEAD (the pre-auth CSRF cookie was
+never cleared after login) and **cherry-picked with authorship intact**, plus a two-line reflow to
+the current lint baseline. Also noted: `origin/main` is one commit ahead (a docs-test hook by a
+teammate), untouched.
+
+### Verification
+
+979 passed / 4 skipped (+2 from the recovered regression test, +1 from `test_api_261`) · ruff 179 ·
+spec `--check` clean. The backend was restarted so the fix is live for the owner's retry.
+
+---
+
 ## 2026-08-12 — Session 69: the coherence pass — diagrams, docs, and the apply runbook
 
 Three specialists, one question: after Sessions 67–68, does everything still agree with everything?
