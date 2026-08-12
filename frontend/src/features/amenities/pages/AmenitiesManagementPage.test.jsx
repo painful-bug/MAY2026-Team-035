@@ -91,3 +91,28 @@ describe('amenities management snapshot failure', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('amenity card opening hours honesty', () => {
+  it('omits the hours line when the snapshot row carries no hours', async () => {
+    // The hosted snapshot's amenity rows carry no hours keys at all; the card
+    // used to back-fill "6:00 AM - 10:00 PM" from the settings-form defaults.
+    mocks.getDashboardSnapshot.mockResolvedValueOnce({ amenities: [AMENITY] });
+
+    renderPage();
+
+    expect(await screen.findByText('Clubhouse')).toBeInTheDocument();
+    expect(screen.queryByText('Opening hours')).not.toBeInTheDocument();
+    expect(screen.queryByText('6:00 AM - 10:00 PM')).not.toBeInTheDocument();
+  });
+
+  it('shows the hours line when the snapshot really provides hours', async () => {
+    mocks.getDashboardSnapshot.mockResolvedValueOnce({
+      amenities: [{ ...AMENITY, openingTime: '06:00', closingTime: '22:00' }],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Opening hours')).toBeInTheDocument();
+    expect(screen.getByText('6:00 AM - 10:00 PM')).toBeInTheDocument();
+  });
+});

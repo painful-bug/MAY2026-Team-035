@@ -34,6 +34,22 @@ export const formatAmenityOperatingHours = (openingTime, closingTime) => {
 };
 
 export const normalizeAmenityRecord = (amenity) => {
+  // The *display* hours are computed from what the record actually carries,
+  // BEFORE the defaults below are laid over it. The defaults exist to seed the
+  // settings form's <input type="time"> fields with something editable — but
+  // they were also flowing into `openingHours`, so every hoursless amenity's
+  // card read "6:00 AM - 10:00 PM" whatever the database said (the hosted
+  // snapshot's amenity rows carry no hours at all, so the card *always* lied).
+  // Equal opening/closing is the API's null→"00:00" spelling and is not a real
+  // window either — the backend refuses closing <= opening on write.
+  const storedOpeningTime =
+    amenity.operatingHours?.openingTime ?? amenity.openingTime ?? '';
+  const storedClosingTime =
+    amenity.operatingHours?.closingTime ?? amenity.closingTime ?? '';
+  const hasStoredHours =
+    Boolean(storedOpeningTime) &&
+    Boolean(storedClosingTime) &&
+    storedOpeningTime !== storedClosingTime;
   const operatingHours = {
     ...DEFAULT_AMENITY_SETTINGS.operatingHours,
     ...amenity.operatingHours,
@@ -110,10 +126,11 @@ export const normalizeAmenityRecord = (amenity) => {
     maintenanceSettings,
     openingTime: operatingHours.openingTime,
     closingTime: operatingHours.closingTime,
-    openingHours: formatAmenityOperatingHours(
-      operatingHours.openingTime,
-      operatingHours.closingTime
-    ),
+    // '' when the record has no real hours; readers omit their hours line
+    // rather than render the settings-form seed values as fact.
+    openingHours: hasStoredHours
+      ? formatAmenityOperatingHours(storedOpeningTime, storedClosingTime)
+      : '',
     bookingSlotDuration: operatingHours.slotDurationMinutes,
     cleaningBuffer: operatingHours.cleaningBufferMinutes,
     bookingMode: bookingSettings.mode,

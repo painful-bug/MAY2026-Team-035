@@ -17,6 +17,41 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 75: Complaint Engine v2 — PRD, implementation plan, testing docs
+
+### docs/COMPLAINT_ENGINE_PRD.md — new
+
+`PO` (structured decision session, 2026-08-12; nineteen rulings, tabled in the PRD's §12 ledger and
+mirrored into the handoff's new §11). Specifies the target complaint engine end to end: manual-first
+assignment with worker consent (offer, not instant assignment — **overturns** `assign_work_order`'s
+built write-accepted-without-asking semantics), forced assignment for high-priority all-declined jobs
+(best-ranked instant, not random), auto-dispatch demoted to a 2h/24h fallback, `high` = critical (no
+fourth priority level), freeform in-chat price negotiation (no money schema), skill-sourced categories
+(one catalogue feeds the resident dropdown and provider onboarding — **overturns** the raise dialog's
+`complaint_categories` sourcing), status coupling via a forward-only projection (**settles** handoff
+§0/§1), resident cancel with a re-evaluation pool, 72h auto-close with a 48h reminder (**settles**
+handoff §2, overturning the product doc's literal 24h), reopen-to-same-queue-with-worker-exclusion
+(**settles** handoff §4, retiring the different-supervisor clause), the admin assign control replaced
+by raise-work (**settles** handoff §8/§10 option 1), work on terminal complaints refused (**settles**
+handoff §10), transfers with live work refused, and the timeline vocabulary CHECK-locked.
+
+### docs/plans/COMPLAINT_ENGINE_V2_IMPLEMENTATION_PLAN.md — new
+
+`DERIVED` (from the PRD). Six new migrations (`20260813100000`–`20260813105000`), backend/frontend
+task breakdown with the repo's rebuild-whole-with-CHANGED-markers convention, and the full testing
+suite plan (39 SQL behaviour assertions, API/vitest additions, eight end-to-end workflow sweeps).
+
+### docs/COMPLAINT_ENGINE_MANUAL_TESTING.md — new
+
+`DERIVED`. Per-role manual walkthroughs (resident, supervisor/manager, worker, admin) plus the
+15-minute cross-role regression sweep.
+
+### docs/COMPLAINT_ENGINE_HANDOFF.md — §11 appended
+
+`PO`. The rulings ledger, so the handoff's open questions visibly close where they were opened.
+
+---
+
 ## 2026-08-12 — Session 74: CI diagnosis, and a runbook addendum for the two pulled privilege migrations
 
 ### docs/plans/MIGRATION_APPLY_RUNBOOK.md — addendum §10–§12
