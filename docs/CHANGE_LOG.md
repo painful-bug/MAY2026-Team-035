@@ -79,6 +79,23 @@ Three shell-level decisions worth recording beyond the bug fixes themselves:
   down snapshot all render nothing rather than an invented number. The landing page's fake
   "12 new this month" stays — it is inside the marketing illustration, not a data surface.
 
+### Departments form — one manager entry, and modals escape the fade-in trap
+
+`PO` (the owner found the create form carrying two generations of manager entry and the modal
+clipped under the header). Two rulings worth a record:
+
+- **The invitation block is the only place a manager is entered.** The legacy free-text
+  "Department Manager" input is gone; `head` is derived at submit from the first Manager row's
+  name (an edit with no re-entered leadership preserves the stored head). The contact email/phone
+  pair stays but is relabelled "Department contact …" — it describes the department, not a person.
+- **The modal defect was a stacking-context trap, and the fix is portals.** `.animate-fade-in`
+  uses `fill-mode: forwards`, and an animation that targets opacity keeps its element a stacking
+  context for as long as it is applied — which `forwards` makes forever. Every portal layout puts
+  that class on `<main>`, so any `fixed` overlay rendered in place is trapped below the `z-40`
+  header no matter its own z-index. The two departments modals now render through
+  `createPortal(document.body)` (the repo's first; no utility existed). Other in-place overlays
+  (amenity form modal, booking ModalLayout) share the latent trap and are flagged, not touched.
+
 ### The hosted database caught up with the repository
 
 `PO` (the owner applied every file personally, per the standing rule). The seven pending

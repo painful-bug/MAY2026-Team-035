@@ -1,4 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
+// Both modals render through a portal to document.body. They used to render in
+// place, inside AdminLayout's `<main class="animate-fade-in">` — and `fadeIn`
+// animates opacity with `fill-mode: forwards`, which keeps the animation
+// applied forever and therefore keeps <main> a stacking context forever. Any
+// z-index inside it, `z-[999]` included, is trapped at <main>'s own level
+// (auto), so the sticky header's `z-40` — a sibling context — painted above
+// the overlay and clipped the modal title. The portal moves the overlay out of
+// that trap; no ancestor can capture it again.
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 // The "unassigned types" tile below calls `useQuery` — this import is what
 // stood between /admin/departments and a ReferenceError that unmounted the
@@ -276,8 +285,23 @@ export default function Departments() {
     setSaving(true);
     setSaveError('');
     try {
+      // `head` is a *derived* display name now, not a field. The form used to
+      // carry a free-text "Department Manager" input beside the invitation
+      // block — two generations of manager entry at once, and the owner read
+      // it as duplicate fields because it was. The invitation block is the
+      // only place a manager is entered; `head` survives purely as the display
+      // name that the department cards and DepartmentDetail render. On create
+      // it is the first manager-ranked invitation's name (or empty). On edit
+      // the leaders list starts empty — leadership already invited is not
+      // re-entered — so an absent manager row falls back to the department's
+      // existing `head` rather than blanking it.
+      const invitedManagerName =
+        form.leaders
+          .find((leader) => leader.rank === 'manager' && leader.name.trim())
+          ?.name.trim() || '';
       const departmentData = {
         ...form,
+        head: invitedManagerName || form.head || '',
         // The department wire takes category *names*: `upsert_category_names`
         // creates any it has not seen in this community, so choosing a new one
         // and saving is what creates it. There is no create-category endpoint
@@ -552,14 +576,23 @@ export default function Departments() {
         </div>
       )}
 
-      {modalMode && (
+      {/* Portalled to document.body — see the createPortal import note. Also
+          `items-start`, not `items-center`: a centered child taller than the
+          viewport overflows both edges and the top edge (the title) is the
+          part that gets lost. Anchoring to the top with matching vertical
+          padding and capping the panel at the remaining height means the
+          title is always visible and the panel scrolls internally. */}
+      {modalMode && createPortal(
         <div
-          className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={modalMode === 'edit' ? 'Edit department' : 'Create department'}
+          className="fixed inset-0 z-[999] flex items-start justify-center bg-slate-900/60 px-4 py-8 backdrop-blur-sm"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) closeModal();
           }}
         >
-          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
+          <div className="max-h-[calc(100vh-4rem)] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-extrabold text-slate-900">
@@ -613,12 +646,22 @@ export default function Departments() {
               />
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {departmentToDelete && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+      {/* Portalled for the same stacking-context reason as the form modal.
+          This one keeps items-center: the panel is max-w-md and short, so it
+          always fits — but max-h + internal scroll guard the tiny-viewport
+          case anyway. */}
+      {departmentToDelete && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Delete ${departmentToDelete.name}`}
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+        >
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
               <Trash2 className="h-5 w-5" />
             </div>
@@ -667,7 +710,8 @@ export default function Departments() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -737,13 +781,25 @@ function DepartmentForm({
   saving,
   saveError,
 }) {
+  // Validation that waits for the user: the category requirement is real, but
+  // painting it red onto a form nobody has touched yet reads as "you already
+  // did something wrong". It appears once the field has been interacted with
+  // (or a submit is attempted); until then the disabled submit button carries
+  // the requirement silently.
+  const [categoriesTouched, setCategoriesTouched] = useState(false);
   const inputClass =
     'w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:bg-white focus:outline-none';
   const isSecurityDepartment =
     form.name.toLowerCase().includes('security') ||
     form.categories.some((entry) => entry.name === 'Security');
   return (
-    <form onSubmit={onSubmit} className="mt-6 space-y-5">
+    <form
+      onSubmit={(event) => {
+        setCategoriesTouched(true);
+        onSubmit(event);
+      }}
+      className="mt-6 space-y-5"
+    >
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Department name" required>
           <input
@@ -792,9 +848,12 @@ function DepartmentForm({
       <CategoryPicker
         required
         selected={form.categories}
-        onChange={(categories) => setForm((current) => ({ ...current, categories }))}
+        onChange={(categories) => {
+          setCategoriesTouched(true);
+          setForm((current) => ({ ...current, categories }));
+        }}
       />
-      {form.categories.length === 0 && (
+      {categoriesTouched && form.categories.length === 0 && (
         <p className="-mt-3 text-[10px] font-semibold text-rose-500">
           Select at least one complaint category.
         </p>
@@ -815,19 +874,18 @@ function DepartmentForm({
         every community.
       </p>
 
+      {/* The free-text "Department Manager" input is gone on purpose: it was
+          the previous generation of manager entry, and with the invitation
+          block below it the form carried both at once — the owner read that
+          as duplicate manager fields because it was. The manager is entered
+          in the invitation block only; `head` (the display name the cards and
+          DepartmentDetail show) is derived from the first manager-ranked
+          invitation at submit time, and an edit with no re-entered manager
+          keeps the existing head. The two fields kept here are the
+          *department's* contact details, not a person's — relabelled so
+          nobody reads them as one again. */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Department manager">
-          <input
-            required={isSecurityDepartment}
-            value={form.head}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, head: event.target.value }))
-            }
-            placeholder="Full name"
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Contact email">
+        <Field label="Department contact email">
           <input
             type="email"
             value={form.email}
@@ -838,7 +896,7 @@ function DepartmentForm({
             className={inputClass}
           />
         </Field>
-        <Field label="Contact phone">
+        <Field label="Department contact phone">
           <input
             required={isSecurityDepartment}
             value={form.phone}
