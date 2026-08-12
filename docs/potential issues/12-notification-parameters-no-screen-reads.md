@@ -40,13 +40,17 @@ is why they are listed rather than batched:
   has no relationship to the complaint the notification is about. It is not a
   small fix waiting to be done; it is a symptom of issue 9, and it closes when
   that portal is wired.
-* **`/admin/departments?job=`** has nothing to fix. There is no supervisor triage
-  screen, so the parameter has no reader, not the wrong reader — the eight
-  `work_orders.py` operations behind it have no frontend consumer at all
-  (issue 10). `0036`'s header states the rule the file is arranged around: *every
-  transition the engine will later make automatically is reachable by hand first*.
-  The hand path is still unbuilt, and these seven notifications point at where it
-  will go.
+* **`/admin/departments?job=`** — ~~has nothing to fix; the triage screen is
+  unbuilt~~ **Resolved 2026-08-12.** The triage screen exists at
+  `/{portal}/departments/:departmentId/work-orders` (all three portals), and
+  `20260812113000`'s sibling `20260812120000_work_order_notification_urls.sql`
+  repoints all seven emissions at it. `portalUrl.js` gained `work-orders` in its
+  department-sub-screen alternation so a manager's copy rewrites too.
+  **A new instance surfaced in the fixing**: `0045:899`/`0045:1077` send a manager
+  to `EmployeeDetail.jsx` with `?departure=`, and that component reads no query
+  parameter. It was invisible until `test_notification_links.py` learned to read
+  a url concatenation past its first line; it is now on record in that test's
+  `IGNORED_QUERY_PARAMETERS`, which is this issue's inventory in executable form.
 * **`/admin/complaints?complaint=`** belongs to the complaint-engine owner
   ([`../COMPLAINT_ENGINE_HANDOFF.md`](../COMPLAINT_ENGINE_HANDOFF.md)) and is the
   cheapest of the four: the screen is real, it lists real complaints, and it needs
@@ -102,8 +106,9 @@ screen. In priority order, which is not the order of the table:
 1. **`/admin/complaints?complaint=`** — real screen, real data, smallest change.
 2. **`/admin/amenities?booking=`** — same shape, one emission.
 3. **`/resident/complaints?complaint=`** — do it as part of issue 9, not before.
-4. **`/admin/departments?job=`** — do it when the triage screen is built, as part
-   of it. Nothing to fix in isolation.
+4. **`/admin/departments?job=`** — ~~do it when the triage screen is built~~ done
+   2026-08-12, as part of exactly that. Its successor on this list is
+   `?departure=` on the employee page, above.
 
 ## Related
 

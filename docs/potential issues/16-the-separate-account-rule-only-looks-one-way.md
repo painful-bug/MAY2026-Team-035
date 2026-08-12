@@ -5,6 +5,23 @@
 **Urgency:** Before a professional base exists to hit it — the state is unreachable today only
 because almost nobody is registered
 
+> **✅ Resolved 2026-08-12, by PO ruling, same day:** *registered professionals are assumed not to
+> be living in any association* — the rule is **identity separation**, and the "plumber who lives
+> here" case is decided: two accounts. Enforced forward in
+> `20260812113000_professional_membership_symmetry.sql`: `enforce_professional_membership_mode`
+> now refuses a `resident`/`manager`/`admin` membership on a profile holding a `service_providers`
+> row (`HBSEP` → 409 `professional_account_separate`), mirroring the registration-time refusal —
+> no `status` filter on the provider row, unknown future roles refused by default. The refusal also
+> moved to where the person is: `POST /access-requests` refuses a professional at request time
+> rather than days later in an admin's queue, and an invite claim surfaces the real sentence
+> instead of a 500. Pre-existing violations are counted and reported by the migration, never
+> repaired — which identity to keep is the account holder's decision.
+>
+> **Two knowingly-accepted residuals:** `register_service_provider` still raises `HB409` for its
+> half of the rule (re-declaring an applied function to change an errcode wasn't worth the drift
+> risk), and a professional provisioned as a manager by email silently fails to claim on sign-in —
+> the claim swallow is deliberate, and per the ruling that person needs a different account.
+
 ---
 
 ## Body

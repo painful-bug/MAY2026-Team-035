@@ -17,6 +17,80 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 68: phase 7, the symmetry ruling, and the end of the orphan list
+
+Six specialist assignments (three new charters, three follow-ups to standing agents), same
+orchestration as Session 67. The API now serves **195 operations** and the sweep reaches **186** —
+the 9 remainder are all structurally-invisible or declared paths, so **potential issue 10's orphan
+inventory is empty**.
+
+### The PO rulings this session
+
+`PO` — **issue 16 is ruled**: *registered professionals are assumed not to be living in any
+association.* The separate-account rule is identity separation, the "plumber who lives here" case
+is two accounts, and `20260812113000_professional_membership_symmetry.sql` enforces the missing
+direction (`HBSEP` → 409 `professional_account_separate`, raised by the membership trigger, checked
+at every membership writer including four in applied files). Consequences: `POST /access-requests`
+refuses a professional at request time; approval failures stopped masquerading as
+`access_request_not_pending`; a professional's invite claim gets a real 409 instead of a 500; and a
+professional provisioned as a manager by email silently fails to claim —
+`STAFF_PROVISIONING_DESIGN.md` records that as the ruled behaviour and its cost.
+
+`PO` — *"proceed with step 7 after any fixes remaining and fixable"* — the audit's approved-fix
+list was implemented before/alongside the wiring, per Session 67's escalations.
+
+### Phase 7 — 26 operations wired, 4 retired
+
+`DERIVED` — **work orders (8)**: a triage surface at
+`/{portal}/departments/:departmentId/work-orders`, all three portals, hiring-precedent shape. Two
+lifecycle questions went to `COMPLAINT_ENGINE_HANDOFF.md` §10 rather than being decided — the §8
+assignment fork (now purely semantic, both options built) and whether work may be raised against a
+terminal complaint.
+
+`DERIVED` — **amenities (10 + reports)**: the admin booking/approvals/ledger/reports screens read
+the API; 14 demo functions and 4 modules deleted with their last readers. A live bug died with
+them — the demo posted the *occurrence* id to `…/{seriesId}/approve` (agenda item 16 closed by the
+same change). The **Edit Booking modal was removed**: no update-booking endpoint exists (API.md §15
+now says so). The resident "Your Bookings" 403 is fixed; the slot-picker 403 beside it is recorded
+in issue 09 as unfixable-by-wiring (no availability read exists, by design).
+
+`DERIVED` — **money (3) + `POST /admins` (1)**: billing settings became a real read/edit (the
+screen had been hard-coding ₹4250/₹100 into every save); invoice issue + offline-payment recording
+landed with bookkeeping-not-checkout framing; "Add admin" became "Promote to Admin", which is what
+the endpoint does.
+
+`AUDIT` — **the four `departments…/staff` writes are retired**, on a per-operation evidence table:
+every one superseded by the `0035` hiring flow before it ever gained a caller. Striking the dead
+`staff: []` payload from the admin form also fixed a live defect — key-presence means *replace*,
+so **every department edit had been silently deactivating its whole roster**. Spec 199 → 195.
+
+### The notification links
+
+`AUDIT` — `20260812120000_work_order_notification_urls.sql` repoints the seven `?job=` emissions
+(`0037`×4, `0039`×3) at the triage screen; `portalUrl.js` learned `work-orders` as a department
+sub-screen. Fixing it exposed **three latent holes in `test_notification_links.py`** — bare
+`<Route>` fragments parsed to the root, urls read only to their first line, and no model of
+forward-only supersession (permanent now, not incidental) — all three fixed, and the repaired
+checker surfaced a **new** dead parameter: `?departure=` to `EmployeeDetail.jsx` (`0045`×2), on
+record in issue 12.
+
+### Docs
+
+`DERIVED` — API.md: the four staff-write sections replaced by a retirement record; the §15 "no
+migration has ever been applied" claim expired against the boundary; the missing update-booking
+endpoint recorded; `residentId`'s dead `GET /residents` citation corrected; the `HBSEP` 409
+documented on its three surfaces. Issues 9 (amended), 10 (emptied), 12 (item 4 closed, successor
+named), 16 (resolved) updated with the migrations README, the meeting agenda, the wiring audit,
+`DECISIONS_NEEDED` (resident Pay affordance) and both design docs.
+
+### Verification
+
+976 backend tests / 4 skipped · ruff 179 · spec 195 ops `--check` clean · mapper clean · scan 20/20
+documented · build clean · 45 vitest · **oxlint 0** · sweep 186/195, zero genuine orphans. The six
+`20260812…` migrations are pglast-parsed and **unapplied**; issue 4 tracks them.
+
+---
+
 ## 2026-08-12 — Session 67: the audit of the merged commits, and phase 6 by specialists
 
 The first session run by the charter workflow: three sub-agents (charters in `.claude/agents/`),

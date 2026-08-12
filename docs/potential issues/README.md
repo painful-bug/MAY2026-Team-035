@@ -20,13 +20,13 @@ Nothing here is a guess. Every claim names the file and line it came from, and e
 | 7 | [Design docs outside `API.md` still describe phone/SMS OTP](#7-design-docs-outside-apimd-still-describe-phonesms-otp) | Doc drift | Low |
 | 8 | [`/auth/*` speaks `snake_case`, everything else speaks `camelCase`](#8-auth-speaks-snake_case-everything-else-speaks-camelcase) | Consistency | Superseded in scope by 11 |
 | 9 | [The resident portal is still a demo](09-resident-portal-is-still-a-demo.md) | Unfinished wiring | **Resolved 2026-08-12** — wired end to end; one table left for phase 7, named in the banner |
-| 10 | [51 API operations have no frontend consumer](10-api-operations-with-no-frontend-consumer.md) | Inventory | Low as a defect, high as a planning input — recounted 2026-08-12: 164/199 |
+| 10 | [51 API operations have no frontend consumer](10-api-operations-with-no-frontend-consumer.md) | Inventory | **Emptied 2026-08-12** — 186/195 reached, zero genuine orphans; the file stays as the record of what "reached" cannot see |
 | 11 | [The naming contract in `API.md` §1.3 is wrong](11-snake-case-in-the-published-contract.md) | Doc defect | Low, but it is a contract giving a wrong answer |
-| 12 | [Four notification parameters that no screen reads](12-notification-parameters-no-screen-reads.md) | Silent UX defect | Low each; they share a failure mode with no alarm on it |
+| 12 | [Four notification parameters that no screen reads](12-notification-parameters-no-screen-reads.md) | Silent UX defect | Item 4 resolved 2026-08-12; a fifth instance (`?departure=`) surfaced in the fixing and is on record |
 | 13 | [Dead code in files this workstream does not own](13-dead-code-in-files-this-workstream-does-not-own.md) | Tech debt | Low — written down because nothing else will |
 | 14 | [The manager has hiring permission and no hiring screen](14-the-manager-has-hiring-permission-and-no-hiring-screen.md) | Unreachable capability | **Resolved 2026-08-11** — the file records what the fix turned up, and the one part still open |
 | 15 | [The service-professional intent dies in the confirmation email](15-the-service-professional-intent-dies-in-the-confirmation-email.md) | Silent funnel break | The dead end is fixed; the metric is still wrong until the template decision |
-| 16 | [The separate-account rule only looks one way](16-the-separate-account-rule-only-looks-one-way.md) | Product decision | Before a professional base exists to hit it |
+| 16 | [The separate-account rule only looks one way](16-the-separate-account-rule-only-looks-one-way.md) | Product decision | **Resolved 2026-08-12 by PO ruling** — identity separation, enforced in `20260812113000`; two accepted residuals named in the banner |
 
 ## Three vintages, and why they are stored differently
 

@@ -68,6 +68,8 @@ with.** This list grows at the end, never in the middle.
 | `20260812090100_skills_and_categories.sql` | `department_skills`, the trigram search, create-and-attach, and the hiring search reading a department's own skills — **rebased onto `20260811162409`**, whose definition of `search_hireable_service_providers` this would otherwise have silently reverted |
 | `20260812090200_staff_provisioning.sql` | `staff_invitations` and the email-bound claim: how a manager or supervisor comes to exist, given that neither has a registration process |
 | `20260812090300_complaint_department_routing.sql` | `complaints.department_id`, category-then-pick-then-triage resolution, the supervisor's change request, and the three `0031` complaint notifications that went to every manager because a complaint had no department to send them to |
+| `20260812113000_professional_membership_symmetry.sql` | the other direction of the separate-account rule (PO ruling 2026-08-12): `enforce_professional_membership_mode` now refuses a resident/manager/admin membership on a profile holding a `service_providers` row (`HBSEP` → 409). Whole trigger body from `20260811162409`, one predicate added. Also re-issues the stale `search_serviceable_communities` comment from `0034` |
+| `20260812120000_work_order_notification_urls.sql` | the seven work-order notifications that pointed at the department list, repointed at the triage screen that now exists; six whole bodies from `0037` and `0039`, seven url lines changed |
 
 | File | Serves |
 |---|---|

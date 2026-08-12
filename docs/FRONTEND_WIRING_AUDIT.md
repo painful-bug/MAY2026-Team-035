@@ -39,9 +39,9 @@ Since `appStore` no longer persists tenant data, those writes are lost on refres
 | Residents | create invitation, list units | **their API** | — *(ours removed)* |
 | PendingRegistrations | list / approve / reject | **their API** | — *(ours removed)* |
 | Amenities — management | create / update / delete amenity | **their API** `/dashboard/amenities` | — *(ours removed)* |
-| Amenities — bookings | 17 service fns, **0 API calls** | ✗ dead | **kept** (step 8) |
-| Amenities — ledger | 5 service fns, **0 API calls** | ✗ dead | **kept** (step 8) |
-| Amenities — reports | `amenityReportsService`, 0 API calls | ✗ dead | **kept** (step 8) |
+| Amenities — bookings | 17 service fns, **0 API calls** | ✗ dead | **wired 2026-08-12** (phase 7b) — `amenitiesApi.js`; 14 demo fns and 4 modules deleted, Edit Booking removed (no endpoint exists) |
+| Amenities — ledger | 5 service fns, **0 API calls** | ✗ dead | **wired 2026-08-12** — ledger + summary + all five money writes |
+| Amenities — reports | `amenityReportsService`, 0 API calls | ✗ dead | **wired 2026-08-12** — `GET /amenity-reports`, service deleted |
 | Admins | `addAdmin` | ✗ dead, **no endpoint existed** | **added** `POST /admins` |
 | Complaints | `updateComplaint`, `addComplaintComment` | ✗ dead | **kept** (step 5) |
 | Departments | `createDepartment`, `updateDepartment`, `deleteDepartment`, `setDepartmentStatus`, `removeStaffMember` | ✗ dead | **kept** (step 6) |

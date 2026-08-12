@@ -383,7 +383,13 @@ bookings the demo refuses**, which is why it is on this list rather than in a co
 
 ---
 
-## 16. The approvals table cannot say how many days a request covers *(found 2026-07-30)*
+## 16. The approvals table cannot say how many days a request covers *(found 2026-07-30)* — ✅ closed 2026-08-12
+
+> Closed by the phase-7b amenity wiring: `ApprovalRow` renders `dayCount` and the detail shows
+> `dates`, and the same change fixed a live bug nobody had listed — the demo was posting the
+> **occurrence** id to `POST /amenity-bookings/{seriesId}/approve`, so approving one row of a
+> three-day request was approving a different thing than the API understood. Original text kept
+> below for the record.
 
 **Today:** [`createResidentAmenityBookingSeries`](../frontend/src/features/amenities/services/amenityBookingsService.js)
 creates one booking record per date, sharing a `bookingGroupId`. `approveAmenityBookingRequest`

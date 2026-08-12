@@ -951,6 +951,7 @@ For scanning. `A`/`C`/`D` reference the sections above.
 | — | `GET /settings/modules` is unpaginated and readable by **any** authenticated role, unlike the rest of §11 | One dependency |
 | — | `module_catalogue` has a read policy and **no write policy at all** — it is seed data, changed by migration | One policy |
 | — | `PUT /settings/modules` writes every catalogue key, so a key dropped from the array turns off rather than keeping its old value | One `where` clause |
+| — | The resident amenities table shows bookings without a Pay control; paying lives on `Payments.jsx` alone, even though `isPayable` and `outstandingAmount` now reach both screens (2026-08-12) | One mutation reused, if wanted — but two Pay buttons means two idempotency-key owners |
 | C2 | Migrations `0004`–`0009` reserved for the auth workstream | Renumber |
 | D1 | Additive now, rename `associations`/`units`/`apartments` later | One mechanical migration |
 | D3 | R1 not applied to `apartments` | Two indexes |

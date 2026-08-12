@@ -190,6 +190,19 @@ the ordinary signed-in request pays nothing for it.
   a `pglast` parse of the SQL, and CI's local `supabase db reset`, which at least proves the file
   applies.
 
+## A documented limitation, added 2026-08-12
+
+**A registered service professional cannot claim a staff invitation, and nothing says so.**
+`20260812113000_professional_membership_symmetry.sql` refuses a `manager` membership on a
+professional account (`HBSEP`), and `_claim_staff_invitations` deliberately swallows claim errors —
+a session is not failed for a claim problem — so the professional signs in, the claim silently
+fails on every sign-in, and they land on `/worker` while the admin's invitation sits `pending`
+forever. This is the ruled behaviour, not a bug: per the PO ruling of 2026-08-12, that person needs
+a different account, and the admin should be told to invite a non-professional email. Making the
+failure *visible* (an invitation status, or a refusal at invite time — impossible today, since the
+email is not bound to a profile until first sign-in) is future work, recorded here so the silence
+is at least a documented silence.
+
 ## Related
 
 - `backend/supabase/migrations/20260812090200_staff_provisioning.sql` — the header carries the same reasoning

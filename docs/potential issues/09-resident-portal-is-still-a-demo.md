@@ -18,11 +18,16 @@
 > `Pending Approval` pass anymore, and Approve/Reject are wired to the real endpoints, which today
 > have no writer on the gate side.
 >
-> **Still open, and now phase 7's first item:** `Amenities.jsx`'s "Your Bookings" table reads via the
-> admin-guarded dashboard snapshot and 403s a resident; `GET /amenity-bookings/mine` is wired on
-> `Payments.jsx` but this table was left for the booking-flow wiring. And point 1 is only half
-> retired: the shapes are now consumed, but proven only against the repository-mocked API — nothing
-> here has run against an applied database (issue 4's boundary note).
+> ~~**Still open, and now phase 7's first item:** `Amenities.jsx`'s "Your Bookings" table reads via
+> the admin-guarded dashboard snapshot and 403s a resident~~ **Fixed 2026-08-12, phase 7b** — the
+> table reads `residentApi.amenityBookings()`. **But the same page carries a second instance the
+> fix uncovered:** the resident *booking form's slot picker* also reads the admin-guarded snapshot
+> (`validateBookingSlot`), so its Time Slot select stays disabled for every resident — and it
+> cannot be wired, because API.md §10 is explicit that **no availability read exists**; availability
+> is decided on write under an advisory lock. The honest fix is a form that submits and renders the
+> `409`, which is a UX decision, not a wiring gap. And point 1 is only half retired: the shapes are
+> now consumed, but proven only against the repository-mocked API — nothing here has run against an
+> applied database (issue 4's boundary note).
 
 ---
 

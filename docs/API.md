@@ -500,6 +500,7 @@ invitation they did not open.
 | Status | Code | Cause |
 |---|---|---|
 | `401` | `authentication_error` | Not signed in, or the staging cookie is missing or expired |
+| `409` | `professional_account_separate` | The signed-in identity is a registered service professional. The separate-account rule is bidirectional since `20260812113000` (`HBSEP`, raised by `enforce_professional_membership_mode`) — the same 409 reaches `POST /access-requests` at request time and `POST /admin/access-requests/{id}/approve` for requests that predate the guard |
 | `422` | `invite_unavailable` | The staged invitation no longer exists or has been used |
 
 ## 5. Live updates, notifications and the admin dashboard
@@ -1431,82 +1432,20 @@ the check and the delete cannot slip through.
 | `404` | `not_found` | No such department |
 | `409` | `conflict` | **The department owns open complaints.** Message carries the count. Resolve, reassign, or deactivate instead |
 
-### `PUT /api/v1/departments/{departmentId}/staff`
+### The four staff-write endpoints — retired 2026-08-12
 
-Replace the whole roster, as the department form submits it. **Requires `ADMIN`.**
+`PUT`/`POST /departments/{id}/staff` and `PATCH`/`DELETE /departments/{id}/staff/{staffId}` were
+removed from the API. All four were superseded by the `0035` hiring flow before they ever gained a
+caller: roster growth happens through applications and invitations, individual removal through
+`POST /departments/{id}/members/{staffId}/remove` (which carries the reason a bare `DELETE` could
+not), and there was never a screen that bulk-replaced or field-edited a roster row. The typed
+name-only roster entry survives where it was actually used — `staff` on `POST /departments` and
+`PATCH /departments/{id}` — and the roster reads are untouched.
 
-**Request**
-```json
-{ "staff": [
-    { "id": "51ab...", "name": "Ramesh Kumar", "role": "Supervisor" },
-    { "name": "New Hire", "phone": "+91 98765 41009", "role": "Technician" }
-] }
-```
-
-**200** — the resulting roster, as an array of staff objects.
-
-Entries carrying an `id` are updated in place; entries without one are added; **active members the
-payload omits are deactivated, not deleted.** A complaint's `assignee` records staff by name, so
-removing the row would turn a past assignment into an unattributable string.
-
-`PUT` rather than `POST` because this replaces a collection — sending the same roster twice leaves
-the same result.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such department, or an `id` belongs to a different department |
-| `422` | `request_validation_error` | An entry has an empty `name`, or an unknown `shift` / `status` |
-
-### `POST /api/v1/departments/{departmentId}/staff`
-
-Add one person. **Requires `ADMIN`.** `201 Created`, body = the created staff object.
-
-```json
-{ "name": "Mohan Das", "phone": "+91 98765 41002", "role": "Technician", "shift": "Day" }
-```
-
-**A staff member needs no account.** `name` is the only required field, matching what the department
-form actually collects; `membershipId` stays `null` until someone links them to a profile.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such department |
-| `422` | `request_validation_error` | Empty `name`, unknown `shift` (`Day` \| `Evening` \| `Night`) or `status` |
-
-### `PATCH /api/v1/departments/{departmentId}/staff/{staffId}`
-
-Patch one roster entry. **Requires `ADMIN`.** `200`, body = the updated staff object.
-
-```json
-{ "role": "Supervisor", "shift": "Evening" }
-```
-
-`rank` is **not** patchable here. A department has at most one head, and promoting somebody must
-demote the incumbent in the same transaction — `PATCH /departments/{id}` with a `head` name is the
-only path that does.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such staff member in the caller's community |
-| `422` | `request_validation_error` | The member belongs to a different department (`wrong_department`), or an unknown `shift` / `status` |
-
-### `DELETE /api/v1/departments/{departmentId}/staff/{staffId}`
-
-Take a member off the active roster. **Requires `ADMIN`.**
-
-**200** — `{ "message": "Staff member removed." }`
-
-> ⚠️ **Deactivation, not deletion** — same reasoning as `PUT …/staff` above. Removing the head also
-> frees the head slot in the same statement, so the next promotion is unobstructed.
-
-| Status | Code | Cause |
-|---|---|---|
-| `401` / `403` | | Not authenticated / not an admin |
-| `404` | `not_found` | No such staff member |
-| `422` | `request_validation_error` | The member belongs to a different department |
+Retiring the `staff: []` payload also fixed a live defect: `PATCH /departments/{id}` treats key
+presence as *replace this collection*, and the admin form had been sending an empty list on every
+edit — silently deactivating the department's whole roster on save. The form no longer sends the
+key at all.
 
 ## 9. Money — invoices and payments
 
@@ -1715,8 +1654,9 @@ the booking rules can be evaluated in SQL without depending on the server's loca
 booking record per date, and `approveAmenityBookingRequest` approves one of them — so a three-day
 request appears in the approvals table three times and can be approved on Monday and rejected on
 Tuesday. `GET /amenities/{id}/approvals` returns **one row per request**, carrying its first day plus
-`dayCount` and `dates`. One click decides the whole request. The frontend does not render `dayCount`
-yet, which is agenda item 16.
+`dayCount` and `dates`. One click decides the whole request. The approvals screen renders
+`dayCount` and `dates` since 2026-08-12 (agenda item 16, closed) — and the same wiring fixed a live
+bug: the demo had been posting the *occurrence* id to `…/{seriesId}/approve`.
 
 **Overlap is guarded by the database, in two places.** An `EXCLUDE USING gist` constraint catches
 exclusive-vs-exclusive; a `BEFORE` trigger holding an advisory lock on the amenity catches everything
@@ -1879,9 +1819,10 @@ too would give one block two sources.
 `status` may read `completed` for a row stored as `approved`: a booking whose end time has passed is
 completed, and storing that would need a scheduled job to keep it true.
 
-`residentId` is the requester's **membership id** — what `GET /residents` returns as `id`, so
-`users.find(u => u.id === booking.residentId)` resolves. `bookingGroupId` is the series id under the
-name the frontend already groups by.
+`residentId` is the requester's **membership id** — what `GET /dashboard/snapshot` returns as
+`users[].membershipId` (there is no `GET /residents`; §6 says so — this line used to cite it, and
+the snapshot's `users[].id` is the *profile* id, which would 409 on any booking write). 
+`bookingGroupId` is the series id under the name the frontend already groups by.
 
 `chargeOverride: null` means "use the amenity's fee"; `0` means "free". They are different answers.
 
@@ -3220,14 +3161,20 @@ This section is what remains anyway, and it is three different kinds of thing: w
 halves of features that live outside this repository, and stories whose missing part was never an
 endpoint. Listed so the frontend team can see what will not answer yet, and why.
 
-**No migration has been applied to any database — `0001` included.** Every endpoint in this document
-is code with a passing test suite and no schema underneath it. That is the whole remaining risk, and
-it is `DECISIONS_NEEDED.md` F1. `0001`'s GIST exclusion constraint on `amenity_bookings` is the only
-thing standing between two residents and the same hall, and it has never executed; nor has `0031`'s
-SLA rule, `0032`'s code hashing, or `0033`'s two settlement RPCs — the four places where the database,
-not the API, is what makes a guarantee true. The rest of §F is unchanged — the private
-Storage bucket `complaint-attachments` does not exist yet (F2), and rate limiting (F3) and optimistic
-concurrency (F4) are unowned.
+**~~No migration has been applied to any database~~ Expired 2026-08-11.** Everything through `0047`
+(and the `2026081x` timestamped files before the boundary) is applied to the linked hosted project —
+so `0001`'s GIST exclusion, `0031`'s SLA rule, `0032`'s code hashing and `0033`'s settlement RPCs
+now exist in a real database. What is *not* applied is everything after the boundary: the six
+`20260812…` files (skills, staff provisioning, complaint routing, notification audiences, the
+professional-membership symmetry, the work-order notification urls). Potential issue 4 tracks the
+remainder. The rest of §F is unchanged — the private Storage bucket `complaint-attachments` does not
+exist yet (F2), and rate limiting (F3) and optimistic concurrency (F4) are unowned.
+
+**There is no update-booking endpoint.** `0016`/`0023` ship create, block, approve, reject, cancel
+and force-cancel, and nothing that *moves* an existing amenity booking. The admin timeline's Edit
+Booking modal was removed 2026-08-12 for exactly this reason — once the screen read real data,
+"Save Changes" had nowhere to send anything. Reinstating it needs a `PATCH` on the occurrence that
+respects the same advisory-lock overlap rules as create.
 
 **~~`POST /notices` emits no notification.~~ Closed 2026-08-10 by `0041`.** This paragraph named the
 one place the `0030` substrate was not wired: every other user-visible event wrote a notification in
@@ -3334,12 +3281,12 @@ below still says otherwise it is a record of when it was written, not a claim ab
 matrix still lists every story, because a story with no owner is a decision that should be visible
 rather than a silence.
 
-**One structural cause explains most of §3 and half of §2.** A staff member has no login: `POST
-/departments/{id}/staff` writes a `staff_assignments` row and leaves `membership_id` null on
-purpose. So every story written in the voice of a Security Manager or a Facility Manager is
-unreachable by that person *by construction*, not because an endpoint is missing. Closing those
-stories starts with deciding whether staff get accounts — see
-[`product/USER_IDENTIFICATION.md`](product/USER_IDENTIFICATION.md).
+**One structural cause explains most of §3 and half of §2.** A staff member has no login: a typed
+roster entry (`staff` on `POST /departments` or `PATCH /departments/{id}`) writes a
+`staff_assignments` row and leaves `membership_id` null on purpose. So every story written in the
+voice of a Security Manager or a Facility Manager is unreachable by that person *by construction*,
+not because an endpoint is missing. Closing those stories starts with deciding whether staff get
+accounts — see [`product/USER_IDENTIFICATION.md`](product/USER_IDENTIFICATION.md).
 
 ### 16.2 Coverage
 
@@ -3755,7 +3702,7 @@ therefore **recorded**.
 |---|---|
 | [`GET /departments`](#get-apiv1departments) · [`GET /departments/{departmentId}`](#get-apiv1departmentsdepartmentid) | The directory, with `contactEmail`, `contactPhone`, hours and the head |
 | [`POST`](#post-apiv1departments) · [`PATCH`](#patch-apiv1departmentsdepartmentid) · [`DELETE /departments/{departmentId}`](#delete-apiv1departmentsdepartmentid) | Keeping it current |
-| [`PUT`](#put-apiv1departmentsdepartmentidstaff) · [`POST`](#post-apiv1departmentsdepartmentidstaff) · [`PATCH`](#patch-apiv1departmentsdepartmentidstaffstaffid) · [`DELETE …/staff`](#delete-apiv1departmentsdepartmentidstaffstaffid) | Roster and roles |
+| The `0035` hiring flow (applications · invitations · [`members/{staffId}/remove`](#post-apiv1departmentsdepartmentidmembersstaffidremove)) and [`…/staff-invitations`](#post-apiv1departmentsdepartmentidstaff-invitations) | Roster and roles — the four direct staff-write endpoints were retired 2026-08-12, superseded by these |
 | [`POST /admins`](#122-post-admins--promote-a-member-to-administrator) | Who the directory can name as a head; the office and the contact entry stay one thing |
 
 *"Outdated, unclear, or insufficiently maintained"* is met on two of three counts. **Clear** —
@@ -4158,8 +4105,9 @@ map to a user story.
 ### What this overturns
 
 `docs/product/USER_IDENTIFICATION.md:55-65` and §16.1 both state that a staff member has no login *by
-construction* — *"a staff member is a name on a roster, not an account"* — and `POST
-/departments/{id}/staff` deliberately leaves `membership_id` null. **That is now overturned.** A
+construction* — *"a staff member is a name on a roster, not an account"* — and a typed roster entry
+(the `staff` field on the department create/update, in its day `POST /departments/{id}/staff`, retired
+2026-08-12) deliberately leaves `membership_id` null. **That is now overturned.** A
 service person registers, holds an account, and is issued a real `worker` or `security` membership by
 the manager who hires them. The `membership_role` enum has carried both values since the baseline and
 nothing has ever issued one.
@@ -4833,7 +4781,9 @@ accepting. They cannot change them: `POST .../decide` ignores `jobTitle` on an i
 > an admin or a manager creates a manager or a supervisor by email through
 > `POST /departments/{id}/staff-invitations`, and that person never registered as a service provider.
 > Somebody hired *here* registered themselves and joins as a `member`; a promotion afterwards is
-> `PATCH /departments/{id}/staff/{staffId}`, a different decision with a different guard.
+> `PATCH /departments/{id}` with a `head` name — the one path that demotes the incumbent in the
+> same transaction. (This line once cited `PATCH …/staff/{staffId}`, which was wrong twice over:
+> that handler refused to patch `rank`, and it was retired 2026-08-12.)
 > **Shift**: `staff_assignments.shift` is a descriptive text column from `0019`'s typed-roster era and
 > **nothing schedules from it** — work reaches a worker through the dispatch sweep (`0037`) or a
 > supervisor's assignment, and a guard's actual rota is `security_shifts` (`0040`), a different table

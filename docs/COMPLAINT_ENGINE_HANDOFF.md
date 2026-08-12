@@ -423,3 +423,28 @@ was chosen because a supervisor who could move work out of their own department
 could empty it — but *whether a transfer should also notify or need consent from
 the receiving department* is a lifecycle question and it is unanswered. Today
 the receiving department finds out by being notified after the fact.
+
+## 10. Added 2026-08-12 — the triage screen exists now, and two questions came with it
+
+**§8 addendum — the fork is now cheaper, and still yours.** Work orders have a
+screen: `/{portal}/departments/:departmentId/work-orders`, calling all eight
+`work_orders.py` operations. It treats a work order as its own resource and
+**does not touch `complaint.assigneeStaffId`**; the "Assign to staff" dropdown
+on `DepartmentDetail.jsx` is untouched and still an optimistic local field. All
+three of §8's options remain open, but options 1 and 2 no longer require
+anything to be built — choosing between them is now purely a decision about
+what the *complaint's* assignment control means. Which is it: does that
+dropdown (1) raise a work order, (2) assign the complaint's existing work
+order, or (3) stay a separate "who is accountable" field, shown alongside the
+work order's assignee rather than instead of it?
+
+**New — may work be raised against a complaint that has ended?**
+`create_work_order` reads the complaint's department, its community and the
+slot, and never reads `complaints.status`. A supervisor can therefore raise a
+job against a `resolved`, `closed` or `cancelled` complaint, and the triage
+screen's "Raise work" tab does not filter those rows out — it lists whatever
+`GET /departments/{id}/complaints` returns. The default is deliberate and
+defensible (a snag found after closure is real work, and D5 already makes a
+reopened complaint carry a second job), but it was never decided. Should
+raising work against a terminal complaint be refused — and if so, refused in
+the RPC with an `HB409`, or merely hidden by the screen?
