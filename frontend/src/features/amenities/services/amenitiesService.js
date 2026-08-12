@@ -9,8 +9,13 @@ import { validateAmenitySettings } from '../utils/validateAmenitySettings.js';
 
 const cloneAmenity = (amenity) => normalizeAmenityRecord(amenity);
 
+// A snapshot without `amenities` must read as an empty catalogue, not a
+// TypeError: the snapshot endpoint is shared surface under active backend
+// work, and this file is what turns its failures into the page's error state
+// (an `ApiError` from the 500 → `useAmenitiesStore.error` → "Try again",
+// which calls straight back through here and genuinely refetches).
 const readAmenities = async () =>
-  (await getDashboardSnapshot()).amenities.map(normalizeAmenityRecord);
+  ((await getDashboardSnapshot()).amenities ?? []).map(normalizeAmenityRecord);
 
 const normalizeBookingConfiguration = (amenityData, currentAmenity = {}) => {
   const bookingMode = amenityData.bookingMode ?? currentAmenity.bookingMode;

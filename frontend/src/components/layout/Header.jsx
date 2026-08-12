@@ -14,16 +14,40 @@ import {
 } from 'lucide-react';
 
 export default function Header({ onMenuClick }) {
-  const { 
-    currentUser, 
-    notices, 
-    visitors, 
-    complaints, 
+  const {
+    currentUser,
+    users,
+    notices,
+    visitors,
+    complaints,
     activities,
     searchQuery,
     setSearchQuery
   } = useApp();
-  
+
+  // The residency chip's data. `currentUser.flat`/`tower` were read here and
+  // the session has never carried either (`applicationUser()` hard-codes both
+  // to '—'), so every member saw "Flat — • Tower —". The snapshot's `users`
+  // projection DOES carry them — `unit_residencies → units → buildings`, keyed
+  // by profile id — so the chip reads its own row from there. The backend uses
+  // the same '—' placeholder for members with no active residency (a pure
+  // admin, typically), so '—' and absence both mean "no unit": the chip hides
+  // rather than render a placeholder. While the snapshot is unavailable the
+  // list is empty and the chip simply stays hidden.
+  const residency = (users ?? []).find((user) => user.id === currentUser?.id);
+  const flat = residency?.flat && residency.flat !== '—' ? residency.flat : '';
+  const tower = residency?.tower && residency.tower !== '—' ? residency.tower : '';
+  const unitLabel = [flat && `Flat ${flat}`, tower && `Tower ${tower}`]
+    .filter(Boolean)
+    .join(' • ');
+  const statusChipLabel = currentUser
+    ? ['Security', 'SecurityManager'].includes(currentUser.role)
+      ? currentUser.role === 'SecurityManager'
+        ? 'Security management'
+        : 'On duty'
+      : unitLabel
+    : '';
+
   // Left Panel States
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [panelType, setPanelType] = useState('notifications'); // 'notifications' | 'search'
@@ -68,18 +92,15 @@ export default function Header({ onMenuClick }) {
             <Menu className="w-5 h-5" />
           </button>
 
-          {currentUser && (
+          {/* `departmentName` and `staffRole` were read here once and
+              `applicationUser()` has never set either, so every gate user saw
+              the literal "undefined • undefined" — and then residents saw
+              "Flat — • Tower —" for the same reason. The label is computed
+              above; when there is nothing truthful to say, no chip. */}
+          {statusChipLabel && (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3.5 py-1.5 rounded-full text-xs font-semibold text-slate-600">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-              {/* `departmentName` and `staffRole` were read here and
-                  `applicationUser()` has never set either, so every gate user
-                  saw the literal "undefined • undefined". Neither is in the
-                  session; a guard's post comes from their shift. */}
-              {['Security', 'SecurityManager'].includes(currentUser.role)
-                ? currentUser.role === 'SecurityManager'
-                  ? 'Security management'
-                  : 'On duty'
-                : `Flat ${currentUser.flat} • Tower ${currentUser.tower}`}
+              {statusChipLabel}
             </div>
           )}
         </div>

@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+// The "unassigned types" tile below calls `useQuery` — this import is what
+// stood between /admin/departments and a ReferenceError that unmounted the
+// whole app (the tile was added with the category-picker rework, the import
+// was not).
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   BriefcaseBusiness,

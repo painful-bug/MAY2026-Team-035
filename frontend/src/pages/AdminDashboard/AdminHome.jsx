@@ -12,8 +12,24 @@ import {
   Building2
 } from 'lucide-react';
 
+// "+N this week", from the snapshot's `weeklyNew` counts (items created in the
+// trailing 7 days). This replaces a literal "+2 this week" that shipped with
+// the demo and survived into the live app. Defensive on purpose: the backend
+// field lands in parallel, so `weeklyNew` may be missing entirely — and a
+// missing field, a zero, or garbage all render nothing rather than a fake
+// trend.
+function TrendChip({ count }) {
+  const value = Number(count);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return (
+    <span className="text-[10px] text-emerald-600 font-semibold block flex items-center gap-0.5">
+      <TrendingUp className="w-3 h-3" /> +{value} this week
+    </span>
+  );
+}
+
 export default function AdminHome() {
-  const { users, pendingRequests, complaints, payments, activities } = useApp();
+  const { users, pendingRequests, complaints, payments, activities, weeklyNew } = useApp();
   const navigate = useNavigate();
 
   // Stats Calculations
@@ -43,9 +59,7 @@ export default function AdminHome() {
           <div className="space-y-1">
             <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Total Residents</span>
             <p className="text-2xl font-extrabold text-slate-800">{residentsCount}</p>
-            <span className="text-[10px] text-emerald-600 font-semibold block flex items-center gap-0.5">
-              <TrendingUp className="w-3 h-3" /> +2 this week
-            </span>
+            <TrendChip count={weeklyNew?.residents} />
           </div>
           <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-650 flex items-center justify-center">
             <Users className="w-5 h-5" />
@@ -80,6 +94,7 @@ export default function AdminHome() {
             <span className="text-[10px] text-amber-600 font-semibold block">
               Awaiting resolutions
             </span>
+            <TrendChip count={weeklyNew?.complaints} />
           </div>
           <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-605 flex items-center justify-center">
             <AlertTriangle className="w-5 h-5" />
