@@ -113,9 +113,12 @@ acknowledgements and nothing else.
 **Post-check.**
 
 ```sql
--- Confirm the amenity-payment notification no longer goes to notify_community_staff
-select prosrc like '%notify_community_roles%'
-       and prosrc not like '%notify_community_staff%' as looks_right
+-- Confirm the amenity-payment notification no longer CALLS notify_community_staff.
+-- (Match on `perform public.…`, not the bare name: the body keeps a deliberate
+-- `-- CHANGED: was notify_community_staff` comment, and comments inside the
+-- $$…$$ body are part of prosrc — a bare-name not-like is always false.)
+select prosrc like '%perform public.notify_community_roles%'
+       and prosrc not like '%perform public.notify_community_staff%' as looks_right
   from pg_proc
  where proname = 'settle_amenity_booking_payment';
 -- expect: looks_right = true
