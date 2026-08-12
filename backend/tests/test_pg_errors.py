@@ -16,7 +16,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
-from app.core.pg_errors import translate
+from app.core.pg_errors import custom_error, translate
 
 
 class FakeAPIError(Exception):
@@ -34,6 +34,13 @@ class FakeAPIError(Exception):
         ("HB403", AuthorizationError, "forbidden"),
         ("HB404", NotFoundError, "not_found"),
         ("HB409", ConflictError, "conflict"),
+        # The membership half of the separate-account rule
+        # (`20260812113000_professional_membership_symmetry.sql`). A 409, like
+        # the registration-time refusal it mirrors, but its own code: "you
+        # already belong here" and "this account is the wrong kind of account"
+        # are different things to tell a user and cannot be told apart from a
+        # status alone.
+        ("HBSEP", ConflictError, "professional_account_separate"),
         ("23505", ConflictError, "unique_violation"),
         ("23503", ValidationError, "foreign_key_violation"),
         ("23514", ValidationError, "check_violation"),
@@ -76,3 +83,33 @@ def test_error_without_a_code_is_handled():
     error = translate(RuntimeError("connection reset"), default_message="Nope.")
     assert type(error) is AppError
     assert error.message == "Nope."
+
+
+# ---------------------------------------------------------------------------
+# `custom_error` -- for call sites that keep their own fallback
+# ---------------------------------------------------------------------------
+
+
+def test_custom_error_returns_our_own_refusals():
+    error = custom_error(FakeAPIError("HBSEP", "Use a separate account."))
+    assert isinstance(error, ConflictError)
+    assert error.code == "professional_account_separate"
+    assert error.message == "Use a separate account."
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        FakeAPIError("23505", 'duplicate key value violates "secret_idx"'),
+        FakeAPIError("XX000", "internal detail"),
+        RuntimeError("connection reset"),
+    ],
+)
+def test_custom_error_declines_everything_that_is_not_ours(exc):
+    """A standard SQLSTATE's message is Postgres' words, not ours to forward."""
+    assert custom_error(exc) is None
+
+
+def test_custom_error_declines_one_of_ours_that_arrived_empty():
+    """The caller must always be able to fall back to its own wording."""
+    assert custom_error(FakeAPIError("HB409", "   ")) is None
