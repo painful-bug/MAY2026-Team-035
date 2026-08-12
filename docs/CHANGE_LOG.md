@@ -17,7 +17,27 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-12 — Session 73: the snapshot 500, and the trend chips get real numbers
+## 2026-08-12 — Session 74: CI diagnosis, and a runbook addendum for the two pulled privilege migrations
+
+### docs/plans/MIGRATION_APPLY_RUNBOOK.md — addendum §10–§12
+
+`AUDIT` (CI's red `database-browser` job prompted the dig; the teammate's fix commit `b9ab138`
+resolved it and brought two migrations the hosted project does not have). The addendum covers
+applying `20260812190000_grant_service_role_data_access.sql` and
+`20260812200000_enable_authenticated_request_client_reads.sql` in the SQL Editor, with per-file
+post-checks and the two ledger inserts (47 → 49). Verified statically before writing: both files
+parse, conflict with nothing applied, and every statement is re-run safe.
+
+The load-bearing finding, recorded in the addendum's "why promptly" note: **no migration in the
+chain ever enabled RLS on `staff_assignments`** — the repositories and the security-invoker
+`department_staff_overview` view were written assuming it was on. On hosted, roster reads work
+today only through Supabase's default grants, unscoped by any policy; `20260812200000` is what
+turns the scoping on. Two notes deliberately recorded rather than fixed (the migration is the
+teammate's): the blanket grant-select loop undoes the deny-by-default `revoke all` posture on
+server-only tables (still deny in practice — no policies exist), and the `for all` admin-write
+policy is paired with an `insert, update`-only grant, so a JWT-path delete would fail with a
+privilege error instead of a policy refusal — latent, since the only direct table access is the
+service client (`auth_service.py:289`).
 
 ### docs/API.md §5 — `GET /dashboard/snapshot` gains `weeklyNew`
 
