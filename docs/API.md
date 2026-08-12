@@ -42,6 +42,14 @@ This document is the contract between the backend and the React frontend. It is
 names the stories nothing serves yet. The stories and the user identification they came from are
 checked in under **[`product/`](product/)**.
 
+## Complaint Engine v2 additions (2026-08-12)
+
+- `POST /complaints/{complaintId}/cancel` accepts `{ mode: "cancel" | "repool", reason? }` and returns the refreshed resident complaint. It is available only before work starts; a stale request returns `409`.
+- `GET /work-orders/{workOrderId}/candidates?includeExcluded=true` returns the supervisor's ranked offer candidates, including workload, distance, leave end and exclusion flag.
+- `POST /complaints` accepts optional `skillId`; when present, the database validates the active skill and snapshots its name as the complaint category.
+- `POST /work-orders/{workOrderId}/assign` now creates a worker offer. The worker must accept before the job is scheduled.
+- The staff detail read is `GET /complaints/staff/complaints/{complaintId}`. It uses this non-colliding path because the existing resident `GET /complaints/{complaintId}` is already mounted unprefixed.
+
 > **Standing rule.** Every backend change updates this file in the same commit — new endpoints,
 > changed shapes, changed status codes. The frontend team is not in the room, and an endpoint that
 > exists only in Python is invisible to them.

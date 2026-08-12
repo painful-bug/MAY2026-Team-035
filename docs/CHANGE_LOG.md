@@ -17,6 +17,12 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Complaint Engine v2
+
+- `API.md`, `openapi.yaml`, and `api_yaml_mapper.md`: documented and regenerated the skill-based raise, resident cancel, candidate picker, and staff detail API surface.
+- `design-of-components.md`: recorded the tracker, candidate picker, and cancel/re-evaluation dialog responsibilities.
+- `erd/homebandhu.dbml`: added v2 complaint skill/pool, offer-force, cancellation, and complaint-timer relationships.
+
 ## 2026-08-12 — Session 72: the seven migrations landed, and the complaints engine got its map
 
 ### The hosted database caught up with the repository

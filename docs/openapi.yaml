@@ -1501,6 +1501,68 @@ components:
       - reason
       title: CancelWorkOrderRequest
       type: object
+    CancelWorkRequest:
+      properties:
+        mode:
+          enum:
+          - cancel
+          - repool
+          title: Mode
+          type: string
+        reason:
+          default: ''
+          maxLength: 2000
+          title: Reason
+          type: string
+      required:
+      - mode
+      title: CancelWorkRequest
+      type: object
+    Candidate:
+      properties:
+        awayUntil:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Awayuntil
+        displayName:
+          title: Displayname
+          type: string
+        distanceKm:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Distancekm
+        excluded:
+          default: false
+          title: Excluded
+          type: boolean
+        hasAdjacentJob:
+          default: false
+          title: Hasadjacentjob
+          type: boolean
+        membershipId:
+          title: Membershipid
+          type: string
+        openJobs:
+          default: 0
+          title: Openjobs
+          type: integer
+        serviceProviderId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Serviceproviderid
+        staffAssignmentId:
+          title: Staffassignmentid
+          type: string
+      required:
+      - staffAssignmentId
+      - membershipId
+      - displayName
+      title: Candidate
+      type: object
     CandidateProfile:
       description: 'A service person as a *hiring manager* sees them.
 
@@ -6167,8 +6229,8 @@ components:
         can honour and the gap is stated in ``API.md`` rather than half-built.'
       properties:
         category:
+          default: ''
           maxLength: 80
-          minLength: 1
           title: Category
           type: string
         departmentId:
@@ -6186,6 +6248,11 @@ components:
           maxLength: 200
           title: Location
           type: string
+        skillId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillid
         title:
           maxLength: 200
           minLength: 1
@@ -6197,7 +6264,6 @@ components:
           type: string
       required:
       - title
-      - category
       title: RaiseComplaintRequest
       type: object
     ReassignItemRequest:
@@ -8156,6 +8222,23 @@ components:
       - skillCount
       title: SkillsSavedResult
       type: object
+    StaffComplaintDetail:
+      properties:
+        complaint:
+          additionalProperties: true
+          title: Complaint
+          type: object
+        events:
+          items:
+            additionalProperties: true
+            type: object
+          title: Events
+          type: array
+      required:
+      - complaint
+      - events
+      title: StaffComplaintDetail
+      type: object
     StaffDeparture:
       description: A request to leave a department roster.
       properties:
@@ -9816,6 +9899,10 @@ components:
           default: false
           title: Isautoassigned
           type: boolean
+        isForced:
+          default: false
+          title: Isforced
+          type: boolean
         offeredAt:
           anyOf:
           - format: date-time
@@ -10062,6 +10149,10 @@ components:
           default: false
           title: Isautoassigned
           type: boolean
+        isForced:
+          default: false
+          title: Isforced
+          type: boolean
         locationText:
           anyOf:
           - type: string
@@ -10192,6 +10283,10 @@ components:
         isAutoAssigned:
           default: false
           title: Isautoassigned
+          type: boolean
+        isForced:
+          default: false
+          title: Isforced
           type: boolean
         locationText:
           anyOf:
@@ -13119,6 +13214,49 @@ paths:
         role: The expected resolution time is computed on insert from that priority, so it exists before
           anyone asks for it
         title: Complaint accountability
+  /api/v1/complaints/staff/complaints/{complaint_id}:
+    get:
+      operationId: staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffComplaintDetail'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Staff complaint detail with full timeline
+      tags:
+      - complaints
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'A supervisor telling their manager a complaint belongs to another department, and
+          the manager''s answer. Entirely inside the staff side of the wall: no interviewee described
+          it because no resident ever sees it, and the complaint stories are about what happens to *their*
+          complaint, not about who ends up holding it. It exists because the routing rule in 0050 is a
+          rule and rules are wrong sometimes -- and the alternative to a request is a supervisor who can
+          silently empty their own queue.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/complaints/{complaint_id}:
     get:
       description: 'One complaint with its timeline and public comment thread.
@@ -13259,6 +13397,52 @@ paths:
         role: Accepts assignee and expectedResolutionAt; both are stored, and both are dropped by the
           snapshot projection before a resident sees them
         title: Complaint accountability
+  /api/v1/complaints/{complaint_id}/cancel:
+    post:
+      operationId: cancel_complaint_work_api_v1_complaints__complaint_id__cancel_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelWorkRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplaintDetail'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Cancel or return scheduled work to the re-evaluation pool
+      tags:
+      - complaints
+      x-user-stories:
+      - coverage: served
+        id: US-2.6
+        role: Lets the resident cancel a pre-start visit or return the complaint for re-evaluation.
+        title: Complaint status tracking with history
   /api/v1/complaints/{complaint_id}/comments:
     post:
       description: 'Add a comment. Any member may comment; only admins may write `internal`.
@@ -20864,16 +21048,12 @@ paths:
       x-user-stories: []
   /api/v1/work-orders/{work_order_id}/assign:
     post:
-      description: 'Book somebody, and book their hour.
+      description: 'Offer somebody the job, and propose their hour.
 
 
-        Writes an **accepted** assignment rather than an offer: a supervisor naming
+        Writes an **offered** assignment. The worker must accept before the visit is
 
-        a person is a decision, not a question. The offer-and-wait path belongs to
-
-        the dispatcher, which is not built yet — until it is, this is also the
-
-        manual form of it.
+        booked; the existing 409 rules remain unchanged.
 
 
         **Assigning a job that is still `awaiting_resident` is allowed**, and that
@@ -21026,6 +21206,60 @@ paths:
         role: A cancelled visit notifies both sides with its reason -- the transition a resident is most
           likely to discover by waiting in for nobody
         title: Complaint lifecycle notifications
+  /api/v1/work-orders/{work_order_id}/candidates:
+    get:
+      operationId: work_order_candidates_api_v1_work_orders__work_order_id__candidates_get
+      parameters:
+      - in: path
+        name: work_order_id
+        required: true
+        schema:
+          title: Work Order Id
+          type: string
+      - in: query
+        name: includeExcluded
+        required: false
+        schema:
+          default: false
+          title: Includeexcluded
+          type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Candidate'
+                title: Response Work Order Candidates Api V1 Work Orders  Work Order Id  Candidates Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Eligible workers for a work-order offer
+      tags:
+      - work-orders
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'The supervisor''s machinery for turning a triaged complaint into a scheduled visit:
+          the queue, the job record, the edit and the assignment history. Three operations on this surface
+          DO serve stories -- proposing a time, assigning a person and moving or cancelling a visit all
+          reach the resident -- and these do not, which is the distinction worth keeping. The interviews
+          produced ''nobody tells me what is happening''; they did not produce a work queue. What a resident
+          learns from this machinery arrives through `GET /complaints`, the timeline and the schedule
+          request, and claiming US-2.8 for a screen only the department can open would make the matrix
+          say a resident sees something they cannot.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/work-orders/{work_order_id}/reschedule:
     post:
       description: 'Change when it happens. **The supervisor''s alone.**

@@ -9,11 +9,18 @@ attachments) went with the reads that were removed -- see
 
 from __future__ import annotations
 
+from typing import Any
+
 from datetime import datetime
 
 from pydantic import Field
 
 from app.domain.common_schemas import CamelModel
+
+
+class StaffComplaintDetail(CamelModel):
+    complaint: dict[str, Any]
+    events: list[dict[str, Any]]
 
 
 class UpdateComplaintRequest(CamelModel):

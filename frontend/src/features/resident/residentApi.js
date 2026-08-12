@@ -36,6 +36,8 @@ export const residentApi = {
    * resident guessed wrong is worse than sending nothing.
    */
   createComplaint: (payload) => post('/complaints', payload),
+  skills: () => api('/skills'),
+  cancelComplaintWork: (complaintId, payload) => post(`/complaints/${complaintId}/cancel`, payload),
   /** Mark the thread read; clears the unread badge, nothing else. */
   markComplaintRead: (complaintId) => post(`/complaints/${complaintId}/read`),
   reopenComplaint: (complaintId, payload = {}) =>

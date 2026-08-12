@@ -31,6 +31,7 @@ from app.api.admin_deps import require_csrf_unsafe
 from app.api.deps import get_request_client, require_membership_role
 from app.domain.work_order_schemas import (
     AssignWorkOrderRequest,
+    Candidate,
     CancelWorkOrderRequest,
     CreateWorkOrderRequest,
     RescheduleWorkOrderRequest,
@@ -163,6 +164,21 @@ async def get_work_order(
     return service.get_detail(client, work_order_id=work_order_id)
 
 
+@router.get(
+    "/work-orders/{work_order_id}/candidates",
+    response_model=list[Candidate],
+    summary="Eligible workers for a work-order offer",
+)
+async def work_order_candidates(
+    work_order_id: str = Path(...),
+    include_excluded: bool = Query(False, alias="includeExcluded"),
+    client: Client = Depends(get_request_client),
+) -> list[Candidate]:
+    return service.candidates(
+        client, work_order_id=work_order_id, include_excluded=include_excluded
+    )
+
+
 @router.patch(
     "/work-orders/{work_order_id}",
     response_model=WorkOrder,
@@ -199,12 +215,10 @@ async def assign_work_order(
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> WorkOrderDetail:
-    """Book somebody, and book their hour.
+    """Offer somebody the job, and propose their hour.
 
-    Writes an **accepted** assignment rather than an offer: a supervisor naming
-    a person is a decision, not a question. The offer-and-wait path belongs to
-    the dispatcher, which is not built yet — until it is, this is also the
-    manual form of it.
+    Writes an **offered** assignment. The worker must accept before the visit is
+    booked; the existing 409 rules remain unchanged.
 
     **Assigning a job that is still `awaiting_resident` is allowed**, and that
     is deliberate rather than an oversight. It is the hand-operated form of the

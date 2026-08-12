@@ -21,6 +21,16 @@ from app.core.pg_errors import translate
 from supabase import Client
 
 
+def staff_detail(client: Client, *, complaint_id: str) -> dict[str, object]:
+    try:
+        response = client.rpc(
+            "staff_complaint_detail", {"p_complaint_id": complaint_id}
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not load the complaint.") from exc
+    return response.data or {"complaint": {}, "events": []}
+
+
 def update_complaint(
     client: Client,
     *,

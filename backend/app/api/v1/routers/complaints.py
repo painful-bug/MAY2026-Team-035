@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Path, status
 from app.api.admin_deps import require_admin, require_csrf_unsafe
 from app.api.deps import get_active_membership, get_current_user, get_request_client
 from app.domain.common_schemas import MessageResult
-from app.domain.complaint_schemas import AddCommentRequest, UpdateComplaintRequest
+from app.domain.complaint_schemas import AddCommentRequest, StaffComplaintDetail, UpdateComplaintRequest
 from app.domain.schemas import MembershipContext
 from app.services import complaints_service
 from supabase import Client
@@ -26,6 +26,19 @@ router = APIRouter(
     tags=["complaints"],
     dependencies=[Depends(require_csrf_unsafe)],
 )
+
+
+@router.get(
+    "/staff/complaints/{complaint_id}",
+    response_model=StaffComplaintDetail,
+    dependencies=[Depends(require_admin)],
+    summary="Staff complaint detail with full timeline",
+)
+async def staff_complaint_detail(
+    complaint_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> StaffComplaintDetail:
+    return complaints_service.staff_detail(client, complaint_id=complaint_id)
 
 
 @router.patch(
