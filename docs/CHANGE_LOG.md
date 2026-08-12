@@ -17,6 +17,40 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 71: the portal that existed before its user did
+
+The owner restarted their end-to-end registration test and hit it immediately: an unregistered
+service professional landing at `/worker` saw the full portal — sidebar with Dashboard, Calendar,
+Availability, Communities, Complaints, Messages, Profile, Settings — with the "Register as a
+service partner" form rendered *inside the Dashboard tab*, and seven other tabs all clickable into
+screens that are meaningless without a provider profile.
+
+### fix(worker) — the registration gate hoisted from the page into the layout
+
+`PO` (the owner's report, verbatim requirement: no tabs until registration is done, and the form is
+not "a page in the Dashboard tab") / `DERIVED` for the mechanics — the gate itself
+(`profileComplete = latitude ∧ longitude ∧ skills`) was correct but lived in `Dashboard.jsx`, a
+*child* of the chrome it needed to suppress. It moved into `WorkerLayout.jsx`, which already owned
+the `['worker-snapshot']` query (react-query dedupes, no second fetch): incomplete profile now
+renders `RegisterProvider` full-page with no chrome mounted at all, and deep links to any
+`/worker/*` sub-path redirect to `/worker` so the URL matches the screen. The predicate is
+deliberately completeness, not existence — a half-saved registration still lands on the form,
+prefilled. In-flight snapshot holds a neutral full-screen state so the chrome never flashes;
+snapshot failure gets a minimal retry screen instead of a blank page. The old in-page gate was
+deleted, not shadowed. The transition needs no reload: the form's submit already awaits the
+snapshot invalidation before navigating, so the portal appears the moment registration lands.
+
+Five-gate: frontend only. ERD, class diagram, component design, Supabase — no impact
+(`WorkerLayout` was already the snapshot owner; this is a gate relocation, not a new component).
+
+### Verification
+
+`npm run test` 51 passed / 11 files (baseline 45/10; six new `WorkerLayout.test.jsx` gate tests:
+no-chrome, prefill, registered-unchanged, deep-link redirect, loading hold, error retry) ·
+`npx oxlint` 0 · `npm run build` clean.
+
+---
+
 ## 2026-08-12 — Session 70: the sign-in that finally met its first real caller
 
 The owner ran the app and OAuth completion failed with "Something went wrong" on every intent.
