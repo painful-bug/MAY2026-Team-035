@@ -781,8 +781,8 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "Found a community and make the caller its first administrator.\n\n"
             "The bootstrap case: the only write that does not require an existing "
             "membership, because it creates one. Requires a verified identity, "
-            "from any enabled provider. **409** if the name collides or the RPC "
-            "returns a row this API cannot read; **422** if the RPC rejects an "
+            "from any enabled provider. **409** for a translated database conflict "
+            "or if the RPC returns a non-object result; **422** if the RPC rejects an "
             "argument; **503** if the registration path has not been provisioned, "
             "or failed in a way this API cannot attribute to the caller."
         ),

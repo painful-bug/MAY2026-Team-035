@@ -256,7 +256,7 @@ schemas `domain/schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/onboarding/community` | `create_community` :12 | `create_community_api_v1_onboarding_community_post` | 200 CommunityOnboardingResponse | mention only — § 16.6 (API.md:3505) |
+| `POST /api/v1/onboarding/community` | `create_community` :12 | `create_community_api_v1_onboarding_community_post` | 200 CommunityOnboardingResponse | [`POST /onboarding/community`](API.md#post-apiv1onboardingcommunity) |
 
 ### `backend/app/api/v1/routers/people.py`
 
