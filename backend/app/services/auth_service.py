@@ -14,7 +14,7 @@ from app.core.supabase_client import (
     get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
-from app.domain.schemas import MembershipContext, Principal, SessionContext
+from app.domain.schemas import MembershipContext, Principal, Profile, SessionContext
 from app.repositories import profiles_repository
 from supabase import Client
 
@@ -320,11 +320,21 @@ def _active_memberships(profile_id: str) -> list[dict]:
 
 
 def _claim_staff_invitations(
-    profile: dict, principal: Principal, access_token: str
+    profile: Profile, principal: Principal, access_token: str
 ) -> bool:
     """Admit a manager or supervisor whose invitation names this email.
 
     Returns whether anything was claimed, so the caller knows to re-read.
+
+    **`profile` is the :class:`~app.domain.schemas.Profile` model, not a table
+    row.** The only caller is `get_session_context`, and both branches it can
+    arrive from -- `profiles_repository.get_profile` and
+    `profiles_repository.upsert_profile` -- return the model; the repository's
+    `_to_profile` is what maps the `profiles.display_email` column onto
+    `Profile.email`, so there is no second spelling to fall back to here. This
+    parameter was annotated `dict` and read with `.get()` while every caller
+    passed the model, which raised `AttributeError` before the `try` below and
+    so failed the whole session read rather than the claim.
 
     **The email is taken from the verified identity, never from the profile row
     alone.** `profiles.display_email` is written by `upsert_profile` from the
@@ -337,7 +347,7 @@ def _claim_staff_invitations(
     error should land on the account page and be admitted on their next
     sign-in, not be refused a session they are entitled to.
     """
-    email = profile.get("email") or profile.get("display_email")
+    email = profile.email
     try:
         email = verified_identity(access_token).email or email
     except Exception:  # noqa: BLE001 - see the docstring: never fail the session

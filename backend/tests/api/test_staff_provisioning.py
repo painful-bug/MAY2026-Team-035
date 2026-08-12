@@ -31,7 +31,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.domain.schemas import Principal
+from app.domain.schemas import Principal, Profile
+from app.repositories import profiles_repository
 from app.services import auth_service, hiring_service
 
 DEPARTMENT = "/api/v1/departments/department-id"
@@ -344,6 +345,30 @@ def seam(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     yield captured
 
 
+def signed_in_profile(**overrides: Any) -> Profile:
+    """A profile shaped the way `get_session_context` actually holds one.
+
+    Built through `profiles_repository._to_profile`, the one mapper both
+    branches of the session read go through, rather than hand-assembled -- so
+    the column names (`display_email`, `phone_e164`) and the model field names
+    (`email`, `phone`) stay each other's problem and not this file's.
+
+    These three tests used to pass a bare `dict` here. That is what let the
+    claim read `profile.get("email")` on a Pydantic model for three commits
+    without a single failure: the seam under test was the only caller that ever
+    sent a dict, and it was a test.
+    """
+    row: dict[str, Any] = {
+        "id": "profile-id",
+        "full_name": "Priya Nair",
+        "phone_e164": "+919876543210",
+        "display_email": "verified@example.com",
+        "is_active": True,
+    }
+    row.update(overrides)
+    return profiles_repository._to_profile(row)
+
+
 def test_api_215_the_claim_uses_the_verified_email_not_the_profile_row(
     seam: dict,
 ) -> None:
@@ -354,7 +379,7 @@ def test_api_215_the_claim_uses_the_verified_email_not_the_profile_row(
     department that had been provisioned for that address.
     """
     claimed = auth_service._claim_staff_invitations(
-        {"email": "attacker-controlled@example.com"},
+        signed_in_profile(display_email="attacker-controlled@example.com"),
         Principal(
             user_id="profile-id",
             email="verified@example.com",
@@ -380,7 +405,7 @@ def test_api_216_a_failed_claim_does_not_fail_the_session(seam: dict) -> None:
     """
     seam["claim_result"] = RuntimeError("connection reset")
     claimed = auth_service._claim_staff_invitations(
-        {"email": "verified@example.com"},
+        signed_in_profile(),
         Principal(
             user_id="profile-id",
             email="verified@example.com",
@@ -402,7 +427,7 @@ def test_api_217_nothing_to_claim_reports_nothing(seam: dict) -> None:
     seam["claim_result"] = []
     assert (
         auth_service._claim_staff_invitations(
-            {"email": "verified@example.com"},
+            signed_in_profile(),
             Principal(
                 user_id="profile-id",
                 email="verified@example.com",
@@ -413,3 +438,145 @@ def test_api_217_nothing_to_claim_reports_nothing(seam: dict) -> None:
         )
         is False
     )
+
+
+# ---------------------------------------------------------------------------
+# The whole session read, with the objects the session read actually holds
+# ---------------------------------------------------------------------------
+
+
+class _Rows:
+    def __init__(self, data: list[dict[str, Any]]) -> None:
+        self.data = data
+
+
+class _SessionQuery:
+    """The slice of the PostgREST builder `get_session_context` uses.
+
+    ``rows`` is a callable, not a list: the membership table has to answer
+    differently before and after the claim, which is the behaviour the whole
+    re-read exists for.
+    """
+
+    def __init__(self, rows: Any) -> None:
+        self._rows = rows
+
+    def select(self, *_: Any, **__: Any) -> _SessionQuery:
+        return self
+
+    def eq(self, *_: Any) -> _SessionQuery:
+        return self
+
+    def is_(self, *_: Any) -> _SessionQuery:
+        return self
+
+    def in_(self, *_: Any) -> _SessionQuery:
+        return self
+
+    def order(self, *_: Any, **__: Any) -> _SessionQuery:
+        return self
+
+    def limit(self, *_: Any) -> _SessionQuery:
+        return self
+
+    def execute(self) -> _Rows:
+        return _Rows(list(self._rows()))
+
+
+class _SessionService:
+    """A service client where the claim RPC is what creates the membership."""
+
+    MEMBERSHIP: dict[str, Any] = {
+        "id": "membership-id",
+        "community_id": "community-id",
+        "role": "manager",
+        "department_id": "department-id",
+        "is_default_community": True,
+    }
+
+    def __init__(self) -> None:
+        self.claimed_with: dict[str, Any] | None = None
+        self.tables: list[str] = []
+
+    def _rows_for(self, name: str) -> list[dict[str, Any]]:
+        if name == "community_memberships":
+            return [self.MEMBERSHIP] if self.claimed_with else []
+        if name == "departments":
+            return [{"kind": "service"}]
+        return []
+
+    def table(self, name: str) -> _SessionQuery:
+        self.tables.append(name)
+        return _SessionQuery(lambda: self._rows_for(name))
+
+    def rpc(self, name: str, params: dict[str, Any]) -> Any:
+        service = self
+
+        class _RPC:
+            def execute(self) -> _Rows:
+                service.claimed_with = params
+                return _Rows([{"membership_id": "membership-id"}])
+
+        return _RPC()
+
+
+def test_api_261_the_provisioned_manager_is_admitted_by_the_session_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The claim, called the way production calls it -- with a `Profile`.
+
+    `api_215`-`api_217` hand `_claim_staff_invitations` its argument directly,
+    so they were free to invent its shape, and they invented a dict. The only
+    real caller is `get_session_context`, which holds whatever
+    `profiles_repository` returns, and that has always been the `Profile` model.
+    Reading it with `.get()` therefore raised `AttributeError` *before* the
+    deliberate swallow inside the claim -- so the failure did not degrade to "no
+    claim this time", it took down `GET /api/v1/auth/session` with a 500 for
+    every signed-in user, on every request, whatever their intent.
+
+    Nothing above this line would have noticed: no test called
+    `get_session_context` at all. This one does, and asserts the outcome the
+    claim exists to produce -- a manager who has never signed in before lands in
+    their portal on their first sign-in.
+    """
+    service = _SessionService()
+    monkeypatch.setattr(auth_service, "get_service_client", lambda: service)
+    monkeypatch.setattr(
+        auth_service,
+        "verified_identity",
+        lambda _token: Principal(
+            user_id="profile-id",
+            email="verified@example.com",
+            email_verified=True,
+            full_name="Priya Nair",
+        ),
+    )
+    profile = signed_in_profile()
+    monkeypatch.setattr(
+        auth_service.profiles_repository,
+        "get_profile",
+        lambda _client, _user_id: profile,
+    )
+
+    context = auth_service.get_session_context(
+        object(),  # type: ignore[arg-type]  # the repository read is stubbed
+        Principal(
+            user_id="profile-id",
+            email="verified@example.com",
+            email_verified=True,
+            full_name="Priya Nair",
+        ),
+        "access-token",
+    )
+
+    assert service.claimed_with == {
+        "p_profile_id": "profile-id",
+        "p_email": "verified@example.com",
+    }
+    assert context.identity == profile
+    assert context.membership is not None
+    assert context.membership.id == "membership-id"
+    assert context.portal == "manager"
+    assert context.onboarding_eligible is False
+    # The re-read is the point: membership, claim, membership.
+    assert service.tables.count("community_memberships") == 2
