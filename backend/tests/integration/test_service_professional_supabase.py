@@ -777,14 +777,14 @@ def test_funnel_retention_removes_only_expired_events() -> None:
     expired = str(uuid4())
     current = str(uuid4())
     service.table("service_signup_funnel_events").insert(
-        [
-            {
-                "visitor_id": expired,
-                "event_name": "cta_impression",
-                "occurred_at": "2020-01-01T00:00:00Z",
-            },
-            {"visitor_id": current, "event_name": "cta_impression"},
-        ]
+        {
+            "visitor_id": expired,
+            "event_name": "cta_impression",
+            "occurred_at": "2020-01-01T00:00:00Z",
+        }
+    ).execute()
+    service.table("service_signup_funnel_events").insert(
+        {"visitor_id": current, "event_name": "cta_impression"}
     ).execute()
 
     assert service.rpc("prune_service_signup_funnel_events").execute().data >= 1

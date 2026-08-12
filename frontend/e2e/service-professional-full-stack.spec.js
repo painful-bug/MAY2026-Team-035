@@ -23,7 +23,8 @@ async function request(path, { method = 'GET', body, token = serviceKey } = {}) 
 
 async function createConfirmedUser(label) {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const email = `${label}-${suffix}@example.test`;
+  const emailLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  const email = `${emailLabel}-${suffix}@example.test`;
   const password = `HomeBandhu-${suffix}-Password!`;
   const created = await request('/auth/v1/admin/users', {
     method: 'POST',
@@ -103,8 +104,11 @@ test('email login, atomic profile, nearest application, approval, and next login
   await page.getByRole('button', { name: 'Next' }).click();
 
   await expect(page).toHaveURL(/\/worker\/communities\?tab=find$/);
-  await expect(page.getByText(community.name)).toBeVisible();
-  await page.getByRole('button', { name: 'Apply · Maintenance' }).click();
+  const communityCard = page
+    .getByText(community.name, { exact: true })
+    .locator('xpath=ancestor::div[.//button][1]');
+  await expect(communityCard).toBeVisible();
+  await communityCard.getByRole('button', { name: 'Apply · Maintenance' }).click();
   await expect(page).toHaveURL(/tab=applications/);
   await expect(page.getByText('pending', { exact: true })).toBeVisible();
 
