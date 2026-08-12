@@ -5,6 +5,15 @@ const STEPS = [
 
 const typeOf = (event) => event.eventType || event.type || event.event_type;
 
+export function canCancelUnstartedWork(events = []) {
+  const latestAssignment = events.findLastIndex((event) =>
+    ['job_assigned', 'job_scheduled'].includes(typeOf(event))
+  );
+  return latestAssignment >= 0 && !events.slice(latestAssignment + 1).some((event) =>
+    ['job_started', 'job_completed'].includes(typeOf(event))
+  );
+}
+
 export function projectTracker(events = []) {
   const all = [...events];
   const lastReopen = all.map(typeOf).lastIndexOf('reopened');

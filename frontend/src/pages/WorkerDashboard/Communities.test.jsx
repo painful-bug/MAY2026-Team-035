@@ -29,7 +29,7 @@ beforeEach(() => {
   mocks.myApplications.mockReset().mockResolvedValue([]);
 });
 
-it('searches communities as the name is typed', async () => {
+it('debounces community searches as the name is typed', async () => {
   const user = userEvent.setup();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -45,5 +45,6 @@ it('searches communities as the name is typed', async () => {
 
   await user.type(screen.getByRole('textbox'), 'Palm');
 
+  expect(mocks.searchCommunities).not.toHaveBeenCalled();
   await waitFor(() => expect(mocks.searchCommunities).toHaveBeenCalledWith({ query: 'Palm' }));
 });

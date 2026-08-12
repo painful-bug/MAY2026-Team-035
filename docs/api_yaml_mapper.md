@@ -164,7 +164,7 @@ Owned by the auth workstream. The spec's error codes and descriptions for these 
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/complaints/staff/complaints/{complaint_id}` | `staff_complaint_detail` :31 | `staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get` | 200 StaffComplaintDetail | **missing** |
+| `GET /api/v1/complaints/staff/complaints/{complaint_id}` | `staff_complaint_detail` :31 | `staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get` | 200 StaffComplaintDetail | § Complaint Engine v2 additions (API.md:45) |
 | `PATCH /api/v1/complaints/{complaint_id}` | `update_complaint` :44 | `update_complaint_api_v1_complaints__complaint_id__patch` | 200 MessageResult | § `PATCH /api/v1/complaints/{complaintId}` (API.md:958) |
 | `POST /api/v1/complaints/{complaint_id}/comments` | `add_comment` :71 | `add_comment_api_v1_complaints__complaint_id__comments_post` | 201 MessageResult | § `POST /api/v1/complaints/{complaintId}/comments` (API.md:990) |
 
@@ -302,7 +302,7 @@ schemas `domain/resident_complaint_schemas.py`, `domain/common_schemas.py`, `dom
 | `GET /api/v1/complaints` | `list_my_complaints` :52 | `list_my_complaints_api_v1_complaints_get` | 200 Page_ComplaintSummary_ | § `GET /api/v1/complaints` (API.md:1027) |
 | `POST /api/v1/complaints` | `raise_complaint` :97 | `raise_complaint_api_v1_complaints_post` | 201 ComplaintDetail | § `POST /api/v1/complaints` (API.md:1055) |
 | `GET /api/v1/complaints/{complaint_id}` | `get_complaint` :127 | `get_complaint_api_v1_complaints__complaint_id__get` | 200 ComplaintDetail | § `GET /api/v1/complaints/{complaintId}` (API.md:1103) |
-| `POST /api/v1/complaints/{complaint_id}/cancel` | `cancel_complaint_work` :160 | `cancel_complaint_work_api_v1_complaints__complaint_id__cancel_post` | 200 ComplaintDetail | **missing** |
+| `POST /api/v1/complaints/{complaint_id}/cancel` | `cancel_complaint_work` :160 | `cancel_complaint_work_api_v1_complaints__complaint_id__cancel_post` | 200 ComplaintDetail | § Complaint Engine v2 additions (API.md:45) |
 | `POST /api/v1/complaints/{complaint_id}/read` | `mark_complaint_read` :238 | `mark_complaint_read_api_v1_complaints__complaint_id__read_post` | 200 MessageResult | § `POST …/read` |
 | `POST /api/v1/complaints/{complaint_id}/reopen` | `reopen_complaint` :177 | `reopen_complaint_api_v1_complaints__complaint_id__reopen_post` | 200 ComplaintDetail | § `POST …/reopen` |
 | `POST /api/v1/complaints/{complaint_id}/resolution` | `confirm_resolution` :208 | `confirm_resolution_api_v1_complaints__complaint_id__resolution_post` | 200 ComplaintDetail | § `POST …/resolution` |
@@ -568,7 +568,7 @@ schemas `domain/work_order_schemas.py`
 | `PATCH /api/v1/work-orders/{work_order_id}` | `update_work_order` :182 | `update_work_order_api_v1_work_orders__work_order_id__patch` | 200 WorkOrder | § `PATCH /api/v1/work-orders/{workOrderId}` (API.md:5893) |
 | `POST /api/v1/work-orders/{work_order_id}/assign` | `assign_work_order` :208 | `assign_work_order_api_v1_work_orders__work_order_id__assign_post` | 200 WorkOrderDetail | § `POST …/assign` |
 | `POST /api/v1/work-orders/{work_order_id}/cancel` | `cancel_work_order` :273 | `cancel_work_order_api_v1_work_orders__work_order_id__cancel_post` | 200 WorkOrder | § `POST …/cancel` |
-| `GET /api/v1/work-orders/{work_order_id}/candidates` | `work_order_candidates` :167 | `work_order_candidates_api_v1_work_orders__work_order_id__candidates_get` | 200 array of Candidate | **missing** |
+| `GET /api/v1/work-orders/{work_order_id}/candidates` | `work_order_candidates` :167 | `work_order_candidates_api_v1_work_orders__work_order_id__candidates_get` | 200 array of Candidate | § Complaint Engine v2 additions (API.md:45) |
 | `POST /api/v1/work-orders/{work_order_id}/reschedule` | `reschedule_work_order` :247 | `reschedule_work_order_api_v1_work_orders__work_order_id__reschedule_post` | 200 WorkOrderDetail | § `POST …/reschedule` |
 
 > **The role guard is coarse by construction, and the file says so.** A department supervisor holds a

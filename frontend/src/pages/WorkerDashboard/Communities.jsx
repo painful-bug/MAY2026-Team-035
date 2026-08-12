@@ -8,6 +8,7 @@ import { communityColor } from '../../lib/communityColor';
 import { destinationAfterAuth } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
+import { useDebounced } from '../../features/departments/components/useDebounced';
 
 // One screen, three panels. The plan gave this three sidebar entries --
 // MyCommunities, FindCommunities, Applications -- and they are three views of
@@ -140,9 +141,10 @@ function Rosters() {
 function Find({ onApplied }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
+  const debouncedQuery = useDebounced(query.trim());
   const results = useQuery({
-    queryKey: ['worker-community-search', query],
-    queryFn: () => workerApi.searchCommunities({ query }),
+    queryKey: ['worker-community-search', debouncedQuery],
+    queryFn: () => workerApi.searchCommunities({ query: debouncedQuery }),
   });
   const profile = useQuery({ queryKey: ['worker-profile'], queryFn: workerApi.profile });
   const applications = useQuery({ queryKey: ['worker-applications'], queryFn: workerApi.myApplications });

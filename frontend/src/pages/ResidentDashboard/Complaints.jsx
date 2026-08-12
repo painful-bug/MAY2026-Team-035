@@ -24,6 +24,7 @@ import { residentApi } from '../../features/resident/residentApi';
 import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
 import { residentFaqs } from '../../data/residentFaqs';
 import { ComplaintTracker } from '../../features/complaints/ComplaintTracker';
+import { canCancelUnstartedWork } from '../../features/complaints/trackerProjection';
 
 // The resident's complaints, over the live API: `GET /complaints`,
 // `GET /complaints/{id}`, and the four writes that belong to the person who
@@ -317,9 +318,7 @@ function ComplaintDrawer({ complaintId, onClose }) {
   });
 
   const complaint = detail.data;
-  const timelineTypes = new Set((complaint?.timeline ?? []).map((event) => event.type));
-  const canCancelWork = (timelineTypes.has('job_assigned') || timelineTypes.has('job_scheduled'))
-    && !timelineTypes.has('job_started') && !timelineTypes.has('job_completed');
+  const canCancelWork = canCancelUnstartedWork(complaint?.timeline);
 
   return (
     <div
@@ -785,8 +784,8 @@ function RaiseComplaintModal({ onClose, onCreated }) {
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Trade">
-              <select required value={form.skillId} onChange={set('skillId')} className={selectClass}>
-                <option value="">Choose a trade…</option>
+              <select required disabled={skills.isLoading || skills.isError} value={form.skillId} onChange={set('skillId')} className={selectClass}>
+                <option value="">{skills.isLoading ? 'Loading trades…' : skills.isError ? 'Trades unavailable' : 'Choose a trade…'}</option>
                 {Object.entries((skills.data ?? []).reduce((groups, skill) => {
                   const group = skill.category || 'Other';
                   (groups[group] ||= []).push(skill);
@@ -797,6 +796,7 @@ function RaiseComplaintModal({ onClose, onCreated }) {
                   </optgroup>
                 ))}
               </select>
+              {skills.isError ? <p role="alert" className="text-[10px] font-semibold text-rose-600">{skills.error?.message || 'Trades could not be loaded. Please try again.'}</p> : null}
             </Field>
             <Field label="Urgency">
               <select value={form.urgency} onChange={set('urgency')} className={selectClass}>
