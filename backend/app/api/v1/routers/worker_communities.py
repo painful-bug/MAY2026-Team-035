@@ -78,11 +78,12 @@ async def search_communities(
     limit: int = Query(20, ge=1, le=20),
     offset: int = Query(0, ge=0),
 ) -> list[ServiceableCommunity]:
-    """Where the caller could apply, nearest first.
+    """Nearby communities, nearest first.
 
-    Three rules, all applied in SQL: the community has a department whose
-    categories need one of the caller's skills, it has not blacklisted them, and
-    they are not already a member of it.
+    A row is visible by proximity even if that community has not configured a
+    matching department yet. Its application buttons still contain only active
+    departments whose categories need one of the caller's skills. Blacklisted
+    communities and communities the caller already belongs to stay hidden.
 
     Results are limited to the caller's service radius. Communities without
     coordinates are excluded, and an incomplete legacy provider receives the

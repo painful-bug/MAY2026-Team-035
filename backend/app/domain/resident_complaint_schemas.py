@@ -23,7 +23,7 @@ in ``domain/vocabularies.py``. The column is ``priority``; the form says
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints
 
@@ -166,7 +166,10 @@ class RaiseComplaintRequest(CamelModel):
 
     title: _required_text(200)  # type: ignore[valid-type]
     description: _optional_text(4000) = ""  # type: ignore[valid-type]
-    category: _required_text(80)  # type: ignore[valid-type]
+    # Legacy callers still send category. New callers submit skillId and the
+    # database snapshots that skill's current name into category.
+    category: _optional_text(80) = ""  # type: ignore[valid-type]
+    skill_id: str | None = Field(default=None, alias="skillId")
     #: ``High`` | ``Medium`` | ``Low``. Defaults to ``Low``, matching the form.
     urgency: str = Field(default="Low")
     location: _optional_text(200) = ""  # type: ignore[valid-type]
@@ -185,6 +188,11 @@ class RaiseComplaintRequest(CamelModel):
     #: ignored rather than refused. A stale form should file the complaint into
     #: the triage queue, not fail to file it.
     department_id: str | None = None
+
+
+class CancelWorkRequest(CamelModel):
+    mode: Literal["cancel", "repool"]
+    reason: _optional_text(2000) = ""  # type: ignore[valid-type]
 
 
 class ReopenComplaintRequest(CamelModel):

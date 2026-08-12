@@ -81,6 +81,8 @@ export const workOrdersApi = {
    * `assigneeName`.
    */
   detail: (workOrderId) => api(`/work-orders/${workOrderId}`),
+  candidates: (workOrderId, { includeExcluded = false } = {}) =>
+    api(`/work-orders/${workOrderId}/candidates${includeExcluded ? '?includeExcluded=true' : ''}`),
 
   /**
    * Change what the job is: `{ skillId?, subjectKind?, locationText?, priority? }`.

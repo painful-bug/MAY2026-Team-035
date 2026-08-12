@@ -15,7 +15,10 @@ which would look like a worker with no jobs rather than like a bug.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
+
+from postgrest.exceptions import APIError
 
 from app.core.pg_errors import translate
 from supabase import Client
@@ -32,17 +35,13 @@ _JOB_SELECT = (
     "assignment_id, work_order_id, staff_assignment_id, assignment_status, "
     "work_order_status, priority, subject_kind, scheduled_start_at, "
     "scheduled_end_at, offered_at, responded_at, decline_reason, "
-    "is_auto_assigned, community_id, community_name, department_id, "
+    "is_auto_assigned, is_forced, community_id, community_name, department_id, "
     "department_name, department_kind, complaint_id, complaint_title, "
     "complaint_category, skill_name, location_text, failed_attempt_count, "
     "cancelled_reason"
 )
-
-#: The detail screen adds what somebody has to know to turn up: the complaint in
-#: full, and who to meet.
-_JOB_DETAIL_SELECT = (
-    f"{_JOB_SELECT}, complaint_description, resident_name, "
-    "resident_phone_e164, resident_unit_code"
+_LEGACY_JOB_SELECT = _JOB_SELECT.replace(
+    "is_auto_assigned, is_forced", "is_auto_assigned"
 )
 
 _UNAVAILABILITY_SELECT = (
@@ -53,6 +52,19 @@ _RULE_SELECT = (
     "id, weekday, start_time, end_time, effective_from, effective_to, scope, "
     "department_name"
 )
+
+
+def _job_rows(query: Callable[[str], Any]) -> list[dict[str, Any]]:
+    """Read either version of the worker view while the v2 migration rolls out."""
+    try:
+        return query(_JOB_SELECT).execute().data or []
+    except APIError as exc:
+        if exc.code != "42703" or "my_worker_job.is_forced" not in exc.message:
+            raise
+    return [
+        {**row, "is_forced": False}
+        for row in (query(_LEGACY_JOB_SELECT).execute().data or [])
+    ]
 
 
 def list_jobs(
@@ -70,21 +82,22 @@ def list_jobs(
     with no slot yet is not the most urgent thing on the screen, and sorting
     nulls first would put it above the visit happening in an hour.
     """
-    query = client.table(_JOBS).select(_JOB_SELECT)
-    if work_order_status:
-        query = query.eq("work_order_status", work_order_status)
-    if assignment_status:
-        query = query.eq("assignment_status", assignment_status)
-    if starts_from:
-        query = query.gte("scheduled_start_at", starts_from)
-    if starts_to:
-        query = query.lte("scheduled_start_at", starts_to)
-    query = query.order("scheduled_start_at", desc=False, nullsfirst=False).order(
-        "offered_at", desc=True
-    )
-    if limit:
-        query = query.limit(limit)
-    return query.execute().data or []
+    def query(columns: str) -> Any:
+        result = client.table(_JOBS).select(columns)
+        if work_order_status:
+            result = result.eq("work_order_status", work_order_status)
+        if assignment_status:
+            result = result.eq("assignment_status", assignment_status)
+        if starts_from:
+            result = result.gte("scheduled_start_at", starts_from)
+        if starts_to:
+            result = result.lte("scheduled_start_at", starts_to)
+        result = result.order("scheduled_start_at", desc=False, nullsfirst=False).order(
+            "offered_at", desc=True
+        )
+        return result.limit(limit) if limit else result
+
+    return _job_rows(query)
 
 
 def get_job(client: Client, *, work_order_id: str) -> dict[str, Any] | None:
@@ -94,16 +107,19 @@ def get_job(client: Client, *, work_order_id: str) -> dict[str, Any] | None:
     the caller has nothing to do with should not be confirmed as existing, which
     is the posture the RPCs in ``0039`` 3 take with their own 404s.
     """
-    rows = (
-        client.table(_JOBS)
-        .select(_JOB_DETAIL_SELECT)
-        .eq("work_order_id", work_order_id)
-        .order("offered_at", desc=True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
+    def query(columns: str) -> Any:
+        return (
+            client.table(_JOBS)
+            .select(
+                f"{columns}, complaint_description, resident_name, "
+                "resident_phone_e164, resident_unit_code"
+            )
+            .eq("work_order_id", work_order_id)
+            .order("offered_at", desc=True)
+            .limit(1)
+        )
+
+    rows = _job_rows(query)
     return rows[0] if rows else None
 
 

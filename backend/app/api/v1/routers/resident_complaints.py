@@ -35,6 +35,7 @@ from app.domain.common_schemas import MessageResult, Page
 from app.domain.resident_complaint_schemas import (
     ComplaintDetail,
     ComplaintSummary,
+    CancelWorkRequest,
     ConfirmResolutionRequest,
     RaiseComplaintRequest,
     ReopenComplaintRequest,
@@ -153,6 +154,23 @@ async def get_complaint(
     """
     return service.get_mine(
         client, membership_id=membership.id, complaint_id=complaint_id
+    )
+
+
+@router.post(
+    "/complaints/{complaint_id}/cancel",
+    response_model=ComplaintDetail,
+    dependencies=[Depends(_resident_only)],
+    summary="Cancel or return scheduled work to the re-evaluation pool",
+)
+async def cancel_complaint_work(
+    body: CancelWorkRequest,
+    complaint_id: str = Path(...),
+    membership: MembershipContext = Depends(get_active_membership),
+    client: Client = Depends(get_request_client),
+) -> ComplaintDetail:
+    return service.cancel_work(
+        client, membership_id=membership.id, complaint_id=complaint_id, body=body
     )
 
 

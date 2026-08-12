@@ -140,10 +140,9 @@ function Rosters() {
 function Find({ onApplied }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
-  const [term, setTerm] = useState('');
   const results = useQuery({
-    queryKey: ['worker-community-search', term],
-    queryFn: () => workerApi.searchCommunities({ query: term }),
+    queryKey: ['worker-community-search', query],
+    queryFn: () => workerApi.searchCommunities({ query }),
   });
   const profile = useQuery({ queryKey: ['worker-profile'], queryFn: workerApi.profile });
   const applications = useQuery({ queryKey: ['worker-applications'], queryFn: workerApi.myApplications });
@@ -168,14 +167,12 @@ function Find({ onApplied }) {
         inputId="worker-community-search"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        onSubmit={() => setTerm(query.trim())}
-        placeholder="Search by name, or leave blank for the nearest"
-        submitLabel="Search"
+        placeholder="Search nearby communities by name"
         isLoading={results.isPending}
         error={results.isError ? results.error?.message || 'Could not search for communities.' : null}
         items={rows}
         showEmpty={results.isSuccess && rows.length === 0}
-        emptyMessage="No communities match your skills, name search, and travel radius right now."
+        emptyMessage="No nearby communities match this name and travel radius."
         resultsClassName="grid gap-3 sm:grid-cols-2"
         renderResult={(community) => (
           <div key={community.id} className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -197,6 +194,9 @@ function Find({ onApplied }) {
                 </button>
               ))}
             </div>
+            {community.departments?.length === 0 && (
+              <p className="mt-3 text-[11px] font-semibold text-slate-500">No matching department is hiring right now.</p>
+            )}
           </div>
         )}
       />
@@ -213,7 +213,7 @@ function Find({ onApplied }) {
       )}
 
       <p className="rounded-xl bg-indigo-50 px-4 py-3 text-xs font-semibold text-indigo-800">
-        Showing the nearest matches within your {profile.data?.serviceRadiusKm ?? 15} km travel radius. Communities outside it or without coordinates are not shown.
+        Showing nearby communities within your {profile.data?.serviceRadiusKm ?? 15} km travel radius. Communities outside it or without coordinates are not shown.
       </p>
 
     </div>

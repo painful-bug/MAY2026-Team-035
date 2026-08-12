@@ -164,8 +164,9 @@ Owned by the auth workstream. The spec's error codes and descriptions for these 
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `PATCH /api/v1/complaints/{complaint_id}` | `update_complaint` :31 | `update_complaint_api_v1_complaints__complaint_id__patch` | 200 MessageResult | § `PATCH /api/v1/complaints/{complaintId}` (API.md:958) |
-| `POST /api/v1/complaints/{complaint_id}/comments` | `add_comment` :58 | `add_comment_api_v1_complaints__complaint_id__comments_post` | 201 MessageResult | § `POST /api/v1/complaints/{complaintId}/comments` (API.md:990) |
+| `GET /api/v1/complaints/staff/complaints/{complaint_id}` | `staff_complaint_detail` :31 | `staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get` | 200 StaffComplaintDetail | **missing** |
+| `PATCH /api/v1/complaints/{complaint_id}` | `update_complaint` :44 | `update_complaint_api_v1_complaints__complaint_id__patch` | 200 MessageResult | § `PATCH /api/v1/complaints/{complaintId}` (API.md:958) |
+| `POST /api/v1/complaints/{complaint_id}/comments` | `add_comment` :71 | `add_comment_api_v1_complaints__complaint_id__comments_post` | 201 MessageResult | § `POST /api/v1/complaints/{complaintId}/comments` (API.md:990) |
 
 ### `backend/app/api/v1/routers/dashboard.py`
 
@@ -298,12 +299,13 @@ schemas `domain/resident_complaint_schemas.py`, `domain/common_schemas.py`, `dom
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/complaints` | `list_my_complaints` :51 | `list_my_complaints_api_v1_complaints_get` | 200 Page_ComplaintSummary_ | § `GET /api/v1/complaints` (API.md:1027) |
-| `POST /api/v1/complaints` | `raise_complaint` :96 | `raise_complaint_api_v1_complaints_post` | 201 ComplaintDetail | § `POST /api/v1/complaints` (API.md:1055) |
-| `GET /api/v1/complaints/{complaint_id}` | `get_complaint` :126 | `get_complaint_api_v1_complaints__complaint_id__get` | 200 ComplaintDetail | § `GET /api/v1/complaints/{complaintId}` (API.md:1103) |
-| `POST /api/v1/complaints/{complaint_id}/read` | `mark_complaint_read` :220 | `mark_complaint_read_api_v1_complaints__complaint_id__read_post` | 200 MessageResult | § `POST …/read` |
-| `POST /api/v1/complaints/{complaint_id}/reopen` | `reopen_complaint` :159 | `reopen_complaint_api_v1_complaints__complaint_id__reopen_post` | 200 ComplaintDetail | § `POST …/reopen` |
-| `POST /api/v1/complaints/{complaint_id}/resolution` | `confirm_resolution` :190 | `confirm_resolution_api_v1_complaints__complaint_id__resolution_post` | 200 ComplaintDetail | § `POST …/resolution` |
+| `GET /api/v1/complaints` | `list_my_complaints` :52 | `list_my_complaints_api_v1_complaints_get` | 200 Page_ComplaintSummary_ | § `GET /api/v1/complaints` (API.md:1027) |
+| `POST /api/v1/complaints` | `raise_complaint` :97 | `raise_complaint_api_v1_complaints_post` | 201 ComplaintDetail | § `POST /api/v1/complaints` (API.md:1055) |
+| `GET /api/v1/complaints/{complaint_id}` | `get_complaint` :127 | `get_complaint_api_v1_complaints__complaint_id__get` | 200 ComplaintDetail | § `GET /api/v1/complaints/{complaintId}` (API.md:1103) |
+| `POST /api/v1/complaints/{complaint_id}/cancel` | `cancel_complaint_work` :160 | `cancel_complaint_work_api_v1_complaints__complaint_id__cancel_post` | 200 ComplaintDetail | **missing** |
+| `POST /api/v1/complaints/{complaint_id}/read` | `mark_complaint_read` :238 | `mark_complaint_read_api_v1_complaints__complaint_id__read_post` | 200 MessageResult | § `POST …/read` |
+| `POST /api/v1/complaints/{complaint_id}/reopen` | `reopen_complaint` :177 | `reopen_complaint_api_v1_complaints__complaint_id__reopen_post` | 200 ComplaintDetail | § `POST …/reopen` |
+| `POST /api/v1/complaints/{complaint_id}/resolution` | `confirm_resolution` :208 | `confirm_resolution_api_v1_complaints__complaint_id__resolution_post` | 200 ComplaintDetail | § `POST …/resolution` |
 
 ### `backend/app/api/v1/routers/resident_home.py`
 
@@ -559,14 +561,15 @@ schemas `domain/work_order_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/complaints/{complaint_id}/work-orders` | `list_complaint_work_orders` :99 | `list_complaint_work_orders_api_v1_complaints__complaint_id__work_orders_get` | 200 array of WorkOrder | § `GET …/work-orders` |
-| `POST /api/v1/complaints/{complaint_id}/work-orders` | `create_work_order` :55 | `create_work_order_api_v1_complaints__complaint_id__work_orders_post` | 201 WorkOrder | § `POST …/work-orders` |
-| `GET /api/v1/departments/{department_id}/work-orders` | `list_department_work_orders` :117 | `list_department_work_orders_api_v1_departments__department_id__work_orders_get` | 200 array of WorkOrder | § `GET /api/v1/departments/{departmentId}/work-orders` (API.md:5832) |
-| `GET /api/v1/work-orders/{work_order_id}` | `get_work_order` :141 | `get_work_order_api_v1_work_orders__work_order_id__get` | 200 WorkOrderDetail | § `GET /api/v1/work-orders/{workOrderId}` (API.md:5850) |
-| `PATCH /api/v1/work-orders/{work_order_id}` | `update_work_order` :166 | `update_work_order_api_v1_work_orders__work_order_id__patch` | 200 WorkOrder | § `PATCH /api/v1/work-orders/{workOrderId}` (API.md:5893) |
-| `POST /api/v1/work-orders/{work_order_id}/assign` | `assign_work_order` :192 | `assign_work_order_api_v1_work_orders__work_order_id__assign_post` | 200 WorkOrderDetail | § `POST …/assign` |
-| `POST /api/v1/work-orders/{work_order_id}/cancel` | `cancel_work_order` :259 | `cancel_work_order_api_v1_work_orders__work_order_id__cancel_post` | 200 WorkOrder | § `POST …/cancel` |
-| `POST /api/v1/work-orders/{work_order_id}/reschedule` | `reschedule_work_order` :233 | `reschedule_work_order_api_v1_work_orders__work_order_id__reschedule_post` | 200 WorkOrderDetail | § `POST …/reschedule` |
+| `GET /api/v1/complaints/{complaint_id}/work-orders` | `list_complaint_work_orders` :100 | `list_complaint_work_orders_api_v1_complaints__complaint_id__work_orders_get` | 200 array of WorkOrder | § `GET …/work-orders` |
+| `POST /api/v1/complaints/{complaint_id}/work-orders` | `create_work_order` :56 | `create_work_order_api_v1_complaints__complaint_id__work_orders_post` | 201 WorkOrder | § `POST …/work-orders` |
+| `GET /api/v1/departments/{department_id}/work-orders` | `list_department_work_orders` :118 | `list_department_work_orders_api_v1_departments__department_id__work_orders_get` | 200 array of WorkOrder | § `GET /api/v1/departments/{departmentId}/work-orders` (API.md:5832) |
+| `GET /api/v1/work-orders/{work_order_id}` | `get_work_order` :142 | `get_work_order_api_v1_work_orders__work_order_id__get` | 200 WorkOrderDetail | § `GET /api/v1/work-orders/{workOrderId}` (API.md:5850) |
+| `PATCH /api/v1/work-orders/{work_order_id}` | `update_work_order` :182 | `update_work_order_api_v1_work_orders__work_order_id__patch` | 200 WorkOrder | § `PATCH /api/v1/work-orders/{workOrderId}` (API.md:5893) |
+| `POST /api/v1/work-orders/{work_order_id}/assign` | `assign_work_order` :208 | `assign_work_order_api_v1_work_orders__work_order_id__assign_post` | 200 WorkOrderDetail | § `POST …/assign` |
+| `POST /api/v1/work-orders/{work_order_id}/cancel` | `cancel_work_order` :273 | `cancel_work_order_api_v1_work_orders__work_order_id__cancel_post` | 200 WorkOrder | § `POST …/cancel` |
+| `GET /api/v1/work-orders/{work_order_id}/candidates` | `work_order_candidates` :167 | `work_order_candidates_api_v1_work_orders__work_order_id__candidates_get` | 200 array of Candidate | **missing** |
+| `POST /api/v1/work-orders/{work_order_id}/reschedule` | `reschedule_work_order` :247 | `reschedule_work_order_api_v1_work_orders__work_order_id__reschedule_post` | 200 WorkOrderDetail | § `POST …/reschedule` |
 
 > **The role guard is coarse by construction, and the file says so.** A department supervisor holds a
 > `worker` membership with the `supervisor` *rank* on their roster row — `0035` settled that rank and

@@ -50,6 +50,7 @@ class WorkOrderAssignment(CamelModel):
     #: false until step 5 exists; the column is here because the worker's screen
     #: reads differently for a job they were given and one they were offered.
     is_auto_assigned: bool = False
+    is_forced: bool = False
 
 
 class WorkOrder(CamelModel):
@@ -92,6 +93,18 @@ class WorkOrderDetail(WorkOrder):
     """One job with every offer ever made on it, newest first."""
 
     assignments: list[WorkOrderAssignment] = Field(default_factory=list)
+
+
+class Candidate(CamelModel):
+    staff_assignment_id: str
+    membership_id: str
+    service_provider_id: str | None = None
+    display_name: str
+    has_adjacent_job: bool = False
+    open_jobs: int = 0
+    distance_km: float | None = None
+    away_until: datetime | None = None
+    excluded: bool = False
 
 
 class _SlotFields(CamelModel):

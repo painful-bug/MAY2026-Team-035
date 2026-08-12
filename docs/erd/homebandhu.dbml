@@ -339,6 +339,7 @@ Table staff_assignments [headercolor: #B7791F] {
   community_id uuid [not null, ref: > communities.id]
   membership_id uuid [not null, ref: > community_memberships.id]
   department_id uuid [ref: > departments.id]
+  skill_id uuid [ref: > skills.id]
   vendor_id uuid [ref: > vendors.id]
   rank staff_rank [not null]
   job_title text
@@ -556,6 +557,7 @@ Table complaints [headercolor: #C53030] {
   sla_due_at timestamptz
   management_notes text
   reopen_count integer [not null]
+  returned_to_pool_at timestamptz
   resident_rating smallint
   resident_feedback text
   submitted_at timestamptz [not null]
@@ -664,6 +666,7 @@ Table work_orders [headercolor: #C53030] {
   preferred_end_at timestamptz
   scheduled_start_at timestamptz
   scheduled_end_at timestamptz
+  cancelled_by text
   escalation_required boolean [not null]
   resolved_at timestamptz
   closed_at timestamptz
@@ -685,6 +688,7 @@ Table work_order_assignments [headercolor: #C53030] {
   accepted_at timestamptz
   declined_at timestamptz
   decline_reason text
+  is_forced boolean [not null]
   scheduled_start_at timestamptz
   scheduled_end_at timestamptz
   completed_at timestamptz
@@ -693,6 +697,17 @@ Table work_order_assignments [headercolor: #C53030] {
   updated_at timestamptz [not null]
 
   Note: 'Confirmed assignments for the same worker must not overlap: EXCLUDE USING gist (staff_assignment_id WITH =, tstzrange(scheduled_start_at, scheduled_end_at) WITH &&) WHERE status = accepted. Requires btree_gist. CHANGED: community_id denormalised.'
+}
+
+Table dispatch_tasks [headercolor: #C53030] {
+  id uuid [pk]
+  work_order_id uuid [ref: > work_orders.id]
+  complaint_id uuid [ref: > complaints.id]
+  kind text [not null]
+  due_at timestamptz [not null]
+  completed_at timestamptz
+
+  Note: 'Complaint Engine v2: exactly one subject is set. Complaint-side timers own auto-close warning and auto-close.'
 }
 
 Table work_order_proposals [headercolor: #C53030] {

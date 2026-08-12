@@ -118,6 +118,12 @@ database.
   visit details.
 - Generate a structured QR pass and a short access code for the visitor group.
 - Display expected visitors and their current entry status.
+
+### Complaint Engine v2 components
+
+- **ComplaintTracker** projects the server timeline into the six resident-visible lifecycle steps; the event list remains the detailed record.
+- **Candidate picker** renders only the server-ranked work-order candidates and can reveal excluded past decliners for supervisor context.
+- **Cancel/re-evaluation dialog** gives a resident the two distinct pre-start choices; the RPC owns the resulting state transition.
 - Record when an approved visitor or group is checked in.
 - Add visitor-related actions to the resident's recent-activity history.
 - Provide the frontend foundation for a future security interface that can

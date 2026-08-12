@@ -21,7 +21,8 @@ dependency graph computed a moment earlier.
 from __future__ import annotations
 
 from app.core.exceptions import ValidationError
-from app.domain.complaint_schemas import AddCommentRequest, UpdateComplaintRequest
+from app.domain.complaint_schemas import AddCommentRequest, StaffComplaintDetail, UpdateComplaintRequest
+from app.services.resident_complaints_service import _event_message
 from app.domain.vocabularies import comment_visibility_to_storage, status_to_storage
 from app.repositories import complaints_repository as repo
 from supabase import Client
@@ -100,3 +101,16 @@ def add_comment(
         author_membership=membership_id,
         author_label=_actor_label(client, user_id),
     )
+
+
+def staff_detail(client: Client, *, complaint_id: str) -> StaffComplaintDetail:
+    result = repo.staff_detail(client, complaint_id=complaint_id)
+    events = result.get("events") if isinstance(result.get("events"), list) else []
+    rendered = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        rendered.append({**event, "message": _event_message(str(event.get("event_type") or ""), payload)})
+    complaint = result.get("complaint") if isinstance(result.get("complaint"), dict) else {}
+    return StaffComplaintDetail(complaint=complaint, events=rendered)

@@ -31,6 +31,7 @@ from app.domain.resident_complaint_schemas import (
     ComplaintDetail,
     ComplaintEvent,
     ComplaintSummary,
+    CancelWorkRequest,
     ConfirmResolutionRequest,
     RaiseComplaintRequest,
     ReopenComplaintRequest,
@@ -77,6 +78,10 @@ _EVENT_LABELS = {
     "job_started": "Work started",
     "job_completed": "Work completed",
     "job_failed": "Visit unsuccessful",
+    "returned_to_pool": "Sent back for re-evaluation",
+    "auto_close_warning": "Reminder sent",
+    "auto_closed": "Closed automatically",
+    "job_force_assigned": "Assigned without offer (critical)",
 }
 
 
@@ -142,6 +147,14 @@ def _event_message(event_type: str, payload: dict[str, Any]) -> str:
         # visit fails are things only the resident can fix.
         why = _text(payload.get("reason"))
         return f"The visit could not be completed. {why}".strip()
+    if event_type == "returned_to_pool":
+        return "Sent back for re-evaluation — the team will assign someone else."
+    if event_type == "auto_close_warning":
+        return "Reminder sent: confirm or reopen."
+    if event_type == "auto_closed":
+        return "Closed automatically after no response."
+    if event_type == "job_force_assigned":
+        return "Assigned without offer (critical)."
     # `comment_added` says nothing here on purpose: the comment itself is in the
     # thread, and repeating it on the timeline would show it twice.
     return ""
@@ -162,6 +175,8 @@ def _is_internal_comment_event(row: dict[str, Any]) -> bool:
     already removed by the policy on ``complaint_comments``; this removes its
     shadow.
     """
+    if _text(row.get("event_type")) == "job_force_assigned":
+        return True
     if _text(row.get("event_type")) != "comment_added":
         return False
     payload = row.get("payload")
@@ -360,6 +375,16 @@ def raise_complaint(
         priority=priority,
         location=body.location.strip(),
         department_id=body.department_id,
+        skill_id=body.skill_id,
+    )
+    return get_mine(client, membership_id=membership_id, complaint_id=complaint_id)
+
+
+def cancel_work(
+    client: Client, *, membership_id: str, complaint_id: str, body: CancelWorkRequest
+) -> ComplaintDetail:
+    repo.cancel_work(
+        client, complaint_id=complaint_id, mode=body.mode, reason=body.reason.strip() or None
     )
     return get_mine(client, membership_id=membership_id, complaint_id=complaint_id)
 

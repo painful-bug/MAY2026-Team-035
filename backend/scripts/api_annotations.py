@@ -1157,6 +1157,14 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    ("post", "/api/v1/complaints/{complaint_id}/cancel"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[("US-2.6", "Lets the resident cancel a pre-start visit or return the complaint for re-evaluation.")],
+    ),
+    ("get", "/api/v1/complaints/staff/complaints/{complaint_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["complaint_transfer"],
+    ),
     ("post", "/api/v1/complaints/{complaint_id}/reopen"): op(
         errors=["401", "403", "404", "422", "500"],
         stories=[
@@ -1988,6 +1996,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         no_story=NO_STORY["work_dispatch"],
     ),
     ("get", "/api/v1/work-orders/{work_order_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("get", "/api/v1/work-orders/{work_order_id}/candidates"): op(
         errors=["401", "403", "404", "500"],
         no_story=NO_STORY["work_dispatch"],
     ),

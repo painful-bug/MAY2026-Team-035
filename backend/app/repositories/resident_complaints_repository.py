@@ -185,6 +185,7 @@ def raise_complaint(
     priority: str,
     location: str,
     department_id: str | None = None,
+    skill_id: str | None = None,
 ) -> str:
     """Create a complaint (RPC). Returns its id.
 
@@ -204,11 +205,25 @@ def raise_complaint(
                 "p_priority": priority,
                 "p_location": location,
                 "p_department_id": department_id,
+                "p_skill_id": skill_id,
             },
         ).execute()
     except Exception as exc:  # noqa: BLE001
         raise translate(exc, default_message="Could not raise the complaint.") from exc
     return str(response.data)
+
+
+def cancel_work(
+    client: Client, *, complaint_id: str, mode: str, reason: str | None
+) -> None:
+    """Cancel or return the caller's live work order to the pool (RPC)."""
+    try:
+        client.rpc(
+            "resident_cancel_work",
+            {"p_complaint_id": complaint_id, "p_mode": mode, "p_reason": reason},
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not cancel that work.") from exc
 
 
 def reopen(client: Client, *, complaint_id: str, reason: str) -> None:

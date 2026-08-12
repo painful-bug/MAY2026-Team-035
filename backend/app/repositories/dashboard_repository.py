@@ -77,7 +77,7 @@ def list_complaints(client: Client, community_id: str, *, legacy: bool) -> list[
 
 def list_visitors(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
     if legacy:
-        columns = "id,visitor_name,visitor_phone_e164,purpose,status,requested_by_membership_id,unit_id,expected_from,expected_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events(event_type,note,occurred_at)"
+        columns = "id,visitor_name,visitor_phone_e164,purpose,status,requested_by_membership_id,unit_id,expected_from,expected_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events:legacy_visitor_events(event_type,note,occurred_at)"
         table = "visitor_access_requests"
     else:
         columns = "id,visitor_name,visitor_phone_e164,status,requested_by_membership_id,valid_from,valid_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events(event_type,created_at)"
@@ -105,14 +105,14 @@ def list_amenities(client: Client, community_id: str, *, legacy: bool) -> list[d
 def list_bookings(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
     if legacy:
         series = (
-            client.table("amenity_booking_series")
+            client.table("legacy_amenity_booking_series")
             .select("id,amenity_id,booked_by_membership_id,status")
             .eq("community_id", community_id).execute().data
             or []
         )
         series_by_id = {row["id"]: row for row in series}
         rows = (
-            client.table("amenity_booking_occurrences")
+            client.table("legacy_amenity_booking_occurrences")
             .select("id,booking_series_id,amenity_id,starts_at,ends_at,status,cancellation_reason,created_at,updated_at")
             .order("starts_at", desc=True).limit(500).execute().data
             or []
