@@ -1,6 +1,6 @@
 # Core Tests Documentation
 
-> **Note:** This file is auto-generated dynamically by a pytest hook in `conftest.py`. It extracts descriptions directly from the python code docstrings during test collection.
+> **Note:** This file is generated from test docstrings by running `uv run pytest --collect-only --generate-test-docs` from `backend`.
 
 ## `test_access_request_phone.py`
 No description provided.
@@ -109,28 +109,29 @@ into one approval row.
 
 
 ## `test_auth_verification.py`
-Email confirmation is a precondition of a password session, not a preference.
+Email-confirmation behavior at the password-session boundary.
 
-The bug these cover: a Supabase project with **Confirm email** switched off hands
-back a valid session for an address nobody has ever proven they own, and nothing
-downstream looked. The provider exchange is the only place that sees GoTrue's own
-user record, so it is the place that has to refuse.
+Production defaults to confirmation-required. Local/test bypass is explicit and
+the backend still enforces the setting when GoTrue returns a session.
 
 Google identities are deliberately untouched here -- the provider has already
 verified the address, and an OAuth JWT is not required to carry the claim at all
 (``docs/BACKEND_CHANGES.md``).
 
-*Total tests in this file: 9*
+*Total tests in this file: 12*
 
 | Test Function | Description |
 |---------------|-------------|
-| `test_an_unconfirmed_address_cannot_exchange_a_password_for_a_session` | The reported bypass: GoTrue says yes, and the backend has to say no. |
-| `test_refusing_a_sign_in_does_not_leave_a_live_session_behind` | GoTrue minted tokens before we could object, so they get spent here. |
+| `test_an_unconfirmed_address_cannot_sign_in_by_default` | No description provided. |
+| `test_refusing_an_unconfirmed_address_revokes_the_minted_session` | No description provided. |
+| `test_explicit_local_override_allows_an_unconfirmed_test_account` | No description provided. |
 | `test_a_provider_that_refuses_the_grant_reports_the_same_reason` | With **Confirm email** on, GoTrue refuses first -- one code either way, so the caller's experience does not depend on a dashboard toggle. |
 | `test_a_confirmed_address_still_signs_in` | No description provided. |
 | `test_a_wrong_password_is_not_reported_as_an_unconfirmed_address` | Only GoTrue's own ``email_not_confirmed`` earns the specific message; everything else stays the generic answer that reveals nothing. |
-| `test_a_session_without_a_user_record_fails_closed` | Nothing to check is not the same as nothing to worry about. |
+| `test_a_session_without_a_user_record_fails_closed` | No description provided. |
 | `test_resending_asks_for_a_signup_link_pointing_at_the_confirmation_page` | The link has to land on the page that spends the token hash; anywhere else and the user meets a confirm button with nothing to confirm. |
+| `test_the_service_intent_is_appended_as_a_query_parameter_not_concatenated` | ``?a=b?intent=…`` is one parameter, not two.  The confirmation page parses ``token_hash`` out of this query string. A second ``?`` makes ``URLSearchParams`` swallow everything after it into one value, so the link arrives with nothing to confirm -- a base URL that already carries a query has to extend it with ``&``. |
+| `test_no_intent_leaves_the_confirmation_url_exactly_as_it_was` | Every non-professional signup keeps the URL the setup document names. |
 | `test_resending_stays_silent_when_the_provider_fails` | A resend that raised on unknown addresses would enumerate accounts. |
 | `test_email_confirmation_is_read_from_where_supabase_actually_puts_it` | Supabase nests the flag in ``user_metadata``. Reading only the top level left the field false for every real caller -- inert while nothing consults it, and a total lockout for whoever first writes ``if not email_verified``. |
 
@@ -172,6 +173,37 @@ invisible until a user noticed the wrong thing on screen:
 | `test_blank_staff_id_is_not_an_id` | The create form seeds ``id: ''``; sending it would look like an update. |
 | `test_update_request_distinguishes_omitted_from_null` | The whole partial-update contract rests on this. |
 | `test_operating_hours_rejects_a_non_clock_string` | A bad time must fail at the edge, not become a null column silently. |
+
+
+## `test_dispatcher.py`
+The job dispatcher.
+
+What is covered, stated plainly because it is easy to overclaim: **this
+exercises the loop, not the engine.** Every decision the dispatcher causes --
+who is free, who gets the offer, what the resident is told -- happens inside
+``0037``, which this suite has no database to run, so none of it can run here.
+What is tested is the part written in Python:
+claiming, per-task isolation, the failure path, and the lifecycle.
+
+The rule these tests exist to protect is the inverse of the push sender's, and
+the inversion is the reason the file is worth reading:
+
+    The sender may not duplicate. The dispatcher may not drop.
+
+*Total tests in this file: 10*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_dispatcher_starts_unconditionally` | No configuration gate, unlike `PushSender`.  An environment with no VAPID keypair is one where push is legitimately off. There is no equivalent for dispatch: a process that silently did not dispatch would be indistinguishable from a department where nobody was free, which is the failure with no alarm attached. |
+| `test_stopping_is_clean_and_repeatable` | Cancellation is not an error, and stopping twice is not either.  The lifespan calls `stop` on the way out of a process that may already be tearing down; a second call raising would turn an orderly shutdown into a traceback in the logs. |
+| `test_every_claimed_task_is_fired` | No description provided. |
+| `test_a_row_without_a_task_id_is_skipped_rather_than_fired` | Defensive, and cheap. A malformed row reaching `fire` would send a null task id to Postgres, which answers `missing` -- correct, but a round trip to learn something the row already said. |
+| `test_the_batch_size_reaches_the_claim` | No description provided. |
+| `test_a_failing_task_is_recorded_and_its_lease_released` | The lease is the whole reason this branch exists.  A task that raised and was left claimed is five minutes of nothing happening to a job somebody is waiting on -- `fail_dispatch_task` clears `claimed_at` so the next tick can pick it up. |
+| `test_one_failing_task_does_not_abandon_the_rest_of_the_batch` | No description provided. |
+| `test_a_failure_to_record_the_failure_is_swallowed` | Both calls fail and the batch survives anyway.  The database being unreachable is exactly when `fire` raises *and* `fail` cannot be written. Letting the second exception out would take down the loop for the whole process at the moment it is least able to recover. |
+| `test_the_loop_survives_a_failing_claim` | A transient database failure must not silently stop every dispatch in the process. The loop logs and comes back on the next tick. |
+| `test_the_dispatcher_knows_nothing_about_task_kinds` | The kinds appear in `0037`, not here.  `fire_dispatch_task` maps a kind to an action beside the actions it dispatches to, so adding a fifth kind is a migration and nothing else. If this assertion ever fails, a branch on `kind` has appeared in Python and the engine has started living in two places. |
 
 
 ## `test_domain_contract.py`
@@ -233,6 +265,59 @@ Unit tests for the pure invite-redemption decision and token hashing.
 | `test_generated_code_uses_unambiguous_alphabet` | No description provided. |
 
 
+## `test_logging.py`
+No description provided.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_transport_loggers_do_not_emit_request_headers` | No description provided. |
+
+
+## `test_membership_set.py`
+The tenancy seam, after it learned about more than one community.
+
+`app/api/deps.py` used to resolve exactly one membership -- `order by
+is_default_community desc limit 1` -- and every handler in the product was
+written against that. A service person breaks the assumption: they belong to as
+many communities as have hired them, and their calendar is the union of all of
+them.
+
+The change was made additively, and **additive is a claim these tests exist to
+check.** Three properties, in order of how expensive they would be to discover
+in production:
+
+1. `get_active_membership` still returns what it returned before, still takes a
+   `Principal`, and can still be called directly rather than through FastAPI.
+   The last of those is not decoration -- `tests/api/test_session_flow.py` calls
+   it positionally to prove the role comes from `community_memberships` and not
+   from a token claim, and an earlier draft of this change broke that by
+   declaring `Depends(get_membership_set)` in its signature. To FastAPI the two
+   read identically; to a caller they do not.
+2. Ordering is preserved: default first, then oldest.
+3. `require_community_role` refuses a community the caller is not in, which is
+   what stops a resource id in a URL from being an authorization decision.
+
+`app/api/deps.py` belongs to the parallel auth workstream. These tests are the
+evidence offered with that review request.
+
+*Total tests in this file: 10*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_a_single_membership_caller_gets_exactly_what_they_got_before` | The overwhelmingly common case, and the one every existing handler is written against. |
+| `test_get_active_membership_is_still_callable_with_a_principal` | The regression that a draft of this change actually introduced.  Declaring `Depends(get_membership_set)` on this function reads identically to FastAPI and breaks every direct call, including the session-flow test that proves the role is not read from the token. |
+| `test_the_default_membership_is_the_first_row` | `is_default_community desc, created_at` is applied by Postgres, so the resolver must not re-sort -- it must trust position. |
+| `test_every_active_membership_is_returned_not_just_the_first` | The whole reason the seam changed: a service person hired by three societies has three memberships and one calendar. |
+| `test_the_resolver_reads_community_memberships_once` | Dropping `limit 1` must not have cost a second round trip. Membership is resolved on every single request; a duplicated read here is a duplicated read everywhere. |
+| `test_a_caller_with_no_active_membership_is_still_refused` | Unchanged behaviour, and worth pinning: this 403 is what stands between a signed-in stranger and every membership-guarded route in the product. |
+| `test_for_community_returns_none_rather_than_guessing` | `MembershipSet` deliberately carries no raising method -- the 403 lives in `deps.py`, so `app/domain` never has to import `app/core`. |
+| `test_require_community_role_refuses_a_community_the_caller_is_not_in` | The point of the helper. A community id arriving on a resource -- a job, an application, a department -- must never be an authorization decision by itself. |
+| `test_require_community_role_refuses_the_right_community_with_the_wrong_role` | Being in the community is not being entitled in it. |
+| `test_require_community_role_allows_any_role_when_none_is_named` | "Are you in this community at all" is a real question, asked by every read a member of it may make. |
+
+
 ## `test_money_mapping.py`
 Unit tests for the money translation layer.
 
@@ -288,6 +373,59 @@ plainly in DECISIONS_NEEDED E1 rather than implied to be covered.
 | `test_invoice_prefix_rejects_characters_that_would_break_a_number` | No description provided. |
 
 
+## `test_notification_links.py`
+Every notification `url` a migration emits must be a route the app has.
+
+`SECURITY_PORTAL_DESIGN.md` states the contract and, until this file, the
+consequence too: *"a notification whose `url` 404s is a defect that no test
+catches."* It does not 404, which is what makes it expensive --
+`NotificationBell.jsx:72` calls `navigate(item.url)` with whatever the row says,
+and `App.jsx`'s catch-all sends anything unmatched to `/`. The user taps a real
+notification, arrives at the marketing page, and there is no error anywhere: not
+in the browser console, not in the API log, not in a test run.
+
+Four of them were wrong when this file was written, in three different ways --
+a route that was deleted, a route that never existed, and a route belonging to a
+portal other than the recipient's. All three are the same mistake: the URL was
+written from memory of the navigation rather than from the navigation.
+
+**How the route table is derived.** From `App.jsx` itself, by walking the nested
+`<Route>` elements and joining each one to its parents, with `AUTH_ROUTES`
+resolved out of `routes/authRoutes.js`. Keeping a copy of the table here would
+reproduce the original defect one layer down: a second list of routes that is
+right on the day it is written.
+
+**What a match means.** That the path resolves to a mounted route. Query
+parameters are dropped before matching, deliberately, because an ignored
+parameter is a missing feature and an unroutable path is a broken link -- two
+different defects that deserve two different answers.
+
+The second one is answered further down, by `test_the_ignored_query_parameters_
+are_the_ones_on_record`. Ten notification links carry a parameter; some of the
+screens they land on do not read it, which lands the user on the right page
+looking at the wrong row. That set is written down rather than asserted empty:
+several of those screens belong to other workstreams and are already filed under
+`docs/potential issues/`. Recording it keeps the list from growing quietly, and
+makes a screen that starts honouring its parameter a test change rather than a
+silent improvement nobody notices.
+
+*Total tests in this file: 11*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_route_table_is_actually_parsed` | If the walker silently produced nothing, everything below would pass. |
+| `test_the_matcher_rejects_the_four_urls_this_file_was_written_for[/security/visitors?pass={param}]` | Proof the check has teeth.  A link checker that cannot fail is worth nothing, and this one is only ever exercised by a passing suite. These are the four values that were in the migrations on 2026-08-11; each must still be judged unroutable. |
+| `test_the_matcher_rejects_the_four_urls_this_file_was_written_for[/worker/jobs/{param}]` | Proof the check has teeth.  A link checker that cannot fail is worth nothing, and this one is only ever exercised by a passing suite. These are the four values that were in the migrations on 2026-08-11; each must still be judged unroutable. |
+| `test_the_matcher_rejects_the_four_urls_this_file_was_written_for[/worker/jobs?job={param}]` | Proof the check has teeth.  A link checker that cannot fail is worth nothing, and this one is only ever exercised by a passing suite. These are the four values that were in the migrations on 2026-08-11; each must still be judged unroutable. |
+| `test_the_matcher_rejects_the_four_urls_this_file_was_written_for[/security-manager/shifts?shift={param}]` | Proof the check has teeth.  A link checker that cannot fail is worth nothing, and this one is only ever exercised by a passing suite. These are the four values that were in the migrations on 2026-08-11; each must still be judged unroutable. |
+| `test_the_component_behind_every_linked_route_can_be_read` | The parameter check below is only worth as much as this resolution.  If a path stopped resolving to a file -- renamed folder, re-exported component, a route whose element is an inline expression -- the checks that follow would quietly pass by having nothing to look at. |
+| `test_the_ignored_query_parameters_are_the_ones_on_record` | A link that lands on the right screen and shows the wrong row.  `/security/shifts?shift=` was the case that prompted this: the path was corrected on 2026-08-11 and the guard still arrived at a fortnight of rows with nothing marking the one they had been told about. Fixing that without checking the others would have left five more of the same, each invisible for the same reason -- the link works, so nothing reports it.  Equality, not a subset. A screen that starts honouring its parameter must leave this set, so the record cannot drift into an allow-list nobody prunes. |
+| `test_every_notification_url_resolves_to_a_mounted_route` | No description provided. |
+| `test_the_python_mirror_matches_the_javascript_rule_table` | A second implementation is only safe while it is checked against the first. The four rules are read out of `portalUrl.js` by name rather than by behaviour -- enough to fail loudly if somebody adds a fifth here and not there, or renames one.  **The sub-screen list is compared by content**, not by name. Naming was enough while the list was three entries nobody touched; `work-orders` joined it on 2026-08-12 for the work-order notification repoint, and a name check would have passed just as happily with the JavaScript half of that change reverted -- leaving every one of the seven links bouncing a department manager home while this file asserted they were fine. |
+| `test_a_managers_notification_lands_somewhere_they_may_go[manager]` | No description provided. |
+| `test_a_managers_notification_lands_somewhere_they_may_go[security-manager]` | No description provided. |
+
+
 ## `test_openapi_spec.py`
 Guards on the API surface itself.
 
@@ -301,7 +439,7 @@ written but never mounted (nothing errors; the endpoints simply do not exist),
 and an endpoint that forgets its auth dependency (it works perfectly, for
 everyone).
 
-*Total tests in this file: 22*
+*Total tests in this file: 30*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -314,6 +452,15 @@ everyone).
 | `test_every_router_is_mounted[/api/v1/billing-settings]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
 | `test_every_router_is_mounted[/api/v1/amenity-reports]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
 | `test_every_router_is_mounted[/api/v1/settings]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/service-providers/me]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/worker/communities]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/worker/snapshot]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/worker/calendar]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/departments/{department_id}/candidates]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/conversations]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/work-orders/{work_order_id}]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/complaints/{complaint_id}/schedule-request]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
+| `test_every_router_is_mounted[/api/v1/security/posts]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
 | `test_every_router_is_mounted[/api/v1/dashboard/snapshot]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
 | `test_every_router_is_mounted[/api/v1/auth/session]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
 | `test_every_router_is_mounted[/api/v1/admin/access-requests]` | One representative path per router.  A router that is written but never added to ``api_router`` raises nothing at all -- its endpoints just silently do not exist, and the first person to notice is whoever calls them. |
@@ -322,7 +469,6 @@ everyone).
 | `test_retired_endpoints_stay_retired[/api/v1/dashboard/admin]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
 | `test_retired_endpoints_stay_retired[/api/v1/residents]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
 | `test_retired_endpoints_stay_retired[/api/v1/registrations]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
-| `test_retired_endpoints_stay_retired[/api/v1/complaint-categories]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
 | `test_retired_endpoints_stay_retired[/api/v1/payments]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
 | `test_retired_endpoints_stay_retired[/api/v1/amenities]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
 | `test_retired_endpoints_stay_retired[/api/v1/settings/modules]` | Paths deliberately removed by the frontend wiring audit.  Each was either duplicating an endpoint the frontend already calls or serving a read the shared dashboard snapshot serves. Re-adding one is a decision, not an accident, so it should have to delete a line here first. See ``docs/FRONTEND_WIRING_AUDIT.md``. |
@@ -380,13 +526,14 @@ These matter because the RPCs in migration 0012 signal authorization and state
 failures through SQLSTATEs rather than message text -- if this mapping is wrong,
 a 403 silently becomes a 500.
 
-*Total tests in this file: 11*
+*Total tests in this file: 17*
 
 | Test Function | Description |
 |---------------|-------------|
 | `test_known_sqlstates_map_to_typed_errors[HB403-AuthorizationError-forbidden]` | No description provided. |
 | `test_known_sqlstates_map_to_typed_errors[HB404-NotFoundError-not_found]` | No description provided. |
 | `test_known_sqlstates_map_to_typed_errors[HB409-ConflictError-conflict]` | No description provided. |
+| `test_known_sqlstates_map_to_typed_errors[HBSEP-ConflictError-professional_account_separate]` | No description provided. |
 | `test_known_sqlstates_map_to_typed_errors[23505-ConflictError-unique_violation]` | No description provided. |
 | `test_known_sqlstates_map_to_typed_errors[23503-ValidationError-foreign_key_violation]` | No description provided. |
 | `test_known_sqlstates_map_to_typed_errors[23514-ValidationError-check_violation]` | No description provided. |
@@ -395,6 +542,44 @@ a 403 silently becomes a 500.
 | `test_builtin_codes_do_not_leak_postgres_text` | A constraint message can quote a row value, so it must not be forwarded. |
 | `test_unknown_code_falls_back_without_leaking` | No description provided. |
 | `test_error_without_a_code_is_handled` | Not every exception from the SDK is an APIError. |
+| `test_custom_error_returns_our_own_refusals` | No description provided. |
+| `test_custom_error_declines_everything_that_is_not_ours[exc0]` | A standard SQLSTATE's message is Postgres' words, not ours to forward. |
+| `test_custom_error_declines_everything_that_is_not_ours[exc1]` | A standard SQLSTATE's message is Postgres' words, not ours to forward. |
+| `test_custom_error_declines_everything_that_is_not_ours[exc2]` | A standard SQLSTATE's message is Postgres' words, not ours to forward. |
+| `test_custom_error_declines_one_of_ours_that_arrived_empty` | The caller must always be able to fall back to its own wording. |
+
+
+## `test_professional_membership_symmetry.py`
+The separate-account rule, enforced in both directions.
+
+`20260812113000_professional_membership_symmetry.sql` is the product owner's
+2026-08-12 ruling on `docs/potential issues/16`: a registered service
+professional is assumed not to live in any association, so the rule is identity
+separation and the direction nobody was watching -- register as a professional
+first, join as a resident second -- has to be refused too.
+
+These are static checks, like `test_service_professional_migrations.py`. They
+cannot show that Postgres refuses the insert; the CI job that resets a local
+Supabase and applies every migration could, and does not cover this yet. What
+they can show is that the statement the database will run says what the ruling
+says, and that the refusal it raises is one the API knows how to shape -- which
+is the half that would otherwise be found by an administrator staring at a 500.
+
+*Total tests in this file: 11*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_the_last_unapplied_migration` | Forward-only: filename order is apply order, and `090300` is the floor.  Not "is the last file in the directory". That was the original assertion and it was wrong within the day: `20260812120000` was written after this one, and a later migration arriving is the system working, not a regression here. What has to hold is that this file lands after everything it depends on -- `20260811162409`, whose trigger body it extends, and the four `20260812090…` files that were the unapplied frontier when it was written. |
+| `test_a_professional_is_refused_a_resident_manager_or_admin_membership` | No description provided. |
+| `test_the_worker_security_refusal_it_was_extracted_from_survives` | The body is a copy of an applied one; the copy must not lose anything. |
+| `test_the_new_predicate_is_marked_as_the_difference` | House discipline: a copied body marks every departure `-- CHANGED`. |
+| `test_the_definer_function_keeps_its_execute_revocation` | No description provided. |
+| `test_existing_violations_are_reported_and_never_repaired` | Which identity to keep is the account holder's decision, not a DDL file's.  Ending the membership evicts a household from its portal; deleting the provider row destroys hiring history. A migration that picked one would be making that call for every affected account at once, in the dark. |
+| `test_no_applied_migration_was_edited_to_make_room_for_this` | The refusal is added forward; `…162409` still reads as it was applied. |
+| `test_the_stale_search_comment_is_reissued_against_the_installed_body` | `0034:531` still promises behaviour `…162409` replaced.  The comment says a community with no coordinates "sorts last rather than being hidden". The body installed today filters on `c.location is not null` and orders by a distance with no `nulls last`, so such a community is hidden. A `comment on` is what `\df+` shows a reader inside the database, where there is no migration file beside it to correct the record. |
+| `test_claiming_an_invite_on_a_professional_account_is_a_conflict` | No description provided. |
+| `test_an_unrecognised_claim_failure_does_not_leak_postgres_text` | No description provided. |
 
 
 ## `test_push_sender.py`
@@ -487,15 +672,19 @@ concurrency that ships.
 ## `test_registration_contracts.py`
 No description provided.
 
-*Total tests in this file: 19*
+*Total tests in this file: 23*
 
 | Test Function | Description |
 |---------------|-------------|
 | `test_google_and_email_password_are_supported_configured_methods` | No description provided. |
+| `test_establishing_a_session_clears_the_preauth_csrf_cookie[establish_session]` | No description provided. |
+| `test_establishing_a_session_clears_the_preauth_csrf_cookie[establish_recovery_session]` | No description provided. |
 | `test_unsupported_auth_method_fails_closed` | No description provided. |
 | `test_auth_methods_can_swap_primary_without_changing_enabled_order` | No description provided. |
+| `test_production_refuses_disabled_email_confirmation` | No description provided. |
 | `test_password_signup_requires_a_long_password` | No description provided. |
 | `test_community_search_reports_an_unapplied_blacklist_schema_migration` | A rollout mismatch must be a safe 503, never a blacklist-bypassing fallback. |
+| `test_service_provider_registration_reports_an_unapplied_schema_migration` | Never fall back to separate profile and skill writes during rollout. |
 | `test_google_authorize_url_leaves_provider_state_to_supabase` | No description provided. |
 | `test_access_request_rejects_client_owned_identity_fields` | No description provided. |
 | `test_founder_contract_rejects_inline_profile_image` | No description provided. |
@@ -512,19 +701,68 @@ No description provided.
 | `test_dashboard_snapshot_does_not_block_the_api_event_loop` | A slow tenant projection must leave public auth routes schedulable. |
 
 
-## `test_roles.py`
-Unit tests for the RBAC hierarchy.
+## `test_service_professional_migrations.py`
+Executable contracts for the two forward-only professional-flow migrations.
 
-*Total tests in this file: 6*
+These checks complement the local-Supabase CI job; they do not pretend a SQL
+parser is a running Postgres database.
+
+*Total tests in this file: 5*
 
 | Test Function | Description |
 |---------------|-------------|
-| `test_admin_satisfies_resident` | No description provided. |
-| `test_admin_satisfies_admin` | No description provided. |
-| `test_resident_does_not_satisfy_admin` | No description provided. |
-| `test_staff_roles_are_independent` | No description provided. |
-| `test_satisfies_any` | No description provided. |
-| `test_parse_role_is_case_insensitive_and_safe` | No description provided. |
+| `test_new_migrations_parse_as_postgresql` | No description provided. |
+| `test_proximity_is_radius_bounded_stable_and_capped` | No description provided. |
+| `test_registration_and_hiring_remain_database_atomic` | No description provided. |
+| `test_definer_functions_have_explicit_execution_grants` | No description provided. |
+| `test_funnel_table_is_narrow_allowlisted_and_retained_for_30_days` | No description provided. |
+
+
+## `test_service_professional_supabase.py`
+Real local-Supabase service-professional flow using authenticated user JWTs.
+
+*Total tests in this file: 4*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_service_professional_flow_with_real_user_jwts` | No description provided. |
+| `test_radius_boundary_stable_top_twenty_and_name_filter` | No description provided. |
+| `test_concurrent_registration_creates_one_complete_provider` | No description provided. |
+| `test_funnel_retention_removes_only_expired_events` | No description provided. |
+
+
+## `test_session_portal.py`
+Which portal a membership lands in.
+
+`portal` is the single value the frontend routes on -- `PORTAL_ROUTES` in
+`frontend/src/routes/authRoutes.js` maps it to a landing route and
+`applicationUser()` turns `security-manager` into the one role label four
+screens and a route guard branch on. So a wrong answer here does not produce an
+error anywhere; it produces a person who quietly never sees their own portal.
+
+That is exactly what happened. `security-manager` was derived from a `manager`
+membership naming a security department, and **nothing in the system writes a
+`manager` membership** -- `hire_service_applicant` (`0035:918`) mints `security`
+or `worker` and no other code path mints one at all. The portal was satisfiable
+by no user the product can create, which is a defect no test could see because
+no test asked. These are those questions.
+
+The seam under test is `_portal_for`, called with a membership row exactly as
+`get_session_context` reads it. `get_service_client` is monkeypatched, so the
+last assertion in each case -- *which tables were read* -- is available, and it
+is worth having: the roster read must not fire for a resident.
+
+*Total tests in this file: 7*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_resident_admin_and_worker_are_their_own_portal` | No description provided. |
+| `test_plain_guard_stays_at_the_gate` | No description provided. |
+| `test_security_rank_seniority_opens_the_manager_portal[manager]` | The spelling real people have.  `gate_admin_community_for` (`0040:589`) admits a `security` membership whose active roster row ranks manager or supervisor, and `supervisor` is in that list deliberately -- a supervisor holds the manager's writes, so the guard portal would leave them permissions with no screen. |
+| `test_security_rank_seniority_opens_the_manager_portal[supervisor]` | The spelling real people have.  `gate_admin_community_for` (`0040:589`) admits a `security` membership whose active roster row ranks manager or supervisor, and `supervisor` is in that list deliberately -- a supervisor holds the manager's writes, so the guard portal would leave them permissions with no screen. |
+| `test_manager_of_a_security_department_still_resolves` | Unreachable today, and kept: `manager` is a real `membership_role`. |
+| `test_manager_of_a_service_department_is_not_a_gate_manager` | The `departments.kind` question is the reason that branch exists. |
+| `test_manager_without_a_department_reads_nothing` | No description provided. |
 
 
 ## `test_settings_mapping.py`
@@ -585,6 +823,16 @@ is a test failure and not a quiet behaviour change:
 | `test_visitor_code_ttl_bounds` | No description provided. |
 
 
+## `test_unit_residencies_rls_migration.py`
+No description provided.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_unit_residencies_policy_does_not_query_itself` | No description provided. |
+
+
 ## `test_units.py`
 Flat-code normalisation.
 
@@ -621,7 +869,7 @@ The stored side has a harder constraint: it must be a member of the baseline's
 Postgres, not a bad row -- so `test_every_stored_status_is_a_baseline_enum_member`
 is the test that actually protects `PATCH /complaints/{id}`.
 
-*Total tests in this file: 20*
+*Total tests in this file: 29*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -645,5 +893,54 @@ is the test that actually protects `PATCH /complaints/{id}`.
 | `test_a_filter_matches_every_status_that_renders_as_the_word_asked_for[Cancelled-expected3]` | No description provided. |
 | `test_an_unrenderable_word_is_rejected_rather_than_matching_nothing` | `Closed` is a stored value, not something this surface ever shows -- so a caller asking for it is a caller guessing. An empty match list would look like "you have none of those". |
 | `test_every_word_this_surface_renders_can_be_filtered_by` | The two directions are derived from one map, so this cannot drift -- which is the point of asserting it rather than trusting it. |
+| `test_comment_visibility_to_storage[resident-public]` | No description provided. |
+| `test_comment_visibility_to_storage[internal-internal]` | No description provided. |
+| `test_comment_visibility_to_storage[public-public]` | No description provided. |
+| `test_comment_visibility_to_storage[  Resident  -public]` | No description provided. |
+| `test_comment_visibility_to_storage[INTERNAL-internal]` | No description provided. |
+| `test_every_stored_visibility_satisfies_the_check_constraint[resident]` | The test that actually protects `POST /complaints/{id}/comments`.  Its sibling above would still pass if the map returned `resident` for `resident`, which is exactly the bug that shipped. |
+| `test_every_stored_visibility_satisfies_the_check_constraint[public]` | The test that actually protects `POST /complaints/{id}/comments`.  Its sibling above would still pass if the map returned `resident` for `resident`, which is exactly the bug that shipped. |
+| `test_every_stored_visibility_satisfies_the_check_constraint[internal]` | The test that actually protects `POST /complaints/{id}/comments`.  Its sibling above would still pass if the map returned `resident` for `resident`, which is exactly the bug that shipped. |
+| `test_an_unknown_visibility_is_rejected_rather_than_defaulted` | Not symmetrical with the other unknowns in this module, and deliberately so: guessing `public` here would publish to the resident a comment somebody may have meant to keep internal. |
+
+
+## `test_work_order_notification_urls.py`
+Seven work-order notifications, repointed at the screen that now exists.
+
+`20260812120000_work_order_notification_urls.sql` moves every supervisor-facing
+work-order notification in `0037` and `0039` off `/admin/departments?job=<id>`
+-- the department *list*, which reads no `job` parameter -- and onto
+`departments/{id}/work-orders?job=<id>`, the triage screen. `docs/potential
+issues/12` item 4 deferred this until such a screen existed; it does.
+
+These are static checks. Whether Postgres installs these bodies is the local
+Supabase CI job's question, and whether the link lands is
+`test_notification_links.py`'s -- which reads the same files and checks every
+surviving url against `App.jsx`'s route tree, including the per-portal rewrite.
+What is left for this file is the part neither can see: that the seven bodies
+are the applied text with seven url lines changed and nothing else.
+
+*Total tests in this file: 18*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_migration_it_supersedes` | Filename order is apply order: last declaration of a name wins.  Being the last file in the directory was only ever a proxy for the property that matters (`20260812160000` broke the proxy without touching the property): the repoint must sort after both files it supersedes, and no migration sorting after it may re-declare any of the six functions -- otherwise that later file's body, not this one's, is what runs. |
+| `test_every_emission_of_the_dead_url_is_accounted_for` | Seven, counted from the applied files rather than from memory.  The count is the point of this test: a repoint that reaches six of seven leaves one notification pointing at a department list, and it would be the one nobody clicks in testing. |
+| `test_each_body_is_the_applied_text_with_only_the_url_changed[accept_work_order_offer]` | Whole-body extraction, checked line by line against its source.  The copy is mandatory -- both source files are applied and immutable -- and a copy that quietly drops a status check while it is repointing a link is the failure mode the discipline exists to prevent. Every line of the applied body must appear in the new one unless it is a url line. |
+| `test_each_body_is_the_applied_text_with_only_the_url_changed[complete_work_order]` | Whole-body extraction, checked line by line against its source.  The copy is mandatory -- both source files are applied and immutable -- and a copy that quietly drops a status check while it is repointing a link is the failure mode the discipline exists to prevent. Every line of the applied body must appear in the new one unless it is a url line. |
+| `test_each_body_is_the_applied_text_with_only_the_url_changed[dispatch_auto_assign]` | Whole-body extraction, checked line by line against its source.  The copy is mandatory -- both source files are applied and immutable -- and a copy that quietly drops a status check while it is repointing a link is the failure mode the discipline exists to prevent. Every line of the applied body must appear in the new one unless it is a url line. |
+| `test_each_body_is_the_applied_text_with_only_the_url_changed[dispatch_failed_visit_escalation]` | Whole-body extraction, checked line by line against its source.  The copy is mandatory -- both source files are applied and immutable -- and a copy that quietly drops a status check while it is repointing a link is the failure mode the discipline exists to prevent. Every line of the applied body must appear in the new one unless it is a url line. |
+| `test_each_body_is_the_applied_text_with_only_the_url_changed[dispatch_ping_candidates]` | Whole-body extraction, checked line by line against its source.  The copy is mandatory -- both source files are applied and immutable -- and a copy that quietly drops a status check while it is repointing a link is the failure mode the discipline exists to prevent. Every line of the applied body must appear in the new one unless it is a url line. |
+| `test_each_body_is_the_applied_text_with_only_the_url_changed[report_work_order_failure]` | Whole-body extraction, checked line by line against its source.  The copy is mandatory -- both source files are applied and immutable -- and a copy that quietly drops a status check while it is repointing a link is the failure mode the discipline exists to prevent. Every line of the applied body must appear in the new one unless it is a url line. |
+| `test_each_changed_line_is_marked_and_is_the_only_change[accept_work_order_offer]` | House discipline: an extracted body marks every departure `-- CHANGED`. |
+| `test_each_changed_line_is_marked_and_is_the_only_change[complete_work_order]` | House discipline: an extracted body marks every departure `-- CHANGED`. |
+| `test_each_changed_line_is_marked_and_is_the_only_change[dispatch_auto_assign]` | House discipline: an extracted body marks every departure `-- CHANGED`. |
+| `test_each_changed_line_is_marked_and_is_the_only_change[dispatch_failed_visit_escalation]` | House discipline: an extracted body marks every departure `-- CHANGED`. |
+| `test_each_changed_line_is_marked_and_is_the_only_change[dispatch_ping_candidates]` | House discipline: an extracted body marks every departure `-- CHANGED`. |
+| `test_each_changed_line_is_marked_and_is_the_only_change[report_work_order_failure]` | House discipline: an extracted body marks every departure `-- CHANGED`. |
+| `test_the_url_carries_the_department_the_screen_is_scoped_to` | `:departmentId` is in the path under all three portal bases.  A url that named only the job would resolve to no route at all -- there is no `/admin/work-orders` -- so the department is not decoration. |
+| `test_no_acl_or_comment_is_restated_from_memory` | `create or replace` keeps the oid, so both survive on their own.  Restating them would mean writing out two opposite postures by hand: `0037`'s three are service_role only and `0039`'s three are granted to `authenticated`. A copy that gets one backwards is a privilege change wearing the clothes of a link fix. |
+| `test_the_worker_and_resident_links_in_these_bodies_are_untouched` | Only the supervisor's link moves. The worker's and the resident's do not.  Both were corrected once already (`0036`'s header records `/worker/jobs…` twice), and a body-wide search-and-replace on `?job=` is exactly how they would be broken a third time. |
 
 
