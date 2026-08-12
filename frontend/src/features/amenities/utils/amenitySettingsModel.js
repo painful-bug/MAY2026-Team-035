@@ -99,6 +99,10 @@ export const normalizeAmenityRecord = (amenity) => {
     ...amenity,
     location: amenity.location ?? DEFAULT_AMENITY_SETTINGS.location,
     capacity: nullableNumber(amenity.capacity),
+    // The snapshot's amenity rows carry neither of these; the cards render
+    // them raw, so an absent value must read as 0, never NaN or blank.
+    pendingRequests: numberOrFallback(amenity.pendingRequests, 0),
+    outstandingDues: numberOrFallback(amenity.outstandingDues, 0),
     operatingHours,
     bookingSettings,
     paymentSettings,
