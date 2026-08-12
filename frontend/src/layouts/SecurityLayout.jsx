@@ -2,13 +2,17 @@ import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Building2,
-  ClipboardClock,
-  History,
+  CalendarClock,
+  ClipboardList,
+  Download,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
+  ScanLine,
+  ShieldAlert,
   ShieldCheck,
-  Users,
+  UserPlus,
+  Wrench,
   X,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
@@ -23,38 +27,80 @@ export default function SecurityLayout() {
   const basePath = isManager
     ? AUTH_ROUTES.SECURITY_MANAGER_DASHBOARD
     : AUTH_ROUTES.SECURITY_DASHBOARD;
-  const navItems = [
-    {
-      name: isManager ? 'Operations Overview' : 'Gate Overview',
-      path: basePath,
-      icon: LayoutDashboard,
-      end: true,
-    },
-    ...(isManager
-      ? [
-          {
-            name: 'Manage Staff',
-            path: `${basePath}/staff`,
-            icon: Users,
-          },
-        ]
-      : []),
-    {
-      name: 'Visitor Access',
-      path: `${basePath}/visitors`,
-      icon: ClipboardClock,
-    },
-    {
-      name: 'Gate History',
-      path: `${basePath}/history`,
-      icon: History,
-    },
-    {
-      name: 'Emergency Desk',
-      path: `${basePath}/emergency`,
-      icon: LifeBuoy,
-    },
-  ];
+  // Two navs over one layout. The guard's starts at the barrier because that is
+  // where they stand; the manager's starts at the overview because they do not.
+  const navItems = isManager
+    ? [
+        { name: 'Overview', path: basePath, icon: LayoutDashboard, end: true },
+        { name: 'Roster', path: `${basePath}/roster`, icon: CalendarClock },
+        { name: 'Gate', path: `${basePath}/gate`, icon: ScanLine },
+        { name: 'Registers', path: `${basePath}/registers`, icon: ClipboardList },
+        { name: 'Incidents', path: `${basePath}/incidents`, icon: ShieldAlert },
+        { name: 'Exports', path: `${basePath}/exports`, icon: Download },
+        // Hiring, added 2026-08-11. The comment that stood here said staffing
+        // "lives in the admin portal's department screens" — which was true and
+        // was the bug: a security department's manager holds
+        // `membership_role = 'manager'`, passes `require_admin_or_manager` and
+        // `can_manage_department`, and had no screen for either. Same gap as
+        // the plumbing manager's, one role along (`docs/potential issues/14`).
+        //
+        // **Gated on `accessRole`, not on `role`.** Two different people reach
+        // this portal: the department's manager, and a senior guard —
+        // `membership_role = 'security'` with a manager-or-supervisor roster
+        // rank, whom `_portal_for` routes here so their gate permissions have
+        // screens. `role` is `SecurityManager` for both, so it cannot tell them
+        // apart; `accessRole` is the membership role.
+        //
+        // **Both are admitted now, and until 2026-08-12 only the first was.**
+        // `can_hire_for_department` counts *either* a `manager` membership on
+        // the department *or* an active `staff_assignments` row of rank
+        // `manager` — and a security department's roster manager holds
+        // `membership_role = 'security'`, so the old gate hid the tab from
+        // somebody who has the permission. That is `docs/potential issues/14`
+        // exactly, recreated by a change to the predicate.
+        //
+        // Which leaves the *supervisor*, who reaches the screen and may not
+        // hire. That is deliberate rather than sloppy: the screen asks
+        // `can_hire_for_department` for this department and says who does, so
+        // the cost of showing it is one click and an explanation. The cost of
+        // hiding it is a permission with nowhere to spend it, which is the
+        // more expensive mistake and the one this file has made before.
+        ...(['MANAGER', 'SECURITY'].includes(currentUser?.accessRole) && currentUser?.departmentId
+          ? [{
+            name: 'Hiring',
+            path: `${basePath}/departments/${currentUser.departmentId}/hiring`,
+            icon: UserPlus,
+          }]
+          : []),
+        // Work orders, added 2026-08-12. **The same gate as Hiring above, on
+        // purpose** — same two people reach this portal, and `accessRole` is
+        // still the only thing that tells the department's manager from the
+        // senior guard.
+        //
+        // The one difference is that the paragraph above about admitting
+        // somebody who may look and not act does not apply here. Hiring is
+        // `can_hire_for_department`, which a supervisor fails; every one of the
+        // eight work-order RPCs checks `can_supervise_department`, which a
+        // supervisor *passes*. So this entry is not a permission with an
+        // explanation attached — it is the screen for a permission all three of
+        // these people already hold, and which none of them had a way to spend
+        // until now.
+        ...(['MANAGER', 'SECURITY'].includes(currentUser?.accessRole) && currentUser?.departmentId
+          ? [{
+            name: 'Work orders',
+            path: `${basePath}/departments/${currentUser.departmentId}/work-orders`,
+            icon: Wrench,
+          }]
+          : []),
+        { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },
+      ]
+    : [
+        { name: 'Gate', path: basePath, icon: ScanLine, end: true },
+        { name: 'Registers', path: `${basePath}/registers`, icon: ClipboardList },
+        { name: 'Incidents', path: `${basePath}/incidents`, icon: ShieldAlert },
+        { name: 'Shifts', path: `${basePath}/shifts`, icon: CalendarClock },
+        { name: 'Emergency', path: `${basePath}/emergency`, icon: LifeBuoy },
+      ];
 
   const handleLogout = () => {
     void logout();
@@ -108,9 +154,13 @@ export default function SecurityLayout() {
                 <p className="truncate text-xs font-extrabold">
                   {currentUser?.name}
                 </p>
+                {/* `staffRole` used to be printed here and `applicationUser()`
+                    has never set it, so this line read " · Main Gate" for every
+                    guard who ever saw it. The post a guard is on is a property
+                    of their shift, not of their session — it is on the Shifts
+                    screen, which reads it from the API. */}
                 <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-400">
-                  {currentUser?.staffRole} ·{' '}
-                  {isManager ? 'Operations Centre' : 'Main Gate'}
+                  {isManager ? 'Security management' : 'Gate operations'}
                 </p>
               </div>
             </div>
@@ -149,7 +199,9 @@ export default function SecurityLayout() {
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-bold text-slate-300 hover:border-rose-400/30 hover:bg-rose-500/10 hover:text-rose-300"
           >
             <LogOut className="h-4 w-4" />
-            {isManager ? 'Logout' : 'End Shift & Logout'}
+            {/* Was "End Shift & Logout", which ended no shift. Ending a shift
+                is now a real PATCH on the Shifts screen; this only logs out. */}
+            Logout
           </button>
         </div>
       </aside>

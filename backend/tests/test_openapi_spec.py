@@ -59,6 +59,9 @@ _PUBLIC_PATHS = {
     "/api/v1/auth/email/resend",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
+    # Anonymous launch-funnel events are bound to a random HTTP-only visitor
+    # cookie and still require the pre-auth CSRF pair; no account is required.
+    "/api/v1/telemetry/service-signup",
     # Exchanges an invite token+code for a short-lived signed cookie. Called
     # before the user has signed in -- that is the point of it.
     "/api/v1/invitations/prepare",
@@ -97,6 +100,25 @@ def test_checked_in_spec_matches_the_code():
         "/api/v1/billing-settings",
         "/api/v1/amenity-reports",
         "/api/v1/settings",
+        # The service-operations aggregate. Nine routers behind one
+        # `include_router` in `service_api.py`, which is exactly the arrangement
+        # this test exists to catch: dropping that one line would delete sixty
+        # operations and raise nothing anywhere.
+        #
+        # `worker/snapshot`, `worker/calendar` and `security/posts` were added on
+        # 2026-08-10, and their absence is worth naming rather than quietly
+        # fixing: this list said "four routers" while eight were mounted, so the
+        # three newest were covered only by the aggregate's own line. A
+        # parametrised list is only as good as its last update.
+        "/api/v1/service-providers/me",
+        "/api/v1/worker/communities",
+        "/api/v1/worker/snapshot",
+        "/api/v1/worker/calendar",
+        "/api/v1/departments/{department_id}/candidates",
+        "/api/v1/conversations",
+        "/api/v1/work-orders/{work_order_id}",
+        "/api/v1/complaints/{complaint_id}/schedule-request",
+        "/api/v1/security/posts",
         # Theirs. Listed because our admin_router is mounted from the same
         # aggregator, so a mistake there could drop their routes instead of ours.
         "/api/v1/dashboard/snapshot",
@@ -129,7 +151,20 @@ def test_every_router_is_mounted(path):
         # second table -- so the path now serves a projection that never existed
         # rather than the one that was removed. Deleting this line is the
         # decision the docstring below asks for.
-        "/api/v1/complaint-categories",
+        #
+        # `/api/v1/complaint-categories` came back in `skills_and_categories`, and this is that
+        # decision made a second time. Its retirement reason (audit line 72) was
+        # a statement about two screens: "CreateDepartment.jsx collects
+        # categories as free-text inputs, not from a vocabulary, and
+        # Departments.jsx reads department.categories off the department.
+        # Nothing fetches a category list." **Both halves have since expired.**
+        # CreateDepartment.jsx was deleted in 38927e5, and the department form's
+        # category box is now a combobox whose whole job is to stop somebody
+        # inventing "Plumbling" beside "Plumbing" -- which it cannot do without
+        # the list. The new path is also not the old one: it carries each
+        # category's linked skill, so the form can show the categories that
+        # match no trade and therefore reach no service person in any hiring
+        # search. That projection never existed before.
         "/api/v1/payments",
         "/api/v1/amenities",
         "/api/v1/settings/modules",

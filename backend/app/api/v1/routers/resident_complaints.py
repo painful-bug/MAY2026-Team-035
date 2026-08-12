@@ -115,9 +115,10 @@ async def raise_complaint(
     community — the first write in this backend to emit a notification, and the
     reason the notification substrate was built before this step.
 
-    Attachments are **not** accepted yet. The form collects them and no upload
-    endpoint exists; sending them would be accepting data this backend then
-    drops.
+    Attachments are **not** accepted yet, and since 2026-08-12 the form no
+    longer collects them either -- promising a resident their photo reached
+    somebody would be worse than not asking. `media` stays in the schema for
+    the day an upload endpoint exists.
     """
     return service.raise_complaint(client, membership_id=membership.id, body=body)
 

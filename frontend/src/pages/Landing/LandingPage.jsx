@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
 import {
   Building,
   Users,
@@ -17,6 +18,7 @@ import {
 
 export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  React.useEffect(() => { void recordServiceSignupEvent('cta_impression'); }, []);
 
   const features = [
     {
@@ -157,7 +159,7 @@ export default function LandingPage() {
             A focused administration portal for resident onboarding, complaint operations, maintenance collections, notices, amenities, and society teams.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
+          <div className="flex flex-col items-center lg:items-start gap-3">
             <Link
               to="/login"
               className="w-full sm:w-auto px-6 py-3.5 text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl flex items-center justify-center gap-2 transition-all shadow-md shadow-indigo-200 hover:-translate-y-0.5"
@@ -165,6 +167,12 @@ export default function LandingPage() {
               Get Started
               <ArrowRight className="w-4 h-4" />
             </Link>
+            <p className="text-xs font-medium text-slate-500">
+              Signing up as a service professional?{' '}
+              <Link to="/register?intent=service-provider" onClick={() => { void recordServiceSignupEvent('cta_clicked'); }} className="font-bold text-indigo-600 hover:underline">
+                Sign up here
+              </Link>
+            </p>
           </div>
         </div>
 

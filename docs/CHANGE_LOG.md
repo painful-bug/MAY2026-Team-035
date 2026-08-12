@@ -17,6 +17,2196 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-12 — Session 72: the seven migrations landed, and the complaints engine got its map
+
+### The hosted database caught up with the repository
+
+`PO` (the owner applied every file personally, per the standing rule). The seven pending
+migrations — `20260812090000` through `20260812160000` — were applied to the hosted Supabase
+project in filename order via the SQL Editor, each verified with a post-check before the next.
+The migration ledger was repaired by hand (the CLI is unlinked; seven `insert … on conflict do
+nothing` rows, count now 47), and the Database Advisors run came back with an empty Errors tab —
+the three new tables are RLS-clean, and the 296 warnings are the linter flagging the
+security-definer-RPC architecture itself plus 14 pre-existing baseline helpers, none from these
+files. The original defect — `create_founder_community` tripping `communities_status_canonical`
+on the legacy title-cased default — is fixed at the root.
+
+### docs/COMPLAINT_ENGINE_STATE.md — new
+
+`PO` (the owner asked for a detailed, teammate-facing account of everything implemented in the
+complaints engine so far, frontend and backend, including the workflow, origins and assignment).
+The handoff document holds the *open questions*; nothing held the *orientation* — what exists,
+how a complaint moves, which endpoints and screens are wired to what. The new file carries the
+lifecycle diagram, the routing and assignment rules, the full API and frontend surface tables,
+and a consolidated eleven-item worklist that cross-references the handoff's argued sections.
+
+### docs/COMPLAINT_ENGINE_HANDOFF.md — deployment caveat corrected, pointer added
+
+`DERIVED`. §7's caveat ("no migration has ever been applied to any database") became false when
+the owner applied the chain; a dated update note now says so without rewriting the sections that
+relied on it. The header points newcomers at the state document first.
+
+### docs/plans/MIGRATION_APPLY_RUNBOOK.md — the file-1 post-check anchored on call sites
+
+`AUDIT` (found live, during the apply). The §1 post-check searched `prosrc` for the bare old
+function name, which survives in the deliberate `-- CHANGED: was notify_community_staff` comment
+inside the `$$…$$` body — comments in a function body are part of `prosrc`, so the check failed
+on a database that was actually correct. Both patterns now match `perform public.…` call sites,
+with the gotcha recorded inline.
+
+---
+
+## 2026-08-12 — Session 71: the portal that existed before its user did
+
+The owner restarted their end-to-end registration test and hit it immediately: an unregistered
+service professional landing at `/worker` saw the full portal — sidebar with Dashboard, Calendar,
+Availability, Communities, Complaints, Messages, Profile, Settings — with the "Register as a
+service partner" form rendered *inside the Dashboard tab*, and seven other tabs all clickable into
+screens that are meaningless without a provider profile.
+
+### fix(worker) — the registration gate hoisted from the page into the layout
+
+`PO` (the owner's report, verbatim requirement: no tabs until registration is done, and the form is
+not "a page in the Dashboard tab") / `DERIVED` for the mechanics — the gate itself
+(`profileComplete = latitude ∧ longitude ∧ skills`) was correct but lived in `Dashboard.jsx`, a
+*child* of the chrome it needed to suppress. It moved into `WorkerLayout.jsx`, which already owned
+the `['worker-snapshot']` query (react-query dedupes, no second fetch): incomplete profile now
+renders `RegisterProvider` full-page with no chrome mounted at all, and deep links to any
+`/worker/*` sub-path redirect to `/worker` so the URL matches the screen. The predicate is
+deliberately completeness, not existence — a half-saved registration still lands on the form,
+prefilled. In-flight snapshot holds a neutral full-screen state so the chrome never flashes;
+snapshot failure gets a minimal retry screen instead of a blank page. The old in-page gate was
+deleted, not shadowed. The transition needs no reload: the form's submit already awaits the
+snapshot invalidation before navigating, so the portal appears the moment registration lands.
+
+### The pre-apply conflict sweep over the seven pending migrations
+
+`PO` (the owner chose the full migration over a one-file unblock and asked for a conflict test
+first) — a specialist ran seven static checks over the seven pending files: cross-file collisions
+(none — no object is defined in more than one pending file), diffs of all 14 `create or replace`
+bodies against their true last-applied predecessors (every diff is exactly the stated change; no
+security-posture flip anywhere), dependency closure (zero unresolved names; file 7's independence
+from files 1–6 verified), hosted-data hazards (file 5's pre-existing-violation block is
+notice-only; file 7's units update can disturb nothing — no triggers, no status constraint, RLS
+does not bind the SQL-editor role), backend compatibility (today's broken-by-design list enumerated;
+zero signature/shape mismatches after apply; no between-file seam where the running app is worse
+off mid-sequence), the static suites, and a line-level runbook audit. **Verdict: safe to apply in
+filename order.** Fallout fixed on the branch:
+
+- `test_work_order_notification_urls.py` asserted the url-repoint file is the *last* migration —
+  a proxy for last-writer-wins that file 7's arrival falsified without touching the property.
+  Re-pinned to the real property: sorts after `0037`/`0039` and no later file re-declares any of
+  the six functions. 46/46 migration tests green.
+- `DERIVED` — file 4's drop of the 6-arg `raise_complaint` discarded 0031's explicit authenticated
+  grant, leaving the new 7-arg function callable only via the default PUBLIC execute privilege
+  (effective callability unchanged, but convention-breaking and fragile against any future
+  default-privileges revoke). The unapplied file now restates the grant on the new signature —
+  explicitly no posture change, and commented as such.
+- The `units_member` mechanism claim in file 7's comment and the runbook was half-wrong (that
+  policy filters the *membership's* status; the unit-status filter that hides title-cased units
+  lives in the baseline's belongs-to-community check) — both corrected. Runbook stale counts fixed
+  (six→seven throughout; file 2 has nine function groups, not six; file 1 has two comments; file 4
+  is "most DDL surface", not "only").
+
+Recorded, not fixed (pre-existing, outside this pass): the `push_unconfigured` test fixture can't
+neutralize `.env`-sourced VAPID settings, so two push-503 tests fail on any machine with keys in
+`backend/.env` — flagged for its own session.
+
+### fix(db) — community creation has been impossible on the hosted database
+
+`AUDIT` (from the owner's live failure: admin onboarding's "Create community" step died with
+*"Unable to create the association"*) — the backend log showed the real error:
+`new row for relation "communities" violates check constraint "communities_status_canonical"`,
+failing row containing `Active`. Root cause is a legacy seam, not this branch's work: the hosted
+database predates `0001_baseline.sql`, and its legacy tooling created the status columns with
+title-cased defaults. Teammate migration `20260730163759` normalized the existing communities
+*rows* and added the lowercase-canonical constraint — but never fixed the column *default*, so
+`create_founder_community` (which never names `status` and rides the default) has violated the
+constraint on every call since that file was applied. New forward-only migration
+`20260812160000_legacy_status_defaults.sql`: sets the `communities.status` default to `'active'`,
+and defensively does the same for `units` **plus** the row normalization the 2026-07-30 file never
+gave it — a title-cased unit fails *silently* (the baseline's unit-belongs-to-community check and
+the `units_member` RLS policy both filter on `status = 'active'`, so such a unit is invisible to
+resident onboarding rather than loudly rejected). On a baseline-created database every statement is
+a no-op. pglast-parsed clean; independent of the other six pending files, so it can be applied
+alone to unblock community creation; `MIGRATION_APPLY_RUNBOOK.md` now carries it as file 7 with
+post-checks (and its trailing sections renumbered).
+
+Five-gate: Supabase only (a column-default repair; no schema shape change, so ERD and class diagram
+carry nothing new). Frontend — no change; the failing screen starts working once the file is
+applied. Component design — no impact.
+
+### fix(worker) — the chat dock was the one piece of chrome that leaked through
+
+`PO` (owner's follow-up report: the floating chat bubble still rendered over the registration
+form) / `DERIVED` — `ChatDock` is mounted once globally in `App.jsx`, outside the routes and
+therefore outside any layout gate, and its only hide rule was "signed out". The dock now defers to
+the same gate: on `/worker` paths it subscribes to the same `['worker-snapshot']` query (deduped,
+and `enabled`-gated so admins and residents never call `/worker/snapshot`) and hides while the
+snapshot is unresolved or the profile is incomplete. The predicate itself was extracted to a new
+single-definition helper, `features/worker/providerProfile.js` (`isProviderProfileComplete`),
+imported by both the layout and the dock so the two gates cannot drift — it lives in its own module
+rather than beside `workerApi` because the tests mock that module wholesale. Deliberately NOT hidden
+for membership-less identities in general: a registered-but-unhired provider keeps the dock, because
+hiring conversations happen there.
+
+Five-gate: frontend only. ERD, class diagram, component design, Supabase — no impact
+(`WorkerLayout` was already the snapshot owner; this is a gate relocation, not a new component).
+
+### Verification
+
+`npm run test` 54 passed / 12 files (baseline 45/10; six new `WorkerLayout.test.jsx` gate tests —
+no-chrome, prefill, registered-unchanged, deep-link redirect, loading hold, error retry — and three
+new `ChatDock.test.jsx` tests — hidden for unregistered on `/worker`, visible for registered, and
+visible on non-worker paths with zero worker-snapshot calls) · `npx oxlint` 0 · `npm run build`
+clean.
+
+---
+
+## 2026-08-12 — Session 70: the sign-in that finally met its first real caller
+
+The owner ran the app and OAuth completion failed with "Something went wrong" on every intent.
+Live-server logs pinned it in one grep: the exchange succeeded; the very next call —
+`GET /auth/session` — 500'd.
+
+### fix(auth) — `'Profile' object has no attribute 'get'`
+
+`AUDIT` — `_claim_staff_invitations` read the profile dict-style (`profile.get("email")`), but its
+only caller has always passed the Pydantic `Profile` model — **the annotation was wrong on the day
+it was written** (`5515b5d`), not broken by any merge; the initial merge-seam hypothesis did not
+survive `git log -S`. The crash sat before the function's deliberate error-swallow, so every
+authenticated session read died, and it stayed invisible because *no test anywhere called*
+`get_session_context` — the only "callers" matching the dict annotation were the seam tests that
+invented their own argument. Fixed by retyping and reading the attribute; the three seam tests now
+build the real model through the repository's own mapper; new `test_api_261` drives
+`get_session_context` end to end. A class audit over all of `app/` (two AST sweeps plus a manual
+read of the auth path) found exactly one instance. The clean-run lesson: **a mocked test suite
+proves shape agreement with its own mocks, not with the repository** — 976 tests passed around a
+bug every real sign-in hit.
+
+### The completeness check against painful-bug's history
+
+`AUDIT` — 26 of the teammate's 28 commits were already in the branch, one more byte-identically
+under a different SHA. The single true gap: `de26205` *"fix: retire preauth csrf after session
+creation"* — stranded on `codex/fix-preauth-csrf` when PR #20 was closed unmerged and only its
+sibling was hand-salvaged into PR #21. Verified live against HEAD (the pre-auth CSRF cookie was
+never cleared after login) and **cherry-picked with authorship intact**, plus a two-line reflow to
+the current lint baseline. Also noted: `origin/main` is one commit ahead (a docs-test hook by a
+teammate), untouched.
+
+### Verification
+
+979 passed / 4 skipped (+2 from the recovered regression test, +1 from `test_api_261`) · ruff 179 ·
+spec `--check` clean. The backend was restarted so the fix is live for the owner's retry.
+
+---
+
+## 2026-08-12 — Session 69: the coherence pass — diagrams, docs, and the apply runbook
+
+Three specialists, one question: after Sessions 67–68, does everything still agree with everything?
+Mostly yes; where not, fixed the same day. The app was also run end to end for the first time this
+branch: backend healthy on :8000, frontend on :5173, and the telemetry writes returned 200 —
+a real round trip into the hosted database.
+
+### `docs/plans/MIGRATION_APPLY_RUNBOOK.md` — new
+
+`DERIVED` — the six unapplied `20260812…` migrations verified five ways (parse, order, retry
+safety, code↔schema closure over all 124 RPC call sites — zero unresolved — and the notice
+handling) and turned into the owner's step-by-step apply guide. Two honest limits recorded in it:
+files 1–4 have no dedicated static test suite (verified by hand for this pass), and
+`complaint_department_routing`'s `raise_complaint` drop/create pair is the one transient gap a
+mid-file interruption can leave.
+
+### The diagrams — reconciled after fourteen migrations of drift
+
+`AUDIT` — `docs/diagrams/homebandhu_submission_erd.dbml` gains the four missing tables
+(`service_signup_funnel_events`, `department_skills`, `staff_invitations`,
+`complaint_department_requests`) and five corrections; `erd.svg` re-rendered (determinism proved
+first — the untouched source reproduced the committed SVG byte-for-byte), old render archived per
+the 2026-08-10 precedent. `HomeBandhu-Architecture-Classes.puml` gains the entire
+service-operations half it had never modelled and loses five methods that never existed plus the
+four retired staff writes. `docs/erd/homebandhu.dbml` **did not parse at all** (`''` escapes DBML
+does not have) — fixed, two tables added, and its README now says plainly it records intent, not
+schema. `homebandhu-domain.puml`: the note arguing `department_skills` into non-existence replaced
+with the overturn (the join was incomplete, not wrong), the three missing entities added, and the
+`RequestStatus` enum `ComplaintDepartmentRequest` had referenced since Session 65 finally defined.
+
+`AUDIT` — **the five-gate rule now names its canonical pair**: `docs/diagrams/` is what tracks the
+implementation; Session 65's gate pass had updated the intent draft and the domain model while the
+tracking pair drifted for fourteen migrations. Recorded here and in the orchestrator's standing
+notes so the next gate pass checks the right files.
+
+### The documentation cross-check
+
+`AUDIT` — one real deviation: `api_yaml_mapper.md` was 94 rows stale against Session 68's final
+docs commit — every diff a line number, none a route. Regenerated; the lesson is that a docs-only
+last commit still needs a mapper regen. All 20 `api_map_scan` findings re-verified as recorded
+verdicts (none new across +20/−4 operations); all 24 user-story verdicts agree across the index,
+§16 and the spec; zero dead anchors across eight documents. Stale prose fixed in eight files —
+API.md's banner and §16.6 (rebuilt, four groups had gone missing), the wiring audit, the agenda
+(item 17 closed, item 12 three-quarters closed), `DECISIONS_NEEDED` (B14, B15, B17 closed, B12
+part), both build plans, and the handoff's two "has no caller" notes (both now have callers; the
+fork stays the owner's). Dated finding-blocks were left as records, per convention.
+
+### The server
+
+`AUDIT` — `.claude/launch.json`'s backend entry used `sh`, which does not spawn on this machine —
+now PowerShell. `/health` answers ok; the signed-out 401 pair is the session probe working as
+designed; a stray 773 KB `nul` redirect artifact was removed from the repo root.
+
+---
+
+## 2026-08-12 — Session 68: phase 7, the symmetry ruling, and the end of the orphan list
+
+Six specialist assignments (three new charters, three follow-ups to standing agents), same
+orchestration as Session 67. The API now serves **195 operations** and the sweep reaches **186** —
+the 9 remainder are all structurally-invisible or declared paths, so **potential issue 10's orphan
+inventory is empty**.
+
+### The PO rulings this session
+
+`PO` — **issue 16 is ruled**: *registered professionals are assumed not to be living in any
+association.* The separate-account rule is identity separation, the "plumber who lives here" case
+is two accounts, and `20260812113000_professional_membership_symmetry.sql` enforces the missing
+direction (`HBSEP` → 409 `professional_account_separate`, raised by the membership trigger, checked
+at every membership writer including four in applied files). Consequences: `POST /access-requests`
+refuses a professional at request time; approval failures stopped masquerading as
+`access_request_not_pending`; a professional's invite claim gets a real 409 instead of a 500; and a
+professional provisioned as a manager by email silently fails to claim —
+`STAFF_PROVISIONING_DESIGN.md` records that as the ruled behaviour and its cost.
+
+`PO` — *"proceed with step 7 after any fixes remaining and fixable"* — the audit's approved-fix
+list was implemented before/alongside the wiring, per Session 67's escalations.
+
+### Phase 7 — 26 operations wired, 4 retired
+
+`DERIVED` — **work orders (8)**: a triage surface at
+`/{portal}/departments/:departmentId/work-orders`, all three portals, hiring-precedent shape. Two
+lifecycle questions went to `COMPLAINT_ENGINE_HANDOFF.md` §10 rather than being decided — the §8
+assignment fork (now purely semantic, both options built) and whether work may be raised against a
+terminal complaint.
+
+`DERIVED` — **amenities (10 + reports)**: the admin booking/approvals/ledger/reports screens read
+the API; 14 demo functions and 4 modules deleted with their last readers. A live bug died with
+them — the demo posted the *occurrence* id to `…/{seriesId}/approve` (agenda item 16 closed by the
+same change). The **Edit Booking modal was removed**: no update-booking endpoint exists (API.md §15
+now says so). The resident "Your Bookings" 403 is fixed; the slot-picker 403 beside it is recorded
+in issue 09 as unfixable-by-wiring (no availability read exists, by design).
+
+`DERIVED` — **money (3) + `POST /admins` (1)**: billing settings became a real read/edit (the
+screen had been hard-coding ₹4250/₹100 into every save); invoice issue + offline-payment recording
+landed with bookkeeping-not-checkout framing; "Add admin" became "Promote to Admin", which is what
+the endpoint does.
+
+`AUDIT` — **the four `departments…/staff` writes are retired**, on a per-operation evidence table:
+every one superseded by the `0035` hiring flow before it ever gained a caller. Striking the dead
+`staff: []` payload from the admin form also fixed a live defect — key-presence means *replace*,
+so **every department edit had been silently deactivating its whole roster**. Spec 199 → 195.
+
+### The notification links
+
+`AUDIT` — `20260812120000_work_order_notification_urls.sql` repoints the seven `?job=` emissions
+(`0037`×4, `0039`×3) at the triage screen; `portalUrl.js` learned `work-orders` as a department
+sub-screen. Fixing it exposed **three latent holes in `test_notification_links.py`** — bare
+`<Route>` fragments parsed to the root, urls read only to their first line, and no model of
+forward-only supersession (permanent now, not incidental) — all three fixed, and the repaired
+checker surfaced a **new** dead parameter: `?departure=` to `EmployeeDetail.jsx` (`0045`×2), on
+record in issue 12.
+
+### Docs
+
+`DERIVED` — API.md: the four staff-write sections replaced by a retirement record; the §15 "no
+migration has ever been applied" claim expired against the boundary; the missing update-booking
+endpoint recorded; `residentId`'s dead `GET /residents` citation corrected; the `HBSEP` 409
+documented on its three surfaces. Issues 9 (amended), 10 (emptied), 12 (item 4 closed, successor
+named), 16 (resolved) updated with the migrations README, the meeting agenda, the wiring audit,
+`DECISIONS_NEEDED` (resident Pay affordance) and both design docs.
+
+### Verification
+
+976 backend tests / 4 skipped · ruff 179 · spec 195 ops `--check` clean · mapper clean · scan 20/20
+documented · build clean · 45 vitest · **oxlint 0** · sweep 186/195, zero genuine orphans. The six
+`20260812…` migrations are pglast-parsed and **unapplied**; issue 4 tracks them.
+
+---
+
+## 2026-08-12 — Session 67: the audit of the merged commits, and phase 6 by specialists
+
+The first session run by the charter workflow: three sub-agents (charters in `.claude/agents/`),
+each with a scope fence and a mandated report, with synthesis and every `docs/` change staying here.
+Two things happened at once: the merged service-professional commits (`fc69d3f`, `ce3fafe`) were
+line-audited on the user's suspicion of bugs, and the resident portal was wired end to end
+(phase 6 — potential issue 09 resolved, see its banner).
+
+### The audit: twelve findings, four fixed, two escalated, six recorded
+
+`AUDIT` — the audit also *cleared* the merged work's foundations, which is worth as much as the
+findings: PostGIS units and argument order correct, SECURITY DEFINER hygiene complete, registration
+atomic, the RLS-recursion fix genuine and strictly narrower than the policy it replaced, and
+`ce3fafe`'s rewrites of the applied files byte-faithful to the baseline.
+
+**Fixed the same day** (each with a fail-before/pass-after test): the email-confirmation
+`intent` concatenation that would have broken confirmation outright under a `{{ .RedirectTo }}`
+template; the `/get-started` dead end for an email-path service professional (third door, destination
+computed from `destinationAfterAuth` so the two paths cannot drift); the admin Settings coordinate
+inputs whose `required`/`min`/`max` never fired outside a form; the telemetry visitor cookie whose
+30-day window never slid, double-counting returning visitors.
+
+**Escalated to files of their own**: [potential issue 15](potential%20issues/15-the-service-professional-intent-dies-in-the-confirmation-email.md)
+(the intent still dies in the fixed email template, so the funnel's `auth_completed` undercounts —
+a dashboard-configuration decision) and [16](potential%20issues/16-the-separate-account-rule-only-looks-one-way.md)
+(the separate-account rule is enforced in one direction only — a product question).
+
+**Recorded here, deliberately not acted on**: the unauthenticated telemetry endpoint joins
+potential issue 3's rate-limiting table; `sign_in_with_password`'s unconditional confirmed-email
+check now applies in production only (staging strictness is a conscious choice for the owner);
+`service_applications_read` silently lost department-less managers (inert — nothing mints one);
+`departments.hours` landed as `text` against the baseline's `jsonb` (inert type drift, now
+permanent); `0034`'s `search_serviceable_communities` comment describes the pre-replacement
+null-coordinate behaviour; CI's closing `git diff --check` cannot catch generated-file drift, and
+the workflow exports the (demo) service-role key to `$GITHUB_ENV` — both left because CI cannot be
+verified locally.
+
+### `docs/potential issues/`
+
+`AUDIT` — 09 resolved (banner carries the residual: the Amenities "Your Bookings" table, now
+phase 7's first item). 10 recounted: 164/199, with `GET /events` moved to "reached another way"
+(`EventSource`, structurally invisible to the sweep). 3 gained the telemetry endpoint. 4
+half-resolved by the boundary — `0001`–`0047` applied, the four `20260812…` files still nowhere.
+15 and 16 are new.
+
+### `docs/API.md`, router docstrings, `docs/FRONTEND_WIRING_AUDIT.md`
+
+`DERIVED` — the two "the form collects them [attachments]" sentences now record that it no longer
+does; the wiring audit's resident postscript records phase 6 and that `payInvoice` was wired to the
+resident simulator, not the forbidden admin settlement endpoint.
+
+### One frozen-interface lesson
+
+`AUDIT` — `residentApi.js` was written by the orchestrator as the frozen interface before launch,
+and both of its documentation errors (`resolveComplaint`'s invented `{accepted}` shape; `body` where
+`AddCommentRequest` says `message`) were caught by the implementing agents against the schemas.
+The convention held — both agents reported rather than silently diverging — but the lesson stands:
+an interface frozen before its shapes are verified freezes the errors too.
+
+---
+
+## 2026-08-12 — Session 66: the deployment boundary, and what it invalidated
+
+A teammate's branch landed two commits, and one of them moved a rule this workstream had been
+building on for six weeks. **The linked hosted Supabase project was verified on 2026-08-11 with
+every repository migration through `0047` applied.** Those files are immutable from now on, and
+corrections to them are forward-only.
+
+Session 65, immediately below, was written hours earlier and is **wrong in three places as a
+result**. It is left standing because it is an accurate record of decisions taken under the rule of
+that day; each correction is named here rather than by editing the entry.
+
+### `backend/supabase/migrations/README.md`
+
+`AUDIT` — **the number ranges are closed at `0047`.** Everything after the boundary is a timestamp.
+This overturns Session 65's `0050`–`0059` extension, which was correct when written and is now moot:
+numbers exist so two people do not pick the same next integer, and a timestamp cannot collide. The
+table is kept because it explains files that already exist. New rows for the seven files after the
+boundary.
+
+`AUDIT` — the `0040` **corrected 2026-08-12** row is withdrawn. That correction now lives in
+`20260812090000_notification_audiences.sql`. The row points there instead.
+
+### Migrations — three renamed, two written, three reverted
+
+`DERIVED` — `0048`/`0049`/`0050` became `20260812090100_skills_and_categories.sql`,
+`20260812090200_staff_provisioning.sql` and `20260812090300_complaint_department_routing.sql`.
+Not cosmetic: `0048` sorts **before** `20260811162409`, so leaving the numbers would have run this
+workstream's files before the ones already written against them.
+
+`DERIVED` — `20260812090000_notification_audiences.sql` is new, and exists only because of the
+boundary. Session 65 corrected `0033`'s amenity audience and `0040`'s incident audience *in place*;
+both files are applied, so both edits are reverted and both functions are repeated in full in the
+new file. Same for the three complaint notifications Session 65 edited into `0031` — they are now
+section 10 of the routing migration.
+
+> **What the boundary costs, stated plainly.** The old README allowed in-place correction
+> specifically so that changing one string inside a function body would not require re-declaring the
+> whole function, *because the copy is then free to drift from the original*. That reasoning was
+> right and the allowance is gone, so the drift risk is now real and permanent. What is done about
+> it: every copied body was extracted mechanically from the applied file, so the starting point is
+> provably the applied text, and every difference carries a `-- CHANGED` marker at the line it
+> changes.
+
+`AUDIT` — **`search_hireable_service_providers` was about to be silently reverted.** Both this
+workstream and `20260811162409` redefine it with the same signature, so `create or replace` is
+last-writer-wins and the renamed file now runs second. Left alone it would have withdrawn five
+things that have nothing to do with skills: the radius bound and its GiST-prunable outer bound, the
+`is_available` / `location is not null` filters, the worker/security mode exclusion, the
+deterministic ordering, and `can_hire_for_department` in place of `can_manage_department`. The
+department-skills union is now rebased onto that file's body as a one-CTE diff.
+
+### `docs/API.md`, `docs/COMPLAINT_ENGINE_HANDOFF.md`, `docs/potential issues/14`
+
+`AUDIT` — every sentence claiming *no migration in this project has ever been applied* is now false
+and is corrected with the date the claim expired. Three in API.md, one in the handoff, one in issue
+14, one in `test_dispatcher.py`, one in `test_complaint_routing.py`.
+
+### `docs/API.md` — `GET /departments/{departmentId}` gains `canHire`
+
+`DERIVED` — the hiring authority moved and is **not** overturned here:
+`can_hire_for_department` gives hiring to the department's own active manager, by membership role or
+by roster rank, with community admins as the fallback *only while it has neither*. That is the other
+workstream's decision.
+
+What follows from it is ours. **The question stopped having a role-shaped answer** — the same admin
+may hire for one department and not the next — and both frontend gates were still asking it
+role-shaped, in opposite directions: a security department's roster manager holds
+`membership_role = 'security'` and was hidden from a permission they hold (`docs/potential issues/14`
+exactly, recreated), while an admin on a managed department got an empty applications list and an
+`HB403` candidate search, which reads as a broken screen rather than a restricted one.
+
+So the department read carries the answer, computed by calling that function, and the screen says who
+decides. `usePortalScope.canHire` is deleted rather than corrected: no value of that shape can be
+right, and it had no callers.
+
+`null` on the list is *not asked*, distinct from *no* — it is one round trip per department and the
+list has no control that needs it.
+
+---
+
+## 2026-08-12 — Session 65: three open questions, answered
+
+> **Corrected by Session 66, above.** The migration-range extension, the `0040` in-place row, and
+> the reasoning that made both available were overtaken by the deployment boundary the same day.
+
+Session 64 closed with four open questions. Three were put back to the product owner and answered;
+the fourth — complaint **assignment** semantics — stays with the complaint-engine owner and was not
+touched.
+
+### `backend/supabase/migrations/README.md`
+
+`PO` — the service-operations range is extended to **`0050`–`0059`**. `0049` took the last number in
+`0034`–`0049` and complaint routing still needed a file. Nothing claims `0050`+, and the rule *lowest
+free number in your own range* only works if a range that runs out gets extended rather than quietly
+borrowing from a neighbour. Recorded with the note that extending grows the table at the end, never
+in the middle.
+
+`AUDIT` — `0040` gains a **corrected 2026-08-12** row, following the precedent `0022`, `0032`,
+`0036`, `0037` and `0043` set: nothing here has been applied to any database, so an audience mistake
+inside a function body is fixed in place. **This stops being available the moment anything is
+applied**, and the README already says so.
+
+### `docs/design/STAFF_PROVISIONING_DESIGN.md`
+
+`PO` — the single factor **stands**, and a claim code was offered and declined: *"lets assume that
+the admin wont make any typos for now and if the admin wants he can change the email when he notices
+via an edit option."* The recovery path was built instead —
+`PATCH /departments/{id}/staff-invitations/{invitationId}`.
+
+`DERIVED` — the **department is not editable** on that endpoint. It is what `can_manage_department`
+authorizes the call against, so a move would let the manager of one department mint staff into
+another. Moving an invitation is revoke-and-reissue under the authority of wherever it is going.
+
+The trade-off section now says plainly what the edit does and does not change: it makes the
+*accident* recoverable and does nothing about the security case. An address that is wrong *and*
+belongs to a real HomeBandhu user still admits that person, still silently.
+
+### `docs/erd/homebandhu.dbml`
+
+`AUDIT` — **`complaints.department_id` was already in the ERD and had no implementation.** Routing
+happened only when dispatch built a work order, so before that moment a complaint belonged to nobody.
+`0050` brings the implementation into line with a design decision already recorded here rather than
+changing the design.
+
+`DERIVED` — new table **`complaint_department_requests`**, the only genuinely new entity. A
+supervisor cannot move a complaint themselves, so the request is a row rather than an UPDATE: one who
+could push work out of their own department could empty it, and the receiving department would have
+no say either way.
+
+### `docs/class-diagram/homebandhu-domain.puml`
+
+`DERIVED` — `Complaint` gains `departmentId [0..1]` and `routeToDepartment(...)`, plus the
+`ComplaintDepartmentRequest` entity and five associations. **Null `departmentId` is a real state, not
+a gap** — it means the rule found nothing and the complaint is in the administrator's triage queue.
+
+### `docs/API.md`
+
+`PO` — new **§7.1**, the routing rule in precedence order: category, then the resident's own guess,
+then the triage queue. Category over the resident's pick is the ruling and it is the right way round —
+the category mapping is curated by somebody who knows how the society is organised, and the resident
+is guessing.
+
+`DERIVED` — **`"Other"` and `"Not sure"` are documented as *not* special values.** They are the two
+inputs that match nothing and fall through. Naming them as sentinels would have put two more strings
+in the system to express what the absence of a match already says.
+
+`DERIVED` — an **ambiguous category routes to nothing**. `department_categories` has a composite
+primary key, so one category may belong to several departments; the rule refuses to pick even when
+the resident named one of the candidates, because letting them break the tie would invert the
+precedence rule the section exists to state.
+
+`AUDIT` — the complaints preamble's audience claim was **wrong and is corrected**: raising,
+reopening, confirming and commenting reached every admin *and every manager in the community*, not
+"admins and managers" of anything relevant. Four notifications now go to the admins and the
+complaint's own department manager.
+
+### `docs/potential issues/14-…`
+
+`AUDIT` — the three notification links this file recorded as deliberately-unrewritable are all
+closed, and **none by adding a rewrite rule**. Two were audience mistakes (`0033`, `0040`) and one
+was a missing column (`0050`). The lesson is written down: *a link with no good destination is often
+a notification with no good recipient.*
+
+### `docs/COMPLAINT_ENGINE_HANDOFF.md`
+
+`PO` — new **§9**, written to be read *before* the owner concludes their §8 fork was decided for
+them. It was not: §8 is which **person** works a complaint, §9 is which **department** owns it, and
+`0050` deliberately answers only the second — it writes no `assigned_to_membership_id` and creates no
+work order. One genuine judgement call is handed over: whether a transfer should need consent from
+the *receiving* department, which today finds out by being notified after the fact.
+
+---
+
+## 2026-08-11 — Session 64: the manager who could not hire
+
+A follow-up to Session 63, on one instruction: build out the hiring screen recorded as
+`docs/potential issues/14`, and first **report which role it had actually been built for**.
+
+### `docs/potential issues/14-…` and its `README.md`
+
+`AUDIT` — marked **resolved**, and rewritten rather than annotated, because the audit found the gap
+was wider than the file described. The answer to "was this built for the admin or the supervisor?" is
+**the admin**, and never the supervisor: `require_admin_or_manager` checks the *membership role*, and
+a supervisor holds `worker`. Rank and role are separate axes and only role is checked here, so
+supervisors have never had hiring permission at any layer.
+
+Two things the file did not know when it was written, both now recorded in it: the
+**security-department manager** had the identical gap (`SecurityLayout.jsx` said so in a comment),
+and the `service_application_received` notification — which `0035` addresses to
+`array['admin','manager']` — carried an `/admin/…` link that silently redirected a manager to their
+own overview.
+
+### `docs/API.md`
+
+`DERIVED` — a new `GET /api/v1/service-providers/{providerId}`, documented with the reason it is
+narrower than the provider's own profile read: no coordinates and no profile id, because
+`distanceKm` from the candidate list already answers where somebody is and a home coordinate is a
+different fact offered for a different purpose. The **guard** is the point of the route existing at
+all — `service_providers_read` is `auth.uid() is not null`, so Postgres would give the row to any
+signed-in caller.
+
+`PO` — `rank` and `shift` struck from `POST /departments/{id}/invitations` and
+`POST .../decide`, quoting the ruling verbatim in place. Both halves recorded separately because
+they are separate facts: leadership never comes from the hiring path (it is provisioned by email),
+and `staff_assignments.shift` is a column **nothing schedules from** — the dispatch sweep and
+`security_shifts` do that work. `security_shifts` is explicitly untouched, so nobody reads "there is
+no shift system" as applying to the gate rota.
+
+### `docs/changelogs/2026-08-11-…`
+
+`DERIVED` — a phase-6 section, two new breaking-change entries (7 and 8), and the open-questions
+section rewritten into **settled** and **still open**. Two of the three questions raised at the end
+of Session 63 were answered by the PO and are now recorded as decisions with their reasons, not as
+questions.
+
+### Not changed, deliberately
+
+The ERD and class diagram. Session 64 adds **no tables, no columns and no migration** — the
+`0034`–`0049` range is exhausted and this work needed none of it, because
+`service_provider_overview` was already readable and `decide_service_application` already defaulted
+an omitted rank to `member`. A five-gate pass with nothing to record is worth saying out loud rather
+than leaving as a silent omission.
+
+---
+
+## 2026-08-11 — Session 63: departments, skills and the manager who could not sign in
+
+Four instructions, and the first three are done. The fourth — wire every dangling backend operation
+— is deliberately incomplete and says so at the end.
+
+### `docs/changelogs/` (new folder)
+
+`PO` — the ruling was to keep a **detailed changelog of this execution, in addition to the normal
+ones, so it can be shared with teammates**. `CHANGE_LOG.md` is keyed on documents and is terse;
+that one is keyed on endpoints, schema and contracts, and carries a "files touched, grouped by
+owner" section so each person finds their own. `docs/changelogs/README.md` gives the folder a
+convention rather than one example, the shape `docs/issue fixes/` was given.
+
+Written **per phase as each landed**, not at the end. A changelog assembled from memory after eight
+phases is a summary, and the details a teammate needs are exactly the ones that get lost.
+
+### `docs/API.md`
+
+`DERIVED` — six operations for the skill catalogue (`0048`) and three for leadership provisioning
+(`0049`), each with its status table. `GET /skills` gained `q`/`limit` and the entry now states that
+the no-query behaviour is unchanged, because it already had a consumer.
+
+`DERIVED` — the `GET /departments/{id}` entry changed from `ADMIN` to `ADMIN` **or the department's
+own manager**, with the reason: the manager portal has no other way to read its own department, and
+this was the only department operation with no frontend caller at all.
+
+`PO` — a new §"Leadership provisioning" recording the ruling verbatim: *managers and supervisors
+have no registration process; servicemen are the only role in the service section that does.*
+
+### `docs/design/STAFF_PROVISIONING_DESIGN.md` (new)
+
+`DERIVED` — required, not optional: `0049` changes `auth_service.py`, which belongs to the auth
+workstream, and the standing rule is that file is only touched with a design doc. It records the
+mechanism, the derived-role table, and **the one-factor trade-off in plain words** — whoever holds
+that mailbox at first sign-in becomes the manager. The resident invite's mandatory token is
+untouched; leadership got its own table specifically so that rule would not have to bend.
+
+### `docs/FRONTEND_WIRING_AUDIT.md`
+
+`AUDIT` — the `GET /complaint-categories` row is struck through and marked reinstated. Its
+retirement reason was a statement about two screens, and **both halves expired**:
+`CreateDepartment.jsx` was deleted in `38927e5`, and the department form's category field is now a
+combobox that cannot prevent duplicates without the list. The reinstated read also is not the
+retired one — it carries each category's linked skill.
+
+### `docs/COMPLAINT_ENGINE_HANDOFF.md`
+
+`DERIVED` — a new §8. The "Assign technician" dropdown had been reading `department.staff`, which
+the snapshot always builds empty, so it has been offering a choice of nobody. It now reads the real
+roster. **The question of what an assignment *means* is left open on purpose** — three possible
+shapes are set out, and the choice belongs to whoever owns the complaint lifecycle.
+
+### `docs/potential issues/14` (new)
+
+`AUDIT` — a department manager may hire and has no screen to hire from. Reusing the admin hiring
+screen would have shipped four `/admin/...` links that 403 for them, so the tab was dropped and the
+gap written down. Also notes something about the sweep itself: **reachability is not the same as
+reachability by everyone who is allowed.**
+
+### Two corrections to earlier sessions
+
+> **`0035` said it replaced `department_overview` and did not.** Its own header states the reason
+> to: *"leave `department_overview` matching on `'head'` and the admin screen's head field is
+> permanently null."* It replaced `apply_department_head` and never touched the view — so
+> `head_name` has been null for every department in the API since `0035`. `0048` corrects the
+> predicate while replacing the view anyway. Recorded here rather than only in the migration,
+> because a comment claiming a fix that was not made is worse than no comment.
+
+> **Session 60's five-gate note on `search_hireable_service_providers` is now partly superseded.**
+> The function derives the skills a department needs from its categories; from `0048` it is the
+> union of that and the department's own skills. Not a correction of that session — a deliberate
+> behaviour change, made because otherwise attaching a skill to a department would change nothing
+> anybody could observe.
+
+### What is not done
+
+`PO` — the ruling on the connectivity sweep was **"everything dangling"**, all 51 operations.
+Phases 1–5 (skills, provisioning, the admin form, the manager portal) are complete; **phases 6 and 7
+— the resident portal's 24 operations and the work-order, amenity and money surfaces — are not
+started.** The plan named them as the cut line if scope ran long, and it has. They are unblocked and
+independent of everything above.
+
+
+## 2026-08-11 — Session 62: the four that are not ours, and everything nothing reaches
+
+**Context.** PO: *"are the 5 issues you identified documented? if not document them in potential
+issues. fix all other issues that we have identified and after that do a full sweep for dead or stale
+stuff."*
+
+**They were not documented — they were recorded in a test constant, which is not the same thing
+(`AUDIT`).** `IGNORED_QUERY_PARAMETERS` kept the list honest but told nobody outside the suite what
+each entry cost a user or who could fix it. A finding whose only home is an assertion is findable by
+people already reading that file.
+
+### `docs/potential issues/12-notification-parameters-no-screen-reads.md` — new (`PO`)
+
+Thirty-six notification `url` values across seven migrations carry a query parameter, in ten distinct
+`(path, parameter)` pairs. The file gives each open one its emitting migration lines, its emission
+count, the screen, the owner, and what a fix would actually be — deliberately not batched, because
+the four need four different answers. `/resident/complaints?complaint=` is eleven of the twenty-three
+open emissions and the *least* fixable: the screen behind it reads a zustand demo store, so honouring
+the parameter would highlight a seeded row unrelated to the complaint. It closes when issue 9 closes.
+`/admin/departments?job=` has nothing to fix at all — there is no supervisor triage screen, so the
+parameter has no reader rather than the wrong one.
+
+### `frontend/src/pages/WorkerDashboard/Messages.jsx` — `?conversation=` is honoured (`DERIVED`)
+
+**The fifth pair was ours, which Session 61 got wrong** and this corrects. `0041:611` notifies the
+provider with `/worker/messages?conversation=<id>`; the screen kept the open thread in `useState`,
+which cannot be linked to, so the bell landed the worker on a thread list with nothing opened. The
+admin twin (`AdminDashboard/Messages.jsx`) got this right the day it was written and says why in its
+header — this side simply never had it.
+
+Selection moved to `useSearchParams`, and opening a thread is a real history entry on purpose: on the
+phone this screen is built for, that makes the hardware back button close the thread rather than
+leave the portal. An **error branch** came with it, because the id can now arrive from a link: a
+closed thread, or one belonging to another account, previously rendered as a blank thread under a
+real header, which reads as *no messages* rather than as an error.
+
+### `backend/scripts/dead_code_sweep.py` — new (`PO`, *"a full sweep for dead or stale stuff"*)
+
+Four questions nothing in this project asked: frontend modules nothing imports, frontend exports
+nothing outside the file mentions, backend module-level names that occur exactly once, and relative
+Markdown links in `docs/` that resolve to nothing. None is an error in either language, and a
+Markdown link is checked by nothing at all. Two dead-code sweeps had been done here by hand; this is
+the same work, repeatable, with its blind spots in the docstring rather than in someone's head —
+decorated functions are excluded (a route handler is reached through `@router.get`), the export check
+is a word search so it under-reports rather than accusing live code, and a name whose only caller is
+itself dead still counts as live.
+
+**Deleted, ours:** `security_service.export_datasets()` (no caller — `export_csv` consults `_DATASETS`
+directly), `vocabulary.js`'s `SHIFT_STATUSES` and `startOfToday()`, and the unnecessary `export` on
+`offlineGate.js`'s two storage keys and batch size, which are module-private on purpose: the
+functions beside them are what keeps a half-written value from reaching a caller.
+
+### `docs/potential issues/13-dead-code-in-files-this-workstream-does-not-own.md` — new (`AUDIT`)
+
+The rest of the sweep's output, recorded rather than changed: three backend names with zero
+references (`require_active_role`, `WithdrawAccessRequest`, and the three cookie constants superseded
+by `cookie_name()`), two orphan frontend modules, eight unused exports — **all three of `phone.js`'s,
+which is the shape of a module left behind by the phone/OTP design** — and `graphify-out/`, 57 tracked
+files and 2.6 MB of a code-graph tool's output that nothing refers to.
+
+`require_active_role` is flagged for a second look rather than a straight delete: issue 2 kept `Role`
+in `roles.py` *on the grounds that this file imports it*, so if the function goes, that reason goes
+with it.
+
+### Stale claims corrected (`AUDIT`)
+
+- **Issue 4** said the migration directory held 22 files, `0001` through `0032`. It holds **37**.
+  Fifteen landed since it was written and every one is unapplied too, so the finding did not change —
+  only its size did, which is the argument for the finding.
+- **Four dangling relative links**, all to files deleted in the change that made the document true:
+  `ADMIN_REGISTRATION_FLOW.md`'s OTP page and `AuthFlowRoute.jsx`, and `FRONTEND_MEETING_AGENDA.md`
+  items 8 and 9. The agenda items keep their text and gain dated notes — item 9 is **resolved** (one
+  department-create path now, not two) and item 8 is **overtaken but not resolved**, because the
+  question of whether `flat` holds a bare number or a full code is still open even though the second
+  code path is gone. Item 9's third disagreement is explicitly *not* resolved: department categories
+  are claimed by name against no closed list, so `Others` is still claimable and still carried by no
+  complaint.
+- **`API.md` §16.4, US-2.1** carried an unmarked stale table row — *"any write endpoint: missing"* —
+  two paragraphs below an endpoint table listing four visitor-pass writes `0032` shipped. Found while
+  answering *"are there any user stories left to be fulfilled"*, which is the use this section is
+  for. The section deliberately keeps superseded layers, so the row is struck through and the
+  correction stated above it rather than the layer being rewritten: US-2.1's remaining gap is the
+  *question* side, not the write side — nothing raises `visitor.approvalRequested` because a
+  guard-raised approval request has no endpoint. An unmarked stale row inside a document that marks
+  all its other corrections reads as current, which is worse than no record.
+
+**Baselines now:** **860 tests** (unmoved — the parameter inventory asserts four instead of five),
+ruff **153**, oxlint **7**, map-scan **20**, spec unmoved at 150 paths / 179 operations, mapper
+`--check` clean, `npm run build` and all three node suites clean. `dead_code_sweep.py` reports **zero**
+dangling links and nothing of ours.
+
+---
+
+## 2026-08-11 — Session 61: the notification parameter, not just the path
+
+**Context.** PO: *"fix the gap about the shifts screen. plan and execute."* The gap is the one
+Session 60 declared on itself — `0043`'s `security_shift.assigned` was corrected to
+`/security/shifts?shift=<id>` and the screen it lands on never read `shift`.
+
+**Why this is a defect and not a polish item (`DERIVED`).** It is the same failure as the wrong path,
+one step later: the link works, so nothing reports it. The guard taps *"A shift was handed to you"*,
+arrives at a fortnight of roster rows, and has to find theirs by eye. Session 60's own words for the
+path defect apply unchanged — *no error anywhere: not in the browser console, not in the API log, not
+in a test run.*
+
+### `docs/API.md` §19 — `GET /security/shifts` gains a `shiftId` filter (`DERIVED`)
+
+Not a highlight-only fix, because **the linked shift is often not on screen to highlight.** A handover
+is driven by `0045`'s *scheduled* departure, whose date can be weeks out, and the screen queries ±7
+days. Widening the window is worse than useless: the list caps at 200 rows ordered by start, so a
+wider range on a multi-post gate can truncate away the row being looked for. One id, one row, no
+window.
+
+**A filter and deliberately not `GET /security/shifts/{id}`.** The worker precedent that shape would
+copy (`GET /worker/jobs/{id}`) exists because it returns a *richer* model — the resident's name, flat
+and the complaint in full. There is no richer shift model, so a second path would serve the same
+`SecurityShift` and cost an operation, moving the `179 operations / 150 paths` figures in five
+documents to express *the same list, narrowed to one* — which is what the `postId` filter beside it
+already does. An unknown id answers `200 []`, **not `404`**, so the read cannot be used to test
+whether a shift exists in a community the caller cannot see.
+
+### `docs/design/SECURITY_PORTAL_DESIGN.md` — new *"The parameter, not just the path"* (`AUDIT`)
+
+That file previously recorded the deliberate limit: *"the test deliberately ignores query strings,
+because an ignored parameter is a missing feature and an unroutable path is a broken link."* Right
+about the path check, wrong as a stopping point. The section now describes both halves and links the
+five that remain to their owners.
+
+**`backend/tests/test_notification_links.py` turns the blind spot into an inventory.** It resolves
+each notification path to the component `App.jsx` mounts there and asserts the set of `(path,
+parameter)` pairs no screen reads **by equality** against a named constant. Equality rather than a
+subset, so the record cannot decay into an allow-list nobody prunes: a screen that starts honouring
+its parameter has to leave the list in a diff somebody reviews.
+
+Six pairs were ignored; five remain, and none is this workstream's to fix — `/resident/complaints`
+and `/admin/complaints` (issue 09 and `COMPLAINT_ENGINE_HANDOFF.md`), `/admin/departments?job=`
+(issue 10 — no supervisor triage screen exists, so there is no parameter to read yet),
+`/admin/amenities?booking=` and `/worker/messages?conversation=`.
+
+> **Corrected the next session.** *"None is this workstream's to fix"* was wrong about one of the
+> five: `/worker/messages?conversation=` is our own screen, from Step 8 of the same phase. Fixed in
+> Session 62 below. The claim was made from the ownership of the *screens the other four land on*
+> without checking the fifth, which is the same shortcut — writing from memory of the code rather
+> than from the code — that the link test exists to catch.
+
+**Baselines now:** **860 tests** (856 + 2 shift filter + 2 parameter inventory), ruff **153**, oxlint
+7, map-scan 20, **spec unmoved at 150 paths / 179 operations**, mapper regenerated (21 rows, all line
+numbers), `npm run build` and all three node suites clean.
+
+---
+
+## 2026-08-11 — Session 60: the compatibility sweep, two fixes and three filed issues
+
+**Context.** The PO asked for an end-to-end compatibility check — *"from auth to resident to admin to
+all service people"* — then ruled on its output: *"lets fix findings 1 and 2 … go into detail about
+each and every other finding and store them as separate files."*
+
+The sweep compared 124 frontend call sites against the 179 live operations, every notification `url`
+against the route table, and the portal-derivation chain end to end. **The call layer is clean**: no
+path or method mismatch anywhere. Both real defects were one layer up, in reachability.
+
+### `docs/design/AUTH_AND_SESSION_DESIGN.md` — new §5.6, and §5 loses its count (`AUDIT`)
+
+`/security-manager` was reachable by **no user the system can create**. Session 57's §5.3 narrowed the
+portal predicate from *"a manager with a department"* to *"a manager whose department is a security
+department"* — the right narrowing of the wrong question, because `hire_service_applicant`
+(`0035:918`) is the only minter of a department membership and it writes `security` or `worker`.
+Nothing writes `manager`.
+
+The answer was already in the repository, in SQL, with a comment saying so: `gate_admin_community_for`
+(`0040:589`) has defined a security manager as a `security` membership with an active roster rank of
+`manager` or `supervisor` since the day it was written, under the heading *"D3 made rank and role
+separate axes."* `_portal_for` now asks that question, so the portal and the live authorization agree
+by construction — the alternative being a portal that is either unreachable or full of screens whose
+writes 403. `supervisor` is admitted because that predicate admits it.
+
+This orphaned four pages, `GET /security/roster` and migration `0047` — all built the previous day.
+`/security/*` also now admits `SecurityManager`, without which the fix would have started bouncing
+newly-senior guards off the target of two shift notifications.
+
+### `docs/design/SECURITY_PORTAL_DESIGN.md` — the deep-link table gains two rows and a correction (`AUDIT`)
+
+That file already said *"a notification whose `url` 404s is a defect that no test catches"*. Four of
+them were, addressed to people whose portal has no such route:
+
+| Migration | Was | Recipient | Now |
+|---|---|---|---|
+| `0032` `decide_visitor_pass` | `/security/visitors?pass=` | the gate | `/security` |
+| `0036` ×3 | `/worker/jobs/<id>` | the worker | `/worker?job=<id>` |
+| `0037` ×2 | `/worker/jobs?job=<id>` | the worker | `/worker?job=<id>` |
+| `0043` `reassign_departure_item` | `/security-manager/shifts?shift=` | **the guard handed the shift** | `/security/shifts?shift=` |
+
+The last is the sharpest: a manager's prefix on a notification addressed to a guard. It is no longer
+asked for but checked — `backend/tests/test_notification_links.py` parses `App.jsx`'s nested route
+tree and asserts every `url` literal in every migration resolves against it, with four cases pinning
+that the matcher still rejects the historical values, because a link checker that cannot fail is
+worth nothing.
+
+**The migrations were corrected in place rather than superseded (`DERIVED`).** Seven string literals
+sit inside seven functions of ~600 lines total, each defined exactly once; a fix migration would
+re-declare all seven to change seven strings, and the copies would drift. `0022` set that precedent
+on 2026-08-04. `backend/supabase/migrations/README.md` now states the rule and its expiry: once
+anything has been applied anywhere, this stops being available.
+
+### `docs/API.md` §3.5 — `portal` becomes a documented closed list (`DERIVED`)
+
+Six values, who gets each, and the two spellings of `security-manager`. `portal` is what the frontend
+routes on and it had never been written down anywhere a client could read it — which is part of why
+one of its values could be unsatisfiable for a day without anyone noticing.
+
+### `docs/potential issues/` — becomes an index plus three files (`PO`)
+
+The three findings not fixed are now one file each, per the ruling, each naming the contract it says
+is wrong and linking to it:
+
+| File | Finding |
+|---|---|
+| [`09-resident-portal-is-still-a-demo.md`](potential%20issues/09-resident-portal-is-still-a-demo.md) | seven of eight resident pages read the zustand demo store; 24 endpoints built for them have never been called |
+| [`10-api-operations-with-no-frontend-consumer.md`](potential%20issues/10-api-operations-with-no-frontend-consumer.md) | 51 of 179 operations have no caller, sorted into what that means — including the supervisor triage surface, the manual half of the dispatch engine |
+| [`11-snake-case-in-the-published-contract.md`](potential%20issues/11-snake-case-in-the-published-contract.md) | §1.3's *"everything else: camelCase"* is false for 28 properties across three non-auth surfaces. **The code is consistent and the document is wrong**, which widens issue 8 from one seam to five |
+
+`README.md` becomes the index for all eleven, with issue 6's count recounted (149 → 153) and issue 8
+marked superseded in scope.
+
+**The sweep ships as `backend/scripts/frontend_api_sweep.py`**, so those documents' *How to confirm*
+step is a command rather than a claim. It declares its own blind spot — one call site whose first
+argument is an expression — rather than letting it inflate the unreached list.
+
+**Baselines now:** **856 tests** (843 + 7 portal + 6 link), ruff **153**, oxlint 7, map-scan 20, spec
+and mapper both up to date, `npm run build` and all three node suites clean.
+
+---
+
+## 2026-08-11 — Session 59: §3 of the mapper becomes generated, and finds a bug in the scanner
+
+**Context.** Session 58 raised the mapper's drifted `API.md:NNNN` references and declined to fix
+them by hand, on the grounds that *"if it is worth fixing it is worth generating."* The PO ruled:
+*"regenerate the mapping and everything else to match the current api state."*
+
+### `backend/scripts/regen_mapper.py` — new (`PO`)
+
+Rewrites all 179 rows of [`api_yaml_mapper.md`](api_yaml_mapper.md) §3 from the live app and the
+generated spec. **166 of the 179 changed** — every one a line number or a handler position, and not
+one a route, `operationId` or schema. That distribution is the finding: the file's *contents* had
+been maintained faithfully endpoint by endpoint, and its *coordinates* had rotted underneath,
+because `API.md` grows above a heading and every reference below it moves. No check could see it.
+
+**What it deliberately does not generate.** Which `API.md` section covers an operation is an
+editorial judgment — `mention only — § 3.4 Password recovery` is somebody deciding which paragraph
+is the right answer — so the label is preserved verbatim and only its line number re-resolved.
+`**Bold**` is preserved too: `**200 free-form object**` marks a §5 defect and the unbolded form does
+not. Prose, layer chains and notes are untouched. §6.1 step 4 now says regenerate rather than write
+the row, and §6.2 adds `--check` to the after-every-pull routine.
+
+### The scanner was wrong about one endpoint, and the generated table is what said so (`AUDIT`)
+
+`GET /communities/search` has always been marked `**missing**` in §3, while `api_map_scan.py`
+reported it documented. **The hand-written row was right.** The scan tested whether a path appeared
+*anywhere* in `API.md` as a bare substring, and §18 documents `GET /worker/communities/search` — a
+different endpoint that happens to end the same way. So a genuinely undocumented operation reported
+clean for as long as the check has existed.
+
+Fixed with a left-boundary anchor: a longer path is not a mention of a shorter one. **The
+operation-side baseline moves 19 → 20**, and that is a defect surfacing rather than a regression —
+the same distinction Session 58 drew about arithmetic, arriving from the opposite direction. It also
+overturns one line written *in* Session 58: `/communities/search` was listed there as having
+"since gained coverage", which came from trusting the scan over the row.
+
+**Second thing that fell out of doing it mechanically:** some rows quoted the route in camelCase,
+against §1's own rule that the mapper writes it as the code declares it. Normalised.
+
+**Baselines now:** 843 tests, ruff **153** (the new script lints clean), spec up to date at 150
+paths / 179 operations, **map-scan 20**, oxlint 7. The regenerator is idempotent — a second run
+reports no change.
+
+---
+
+## 2026-08-11 — Session 58: the coherence sweep, and what a summary can still lie about
+
+**Context.** The PO asked for a sweep across the whole surface after Session 57 — *"check if
+everything fits in"* — and specifically for the spec and the story mapping. Both hold: the spec
+regenerates byte-identical, and all 24 stories agree across `USER_STORIES.md`, `API.md` §16 and
+`api_annotations.py`. Everything found below is a **summary that had drifted away from inputs that
+were themselves correct and checked.**
+
+### `API.md` — four stale figures over verdicts that were never wrong (`AUDIT`)
+
+* **The document's own banner, the first factual claim in the file, read "163 operations across 138
+  paths" against a spec of 179 across 150** — three sessions stale. The sentence beside it, that
+  every `###` heading corresponds to a real operation, is machine-checked and was true the whole
+  time. A count in prose is not checked by anything, and now says so.
+* **§16.2's coverage table read 8 / 9 / 7 and now reads 15 / 6 / 3.** Its §3 row said the security
+  manager had *nothing* served; five of those six stories are served, four of them since `0040`
+  landed on 2026-08-10. Every per-story verdict beneath the table was right, and
+  `api_map_scan.py` had been checking each of them across three files the whole time — because the
+  scanner compares verdicts and does not add them up. **That is the finding worth keeping:** in a
+  document with machine-checked contents, the hand-derived summary is the last line that can lie,
+  and it is the first line anybody reads.
+* **§16.6's headline read "90 of the 163 operations" against a spec saying 106 of 179**, and its
+  table summed to 74. Four whole families were missing from it — departures, direct messages, the
+  gate roster and posts, the worker's own availability — because each was added to the *spec* and
+  not to this hand-made grouping. **The table was rebuilt so that every row is one
+  `x-no-user-story` group in `openapi.yaml`**, same counts and same rationales, and
+  `api_yaml_mapper.md` §6.3 now carries the one-line recount that produces the numbers. A group
+  that splits or merges upstream now shows up as a row that no longer matches, instead of a total
+  that quietly stops adding up.
+* **§16.1 still opened "this branch is the admin dashboard backend", naming the resident app and
+  the security gate as surfaces with no workstream.** Both have one; the gate's arrived yesterday.
+  Struck through rather than deleted — it is why much of the section is worded as it is.
+* **§16.7's open-work table** still listed CSV export as to-do (US-3.6 closed it for the gate; the
+  admin half of US-1.6 is what remains) and still said US-2.7 waits on a service worker that was
+  built on 2026-08-10.
+
+### `api_yaml_mapper.md` — the tables were current and everything around them was not (`AUDIT`)
+
+Sixteen operations arrived across `0043`–`0047` and every one got its row. Meanwhile the header
+still said *99 operations, 686 tests, `main` @ `98d557a`*, §5 was titled "as of `98d557a`", §6.2
+said 20 findings, and §5.2 claimed eleven undocumented operations when three had since gained
+coverage. All corrected to the branch: **179 operations across 150 paths, 843 tests, 19 findings**
+(eleven untyped bodies, eight undocumented). This file exists to catch exactly this happening
+elsewhere, which is the reason to record that it happened here.
+
+### `docs/design/README.md` (`AUDIT`)
+
+Pointed the story matrix at **`API.md` §15**, which has been *"Not yet implemented"* since the
+resident backend renumbered the sections behind it — the same stale cross-reference
+`USER_STORIES.md` carried for US-3.2 and corrected a day earlier. Also still described *"two
+documents today; a third would be justified by, say, the gate/security surface if it ever gets an
+owner"*, and said one document was retrospective and one prospective. Five documents now, four
+retrospective. The prediction is left visible: the gate did get an owner.
+
+### `docs/design/AUTH_AND_SESSION_DESIGN.md` (`AUDIT`)
+
+§5.2 cites `SecurityDashboard.jsx`, which Session 57 deleted. Kept, with a note — the defect it
+records was real in the file that was there, and this folder's convention is that a stale citation
+is a signal worth having rather than a link to tidy away. The note also records the two reads
+beside it (`departmentName`, `staffRole`) that rendered a literal `undefined • undefined` to every
+gate user until the same build removed them.
+
+**Nothing in application code changed in this session.** Every baseline is where Session 57 left
+it: 843 tests, ruff 153, spec up to date at 150 paths / 179 operations, map-scan 19, oxlint 7,
+frontend build and three test suites green.
+
+---
+
+## 2026-08-11 — Session 57: the gate gets a frontend, and US-3.5 closes
+
+**Context.** Task #93 had been open across two phases: the gate backend (`0040`, nineteen
+operations, `US-3.3`–`US-3.6`) had **no consumer**, and the recommendation on record was that it
+wanted its own build step. The PO ruled on 2026-08-11: *"build it."* Six steps, all shipped.
+
+### The two demo dashboards are replaced (`PO`)
+
+**This ruling overturns nothing written — it closes something left open.** `SecurityDashboard.jsx`
+(1070 lines) and `SecurityManagerDashboard.jsx` (576) were dummy-data screens over the zustand
+visitors slice; both are deleted. In their place, nine route-per-file screens under
+`pages/SecurityDashboard/` and `pages/SecurityManagerDashboard/`, a `features/security/` API module
+and component set, and `features/security/offline/`.
+
+The resident-facing visitors slice **stays** — resident demo screens still consume it. Only the
+security screens stopped.
+
+**Three demo features were dropped rather than reimplemented, and each has a reason** (`DERIVED`):
+
+* *Guard-raised approval requests.* There is no endpoint. The gap is documented at
+  `resident_visitor_passes.py:134-140` — nothing in this repo lets the gate create a
+  `Pending Approval` request — and inventing a client-only version would have been the same defect
+  the demo already had.
+* *The "Society Management Office" phone number.* Invented. No endpoint returns a community contact
+  number, so any number on that screen was one somebody made up, and a made-up number on an
+  emergency screen is worse than no screen. The three real national lines (112 / 101 / 108) stay.
+* *The manager's editable staff array and `operatingHours`.* A second, disagreeing copy of a roster
+  that already lives in the admin portal's department screens. `operatingHours` was never returned
+  by anything.
+
+### `0047_security_roster.sql` + `GET /security/roster` — a hole between two permission models (`DERIVED`)
+
+Found in the first hour of building the shift form, which is exactly where §4.25 predicted an
+unconsumed API would hide a defect. Creating a shift needs a `staffAssignmentId`; the person who
+creates shifts is a security *manager* — a `security` membership ranked `manager`/`supervisor`,
+since `D3` split rank from role — and **every roster read in this API sat behind the hiring
+surface's `require_admin_or_manager`, which tests the membership role.** The one person the form
+exists for could not fetch the guards to put in it.
+
+One security-definer function, authorized by the predicate the shift write already trusts
+(`gate_admin_community_for`). Narrower than the write on purpose: it lists only staff of
+`departments.kind = 'security'`, because a shift form offering the plumbing roster offers a mistake.
+No table, no view, no column — **the ERD and class diagram are untouched.** `API.md` §19 is twenty
+operations; spec regenerated at 150 paths / 179 operations.
+
+### `US-3.5` moves `partial` → `served` (`DERIVED`)
+
+`API.md` §16.5 had graded it *"the server side is complete; the browser side is not"* since Step 7.
+The browser side now exists and the section says so, replacing the old paragraph rather than
+deleting it. Three properties of the implementation are recorded there because they are properties
+of the *story*: every offline verdict is labelled **provisional** on screen; the device never
+returns `departed` (the guest-count arithmetic needs `visitor_events`); and entries the server
+rejects survive reconcile and stay visible until dismissed one at a time.
+
+**A standing rule is deliberately overridden here.** `store/appStore.js` states that *localStorage
+is deliberately never a source of domain truth*, and `public/sw.js` refuses to cache `/api/*` for
+the same reason. The offline scan queue is the first durable client-owned write state in this
+codebase. It is justified in `offlineGate.js`'s header: a barrier whose network dropped still has
+people standing at it, and what makes an offline admission safe is not the storage but
+`POST /security/offline-reconcile`, which re-verifies server-side and logs its own verdict beside
+the device's claim.
+
+### Two frontend fixes and one API touch-up (`AUDIT`)
+
+* `Header.jsx` and `SecurityLayout.jsx` read `currentUser.departmentName` and `.staffRole`, which
+  `applicationUser()` has **never** set — so every gate user has been shown the literal
+  `undefined • undefined` since those screens shipped. Neither field is in the session; a guard's
+  post is a property of their shift and now comes from the API. The same root cause is why the
+  manager dashboard was permanently stuck on a "department unavailable" card.
+* The layout's *End Shift & Logout* button ended no shift. Ending a shift is now a real
+  `PATCH /security/shifts/{id}` on the Shifts screen — the one status-only change a plain guard may
+  make on their own row — and the button is plain *Logout*.
+* `GET /security/posts` took `include_inactive` in snake_case while every other query parameter on
+  the surface is camelCase and `API.md` had promised `includeInactive` since Step 7. My own
+  oversight; the alias was added rather than the documentation bent to fit it. No consumer existed
+  to break.
+
+### `docs/design/SECURITY_PORTAL_DESIGN.md` — new (`DERIVED`)
+
+The route map, the three notification deep-link contracts `0040` has emitted since Step 7
+(`/security/shifts`, `/admin/security/incidents`, `/resident/visitors` — the first two had no route
+until now), and the offline design with its threat reasoning.
+
+---
+
+## 2026-08-11 — Session 56: the stale renders are re-rendered, the old ones archived
+
+**Context.** The PO ordered the re-render on 2026-08-10 and asked for the old images to be
+preserved: *"preserve the old ones in a folder in docs called archives with a note on what changed
+and why it changed in a file in there too."* New folder `docs/archives/2026-08-10-diagram-rerender/`
+holds the three replaced images plus `NOTE.md` with the per-file what-and-why.
+
+### `docs/class-diagram/HomeBandhu-Domain-Model.svg` / `.png` — regenerated from the `.puml` (`PO`)
+
+Rendered with PlantUML 1.2024.8 + Graphviz 15.1.1, same toolchain and style as before; the images
+now show everything `0034`–`0046` added to the source. Two findings recorded in the directory
+README while doing it (`AUDIT`): the previously committed PNG had been **silently truncated to
+4096×4096** by PlantUML's default size limit (the full diagram is ~21500 px wide — render with
+`-DPLANTUML_LIMIT_SIZE=24576`), and PlantUML 1.2025.0+ requires Java 11, so on a Java 8 machine
+1.2024.8 is the jar to use. The README's "renders are one commit behind" warning is replaced by a
+"renders are current" block naming versions and pitfalls.
+
+### `docs/diagrams/erd.png` → regenerated offline; new companion `erd.svg` (`PO`, tool change `DERIVED`)
+
+The old `erd.png` was a dbdiagram.io export roughly ten migrations behind its `.dbml` — it still
+showed `vendors` and `staff_skills` (dropped in `0044`) and predated every service-operations
+table. The replacement is generated **offline** by `@softwaretechnik/dbml-renderer` (SVG, plus PNG
+through Graphviz `dot`), so regeneration is now a command rather than a by-hand paste-and-export —
+the by-hand step is what let the image drift. The visual style changes (auto-layout, tall aspect);
+the `.dbml` header documents the command and notes dbdiagram.io remains usable for a hand-arranged
+export. An automated paste into dbdiagram.io was attempted first and abandoned — the editor hung on
+the 81 KB document.
+
+### `docs/diagrams/homebandhu_submission_erd.dbml` — three notes reworded, wording only (`AUDIT`)
+
+Three `note:` strings contained bare apostrophes inside DBML single-quoted strings (`worker's`,
+`resident's`, `0037's`, and a quoted `'[)'` range literal) — a parse error in any strict DBML
+parser, found the moment a mechanical renderer first consumed the file. Reworded to avoid the
+apostrophe; no schema content changed.
+
+---
+
+## 2026-08-10 — Session 55: dated departures, the employee page, and a mailbox — Phase 2's build
+
+**Context.** Phase 2 Steps 3–9, from the PO's *service men leave and further department fine tuning
+and works.md* and the four rulings taken in Q&A the same day. Two migrations (`0045`, `0046`), eight
+new API operations plus one changed, four new screens, and one rule overturned by name.
+
+### `API.md` §18.7 — the zero-commitment gate on Approve is overturned (`PO`)
+
+`0043` refused to approve a departure while anything was booked in the leaver's name, and §18.7 said
+so as the feature's centrepiece. **The PO ruled the other way on 2026-08-10**: the decision whether
+and when somebody leaves is the manager's; approval picks a leave date (requested or later) and
+*releases* booked work from that date onward back to the dispatch pool at a queue priority just
+below urgent. §18.7 now opens with the dated model, carries the overturning note per
+`design/README.md`'s rule, and the decide operation's 409 row loses "items still outstanding". The
+gate survives in one named place — the direct remove, which has no decision record and no release
+step — and the doc says which.
+
+### `API.md` — three employee-management reads, a new §20, one PATCH narrowed (`DERIVED`)
+
+`GET …/staff/{staffId}`, `GET …/staff/{staffId}/schedule`, `GET …/departures/{id}/coverage`
+documented in §18.7 (the coverage zero is a statement, not an error — the PO's "if there are none,
+it says so"). **§20 Direct messages**: five operations, the pair rule ("the committee" is the
+`admin` role), the work-order thread's lock, names-as-snapshots and why (`profiles` is
+self-read-only). `PATCH /service-providers/me` no longer accepts `displayName` — name and email are
+identity, edited nowhere in settings (`PO`) — and §18.1's route text says so with the `0045` RPC
+change that made it possible. §18's header count is fifty-five; `api_yaml_mapper.md` gained the
+eight rows and a `messages.py` section; `api_map_scan.py --strict` is back at its 19 baseline.
+
+### `diagrams/homebandhu_submission_erd.dbml` (`DERIVED`)
+
+`staff_departures` gained the two dates with the ruling in the `effective_at` note; `dispatch_tasks`
+reworked (nullable `work_order_id`, `departure_id`, `priority` with the 2/1/0 ladder, fifth kind,
+two new partial indexes); `dm_threads`/`dm_messages` added under an 0046 banner with the
+canonical-pair, one-live-thread-per-job and lock notes.
+
+### `class-diagram/homebandhu-domain.puml` (`DERIVED`)
+
+`StaffDeparture` gained the dates, `approve(effectiveAt)`, `conflicts()`/`coverage()`, and its note
+now records the overturned refusal in italics rather than asserting it. `DirectMessageThread` /
+`DirectMessage` added with the pair-and-lock note; `DispatchTaskKind` gained `DEPARTURE_REMOVAL`;
+`DmThreadKind` added. **The rendered `.svg`/`.png` remain stale and labelled so** — the tooling
+decision is unchanged.
+
+### `backend/supabase/migrations/README.md` (`DERIVED`)
+
+Rows for `0045` and `0046`, each naming its one non-obvious decision.
+
+---
+
+## 2026-08-10 — Session 54: Phase 2 opens — the dead-code sweep pays R16's debt
+
+**Context.** A second plan was approved from the PO's *service men leave and further department fine
+tuning and works.md* (dated departures with release-on-approve, queue priority, employee management,
+worker settings, an in-app notification feed, direct messages, a chat dock on every portal). Its
+Steps 1–2 are the old plan's Steps 11–12, run first so nothing new is built on unswept ground. This
+session is those two steps; the feature work follows.
+
+### `backend/supabase/migrations/0044_retire_dead_tables.sql` — new (`DERIVED`)
+
+Drops `staff_skills` (superseded by `service_provider_skills` — D2, skills belong to the person) and
+`vendors` plus `staff_assignments.vendor_id`, its only live reference (superseded by
+`service_providers` — D1, a service person is a profile inside the tenancy model, not a company
+outside it). Exactly the deletion R16's amendment promised by name; the amendment now carries a
+"Done" line pointing here. `diagrams/homebandhu_submission_erd.dbml` loses both table blocks and the
+`vendor_id` column — each replaced by a comment saying what superseded it, because a table that
+silently vanishes from an ERD reads as an oversight rather than a decision.
+
+### `backend/app/domain/roles.py` — the RBAC hierarchy deleted (`AUDIT`)
+
+`docs/potential issues/` item 2, taken as written except for one amendment the grep forced: `Role`
+itself is **not** dead — two repositories import it as the typed name for the enum values. Deleted:
+`_IMPLIED_ROLES`, `effective_roles`, `role_satisfies`, `satisfies_any`, `parse_role`, and
+`tests/test_roles.py` (835 → 829 tests). Kept: `Role`, `display_role`. The docstring that claimed to
+be "the single source of truth" for authorization now says what the real guards are and names the
+sweep that removed the pretender. Item 2's table row is marked resolved with the amendment noted.
+
+### Frontend — one unreachable page deleted (`AUDIT`)
+
+`pages/AdminDashboard/CreateDepartment.jsx`: its route has been a redirect to
+`/admin/departments?create=1` since the Phase 1 reconciliation, and nothing imports it. The
+`staffVocabulary.js` history comment now says the page is gone so its reference reads as history
+rather than a pointer. Two other unreferenced files were **found and deliberately left**, because
+they belong to teammates' workstreams: `features/amenities/components/AmenityTabPlaceholder.jsx`
+(amenities) and `pages/Signup/SignupPage.jsx` (auth — superseded by OAuth onboarding). Recorded here
+for their owners rather than deleted across the ownership line. The fallow MCP analyzer timed out
+three times against `frontend/src`; the sweep used a resolver-based import scan instead, verified
+by hand (it initially flagged the lazy-loaded `AmenityReportsPage.jsx`, which is live — dynamic
+imports were the scanner's blind spot).
+
+---
+
+## 2026-08-10 — Session 53: the documentation sweep, and a renumber that was cancelled
+
+**Context.** Step 10 of the approved build order. Four of the five items were chores; the first was a
+decision, and it went the other way.
+
+### `API.md` — the `§15`–`§19` renumber is cancelled, not deferred again (`AUDIT`)
+
+§18 has carried a note promising a renumber in this sweep: the two new content sections sit after the
+three meta-sections, and inserting them earlier *"would shift all three again and invalidate roughly
+twenty cross-references."* Counting properly is what changed the answer. There are **142** `§15`–`§19`
+references across this repository, and **49 of them are in this file** — a dated record whose whole
+value is that it did not change afterwards.
+
+A renumber leaves two options for those 49 and both are worse than an odd ordering: rewrite them, and
+a historical entry says something it did not say; leave them, and every pointer in the log is
+silently wrong. A wrong pointer is worse than an odd ordering, because a reader believes a pointer.
+So the numbers stay, the note stops apologising and becomes a ruling with its reason, and this entry
+records what it overturns.
+
+### `CONFLICT_RESOLUTIONS.md` — R16 amended (`DERIVED`)
+
+R16 parked twelve orphan baseline tables with *"build nothing against them"*, and this feature built
+against them. The amendment names **which seven** are no longer parked and how: five went live
+(`work_orders`, `work_order_assignments`, `worker_availability_rules`, `worker_unavailability`,
+`skills`), two were superseded (`staff_skills` by D2, `vendors` by D1). The still-parked three are
+listed too, because without both lists a reader cannot tell an un-parked table from an overlooked one.
+
+It also records what R16 got **right**: the shapes held. `work_order_assignments` needed an offer
+lifecycle and an exclusion constraint bolted on and nothing else. The part that did not hold was
+`staff_skills`, and for a reason no schema audit could have seen — the question the product actually
+asks is *which communities need my trades*, asked by somebody on no roster at all.
+
+### `class-diagram/homebandhu-domain.puml` (`DERIVED`)
+
+A **Service Personnel** package: `ServiceProvider`, `ServiceProviderSkill`, `SkillCategory`,
+`ServiceApplication`, `BlacklistedServiceProvider`, `StaffDeparture`, `Conversation`,
+`ConversationMessage`, `DispatchTask`, and the five gate classes. Nine enumerations, thirty-four
+associations, and the constraint notes that carry the reasoning — why skills belong to the person,
+why a departure has no `handover` status, why the shift exclusion predicate differs from the
+assignment one, why the two registers are two tables.
+
+**The rendered `.svg` and `.png` were not regenerated**, and the directory README now says so at the
+top. The procedure needs `plantuml.jar` and Graphviz `dot`; neither is installed here, and an image
+that silently disagrees with its source is worse than one labelled stale.
+
+One modelling correction while writing it: `SkillCategory` was drafted as an association class
+between `Skill` and `ComplaintCategory`, and this model has no `ComplaintCategory` class — a
+complaint's category is a `String` attribute. It is a plain entity with a note pointing at the table.
+
+### `product/USER_STORIES.md` (`AUDIT`)
+
+US-3.2's *"see §14"* has pointed at the wrong section since the resident backend renumbered the
+sections behind it. It means `API.md` §16.5. Corrected with the reason attached.
+
+### `DECISIONS_NEEDED.md`
+
+- **B2 answered by building it (`DERIVED`).** The free-text assignee was why *"complaints assigned to
+  me"* was impossible; `work_order_assignments` plus `assigneeStaffId` is the answer, and
+  `GET /worker/jobs` is that query. The residue is stated rather than implied: the label is kept
+  beside the id, five files read it for display, and a staff member renamed after an assignment shows
+  their old name on that complaint until it is next written.
+- **A12 revisited (`AUDIT`).** Its reasoning rested on B2, which is now answered — and deactivation is
+  still right, for a better reason. What the entry never had is the *condition*: `0043` refuses a
+  removal while any job or shift is still booked in that person's name. "Does removal deactivate" was
+  always yes; the question nobody asked was "and what happens to their work".
+- **A22 partially answered (`AUDIT`).** *"A scheduler needs a decision about what runs it"* — there is
+  one, and D8 says what: an in-process asyncio loop over `dispatch_tasks`, not `pg_cron`. That removes
+  the blocker the question named without answering the question, and the entry says which.
+
+---
+
+## 2026-08-10 — Session 52: leaving becomes a process, and a removal that could not be safe
+
+**Context.** Product-owner instruction: *"leaving a community requires manager permission… only when
+everything has been handed over to other workers can the leave be approved… this reassignment has to
+take place before the person is removed, the same applies for all servicemen regardless of
+department."* `0043` is the answer; the interesting part is what building it revealed.
+
+### The defect the instruction was really about (`AUDIT`)
+
+**`remove_department_member` has been able to strand work since `0035`.** It set the roster row
+inactive, ended the membership and returned. Nothing touched `work_order_assignments`, so a row with
+`status = 'accepted'` survived a removal untouched — still pointing at tomorrow's slot, still counted
+as somebody's load by `dispatch_candidates`, still rendering on the resident's complaint as *someone
+is coming*. Nobody was coming, and the membership that would have carried the reminder had just
+ended, so the one person who could have said so had been logged out. `security_shifts` had the same
+hole: the rota read as covered by a guard who no longer worked there.
+
+That is why the fix is not a confirmation dialog. **A departure is a state a person is in**, not an
+event that happens to them, and the interval between the two is where the handover happens.
+
+### `API.md`
+
+- **New §18.7, seven operations (`DERIVED`).** Two on the worker's side, five on the manager's, and
+  five of the seven exist only to make one refusal survivable — you cannot gate an approval on an
+  empty list without giving somebody a way to empty it.
+- **`POST …/members/{staffId}/remove` gains a `409` (`DERIVED`).** Refused while anything is booked
+  in that person's name. Recorded as an amendment to the existing entry rather than a new one,
+  because the route's contract changed rather than its purpose. It stays the one-click answer for a
+  name typed into the department form by mistake.
+- **`StaffMember` gains `openCommitmentCount` and `departureStatus` (`DERIVED`).** The prose says why
+  the first is *not* `activeAssignmentCount`: that counts open complaints, this counts jobs and
+  shifts actually booked, and a complaint can sit with nobody scheduled while a job can outlive the
+  complaint that caused it. Added before the screen needed it rather than after it failed — the
+  fourth time in this build a consumer would have proved a read one field short.
+- **The bar's asymmetry written beside the rule it breaks (`DERIVED`).** A blacklist *releases* work
+  to the engine instead of waiting for a handover. Stated in §18.7 rather than left to be discovered
+  by comparing two functions, because a reader who finds it by accident reads it as a bug.
+
+### `notifications_service.py`
+
+- **`_FALLBACK_URLS` closes the gap §5.18 recorded (`AUDIT`).** Four `0035` hiring notifications
+  rendered a title and carried no `url`, so they arrived as text nobody could tap. The comment beside
+  `_FALLBACK_TITLES` said a link is *"not something a fallback can invent"* — true in general, wrong
+  about these four, whose payloads already carry the id the route needs. Corrected in place with the
+  original reasoning kept, per this document's own convention.
+
+### `api_annotations.py`
+
+- **A new `NO_STORY` verdict, `departure` (`AUDIT`).** Named by the product owner rather than by an
+  interviewee, and the reason is visible in the interviews: everybody described being hired and
+  nobody described quitting, because the person who quits is not in the room when the society is
+  interviewed. It touches US-2.7 without serving it — the reassignment does tell a resident somebody
+  else is coming, but that notification is written by `assign_work_order`, which US-2.7 already
+  credits.
+
+### `diagrams/homebandhu_submission_erd.dbml`
+
+- **`staff_departures` added with its provenance note (`DERIVED`).** Including why there is no
+  `handover` status.
+
+### `design-of-components.md`
+
+- **Component 3 extended (`DERIVED`).** Departure, handover and the release-versus-hand-over
+  distinction, per that document's own convention.
+
+### One stale claim corrected while passing (`AUDIT`)
+
+`worker_communities.py`'s docstring for `GET /worker/applications` still said the list was *"the only
+way a rejected applicant learns the outcome"* because `recipient_membership_id` was not nullable.
+`0041` made it nullable eight hours earlier and both a rejection and an invitation are notified now.
+The sentence fed the OpenAPI description, so it was wrong in a generated artifact as well as in a
+docstring. Corrected with its expiry attached rather than deleted.
+
+---
+
+## 2026-08-10 — Session 51: the manager's side of hiring, and one vocabulary instead of four
+
+**Context.** Step 9 of the approved build order: *"manager hiring, messages, vocabulary
+reconciliation"*. Two new screens, three old ones reconciled, and — as in Sessions 49 and 50 —
+building the consumer proved a read one field short.
+
+### `API.md`
+
+- **`rank`'s printed vocabulary was stale (`AUDIT`).** §8 has said `member | supervisor | head` since
+  `0019`; `0035` replaced `head` with `manager` five migrations ago and the response example still
+  showed `"rank": "head"`. Corrected, with the note that the department's *head* is still called that
+  everywhere the API says `head` and is the person holding `rank = 'manager'`.
+- **`serviceProviderId` documented on `StaffMember` (`DERIVED`).** New in `0042`, with the reason it
+  exists rather than only its type: the two things a manager can do to a roster row take two
+  different ids, and without this field one screen cannot offer both.
+- **Two claims about who cannot be notified, both now false, both corrected in place rather than
+  deleted (`DERIVED`).** `POST /departments/{id}/invitations` said *"the invited person is not
+  notified"* and gave the schema as the reason; `GET /worker/applications` said it was *"the only way
+  a rejected applicant or an invited provider learns the outcome, since neither can be notified"*.
+  `0041` made `recipient_membership_id` nullable and both are notified now. The original reasoning is
+  kept in the correction, because a sentence that was true when written is more useful with its
+  expiry attached than removed.
+- **The frontend vocabulary problem recorded beside the schema's answer (`AUDIT`).** §8's
+  long-standing rule that `rank` and `role` are separate fields on purpose is exactly what three
+  copies of `STAFF_ROLES` had wrong — one list answering two questions, which is why no two copies
+  agreed.
+
+### `design-of-components.md`
+
+- **Component 3 extended (`DERIVED`).** Departments now have a hiring surface that is not a roster
+  form: applications in both directions, a skill-matched candidate search, and the remove-versus-bar
+  distinction. Recorded because that document's own convention requires it.
+
+### `diagrams/homebandhu_submission_erd.dbml`
+
+- **`staff_assignments.service_provider_id` note rewritten (`AUDIT`).** It said `0035` set it. It
+  also records now that nothing *read* it until `0042`, and why that was invisible: a field only the
+  write path uses looks complete in every test, because the test asserts the write.
+
+### `supabase/migrations/README.md`
+
+- **`0042_roster_provider_link.sql` added to the table (`DERIVED`).**
+
+### One gap raised rather than absorbed
+
+- **The gate has a backend and no consumer, and no step of the approved plan schedules one
+  (`AUDIT`).** `0040` and `security_operations.py` closed `US-3.3`–`US-3.6` on the API in Step 7;
+  Step 8 was the worker portal and Step 9 is this. `SecurityDashboard.jsx` and
+  `SecurityManagerDashboard.jsx` are both demo screens over zustand and neither calls one of those
+  endpoints. This is the same shape as the two defects Sessions 49 and 50 found by building
+  consumers, and it wants its own step of roughly Step 8's size. Recorded in
+  `plans/SERVICE_OPERATIONS_PROGRESS.md` §4.25 as a product-owner decision, not folded into the
+  documentation sweep.
+
+---
+
+## 2026-08-10 — Session 50: a notification learns to reach somebody who belongs nowhere
+
+**Context.** Two rulings from the product owner in one sentence — *"you can change the auth bit too,
+but do document it separately in detail in a separate file in `doc/design`"* and *"fix the
+notification issue too, we need to implement that too"* — and they turned out to be the same piece of
+work. The notification gap `0038` left open could not be closed without changing who a notification
+is addressed to, and who a notification is addressed to is an auth question.
+
+### `design/AUTH_AND_SESSION_DESIGN.md` — new
+
+- **Created (`PO`).** The fourth document in `docs/design`, and the first that cuts across all three
+  surfaces rather than describing one. It is the review packet the PO's ruling asked for: what the
+  service-operations build changed in the shared auth seam, what it fixed, and — listed as its own
+  section, so restraint can be told from oversight — what it deliberately left alone. Registered in
+  `design/README.md` outside the read-in-order list, because it is not a fourth surface.
+- **It carries four defects nobody had reported** (§5). Each was invisible until a population arrived
+  that the original decision had not imagined, which is the argument for the file rather than a diff.
+
+### `API.md`
+
+- **`US-2.4` moves from *Partial* to *Served* (`DERIVED`).** §16.4 had said the shortfall was one
+  missing writer: `notification_service`'s renderer has carried a title for `notice.published` since
+  the substrate shipped and nothing ever emitted it. `0041` closes it as an `after insert` trigger on
+  `notices`. **This overturns nothing** — the paragraph in §15 that proposed a call inside
+  `notices_service.create_notice` and then declined to make one asked for the notification to land
+  *in* the transaction rather than beside it, and a trigger satisfies that by construction while
+  leaving `insert_notice` the single-statement PostgREST write its docstring defends.
+- **§5.2 and §5.3 rewritten from "any active member" to "any signed-in person" (`DERIVED`).** The
+  three notification routes and the three push routes no longer require a membership. The reasoning is
+  spelled out where it will be read: the caller waiting on an answer to a job application was
+  precisely the caller who could not be told one.
+- **The stale service-worker note in §5.3 struck through.** It still claimed nothing in
+  `frontend/public/` was a service worker; that stopped being true in Session 49 and the sentence had
+  only been corrected in the other place it appeared.
+- **`POST /conversations/{id}/messages` gains its notification paragraph (`DERIVED`).** Including why
+  the two directions are addressed differently, and the honest limit: a profile-addressed notification
+  produces no SSE frame, because `sse_events.community_id` is `not null`.
+
+### `product/USER_STORIES.md`
+
+- **`US-2.4` → *Served*, with the reason rewritten rather than the verdict alone flipped (`DERIVED`).**
+  The three places the export gate compares — this file, `API.md` §16 and
+  `scripts/api_annotations.py` — moved together, which is what `api_map_scan.py --strict` checks.
+
+### `supabase/migrations/README.md`
+
+- **`0041_person_notifications.sql` added to the table (`DERIVED`).** Service-operations range, lowest
+  free number.
+
+### What the schema decision overturns, named as the convention requires
+
+- **`0030`'s rule that leaving a community ends your access to what was addressed to you (`DERIVED`).**
+  The read policy is now `recipient_profile_id = auth.uid()`, so it does not. The rule only read
+  correctly for a caller with one membership; with several, a person removed from one society would
+  lose that society's rows out of a feed that is otherwise theirs, and the badge would fall with no
+  event to explain it. What ending a membership must stop is *new* notifications, and
+  `notify_community_roles` already filters on `status = 'active'` at the moment of writing — which is
+  where that rule belongs.
+
+---
+
+## 2026-08-10 — Session 49: the worker portal, and the file two stories were waiting on
+
+**Context.** Step 8, the first step of this build to touch the frontend. Nothing here changes what
+the API does; two things here change what the documentation *claimed*, because building the screens
+proved one endpoint unusable and one verdict overstated.
+
+### `product/USER_STORIES.md`
+
+- **`US-2.7` moves from *Partial* to *Served*.** It had read *"backend-complete … `frontend/public/`
+  has no service worker, so no phone can buzz"* since the resident build. `frontend/public/sw.js`
+  now exists and `lib/push/pushClient.js` subscribes against `GET /push/vapid-key`. The whole gap
+  was one missing file — `0030` had stored subscriptions and `app/core/push.py` had been able to
+  send for weeks. `DERIVED`.
+- **`US-3.5`'s stated blocker was wrong and is corrected in place.** It said the missing service
+  worker was what stopped the offline gate. `localStorage` holds a bundle perfectly well without
+  one; what a service worker actually buys is *surviving a reload* during the outage. The story
+  stays **Partial** — its real remainder is the gate screen, which lands with the security
+  frontend — but for the right reason. `AUDIT`.
+
+### `API.md` — `GET /worker/communities/search`
+
+- **The response shipped as `departmentNames: string[]` and could not be acted on.**
+  `POST /worker/applications` takes a `departmentId`, and a provider who is not yet a member cannot
+  read `GET /departments` to find one — so the search returned a list of names with nothing to
+  press. Now `departments: [{ id, name }]`. Found only by building the screen that consumes it.
+  `AUDIT`.
+- **Two parallel arrays were rejected as the fix, and the reason is worth keeping.**
+  `array_agg(distinct …)` sorts by its own argument, so an id array and a name array come back in
+  uuid order and alphabetical order respectively and correspond only by accident — a bug that would
+  have looked correct in every test with one department. One `jsonb_agg` of objects instead.
+  `DERIVED`.
+
+### `ARCHITECTURE.md`, `design-of-components.md`, `design/SERVICE_OPERATIONS_DESIGN.md`
+
+- **The service worker, and what it deliberately is not.** No build-time precache manifest and no
+  Workbox: Vite emits content-hashed asset names, so a hand-written manifest is wrong on the next
+  build and a generated one is a versioning problem nobody asked to have. It caches successful
+  same-origin GETs as they happen and reads that cache only when the network fails, and it skips
+  `/api/` entirely — an API response served from cache would show a worker yesterday's jobs and call
+  them today's. `DERIVED`.
+- **The worker portal is guarded by a signed-in identity, not by a role.** `ProtectedRoute` reads
+  `currentUser`, and `applicationUser()` returns null for anybody holding no membership — which is
+  exactly the service person who has registered and not yet been hired, the population the
+  registration and community-search screens exist for. `SignedInRoute` requires only
+  `sessionContext.identity`; what the portal shows is decided by `GET /worker/snapshot`, whose null
+  `provider` and empty `communities` are the two empty states. Same problem and same answer as
+  `require_service_provider` depending on `get_current_user` alone. `DERIVED`.
+- **No new zustand slices, against the plan.** The eleven existing slices are the demo half of the
+  app — `createVisitorsSlice` mints its own ids — while every page that talks to the real backend
+  already uses react-query, which is mounted and configured. Three hand-rolled slices would
+  reimplement loading, error and refetch state and file the portal under the demo half. `AUDIT`.
+- **Nine planned worker pages became six routes.** `MyCommunities`, `FindCommunities` and
+  `Applications` are three views of one question and are now three tabs; `TodaySchedule` is what
+  `GET /worker/snapshot` returns, which makes it the dashboard home rather than a sibling of it.
+  `DERIVED`.
+- **The week view is not an hour-ruled time grid.** That geometry exists to make overlaps visible,
+  and `work_order_assignments_no_overlap` in `0036` refuses to write one. `DERIVED`.
+
+---
+
+## 2026-08-10 — Session 48: the complaint-engine handoff, and security operations
+
+**Context.** Step 7, preceded by a handoff. Six steps of building on top of the complaint path
+produced a set of questions that cannot be answered from inside the service surface, because each is
+about what a *complaint* means or when it ends. They are written down for the owner of that
+workstream rather than guessed quietly.
+
+### `COMPLAINT_ENGINE_HANDOFF.md` — new
+
+- **The framing fact, verified by reading rather than asserted: the service-operations feature never
+  writes `complaints.status`.** Not once across `0036`, `0037` and `0039` — the `complaints` table
+  appears only as `select * into` and as a foreign key. So there are **two state machines over one
+  complaint and they are not coupled**, and a complaint can read *Pending* to its raiser while a
+  technician is standing in their kitchen. Deliberate under D5 (one complaint, many work orders:
+  "the complaint's status" is not a projection of any one job's), survivable because the timeline
+  carries the whole story, and the single item most worth overturning knowingly. `AUDIT`.
+- **Seven judgement calls handed over with the default we took and what it costs**, not as requests:
+  job completion versus complaint resolution (§1); 24-hour auto-resolution (§2); the
+  `complaint_events` namespace, which has no CHECK constraint and therefore no lock (§3); the failed
+  visit escalation and its one dependency on the *meaning* of a complaint status (§4); priority
+  inherited once and never re-inherited (§5). `DERIVED`.
+- **The gap §1 names is the one nobody had noticed.** `confirm_complaint_resolution` refuses
+  anything not already `resolved` (`0031`:546), and nothing moves a complaint to `resolved` when its
+  work is done — so after a completed visit the resident *cannot* confirm even if they want to. The
+  path from *work done* to *complaint closed* is missing its first step, and that step is a
+  management act. `AUDIT`.
+- **§2 corrects a misreading that was about to be inherited.** Auto-resolving off
+  `dispatch_tasks.due_at` would close the complaints that got attention and leave the neglected ones
+  open forever, because that timer exists only for complaints that reached triage, while
+  `expected_resolution_at` exists for every complaint. The two clocks are not interchangeable.
+  `AUDIT`.
+
+### `0040_security_operations.sql` — the gate
+
+- **Six tables and the surface that finally gives `security` something to do.** `security_posts`,
+  `security_shifts`, `material_movements`, `water_tanker_logs`, `security_incidents` and
+  `offline_reconcile_log`, plus nineteen operations. Hiring, skills, availability, the calendar,
+  blacklisting and messaging were all reused from `0034`–`0039` verbatim — a guard is hired by
+  exactly the RPC that hires a plumber — because the only thing that differs is what the work *is*.
+  `DERIVED` from D11.
+- **The guard is the opposite of the worker portal's, and that is the design decision.** `0039` takes
+  no identity anywhere because a service person's surface is cross-community; a gate belongs to one
+  society, so this resolves a community from the caller's membership. But **not** from
+  `MembershipSet.default`: a guard who lives in one society and works another's barrier has a default
+  membership of `resident`, and that check would refuse them their own register. `AUDIT`.
+- **Two permission levels rather than one.** Recording is any gate staff; the roster is an admin, a
+  manager, **or** a `security` membership ranked `manager` or `supervisor` on its roster row. The
+  alternative is a system where every guard can rewrite the rota, and the alternative to *that* is
+  one where the security manager cannot log a tanker. This is also the first place D3's
+  rank-and-role split is honoured in code rather than described. `DERIVED`.
+- **`US-3.5` was a fallback with nothing to fall back from.** The plan gives Step 7 an offline bundle
+  and a reconcile and no online verification, while `USER_STORIES.md` US-3.1 says in print that
+  *"nothing verifies a code at the gate"* — `0032` has minted and stored `code_hash` and `pass_hash`
+  since the visitor passes shipped and **nothing has ever read either back**. `POST
+  /security/gate/verify` is built first and the offline pair sits on it, so the two paths cannot
+  drift into two different answers about the same visitor. `AUDIT`.
+- **Plan D13's signed bundle is dropped, and the reason is that the signature protects nothing.** The
+  device verifies it against a key the device holds, and the same person who can edit `localStorage`
+  can delete the check beside it. What is load-bearing is that an offline admission is **provisional
+  until reconciled**: the server re-runs the real verification and records its own verdict beside the
+  device's claim, so a fabricated entry becomes a flagged row rather than an admitted guest.
+  `DERIVED`, overturning a plan decision.
+- **`US-3.1` closed, which was not in scope.** `visitor_requests.guest_count` has existed since
+  `0032` and nothing had ever read it, so the obvious first-scan-in-second-scan-out verification
+  would have admitted one guest of a two-hundred-guest function and turned the rest away — the exact
+  failure the story describes. `verify_gate_credential` counts admissions against the column instead.
+  `API.md` §16.5 had predicted the opposite in print — *"the one thing the current model cannot
+  express"* — and the correction is stated inline rather than by rewriting the paragraph. `AUDIT`.
+- **A CSV export is a path from the gate to a spreadsheet formula.** Every text column on these
+  registers is typed by whoever is standing at the barrier, and `=`, `+`, `-` and `@` are formula
+  leaders in every spreadsheet; `csv` quoting does not help, because the quotes are stripped before
+  the cell is evaluated. Cells are prefixed with an apostrophe rather than stripped, since stripping
+  would turn a quantity of `-5` into `5`. `AUDIT`.
+- **Five story verdicts moved.** `US-3.3`, `US-3.4`, `US-3.6` and `US-3.1` to **served**; `US-3.5` to
+  **partial**, because its missing half is a service worker in `frontend/public/` rather than
+  anything in the backend — the same missing file that stops `US-2.7` buzzing a phone. Surface is
+  now **163 operations across 138 paths**, 821 tests. `DERIVED`.
+
+### `tests/test_openapi_spec.py` — a list that had gone stale
+
+- **Three routers were mounted with no representative path**, under a comment reading *"Four routers
+  behind one `include_router`"* while eight were. Deleting any one of their `include_router` lines
+  would have removed operations and raised nothing there — and the failure would have surfaced in
+  `export_openapi.py --check` as *the spec is stale*, whose obvious fix is to regenerate, which would
+  have made the drop permanent and the check green. `AUDIT`.
+
+## 2026-08-10 — Session 47: the worker's own side, and a guard that should not exist
+
+**Context.** Step 6. `in_progress`, `completed` and `failed` have been declared in
+`work_orders_status_check` since Step 4 with nothing able to write them, because the only person who
+can say *I have started* is the one standing at the door and until hiring existed that person had no
+account. Fourteen operations, one migration, and one amendment to `0037`. The spec moves from 130
+operations to **144** across 124 paths.
+
+### `0039_worker_actions.sql` — and the renumber it forces
+
+- **Step 6 needed a migration the plan did not give it**, because `0034`–`0037` contain no
+  worker-side write function at all. So `0039` is worker actions and **security operations becomes
+  `0040`**. Nothing else moves. `AUDIT`.
+- **Three `security_invoker` views** — `my_worker_job`, `my_worker_unavailability`,
+  `my_worker_availability_rule` — each filtered to the caller *inside the view*, not merely by the
+  policy. The policies underneath are wider on purpose (`0036` §7 lets a supervisor read their
+  staff's leave), so a view leaning on the policy alone would show a supervisor their whole
+  department on a screen headed "my week". `DERIVED`.
+- **Five verbs on a job**, and the interesting one is `accept`: it takes `for update` on the work
+  order before reading anything, so the second of two workers tapping the same offer waits, re-reads
+  a job that now says `scheduled`, and is told *somebody has already taken this job* rather than
+  handed a `23P01`. The exclusion constraint is still the guarantee; it is just not the thing anybody
+  should have to read. `DERIVED` from D5.
+- **Completing a job does not resolve the complaint.** They look like one act and are not: a resident
+  whose tap still drips after the visit has a complaint that is emphatically not resolved, and
+  `0031` already gives them the button that says so. A worker's word is evidence, not a verdict.
+  `PO`-facing.
+- **Declining writes no `complaint_events` row and notifies nobody.** The resident does not need to
+  learn that five people were asked and one said no, and it keeps `job_declined` meaning the one
+  thing it already meant — *the resident declined the proposed time*. `AUDIT`: reusing that word
+  would have rendered a worker's decline on the resident's timeline as their own.
+- **Accepting writes `job_assigned`, not a new `job_accepted`.** From the resident's side it is the
+  same fact — somebody is now coming, and this is their name. `DERIVED`.
+
+### `0037_dispatch_engine.sql` — the fourth handler, and one defect
+
+- **`dispatch_failed_visit_escalation` exists now**, in `0037` rather than `0039`, because "what the
+  engine does" living in two files is how the next reader misses half of it. Its idempotency check is
+  deliberately **not** a status check: a failed job stays `failed` for good, since the answer to a
+  failed visit is a *new* work order (D5), so it asks whether a newer job exists on the same
+  complaint. Two hours out; the department's manager, or the community's admins where there is no
+  manager on the roster. `DERIVED`.
+- **`dispatch_candidates` now excludes anyone who declined *this* job.** Found while reading `0037`
+  for the escalation. Without it the ordinary sequence produces the worst outcome the engine can:
+  five are pinged, one declines, thirty minutes later the auto-assign picks the best candidate — and
+  the decliner still ranks first and finds the job booked in their name. Scoped to the work order,
+  not the person. `AUDIT`.
+
+### `app/api/worker_deps.py` — planned, and deliberately not written
+
+The plan put `require_worker` here and §4.4 deferred it to this step. Writing the callers showed it
+should not exist. `require_membership_role` reads the role off `MembershipSet.default` — *one*
+community's membership — and this is the only surface in the product that is deliberately
+cross-community: a plumber hired by three societies and living in a fourth has a default membership
+of `resident`, and that guard would refuse them their own job list. Widening it to *any* worker
+membership still refuses a department manager who is on a roster and has been offered a job.
+
+The question it was reaching for is *does this caller hold this assignment*, which is not about roles
+and already has exactly one implementation — `is_own_staff_assignment` (`0036` §4), used by all three
+views and all five verbs. So the routers are authenticated-only and **no module was added**. `AUDIT`.
+
+### Documentation
+
+- **`API.md`** — §18 gains *"The worker's portal"* with all fourteen operations; the engine's task
+  table now shows four handlers rather than three; the operation count moves to 45, of which nine
+  serve a story rather than five; the `0039`/`0040` renumber is stated where somebody looking for
+  security operations will find it.
+- **`ARCHITECTURE.md`** — two emitter rows, plus the note that `work_order.escalated` is the second
+  emitter in this product that reports an *absence* — not the failure, which is notified
+  immediately, but nobody having acted on it.
+- **`homebandhu_submission_erd.dbml`** — the three "no endpoint reads this yet" notes on the
+  availability tables and the task kinds are now false and say what replaced them.
+- **`api_yaml_mapper.md`** — two router blocks, fourteen rows.
+- **`design/SERVICE_OPERATIONS_DESIGN.md`** — §4.4 said auto-resolution after 24 hours of resident
+  silence *"is implemented as specified"*, which has been false since Step 5 chose to proceed with
+  the visit instead. Corrected in place with the reasoning, and it stays flagged as a default rather
+  than a ruling. §4.3's fallback no longer names a module that was never written. `AUDIT`.
+- **`backend/supabase/migrations/README.md`** — the number-range table gave `0025`–`0039` to the
+  resident backend, which stopped at `0033`, while service operations was six files past it. Split
+  into `0025`–`0033` and `0034`–`0049`. The rule it documents produced its own worked example the
+  same day: `0039` went to whoever wrote first, and the plan's reservation of it lost. `AUDIT`.
+
+---
+
+## 2026-08-10 — Session 46: the engine, and seven functions anyone could call
+
+**Context.** Step 5. `0036` built every transition a work order can make and not one thing that
+makes a transition happen on its own; this is the part that acts unattended. It is the only step of
+the twelve that adds **no API operations at all** — the spec stays at 130 operations across 112
+paths, and that is the pass condition rather than a missed step.
+
+### `0037_dispatch_engine.sql`
+
+- **`dispatch_tasks`** — one row per future action, so the engine's whole behaviour is inspectable
+  with a single `select` and a restart loses nothing. `DERIVED` from the plan's D8.
+- **At-least-once, reversing the push sender's rule.** `app/core/push.py` says *"the sender may not
+  duplicate"* and claims by marking a notification sent before sending it. That is right for
+  something that buzzes a phone at 3am and wrong here: a dropped `resident_timeout` is a complaint
+  left waiting forever with nobody coming. The claim takes a five-minute **lease**, a task may fire
+  twice, and every firing function re-reads the job and returns without writing if the world has
+  moved on. `PO`-visible behaviour, `DERIVED` mechanism.
+- **One trigger replaces five rewritten functions.** The plan had each state-changing RPC enqueue its
+  own tasks — five `create or replace`s over roughly five hundred lines, and a sixth write path
+  someday that forgets. Instead an `after insert or update` trigger on `work_orders` keeps the queue
+  in agreement with the status. `AUDIT`. It also deletes a mechanism: there is no separate
+  "urgent complaints bypass the offer" path, only a `case` in that trigger.
+- **Three handlers for four declared kinds.** `failed_visit_escalation` fires off
+  `status = 'failed'`, which nothing can write until the worker portal exists. The kind goes in the
+  CHECK now so the next step needs no migration; the function waits for a caller — the same posture
+  `0036` took with its three unreachable statuses. `DERIVED`.
+- **Two documented downgrades from the source document.** Ordering candidates *"within 1 km of an
+  adjacent job"* becomes *"already has a job in this community that day"*, because no work order
+  carries usable coordinates and inside one complex every job is a two-minute walk. And a resident
+  who never answers has their **visit proceed**, not their complaint auto-resolved — closing a
+  complaint the resident never saw is a product decision and a background job should not make it
+  quietly at 2am. Both `PO`-facing; the second is worth a decision.
+
+### `app/core/dispatcher.py`, and one wiring change
+
+Mirrors `PushSender` — claim, act, sleep, started from the lifespan, never raising. It contains **no
+dispatch logic at all** and a test asserts as much: the mapping from a task kind to an action lives
+in `fire_dispatch_task` beside the actions, so a fifth kind will not touch Python. `app/main.py`
+starts it beside the sender and stops it first, because it is the only one of the three workers that
+writes.
+
+### A privilege defect across four earlier migrations
+
+Found while deciding what to grant on `0037`'s functions, by checking what `0001` and `0019` do.
+**Postgres grants `EXECUTE` on a new function to `PUBLIC` by default**, so `grant ... to service_role`
+on its own re-states a permission everybody already had. Seven functions had only that line:
+
+- `notify_member` (`0030`), `notify_community_staff` (`0031`), `notify_community_roles` (`0032`) —
+  any signed-in user could write a notification to any membership, or broadcast one, choosing the
+  title, the body and the **url**. A notification that arrives wearing the association's name and
+  leads anywhere is phishing, and the feed is the one surface a resident is meant to trust.
+- `claim_push_batch`, `record_push_success`, `record_push_failure` (`0030`) — silence push
+  deployment-wide, or delete another resident's subscription by endpoint.
+- `expire_visitor_passes` (`0032`) — settle any community's lapsed passes.
+
+Three of the seven granted `authenticated` **on purpose**, with a comment arguing that the callers
+are feature RPCs and a resident-initiated write reaches them over the user's client. The first clause
+is true and is exactly why the second does not follow: inside a `security definer` function the
+current user *is* the definer. Verified from the other end too — nothing in `app/` calls any of the
+seven by name. All now carry `revoke all ... from public, anon, authenticated`, and the stale
+reasoning is replaced in place rather than deleted. `AUDIT`.
+
+**Nothing in the suite can prove this fix**, and that is its honest status: no migration has ever been
+applied anywhere, so these are permissions that have never existed on functions that have never run.
+
+### Verification
+
+`pytest` **790 passed** (was 780). `ruff` **153**, the baseline, none added.
+`export_openapi.py --check` clean and **unchanged**. `api_map_scan.py --strict` **19 findings**,
+unchanged. `pglast` on `0037`: 44 statements, plus a separate pass parsing the three `language sql`
+function bodies, which `pglast` otherwise skips as opaque strings — that pass caught a real one: an
+unqualified `order by has_adjacent_job` inside `dispatch_candidates` was ambiguous against the
+function's own `RETURNS TABLE` column of the same name. Restructured so every reference is qualified.
+
+---
+
+## 2026-08-10 — Session 45: the job, and a constraint that has waited since the ERD was drawn
+
+**Context.** Step 4 of the service-operations build: a triaged complaint becomes a named person at a
+named hour. The step is large in surface (ten operations) and turns on one line of SQL — a GiST
+exclusion constraint saying a person cannot be in two places at once, which
+`docs/erd/homebandhu.dbml:614` has declared since it was written and which nothing has ever enforced.
+
+### What this overturns
+
+- **`CONFLICT_RESOLUTIONS.md` R16, second half.** It ruled of `work_orders` and
+  `work_order_assignments` — *"tag each `Phase 2 — no v1 endpoint, no v1 RLS policy`, and build
+  nothing against them."* Both are now extended, indexed, policied and served. `DERIVED` from the
+  approved plan's D5. The amendment to R16 itself lands in the documentation sweep; recorded here so
+  the overturn is not discovered by reading the code.
+
+### `docs/API.md` — §18 gains ten operations, and the section stops being about registration
+
+- **New:** `### Work orders — the state machine, before there is an engine to drive it` — a lifecycle
+  table, the two constraint decisions, and eight endpoint subsections. Surface count 120 → **130
+  operations across 112 paths**. `DERIVED`.
+- **Changed:** §18's opening no longer says *"Six operations"* and *"Hiring is `0035` and is not built
+  yet"*, both of which had been false since Step 2. `AUDIT` — found while adding the fourth
+  subsection to a section whose first paragraph still described only the first.
+- **New:** the one asymmetry worth stating in print — a resident may confirm and may decline, and
+  **the reschedule after assignment is the supervisor's alone**, because by then it is a change to
+  two people's days and only one of them is on that screen. `DERIVED`.
+- **New:** a paragraph recording what Step 4 deliberately does **not** contain — no timers, no queue,
+  no dispatcher — and the rule that follows from it: *every transition the engine will later make
+  automatically is reachable by hand first*. `DERIVED`. This is why `POST .../assign` accepts a job
+  still in `awaiting_resident`: it is the hand-operated form of the resident timeout, and without it
+  the state machine would have a state with no manual exit.
+- **New:** a note that `in_progress`, `completed` and `failed` are declared in the CHECK and not yet
+  reachable, so their absence from the writes reads as intended rather than forgotten. `DERIVED`.
+- **Changed:** §16.6 recounted from `x-user-stories` in the generated spec — **56 mapped, 74 unmapped,
+  130 total**; `Feature` 42 → 47; a new group row for the five work-order operations that serve no
+  story. `AUDIT`, and the count is machine-derived rather than hand-tallied for the reason §16.6
+  already records about an earlier miscount.
+- **New:** the observation that `0036` is the **first** of these four migrations to move the *mapped*
+  count, and by five. Twenty-one operations of hiring machinery mapped to nothing; the first ten that
+  put a named person at a door mapped to US-2.7 and US-2.8. `AUDIT` — that is the shape of the
+  research gap stated precisely, rather than as a general complaint about the story set.
+
+### `docs/api_yaml_mapper.md` — two more router tables
+
+- **New:** `work_orders.py` (eight operationIds) and `resident_scheduling.py` (two), with blockquotes.
+  `DERIVED`.
+- **New note:** the two routers share **one service**, deliberately. Splitting it would put the two
+  sides of one state machine in two files, and the transition `awaiting_resident → offered` would be
+  written in one and read in the other. The routers differ because the *guards* differ; the state
+  machine does not.
+- **New note:** the work-order router's role guard is **coarse by construction** and cannot be
+  otherwise — a supervisor holds a `worker` membership with the `supervisor` *rank*, and `0035`
+  settled that rank and role are different things. `can_supervise_department` is the boundary.
+
+### `docs/diagrams/homebandhu_submission_erd.dbml` — four baseline tables stop being dead
+
+- **Changed:** `work_orders` gains twelve columns, three indexes and a status vocabulary; its note
+  records why **one complaint may carry many** work orders and what the rejected alternative
+  (assignee columns on `complaints`) would have cost. `DERIVED`.
+- **Changed:** `work_order_assignments` gains seven columns and carries
+  `work_order_assignments_no_overlap` in its note, spelled out in full — including why the `where`
+  clause covers only `accepted` rows. `DERIVED`: constrain the *offers* and `0037` could only ever
+  ask one worker at a time, which defeats the point of asking.
+- **Changed:** `worker_availability_rules` and `worker_unavailability` drop `NOT NULL` on
+  `staff_assignment_id` and gain `service_provider_id`, with `num_nonnulls(...) = 1`. `DERIVED`: a
+  registered service person's week is not a fact about one of their four societies.
+- **Note added** to both work-order tables that `btree_gist` is **not a new requirement** — `0001`
+  both installs it and declares an exclusion constraint that cannot exist without it. `AUDIT`, and it
+  closes a question that had been carried as open across three steps.
+
+### A defect fixed in passing
+
+- **`work_orders.priority`** defaulted to `normal` and was unconstrained, while `complaints.priority`
+  has been checked against `low | medium | high` since `0031`. `AUDIT` — two value sets for one name
+  is the same defect `0031` refused when it declined to carry two *names* for one idea. Corrected in
+  place, and `create_work_order` now inherits the complaint's priority rather than inventing one.
+  Free to correct because no migration in this project has ever been applied to a database; it will
+  not be free a second time.
+- **`app/core/pg_errors.py`** gained a `23P01` row. A double-booking caught by the exclusion
+  constraint rather than by the pre-check was surfacing as a bare `400` whose message could not say
+  which field was the problem. It now answers `409` alongside `23505`, because it is the same kind of
+  answer — somebody else has that already. Application code, noted here because the *reason* is a
+  design decision about what a client can distinguish.
+
+### Two more, found by re-reading the migration rather than by a test
+
+- **`work_orders_department_tenant_fkey` was `on delete set null` and could never have fired.** A
+  multi-column `ON DELETE SET NULL` nulls *every* referencing column, and `work_orders.community_id`
+  is `not null` in the baseline (`0001`:73) — so the action that was supposed to orphan a job
+  gracefully would instead have raised `23502` and refused to delete the department, and would have
+  done the same on the community cascade, where nothing orders the department delete against the
+  work-order delete. Now `on delete cascade`, matching `0019` and `0035`, which the comment above it
+  had already claimed. `AUDIT`.
+- **`work_orders.department_id` carried two foreign keys with two different delete actions** — an
+  inline `set null` from the `add column` and the composite above it. One department delete, two
+  referential actions, no defined order between them. The inline clause is gone; the composite is the
+  only FK on the column. `AUDIT`. `0035` keeps both of its FKs only because both of its actions agree.
+- **`conversations` gained the composite tenant FK the other three tables already had.** `0038`
+  denormalises `community_id` onto the thread *specifically* so the read policy can call
+  `is_community_admin(community_id)` without joining the department — which means a row whose two
+  columns disagreed would be readable by the wrong community's admins. `open_conversation` sets it
+  correctly; nothing defended it afterwards. `AUDIT`, and the ERD block records the addition.
+
+Every one of these is free today only because no migration in this project has ever been applied
+anywhere (`potential issues` #4). None of them would have been.
+
+---
+
+## 2026-08-09 — Session 44: the conversation, and a guard that belongs in the database
+
+**Context.** Step 3 of the service-operations build: the chat a department has with a service person,
+before and after hiring. The step is small; the interesting part is where its authorization lives.
+
+### `docs/API.md` — §18 gains four operations and one asymmetry worth explaining
+
+- **New:** `### Conversations — the guard that is not in the router`, covering
+  `GET`/`POST /conversations`, `GET /conversations/{id}` and `POST /conversations/{id}/messages`.
+  Surface count 116 → **120 operations across 104 paths**. `DERIVED` from the approved plan's Step 3.
+- **New:** a table stating the three different answers a non-participant gets — absent from the list,
+  `404` on the read, `403` on the write. `DERIVED`: a `403` on the read would confirm a thread exists,
+  which would make a department's conversations with every other provider enumerable by walking ids.
+  The write can afford `403` because the caller has already named a thread they can see.
+- **Changed:** "What is not here yet" no longer lists `0038`; the seventeen-operation count in that
+  paragraph becomes twenty-one.
+
+### `docs/api_yaml_mapper.md` — a fifth service-operations router table
+
+- **New:** `conversations.py` with four operationIds and four blockquotes. `DERIVED`. The first
+  records that this is **the only router on the API with no role guard at all**, and why that is the
+  design: a conversation belongs to one department *and* one provider, so participation is a property
+  of the row and no role a router could check would answer it.
+
+### `docs/diagrams/homebandhu_submission_erd.dbml` — `0038`'s two tables
+
+- **New:** `conversations` and `conversation_messages`, with the unique constraint named in the index
+  note because it is load-bearing rather than incidental — it is what lets `open_conversation` be an
+  upsert instead of a read-then-write. `DERIVED`.
+- **New note:** why `conversation_messages` has **two** author columns rather than one. `AUDIT`: an
+  invited provider holds no membership in the community, so a single `author_membership_id` could not
+  address the party the whole surface exists to reach.
+
+### `docs/plans/SERVICE_OPERATIONS_PROGRESS.md` — §6.4 amended before it was built
+
+- **Changed:** the recorded plan for Step 3 gained a fourth route and lost a trigger, both **before**
+  the code was written, per §1's working agreement. `AUDIT`: with the three routes originally written
+  down, nothing created a thread — an id is required to post, so the first message could never be
+  sent. The trigger was dropped because §6 declares read policies only, so there is no second writer
+  for a trigger to defend against.
+- **Changed:** participation narrowed from "managers and supervisors" to `can_manage_department`.
+  `DERIVED`: this is the *hiring* conversation; a supervisor's conversation is with a complainant
+  about a job, which is `complaint_comments`.
+
+---
+
+## 2026-08-09 — Session 43: hiring, and three constraints that were rejecting valid writes
+
+**Context.** Step 2 of the service-operations build: a service person applies or is invited, a
+department manager decides, and accepting turns one row into three. The product owner also confirmed
+PostGIS is enabled and asked for every defect found so far to be fixed rather than parked.
+
+### `docs/API.md` — §18 gains eleven operations, and §7 loses a lie
+
+- **New:** `### Hiring — one negotiation, two directions`, covering `GET`/`POST` `/worker/communities`,
+  `/worker/communities/search`, the three `/worker/applications` routes, and the six
+  `/departments/{id}/…` hiring routes. Surface count 105 → **116 operations across 101 paths**.
+  `DERIVED` from the approved plan's Step 2.
+- **Changed:** `POST /complaints/{id}/comments` — the error table traded
+  `409 conflict — unknown visibility` for `422 unknown_visibility`, and a note now states that
+  `resident` is a *wire* word which the service translates to the stored `public`. `AUDIT`: the
+  request was previously forwarded unmapped, so **every comment posted through this endpoint failed**
+  against `complaint_comments_visibility_check` — including the frontend's, which hardcodes
+  `resident`. The wire vocabulary documented here is unchanged and remains the contract.
+
+### `docs/diagrams/homebandhu_submission_erd.dbml` — the service tables, and four corrections
+
+- **New:** `service_providers`, `service_provider_skills`, `blacklisted_service_providers`,
+  `service_applications`, plus a prose block naming what `0035` changed on the existing tables.
+  `DERIVED`.
+- **Fixed:** the `departments` and `staff_assignments` blocks were still **baseline-only**, missing
+  every column `0019` added — contact details, opening hours, SLA, kind, status, rank, shift,
+  community_id, display_name, and both partial unique indexes. `AUDIT`, found while preparing to add
+  this feature's own rows to them. Adding to a block that was already wrong would have baked the
+  error in.
+- **Changed:** `departments.kind` note `internal | vendor | hybrid` → `service | security`;
+  `staff_assignments.rank` `head | member` → `manager | supervisor | member`;
+  `staff_assignments.shift` gains `Day` and `Rotating`, loses `Morning`. `DERIVED` from `0035`.
+
+### Three vocabulary contradictions closed, all of them live failures
+
+Recorded together because they are one defect wearing three hats: **a CHECK constraint and a Python
+validator that allow different sets of words.** None was a tidy-up; each was rejecting writes the
+product makes.
+
+| Column | Database said | Code said | Now |
+|---|---|---|---|
+| `complaint_comments.visibility` | `public`, `internal` | `resident` (default) | translated in `vocabularies.py` |
+| `departments.kind` | `internal`, `vendor`, `hybrid` | `service`, `security` | `service`, `security` |
+| `staff_assignments.shift` | `Morning`, `Evening`, `Night`, `Full Day` | `Day`, `Evening`, `Night` | `Day`, `Evening`, `Night`, `Full Day`, `Rotating` |
+
+`AUDIT`. The `kind` sets did not intersect at all, so every department write naming a kind was a
+`422`; only writes omitting it worked, which is why nobody noticed. All three were free to correct
+because **no migration in this project has ever been applied to a database**. They will not be free a
+second time.
+
+### `staff_assignments.rank` — `head` becomes `manager`, and `head` stays the wire word
+
+`PO` ruling D3, implemented. Four vocabularies disagreed: SQL said `head|member`, `API.md` §8 said
+`member|supervisor|head`, the ERD said `manager|supervisor|worker`, and three frontend screens
+carried three more lists. **`supervisor` was documented in `department_schemas.py` and rejected by the
+CHECK constraint** — an advertised rank no write could produce.
+
+`AUDIT` found the part the plan missed: relaxing the CHECK alone breaks the schema, because `0019`
+has four other references to the word. `apply_department_head` is the *only* function that ever sets
+a rank and it wrote `'head'`; `department_overview` projects `head_name` by matching on it. Both are
+replaced in `0035`. **The API keeps saying `head`** — that is what the department screens and `API.md`
+§8 call the person who runs a department, and renaming it would break a working screen for nothing.
+
+### `docs/plans/SERVICE_OPERATIONS_PROGRESS.md` — the journal
+
+§4.6 and §4.7 (facts that changed the plan), §5.8 and §5.9 and §5.10 (what landed), §7.1 closed —
+PostGIS is confirmed enabled, so the D7 fallback is not taken. `btree_gist` remains unconfirmed and
+is flagged, because Steps 4 and 7 declare exclusion constraints that need it.
+
+---
+
+## 2026-08-09 — Session 42: planning documents get a folder, and the service surface gets a design
+
+**Context.** The service-operations build is mid-Step 1 of 12. The product owner asked for two things
+before it continues: that every unit of work be **written down before it is done**, so a stop at any
+point is resumable weeks later by someone who was not here; and that the planning documents, which
+had accumulated loose in `docs/` alongside the reference documents, be gathered into one folder.
+
+### `docs/plans/` — **new folder**
+
+Nine documents moved in. Seven were tracked and moved with `git mv`, preserving history:
+`ADMIN_DASHBOARD_BUILD_PLAN.md`, `ADMIN_DASHBOARD_PLAN.md`, `AUTH_REGISTRATION_IMPLEMENTATION_PLAN.md`,
+`BACKEND_PLAN.md`, `IMPLEMENTATION_PLAN.md`, `RECONCILIATION_ADDENDUM.md`,
+`SCHEMA_RECONCILIATION_PLAN.md`. Two were untracked working-tree files:
+`SERVICE_OPERATIONS_PLAN.md` and `SERVICE_OPERATIONS_PROGRESS.md`, which had been sitting in
+`docs/design/` where they did not belong. — `PO`
+
+**The distinction the folder now makes explicit,** stated in its `README.md`: `design/` is
+retrospective and answers *why the built thing is built that way* — if it and the code disagree, the
+document is a bug. `plans/` is prospective and answers *what we were going to do* — if it and the
+code disagree, **neither is wrong**, because a plan is a record of intent. A half-implemented or
+abandoned plan stays here at full length, because the reasoning in it is what the next person needs.
+Nothing in `plans/` may be cited as evidence of what runs. — `DERIVED`
+
+**Every live cross-reference was repointed in the same change.** Links inside the moved files that
+pointed up into `docs/` (`../API.md` ×7, `../CHANGE_LOG.md`, `../CONFLICT_RESOLUTIONS.md`,
+`../FRONTEND_MEETING_AGENDA.md`, `../FRONTEND_WIRING_AUDIT.md`, `../ARCHITECTURE.md`, and thirteen
+`../../frontend/src/...` paths), and links from outside that pointed at them —
+`docs/ADMIN_REGISTRATION_FLOW.md`, `docs/ARCHITECTURE.md`, `docs/erd/homebandhu.dbml`,
+`docs/potential issues/README.md`, `backend/app/api/v1/admin_api.py:11` and
+`backend/supabase/migrations/0018_settings_on_baseline.sql:20`. — `DERIVED`
+
+**This file's own historical entries were deliberately left alone.** Roughly forty of them name
+`BACKEND_PLAN.md`, `IMPLEMENTATION_PLAN.md` and the rest at their old paths. Those entries are a
+dated record of what was true when they were written; rewriting them to say `plans/` would falsify
+the log to make a `grep` tidier. The move is recorded here as a new entry instead — which is what
+this log is for. — `AUDIT`
+
+**One caveat worth flagging rather than burying.** `AUTH_REGISTRATION_IMPLEMENTATION_PLAN.md` is the
+auth workstream's document, not ours. It was moved because the instruction said *all* planning
+documents, and its inbound reference in `ARCHITECTURE.md:5` was repointed — but it is the one file in
+the set whose owner should get a veto.
+
+### `docs/plans/SERVICE_OPERATIONS_PROGRESS.md` — rewritten as a live work journal
+
+Was a status snapshot; is now a resumable journal with a **§0 "Resume here"** naming the next action
+precisely enough to start work without re-deriving it from the plan. — `PO`
+
+The working agreement in §1 is literal: **before each unit of work the intent is written into §6;
+after it, the entry moves to §5 with what actually happened.** A unit of work is one migration, one
+router-plus-service-plus-repository triple, one test module, one documentation sweep — not one line.
+
+**Why a journal rather than a checklist.** A checklist records *that* something was done. It does not
+record the fact discovered halfway through that made the plan wrong, and that is the expensive one to
+reconstruct — §4 exists for exactly those, and already holds three. — `DERIVED`
+
+Also corrected: the branch was recorded as `documentation/api-updates`; it is `services-and-security`.
+— `AUDIT`
+
+### `docs/plans/SERVICE_OPERATIONS_PLAN.md` — marked frozen
+
+An approved plan is now explicitly not editable to match what happened. Deviations are recorded in
+the progress document *with the fact that forced them*, so the difference between "we decided
+otherwise" and "reality disagreed" stays visible. Three such deviations already exist — the
+`skill_categories` join table that could not work in a per-community schema, `blacklisted_service_providers`
+moving forward one migration, and `MembershipSet` losing its raising method to avoid `app/domain`
+importing `app/core`. — `DERIVED`
+
+### `docs/design/SERVICE_OPERATIONS_DESIGN.md` — **new file**
+
+The third design document `design/README.md` anticipated: *"a third would be justified by, say, the
+gate/security surface if it ever gets an owner."* — `PO`
+
+**It deliberately does not restate the decision record.** `D1`–`D15` were made with the product owner
+across three rounds of questions and live in the plan; relocating them here would present them as
+derived when they were ruled. The design document confines itself to what the plan does not cover:
+how the new surface stays coherent with the two that already exist — a nine-row paradigm checklist,
+the three findings a reader of `design/` would not otherwise meet, four costs stated under a heading
+that admits they are costs, and the one place the surface deliberately diverges (`D3`'s `rank`
+vocabulary). — `DERIVED`
+
+**The most load-bearing paragraph is §2.1.** RLS was *already* multi-community —
+`is_community_member(uuid)` (`0019:81`) has always been an `exists` over every active membership. The
+single-community assumption lived in exactly one query. That is why a service person belonging to
+several communities at once is a change to one function rather than to the tenancy model, and why
+every guarantee in `ADMIN_DASHBOARD_DESIGN.md` §2 about per-request revocation survives untouched.
+
+### `docs/design/README.md`
+
+The document table gains the service row, and a new paragraph says **where the decisions live** —
+`design/` answers why the built thing is built that way, `plans/` holds what we intended, including
+the full `D1`–`D15` record. Without it a reader of the new design document would reasonably conclude
+the decisions had gone missing. — `DERIVED`
+
+### `docs/API.md` — new §18, service personnel
+
+Six operations backed by `0034`, and the section leads with what makes them different: **they are
+the first on this API whose caller holds no community membership.** A plumber exists before any
+society has heard of them. — `DERIVED`
+
+**§18 sits after the three meta-sections rather than before them, and says so in print.** Inserting
+it as §15 would shift §15/§16/§17 for the third time and invalidate roughly twenty cross-references
+across four documents *mid-build*. The renumber is deferred to this feature's documentation sweep,
+where §19 for security operations lands too and one pass covers both. Recording the reason inline
+was the point — an unexplained out-of-order section reads as an accident and gets "fixed" by
+someone who had no way of knowing. — `AUDIT`
+
+**Two things already in print are overturned, each named explicitly** per the `design/README.md`
+rule. `product/USER_IDENTIFICATION.md:55-65` and §16.1: *"a staff member is a name on a roster, not
+an account"* — false as of this section; a service person registers, holds an account, and receives
+a real `worker` or `security` membership when hired. And `CONFLICT_RESOLUTIONS.md` **R16**'s *"build
+nothing against them"* — `skills` is the first of the twelve parked tables to be un-parked.
+`staff_skills` is superseded and is deleted at the end of the feature, because skills belong to the
+**person** and not to a roster row: the "which communities need my skills" search has to run for
+someone nobody has hired yet. — `PO`
+
+**Coverage is unchanged, deliberately.** All six operations trace to no user story. Every story this
+feature eventually closes — US-2.7, US-2.8, US-3.3 through US-3.6 — is about work being *done*,
+which begins at hiring, which is `0035` and not built. Tagging any of them would inflate §16.
+Surface counts in the header updated to **105 operations across 91 paths**. — `DERIVED`
+
+### `docs/api_yaml_mapper.md`
+
+A router table for `service_providers.py` with all six rows, plus a §7 rescan row. Operation-side
+findings stay at **20** — the same as before this work — because all six are documented in both
+places. — `DERIVED`
+
+Two notes recorded under the table for the next person who scans. It is the only router in §3 that
+declares no membership dependency, which is deliberate rather than an omission to tidy away. And
+`GET /skills` is the only collection on this API that returns a bare array instead of a `Page`:
+§1.6's one-shape rule is about collections that grow, and this one is twelve rows of seeded
+reference data. — `AUDIT`
+
+### `docs/plans/SERVICE_OPERATIONS_PROGRESS.md` — §4.4 and §4.5
+
+Two facts found while building, recorded because neither is recoverable from the code afterwards.
+
+**§4.4 — `worker_deps.py` was deferred from Step 1 to Step 6.** Checked against Step 1's actual six
+operations, neither guard the plan put there has a caller: all three write RPCs resolve the provider
+from `auth.uid()` and raise `P0002` when there is no row, which `pg_errors.translate` already turns
+into a 404. A dependency reading the same row a moment earlier would add a round trip per request and
+a second home for the "are you registered" rule. The *reasoning* the plan attached to it is kept
+verbatim, because it is the part that matters: `get_service_provider` must depend on
+`get_current_user` alone, never on membership, or a registered-but-unhired provider is 403'd out of
+the screens that let them apply — a system in which nobody can ever be hired. — `DERIVED`
+
+**§4.5 — the additive seam was not additive, and the suite caught it.** Declaring
+`Depends(get_membership_set)` on `get_active_membership` reads identically to FastAPI and breaks
+every *direct* call. There are direct calls: `tests/api/test_session_flow.py:603` invokes it
+positionally to prove the role comes from `community_memberships` rather than from a token claim.
+Fixed by keeping the `Principal` parameter and deriving inside the body. **A changed parameter type
+is not additive; it only looks additive from inside dependency injection** — which is exactly the
+class of breakage D14 promised would not happen, and the reason `tests/test_membership_set.py` now
+pins the direct-call form explicitly. — `AUDIT`
+
+---
+
 ## 2026-08-09 — Session 41: the pull that widened an error contract without touching a route
 
 **Context.** Local `main` was four commits behind `origin/main`, so Session 40's sweep had been run

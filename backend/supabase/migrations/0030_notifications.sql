@@ -47,6 +47,43 @@
 -- ---------------------------------------------------------------------------
 -- 1. Ownership, as a predicate
 --
+-- The hosted legacy table has title/body/notification_type instead of the
+-- baseline's durable kind/payload contract. It is empty, so archive it intact
+-- and establish the baseline shape. A populated legacy feed must be mapped in
+-- its own reviewed data migration rather than silently rewritten or weakened.
+do $$
+declare
+  v_rows bigint;
+begin
+  if to_regclass('public.notifications') is not null
+     and not exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'notifications'
+          and column_name = 'kind'
+     ) then
+    if to_regclass('public.legacy_notifications') is not null then
+      raise exception 'Legacy notifications archive table already exists.';
+    end if;
+
+    select count(*) into v_rows from public.notifications;
+    if v_rows <> 0 then
+      raise exception 'Cannot reconcile populated legacy notifications without an explicit data migration.';
+    end if;
+
+    alter table public.notifications rename to legacy_notifications;
+  end if;
+end $$;
+
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_membership_id uuid not null references public.community_memberships(id) on delete cascade,
+  kind text not null,
+  payload jsonb not null default '{}'::jsonb,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 -- The third of the shared RLS predicates, alongside `is_community_member` and
 -- `is_community_admin` from 0019. Ownership belongs in SQL rather than in a
 -- Python `where` clause: a predicate the database applies cannot be forgotten by
@@ -204,10 +241,25 @@ $$;
 comment on function public.notify_member(uuid, text, jsonb) is
   'Write one notification, in the caller''s transaction. The only writer of public.notifications.';
 
--- `authenticated`, not just `service_role`: the callers are the feature RPCs,
--- which run as their own definer, and a resident-initiated write (raising a
--- complaint) reaches them over the user's client.
-grant execute on function public.notify_member(uuid, text, jsonb) to authenticated;
+-- `service_role` only, and the reasoning that used to say otherwise was wrong.
+--
+-- It read: "the callers are the feature RPCs, which run as their own definer,
+-- and a resident-initiated write reaches them over the user's client." The first
+-- half is true and is exactly why the second half does not follow. Inside a
+-- SECURITY DEFINER function the current user *is* the definer, so the EXECUTE
+-- check on this call is made against the owner, who owns this function too. The
+-- grant to `authenticated` was never load-bearing.
+--
+-- It was, however, a forgery surface: any signed-in user could call this
+-- directly with any membership id and any payload, and `payload.url` is what a
+-- notification links to. A notification that appears to come from the
+-- association and leads anywhere is phishing with the association's name on it.
+--
+-- The default EXECUTE grant to PUBLIC is revoked for the same reason. A grant to
+-- one role does not remove it; only a revoke does, which is why 0001 pairs the
+-- two on every function it locks down and why this file now does too.
+revoke all on function public.notify_member(uuid, text, jsonb)
+  from public, anon, authenticated;
 grant execute on function public.notify_member(uuid, text, jsonb) to service_role;
 
 -- ---------------------------------------------------------------------------
@@ -498,7 +550,13 @@ comment on function public.claim_push_batch(integer) is
   'Atomically claim un-pushed notifications from the last hour. service_role only; at-most-once by design.';
 
 -- `service_role` only. This is the sender's function and it runs on the service
--- client; there is no resident-facing reason to reach it.
+-- client; there is no resident-facing reason to reach it. The revoke is what
+-- makes that sentence true -- EXECUTE defaults to PUBLIC, so until this line the
+-- comment above described an intention rather than a permission, and any
+-- signed-in user could mark every pending notification as pushed and silence
+-- push for the whole deployment.
+revoke all on function public.claim_push_batch(integer)
+  from public, anon, authenticated;
 grant execute on function public.claim_push_batch(integer) to service_role;
 
 -- ---------------------------------------------------------------------------
@@ -553,5 +611,13 @@ begin
 end;
 $$;
 
+-- Both service_role only, and both revoked from PUBLIC first. `record_push_failure`
+-- with `p_gone => true` deletes a subscription by endpoint, so leaving it on the
+-- default grant meant anyone holding another resident's endpoint string could
+-- unsubscribe their phone.
+revoke all on function public.record_push_success(text)
+  from public, anon, authenticated;
+revoke all on function public.record_push_failure(text, boolean)
+  from public, anon, authenticated;
 grant execute on function public.record_push_success(text) to service_role;
 grant execute on function public.record_push_failure(text, boolean) to service_role;

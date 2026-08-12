@@ -58,12 +58,65 @@ _FALLBACK_TITLES: dict[str, str] = {
     "payment.failed": "Payment failed",
     "payment.recorded": "A payment was recorded",
     "access_request.created": "Someone asked to join",
+    "conversation.message": "New message about your application",
+    # The five hiring kinds `0035` writes. Their payloads carry ids rather than
+    # rendered strings, so without these they land in the feed as the generic
+    # line below -- which is what a resident sees when a writer forgot a title,
+    # and reads as a bug in the app. Titles here rather than in the RPCs because
+    # that is what this table is for. The missing `url` is fixed in
+    # `_FALLBACK_URLS` below; this comment used to say a link was "not something
+    # a fallback can invent", which is true in general and was wrong about these
+    # -- their payloads carry the ids the route needs.
+    "service_application_received": "Someone applied to work in your community",
+    "service_application_accepted": "You have been hired",
+    "service_application_rejected": "Your application was not accepted",
+    "service_invitation_received": "You have been invited to work with a community",
+    "service_invitation_accepted": "An invitation was accepted",
+    "service_invitation_rejected": "An invitation was declined",
+    "service_engagement_ended": "You were taken off a roster",
 }
 
 #: The last resort. A kind nobody has seen before still renders a row, because
 #: the alternative -- hiding it -- means a notification the system decided to
 #: send and the resident never learns exists.
 _GENERIC_TITLE = "Update from your community"
+
+#: Where a notification goes when its writer named no destination.
+#:
+#: Only the four ``0035`` hiring kinds, and only because their payloads already
+#: carry the id the route needs -- the journal recorded these as unclickable
+#: (5.18) and this is where that is answered. **A fallback url is not a general
+#: mechanism**: every other kind in the system names its own, and a guess about
+#: where a notification should land is a worse failure than no link, because a
+#: link that goes to the wrong screen is one the reader believes.
+#:
+#: `service_application_received` reaches a manager, so it lands on the
+#: department's inbox. The other three reach the service person, whose
+#: applications and rosters are one screen.
+_DEPARTMENT_INBOX = "/admin/departments/{departmentId}/hiring?tab=applications"
+
+_FALLBACK_URLS: dict[str, str] = {
+    "service_application_received": _DEPARTMENT_INBOX,
+    "service_application_accepted": "/worker/communities",
+    "service_application_rejected": "/worker/communities?tab=applications",
+    "service_invitation_accepted": _DEPARTMENT_INBOX,
+    "service_invitation_rejected": _DEPARTMENT_INBOX,
+}
+
+
+def _fallback_url(kind: str, data: dict[str, Any]) -> str:
+    """A destination for a kind whose writer gave none.
+
+    Formats against the payload and gives up quietly when a key it needs is
+    missing, because a half-substituted path is worse than no path at all.
+    """
+    template = _FALLBACK_URLS.get(kind)
+    if not template:
+        return ""
+    try:
+        return template.format(**data)
+    except (KeyError, IndexError):
+        return ""
 
 
 def _text(value: object) -> str:
@@ -82,7 +135,8 @@ def render(kind: str, payload: dict[str, Any] | None) -> tuple[str, str, str]:
     """
     data = payload if isinstance(payload, dict) else {}
     title = _text(data.get("title")) or _FALLBACK_TITLES.get(kind, _GENERIC_TITLE)
-    return title, _text(data.get("body")), _text(data.get("url"))
+    url = _text(data.get("url")) or _fallback_url(kind, data)
+    return title, _text(data.get("body")), url
 
 
 def _to_item(row: dict[str, Any]) -> NotificationItem:
@@ -104,7 +158,7 @@ def _to_item(row: dict[str, Any]) -> NotificationItem:
 def list_feed(
     client: Client,
     *,
-    membership_id: str,
+    profile_id: str,
     unread_only: bool = False,
     page: int = 1,
     page_size: int = 20,
@@ -120,7 +174,7 @@ def list_feed(
     offset = (page - 1) * page_size
     rows, total = repo.list_feed(
         client,
-        membership_id=membership_id,
+        profile_id=profile_id,
         unread_only=unread_only,
         offset=offset,
         limit=page_size,
@@ -132,12 +186,12 @@ def list_feed(
         page=page,
         page_size=page_size,
         has_more=offset + len(items) < total,
-        unread=repo.unread_count(client, membership_id=membership_id),
+        unread=repo.unread_count(client, profile_id=profile_id),
     )
 
 
 def mark_read(
-    client: Client, *, membership_id: str, notification_id: str
+    client: Client, *, profile_id: str, notification_id: str
 ) -> NotificationReadResult:
     """Mark one notification read.
 
@@ -154,19 +208,19 @@ def mark_read(
         raise NotFoundError("Notification not found.")
     return NotificationReadResult(
         marked=1,
-        unread=repo.unread_count(client, membership_id=membership_id),
+        unread=repo.unread_count(client, profile_id=profile_id),
     )
 
 
-def mark_all_read(client: Client, *, membership_id: str) -> NotificationReadResult:
+def mark_all_read(client: Client, *, profile_id: str) -> NotificationReadResult:
     """Clear the badge.
 
     ``unread`` is re-read rather than assumed to be zero. A notification can
     arrive between the update and this count, and reporting zero when one is
     already waiting would leave the badge wrong until the next fetch.
     """
-    marked = repo.mark_all_read(client, membership_id=membership_id)
+    marked = repo.mark_all_read(client)
     return NotificationReadResult(
         marked=marked,
-        unread=repo.unread_count(client, membership_id=membership_id),
+        unread=repo.unread_count(client, profile_id=profile_id),
     )

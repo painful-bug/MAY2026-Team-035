@@ -1,6 +1,15 @@
 import React, { useRef, useState } from 'react';
-import { Ban, Eye, MoreHorizontal, ReceiptText, RotateCcw } from 'lucide-react';
+import {
+  Ban,
+  Eye,
+  MoreHorizontal,
+  Plus,
+  ReceiptText,
+  RotateCcw,
+  Wallet,
+} from 'lucide-react';
 import { LEDGER_ACTION } from '../../constants/ledgerStatuses.js';
+import { getLedgerMenuActions } from '../../utils/amenityLedger.js';
 
 const ACTION_META = {
   [LEDGER_ACTION.VIEW]: { label: 'View Details', icon: Eye },
@@ -13,6 +22,11 @@ const ACTION_META = {
     label: 'Force Cancel Booking',
     icon: Ban,
   },
+  // Money in, then money owed. Two different sentences about the same booking,
+  // and the menu says which is which so nobody records a receipt when they
+  // meant to raise a bill.
+  [LEDGER_ACTION.PAYMENT]: { label: 'Record Payment Received', icon: Wallet },
+  [LEDGER_ACTION.CHARGE]: { label: 'Add Charge', icon: Plus },
 };
 
 export default function LedgerActionsMenu({ transaction, onAction }) {
@@ -42,8 +56,13 @@ export default function LedgerActionsMenu({ transaction, onAction }) {
 
       {isOpen && (
         <div className="absolute right-0 z-30 mt-2 w-56 rounded-xl border border-slate-100 bg-white p-1.5 shadow-lg shadow-slate-100">
-          {transaction.availableActions.map((action) => {
+          {getLedgerMenuActions(transaction).map((action) => {
             const meta = ACTION_META[action];
+
+            if (!meta) {
+              return null;
+            }
+
             const Icon = meta.icon;
             const isDestructive = action === LEDGER_ACTION.FORCE_CANCEL;
 

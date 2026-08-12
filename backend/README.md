@@ -112,9 +112,10 @@ origin to be reachable.
 
 ## Run the tests
 
-The automated tests do not require real Supabase credentials or a local `.env`.
-They provide safe placeholder configuration and replace external service calls
-at the test boundary.
+The default automated tests do not require real Supabase credentials or a local
+`.env`. They provide safe placeholder configuration and replace external service
+calls at the test boundary. Tests under `tests/integration` remain skipped unless
+their local-Supabase environment flag is enabled.
 
 Install the development dependencies and run the complete test suite:
 
@@ -129,5 +130,15 @@ Run the API-focused tests only with:
 uv run --extra dev pytest tests/api -vv
 ```
 
-More detailed testing documentation and evidence can be added to the submission
-folder separately.
+### Generate the test documentation
+
+Ordinary pytest collection and test runs do not modify tracked documentation.
+Regenerate `tests/README.md` and `tests/api/README.md` explicitly from the
+collected test docstrings with:
+
+```bash
+uv run pytest --collect-only --generate-test-docs
+```
+
+Run this command from the `backend` directory and commit the generated README
+changes only when the documented test inventory is intended to be refreshed.

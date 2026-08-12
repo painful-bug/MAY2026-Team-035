@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ClipboardCheck } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOutletContext } from 'react-router-dom';
+import { amenitiesApi } from '../amenitiesApi.js';
 import ApprovalFilters from '../components/Approvals/ApprovalFilters.jsx';
 import ApprovalTable from '../components/Approvals/ApprovalTable.jsx';
 import RejectBookingDialog from '../components/Approvals/RejectBookingDialog.jsx';
@@ -8,11 +10,27 @@ import {
   APPROVAL_FILTERS,
   BOOKING_STATUS,
 } from '../constants/bookingStatuses.js';
-import { useAmenityBookingsStore } from '../store/useAmenityBookingsStore.js';
+
+// The approvals queue, over `GET /amenities/{id}/approvals` and the two
+// decisions behind it.
+//
+// **The status filter is now the server's `status` parameter**, not a
+// `.filter()` over everything the browser happened to be holding. The search
+// box stays client-side: the endpoint has no `q`, and a resident-name search
+// invented here over one page would be a search that quietly misses people.
+// It is scoped to the loaded page and the empty message says which.
+//
+// One row is one REQUEST. The demo produced one row per day, so a three-day
+// booking appeared three times and could be approved on Monday and rejected on
+// Tuesday; the API groups the series and `dayCount` says how much one click
+// covers. Both decisions therefore take `bookingSeriesId`, never the row's own
+// `id` — see `amenitiesApi.approve`.
+
+const PAGE_SIZE = 50;
 
 const getEmptyMessage = (activeFilter, hasSearchQuery) => {
   if (hasSearchQuery) {
-    return 'No booking requests match your search.';
+    return 'No booking requests on this page match your search.';
   }
 
   if (activeFilter === BOOKING_STATUS.PENDING) {
@@ -27,81 +45,66 @@ const getEmptyMessage = (activeFilter, hasSearchQuery) => {
 
 export default function AmenityApprovalsPage() {
   const { amenity } = useOutletContext();
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState(
-    BOOKING_STATUS.PENDING
-  );
-  const [rejectionBooking, setRejectionBooking] = useState(null);
-  const approvalRequests = useAmenityBookingsStore(
-    (state) => state.approvalRequests
-  );
-  const approvalRequestKey = useAmenityBookingsStore(
-    (state) => state.approvalRequestKey
-  );
-  const isApprovalsLoading = useAmenityBookingsStore(
-    (state) => state.isApprovalsLoading
-  );
-  const approvalsError = useAmenityBookingsStore(
-    (state) => state.approvalsError
-  );
-  const approvingBookingId = useAmenityBookingsStore(
-    (state) => state.approvingBookingId
-  );
-  const rejectingBookingId = useAmenityBookingsStore(
-    (state) => state.rejectingBookingId
-  );
-  const rejectionError = useAmenityBookingsStore(
-    (state) => state.rejectionError
-  );
-  const fetchApprovalRequests = useAmenityBookingsStore(
-    (state) => state.fetchApprovalRequests
-  );
-  const approveBookingRequest = useAmenityBookingsStore(
-    (state) => state.approveBookingRequest
-  );
-  const rejectBookingRequest = useAmenityBookingsStore(
-    (state) => state.rejectBookingRequest
-  );
-  const clearRejectionError = useAmenityBookingsStore(
-    (state) => state.clearRejectionError
-  );
+  const [activeFilter, setActiveFilter] = useState(BOOKING_STATUS.PENDING);
+  const [rejectionRequest, setRejectionRequest] = useState(null);
 
-  useEffect(() => {
-    fetchApprovalRequests(amenity.id);
-  }, [amenity.id, fetchApprovalRequests]);
+  const approvals = useQuery({
+    queryKey: ['amenities', amenity.id, 'approvals', activeFilter],
+    queryFn: () =>
+      amenitiesApi.approvals(amenity.id, {
+        status: activeFilter,
+        pageSize: PAGE_SIZE,
+      }),
+  });
 
-  const counts = useMemo(
-    () =>
-      approvalRequests.reduce((statusCounts, booking) => {
-        statusCounts[booking.status] =
-          (statusCounts[booking.status] ?? 0) + 1;
-        return statusCounts;
-      }, {}),
-    [approvalRequests]
-  );
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ['amenities', amenity.id] });
+
+  const approve = useMutation({
+    mutationFn: (seriesId) => amenitiesApi.approve(seriesId),
+    onSuccess: invalidate,
+  });
+
+  const reject = useMutation({
+    // `reasonCode` is the machine value the database checks; `reason` is the
+    // free text that `other` requires and that everything else may omit.
+    mutationFn: ({ seriesId, rejection }) =>
+      amenitiesApi.reject(seriesId, {
+        reasonCode: rejection.reason,
+        reason: rejection.otherReason?.trim() || null,
+        notifyResident: rejection.notifyResident,
+      }),
+    onSuccess: invalidate,
+  });
+
+  const requests = useMemo(() => approvals.data?.items || [], [approvals.data]);
 
   const filteredRequests = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
-    return approvalRequests.filter((booking) => {
-      if (booking.status !== activeFilter) {
-        return false;
-      }
+    if (!normalizedQuery) {
+      return requests;
+    }
 
-      if (!normalizedQuery) {
-        return true;
-      }
+    return requests.filter((request) =>
+      [request.residentName, request.residentFlat, request.bookingTitle].some(
+        (value) => value?.toLowerCase().includes(normalizedQuery)
+      )
+    );
+  }, [requests, searchQuery]);
 
-      return [
-        booking.residentName,
-        booking.residentFlat,
-        booking.bookingTitle,
-      ].some((value) => value?.toLowerCase().includes(normalizedQuery));
-    });
-  }, [activeFilter, approvalRequests, searchQuery]);
-
-  const isLoading =
-    approvalRequestKey !== amenity.id || isApprovalsLoading;
+  // Switching tabs makes an open dialog describe a request that is no longer on
+  // screen, and leaves a failure message attached to nothing. Both are cleared
+  // where the switch happens rather than in an effect that would have to list
+  // the mutations as dependencies to say so.
+  const changeFilter = (filter) => {
+    setRejectionRequest(null);
+    approve.reset();
+    reject.reset();
+    setActiveFilter(filter);
+  };
 
   return (
     <>
@@ -118,7 +121,8 @@ export default function AmenityApprovalsPage() {
               Approval dashboard
             </h2>
             <p className="mt-1 text-xs font-semibold text-slate-400">
-              Review resident requests for {amenity.name}.
+              Review resident requests for {amenity.name}. One row is one
+              request — approving it approves every day of it.
             </p>
           </div>
         </div>
@@ -127,48 +131,75 @@ export default function AmenityApprovalsPage() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           activeFilter={activeFilter}
-          onFilterChange={setActiveFilter}
-          counts={counts}
+          onFilterChange={changeFilter}
+          counts={{ [activeFilter]: approvals.data?.total }}
         />
 
-        {approvalsError && (
+        {approve.error && (
           <div
             role="alert"
             className="mx-4 mt-4 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700 sm:mx-5"
           >
-            {approvalsError}
+            {approve.error.message}
           </div>
         )}
 
-        {isLoading ? (
+        {approvals.isPending ? (
           <div className="px-6 py-14 text-center text-xs font-semibold text-slate-400">
             Loading booking requests...
           </div>
+        ) : approvals.error ? (
+          <div className="px-6 py-14 text-center">
+            <p role="alert" className="text-xs font-bold text-rose-700">
+              {approvals.error.message}
+            </p>
+            <button
+              type="button"
+              onClick={() => approvals.refetch()}
+              className="mt-3 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+            >
+              Try again
+            </button>
+          </div>
         ) : (
-          <ApprovalTable
-            bookings={filteredRequests}
-            approvingBookingId={approvingBookingId}
-            onApprove={approveBookingRequest}
-            onReject={setRejectionBooking}
-            emptyMessage={getEmptyMessage(
-              activeFilter,
-              Boolean(searchQuery.trim())
+          <>
+            <ApprovalTable
+              bookings={filteredRequests}
+              approvingSeriesId={approve.isPending ? approve.variables : null}
+              onApprove={(seriesId) => approve.mutate(seriesId)}
+              onReject={setRejectionRequest}
+              emptyMessage={getEmptyMessage(
+                activeFilter,
+                Boolean(searchQuery.trim())
+              )}
+            />
+            {approvals.data?.hasMore && (
+              <p className="border-t border-slate-50 px-6 py-3 text-[11px] font-semibold text-slate-400">
+                Showing the first {PAGE_SIZE} of {approvals.data.total} requests
+                in this view.
+              </p>
             )}
-          />
+          </>
         )}
       </section>
 
-      {rejectionBooking && (
+      {rejectionRequest && (
         <RejectBookingDialog
-          booking={rejectionBooking}
+          booking={rejectionRequest}
           amenityName={amenity.name}
-          isSubmitting={rejectingBookingId === rejectionBooking.id}
-          submissionError={rejectionError}
+          isSubmitting={reject.isPending}
+          submissionError={reject.error?.message}
           onClose={() => {
-            clearRejectionError();
-            setRejectionBooking(null);
+            reject.reset();
+            setRejectionRequest(null);
           }}
-          onReject={rejectBookingRequest}
+          onReject={async (seriesId, rejection) => {
+            try {
+              return await reject.mutateAsync({ seriesId, rejection });
+            } catch {
+              return null;
+            }
+          }}
         />
       )}
     </>

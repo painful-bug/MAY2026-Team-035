@@ -79,6 +79,22 @@ def admin_api_client(api_client: TestClient) -> TestClient:
 
 
 @pytest.fixture
+def manager_api_client(api_client: TestClient) -> TestClient:
+    """A department manager.
+
+    Added when the `/manager` portal was built. Until staff provisioning nothing
+    minted a `manager` membership, so this role had never been exercised by a
+    test -- which is exactly why the departments router's guards needed one.
+    """
+    return _authenticated_client(api_client, role="manager")
+
+
+@pytest.fixture
+def worker_api_client(api_client: TestClient) -> TestClient:
+    return _authenticated_client(api_client, role="worker")
+
+
+@pytest.fixture
 def csrf_headers(api_client: TestClient) -> dict[str, str]:
     """Start the pre-auth CSRF flow and return unsafe-request headers."""
     response = api_client.get("/api/v1/auth/csrf")

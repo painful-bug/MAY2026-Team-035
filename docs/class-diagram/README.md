@@ -8,6 +8,21 @@ submission scale; together they cover the whole system.
 | [`homebandhu-domain.puml`](homebandhu-domain.puml) | **Domain model** — 47 domain classes + 5 membership subclasses, abstract bases, interfaces, value objects, ~38 enums, association classes, all associations with multiplicities, and every constraint note. This is the primary deliverable. |
 | [`homebandhu-architecture.puml`](homebandhu-architecture.puml) | **Application architecture** — FastAPI controllers/guards/DTOs → services → `Repository<T>` + concrete repositories → infrastructure gateways and external Supabase systems. |
 
+## Renders are current — 2026-08-10
+
+`HomeBandhu-Domain-Model.svg` / `.png` were regenerated on 2026-08-10 from the
+`.puml` as it stands after migrations `0034`–`0046` (Service Personnel package,
+departure scheduling dates, `DEPARTURE_REMOVAL`, and the Direct Messages classes).
+Rendered with PlantUML **1.2024.8** + Graphviz **15.1.1** (`dot`). The previous
+renders are preserved in [`../archives/2026-08-10-diagram-rerender/`](../archives/2026-08-10-diagram-rerender/)
+with a note on what changed. Two render pitfalls that bit and are now known:
+
+- **PNG size limit**: PlantUML clips PNGs at 4096×4096 by default — the previously
+  committed PNG was silently truncated to that. Render with
+  `-DPLANTUML_LIMIT_SIZE=24576`; the full diagram is ~21500 px wide.
+- **Java version**: PlantUML **1.2025.0 and later require Java 11**. On a Java 8
+  machine use `plantuml-1.2024.8.jar` (the last Java-8-compatible release).
+
 ## Pre-rendered output (ready to submit)
 
 These are already generated — just open them:

@@ -129,7 +129,7 @@ def _visitors(client: Client, *, membership_id: str) -> VisitorDigest:
 
 
 def snapshot(
-    client: Client, *, membership_id: str, community_id: str
+    client: Client, *, membership_id: str, community_id: str, profile_id: str
 ) -> ResidentSnapshot:
     """Everything the resident home screen renders, in one call.
 
@@ -141,8 +141,12 @@ def snapshot(
         client, membership_id=membership_id, page_size=_COMPLAINTS
     )
     notices = home.list_notices(client, community_id=community_id, page_size=_NOTICES)
+    # The feed is the person's, not the membership's (0041). For the ordinary
+    # resident those are the same rows; for a resident who also works in another
+    # society it is one activity list rather than a partial one, and it matches
+    # what the bell shows on every other screen.
     feed = notifications_service.list_feed(
-        client, membership_id=membership_id, page_size=_ACTIVITY
+        client, profile_id=profile_id, page_size=_ACTIVITY
     )
 
     return ResidentSnapshot(

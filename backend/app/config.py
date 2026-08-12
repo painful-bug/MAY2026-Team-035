@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     auth_enabled_methods: str = Field("google,email_password", alias="AUTH_ENABLED_METHODS")
     auth_session_idle_days: int = Field(30, ge=1, le=90, alias="AUTH_SESSION_IDLE_DAYS")
     auth_captcha_enabled: bool = Field(False, alias="AUTH_CAPTCHA_ENABLED")
+    auth_email_confirmation_required: bool = Field(
+        True, alias="AUTH_EMAIL_CONFIRMATION_REQUIRED"
+    )
     auth_provider_timeout_seconds: float = Field(
         8.0, gt=0, alias="AUTH_PROVIDER_TIMEOUT_SECONDS"
     )
@@ -88,6 +91,8 @@ class Settings(BaseSettings):
                 "Unsupported authentication methods configured: "
                 + ", ".join(sorted(unsupported))
             )
+        if self.is_production and not self.auth_email_confirmation_required:
+            raise ValueError("Email confirmation must be enabled in production")
 
 
 @lru_cache

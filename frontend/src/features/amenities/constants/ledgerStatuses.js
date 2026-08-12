@@ -35,12 +35,39 @@ export const EMPTY_LEDGER_SUMMARY = Object.freeze({
   completedTransactions: 0,
 });
 
+// The first four are the API's own vocabulary: `LedgerTransaction.availableActions`
+// is a server-computed list drawn from exactly these, using the same rules the
+// write endpoints enforce.
+//
+// The last two are not in that list, and their absence is deliberate rather
+// than an omission. Adding a charge has no precondition at all — the endpoint
+// answers `404` and nothing else — and recording a payment is refused only when
+// there is no outstanding charge of the named kind, which the row's own figures
+// already say. Neither needed a server flag, so neither got one; the client
+// decides whether to offer them from the transaction it is holding. See
+// `getLedgerMenuActions`.
 export const LEDGER_ACTION = Object.freeze({
   VIEW: 'view',
   REFUND: 'refund',
   DAMAGE: 'damage',
   FORCE_CANCEL: 'force_cancel',
+  PAYMENT: 'payment',
+  CHARGE: 'charge',
 });
+
+/** `chargeType` for `POST /amenity-bookings/{id}/payments` — what the money settles. */
+export const PAYMENT_CHARGE_TYPES = [
+  { value: 'booking', label: 'Booking Fee' },
+  { value: 'deposit', label: 'Security Deposit' },
+  { value: 'additional', label: 'Additional Charges' },
+  { value: 'late_cancellation', label: 'Late Cancellation Fee' },
+];
+
+/** `chargeType` for `POST /amenity-bookings/{id}/charges` — what is being billed. */
+export const ADDABLE_CHARGE_TYPES = [
+  { value: 'additional', label: 'Additional Charge' },
+  { value: 'late_cancellation', label: 'Late Cancellation Fee' },
+];
 
 export const FORCE_CANCEL_REASONS = [
   { value: 'emergency-maintenance', label: 'Emergency Maintenance' },

@@ -34,6 +34,8 @@ const createInitialOnboardingState = () => ({
   state: '',
   postalCode: '',
   countryCode: 'IN',
+  latitude: '',
+  longitude: '',
   communityType: COMMUNITY_TYPES.APARTMENT,
   blocks: [createInitialBlock()],
   villas: [createInitialVilla()],
@@ -73,6 +75,7 @@ export const useOnboardingStore = create(
         };
         if (fields[field]) set({ [fields[field]]: value });
       },
+      setCommunityCoordinates: ({ latitude, longitude }) => set({ latitude, longitude }),
 
       setCommunityType: (communityType) =>
         set((state) => ({
@@ -298,7 +301,7 @@ export const useOnboardingStore = create(
     {
       name: 'homebandhu-admin-onboarding',
       storage: createJSONStorage(() => sessionStorage),
-      version: 6,
+      version: 7,
       migrate: (persistedState) => {
         const {
           boundaryCoordinates: _boundaryCoordinates,
@@ -313,6 +316,8 @@ export const useOnboardingStore = create(
           state: currentState.state ?? '',
           postalCode: currentState.postalCode ?? '',
           countryCode: currentState.countryCode ?? 'IN',
+          latitude: currentState.latitude ?? '',
+          longitude: currentState.longitude ?? '',
           villas:
             currentState.villas?.length > 0
               ? currentState.villas

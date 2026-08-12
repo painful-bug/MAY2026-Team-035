@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Building, Loader2 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { prepareInvitation } from '../../lib/auth/authService';
-import { AUTH_ROUTES, getDashboardRouteForRole } from '../../routes/authRoutes';
+import { AUTH_ROUTES, homeRouteFor } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 
 export default function JoinPage() {
@@ -24,7 +24,7 @@ export default function JoinPage() {
       prepared.current = true;
       if (currentUser) {
         const result = await redeemInvite();
-        if (result.success) navigate(getDashboardRouteForRole(result.user.role), { replace: true });
+        if (result.success) navigate(homeRouteFor(result.user), { replace: true });
         else setError(result.message);
       } else {
         beginGoogleSignIn('/join');
@@ -44,7 +44,7 @@ export default function JoinPage() {
     if (!token && isAuthReady && currentUser && !prepared.current) {
       setWorking(true);
       redeemInvite().then((result) => {
-        if (result.success) navigate(getDashboardRouteForRole(result.user.role), { replace: true });
+        if (result.success) navigate(homeRouteFor(result.user), { replace: true });
         else setError(result.message);
       }).finally(() => setWorking(false));
     }

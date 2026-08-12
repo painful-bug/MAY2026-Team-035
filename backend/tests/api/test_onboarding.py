@@ -21,6 +21,8 @@ def _founder_payload() -> dict:
         "city": "Kolkata",
         "state": "West Bengal",
         "postal_code": "700001",
+        "latitude": 22.572645,
+        "longitude": 88.363892,
         "blocks": [{"id": "block-1", "name": "Block A"}],
         "block_locations": {"block-1": {"x": 50, "y": 50}},
         "admin_profile": {

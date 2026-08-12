@@ -44,15 +44,49 @@ class StaffMember(CamelModel):
     phone: str | None = None
     #: The exact string the frontend renders in ``staff[].role`` ("Technician").
     role: str | None = None
-    #: Structural rank: ``member`` | ``supervisor`` | ``head``. Separate from
+    #: Structural rank: ``manager`` | ``supervisor`` | ``member``. Separate from
     #: ``role`` because the seed data proves the two are not a function of each
     #: other -- two departments' heads render as 'Supervisor' and 'Manager'.
+    #:
+    #: Was ``head`` until 0035. Four vocabularies disagreed about this one word,
+    #: and ``supervisor`` was in this docstring while being a value the CHECK
+    #: constraint had never allowed -- an advertised rank no write could produce.
+    #: The department's *head* is still called that everywhere the API says
+    #: ``head``; that is the person holding ``rank = 'manager'``.
     rank: str = "member"
     shift: str | None = None
     status: str = "active"
     membership_id: str | None = None
+    #: The service provider behind this row, when the person was hired through
+    #: an application rather than typed into the department form. Null is the
+    #: ordinary case and stays so -- A7 made a roster a list of names, and 0035
+    #: only stopped that being the *only* thing it could be.
+    #:
+    #: It is here because the two things a manager can do to a roster row take
+    #: two different ids: removal takes this row's ``id``, and blacklisting
+    #: takes the provider's. Without this field one screen cannot offer both.
+    service_provider_id: str | None = None
     #: Open complaints this member holds *in this department* (A8).
     active_assignment_count: int = 0
+    #: Jobs and shifts still booked in their name (``0043``). Not the same
+    #: number as ``activeAssignmentCount``, which counts open *complaints*: a
+    #: complaint can sit with nobody scheduled, and a job can outlive the
+    #: complaint that caused it.
+    #:
+    #: It is here because it decides which verb a roster row offers. Removal is
+    #: refused while this is non-zero, so a screen that did not know the number
+    #: could only find out by trying — and a manager would experience the rule
+    #: as a button that sometimes errors.
+    open_commitment_count: int = 0
+    #: ``pending`` while a departure is open on this row, ``approved`` once the
+    #: manager set a leave date that has not arrived yet, otherwise null. The
+    #: engine is already (wholly or from the date) frozen against this person
+    #: when it is set.
+    departure_status: str | None = None
+    #: The leave date the row is heading toward — the requested one while
+    #: pending, the decided one once approved. Null for an undated (immediate)
+    #: request. What the roster tile renders as "leaving <date>".
+    departure_effective_at: datetime | None = None
 
 
 class DepartmentSummary(CamelModel):
@@ -66,7 +100,17 @@ class DepartmentSummary(CamelModel):
     #: ...paired with their ids, per the R23 label+id rule.
     category_ids: list[str] = Field(default_factory=list)
 
-    #: The head's name. Backed by the staff row with ``rank = 'head'``.
+    #: Skills the department needs, chosen explicitly. **Empty by default and
+    #: never inherited from ``categories``** -- the two answer different
+    #: questions (which trade handles this kind of complaint, versus which
+    #: trades this department employs) and inheriting one from the other would
+    #: silently give every department skills nobody chose. Same label+id pairing
+    #: as categories, per R23.
+    skills: list[str] = Field(default_factory=list)
+    skill_ids: list[str] = Field(default_factory=list)
+
+    #: The head's name. Backed by the staff row with ``rank = 'manager'``
+    #: (``'head'`` before 0035). ``head`` stays the wire word.
     head: str | None = None
     head_staff_id: str | None = None
     email: str | None = None
@@ -91,6 +135,23 @@ class DepartmentDetail(DepartmentSummary):
     """A department plus its roster."""
 
     staff: list[StaffMember] = Field(default_factory=list)
+
+    #: Whether **this caller** may hire for **this department** --
+    #: ``can_hire_for_department`` asked directly, so the screen and the RPC
+    #: cannot disagree about it.
+    #:
+    #: Worth a field rather than a role check in the browser because the answer
+    #: stopped being a property of the caller. Hiring belongs to the department's
+    #: own active manager, and a community admin is the fallback **only while it
+    #: has none** -- so the same admin may hire for one department and not the
+    #: next one down the list. A security department's roster-ranked manager
+    #: qualifies too, and they hold ``membership_role = 'security'``, which no
+    #: role check in the frontend would have guessed.
+    #:
+    #: ``None`` means *not asked on this read*, which is the honest answer for
+    #: the list: it is one round trip per department and the list has no control
+    #: that needs it. Only the single-department read fills it in.
+    can_hire: bool | None = None
 
 
 class StaffMemberInput(CamelModel):
@@ -155,24 +216,27 @@ class UpdateDepartmentRequest(CamelModel):
     staff: list[StaffMemberInput] | None = None
 
 
-class ReplaceStaffRequest(CamelModel):
-    """The whole roster, as the department form submits it.
+class SetDepartmentSkillsRequest(CamelModel):
+    """The department's whole skill set, as the form submits it.
 
-    Members not listed are deactivated rather than deleted (A7) -- a complaint's
-    ``assignee`` records staff by name, so a deleted row turns a past assignment
-    into an unexplained string.
+    Ids rather than names, because by the time this is sent every skill exists:
+    the form's "Add skill" button creates a new one through
+    ``POST /departments/{id}/skills`` and gets an id back. A name here would be
+    a second, quieter way to write to the global catalogue.
     """
 
-    staff: list[StaffMemberInput] = Field(default_factory=list)
+    skill_ids: list[str] = Field(default_factory=list)
 
 
-class UpdateStaffMemberRequest(CamelModel):
-    """Patch one roster entry."""
+class AddDepartmentSkillRequest(CamelModel):
+    """One skill, by name, to create if needed and attach.
 
-    name: str | None = Field(None, min_length=1, max_length=120)
-    phone: str | None = Field(None, max_length=32)
-    role: str | None = Field(None, max_length=60)
-    shift: str | None = Field(None, description="Day | Evening | Night")
-    status: str | None = Field(None, description="active | inactive")
+    This is the only request in the API that may write to the global skill
+    catalogue as a side effect, and it is deliberate: the alternative is a
+    client that creates then attaches, which can half-fail and leave a skill
+    nobody asked for.
+    """
+
+    name: str = Field(min_length=1, max_length=80)
 
 

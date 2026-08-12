@@ -192,6 +192,24 @@ President / Secretary / Treasurer / Committee Member / Association Manager / Oth
 > **Cost if wrong** — low, but note the asymmetry: switching to a hard delete loses history that
 > cannot be recovered, while switching away from one loses nothing.
 >
+> **Revisited 2026-08-10 — the premise has changed twice and the answer has not.** The *why* above
+> rests on B2: the assignee was an unattributable string, so the row had to survive. B2 is answered
+> now (`work_order_assignments` plus `assigneeStaffId`), and deactivation is still right — for a
+> better reason. A roster row is what a *past* assignment points at, and a hired service person's
+> membership hangs off it; deleting it would end an employment record rather than an employment.
+>
+> `0043` added the condition removal happens *under*, which is the part this entry never had: a
+> removal is now **refused** while any job or shift is still booked in that person's name. Before
+> that, deactivating the row left the work behind it untouched — an accepted assignment survived,
+> still pointing at tomorrow, addressed to a membership that had just ended. The answer to "does
+> removal deactivate" was always yes; the question nobody asked was "and what happens to their work".
+>
+> **Third visit, 2026-08-10 (later the same day) — the condition narrowed, deactivation still
+> stands.** The PO overturned `0043`'s gate on the *approval* path: approving a departure now
+> releases the booked work back to the dispatch pool from the leave date onward (`0045`), so the
+> refusal survives only on the direct remove, which has no release step. Either way the row is
+> deactivated, never deleted — three premises in, the answer has not moved.
+>
 > **Answer:** ______________________________________________
 
 ### A13 🔴 There is **no maintenance amount anywhere in this product**. What is it?
@@ -439,6 +457,19 @@ this product does not contain:
 > **Cost if wrong** — the *storage* is free either way. Building either feature is a step of its own,
 > and the fine engine is the larger one because it touches money that residents will dispute.
 >
+> **Partially answered 2026-08-10.** *"A scheduler needs a decision about what runs it"* — there is
+> one now, and the decision is recorded as D8 of `plans/SERVICE_OPERATIONS_PLAN.md`:
+> `app/core/dispatcher.py`, an in-process asyncio loop started from the FastAPI lifespan, claiming
+> due rows out of `dispatch_tasks` with `for update skip locked` so two processes cannot double-fire.
+> `pg_cron` was rejected because `0024` already only uses it inside a `DO` block that no-ops when the
+> extension is absent — nobody knows whether it is available on the project, and betting a log pruner
+> on that is reasonable while betting billing on it is not.
+>
+> **This does not answer the question.** It removes the blocker the answer named. Whether automated
+> billing is real, and what a late fee *is* — an invoice line, a separate invoice, or a balance
+> adjustment, and whether it compounds — are still yours, and the fine engine is still the larger of
+> the two because it touches money residents will dispute.
+>
 > **Answer:** ______________________________________________
 
 ### A23 🟡 Two settings toggles are stored and read by nothing, because their features have no backend
@@ -496,7 +527,7 @@ Full detail is in [`FRONTEND_MEETING_AGENDA.md`](FRONTEND_MEETING_AGENDA.md); th
 | # | Item | What we need | Status if you say nothing |
 |---|---|---|---|
 | B1 🔴 | **Bug: `C-C-505`.** `createPendingRequestsSlice.js:36` builds `` `${tower}-${flat}` ``, but seeded requests already store the full code. Approving a seeded request creates a flat that does not exist. | Pick one meaning for `flat` and use it in both places | We normalise both shapes; your local state stays wrong |
-| B2 🔴 | **Free-text assignee** (`Complaints.jsx:175`) | Make it a select over department staff | We store a text label; "complaints assigned to me" stays impossible |
+| B2 ✅ | ~~**Free-text assignee** (`Complaints.jsx:175`)~~ | **Answered 2026-08-10 by building it** — see below | — |
 | B3 🟡 | **Category multi-select** lets two departments own one category | Confirm whether that is intended (see A3) | Lowest SLA wins |
 | B4 🟡 | **`timeAgo` / `date` are pre-formatted**, so those responses can never be cached | Format relative times client-side | Works, permanently slower and uncacheable |
 | B5 🟡 | **No empty states** — a real founding community has zero of everything | An empty rendering per list and tile | Every list returns `{items: [], total: 0}` with `200`; the screens still need to draw it |
@@ -506,12 +537,34 @@ Full detail is in [`FRONTEND_MEETING_AGENDA.md`](FRONTEND_MEETING_AGENDA.md); th
 | B9 🟡 | **The two department-create screens disagree about categories.** `Departments.jsx:22` is a fixed checkbox list of six; `CreateDepartment.jsx:79` is a free-text box whose placeholder is *"e.g. Leaking pipes"* — a symptom, not a category. Only five are seeded; `Others` is not one of them. | Decide whether categories are a controlled vocabulary or free text, and make both screens agree | We upsert by name, so both screens work — and a typo silently becomes a new category |
 | B10 🟢 | **`head` is free text independent of `staff[]`.** Nothing makes the head one of the listed staff, though the seed data always does. | Make it a select over the roster | Naming a head promotes the matching staff row, or creates one if no name matches |
 | B11 🟡 | **The money tiles are computed in the browser from the whole invoice array** (`Maintenance.jsx:11-17`, `AdminHome.jsx:25-29`). That is correct only while every invoice fits in one response — after that the tiles silently report the total of one page. | Read the tiles from `GET /invoices/summary` instead of summing rows | The table pages correctly and the tiles above it quietly go wrong; the endpoint exists and is ignored |
-| B12 🔴 | **There is no way to bill anyone from the dashboard.** The Maintenance screen lists invoices and shows three tiles; no screen creates an invoice, records an offline payment, or sets the maintenance amount. | An invoice-creation screen, a “run billing” action and a billing-settings form | The endpoints exist and a real community's collections screen reports on an empty table forever |
+| B12 ◐ | ~~**There is no way to bill anyone from the dashboard.** The Maintenance screen lists invoices and shows three tiles; no screen creates an invoice, records an offline payment, or sets the maintenance amount.~~ **Three of four answered 2026-08-12 by building them** — `Maintenance.jsx:46` creates an invoice, `:201` records an offline payment, `Settings.jsx:137-144` sets the maintenance amount. | **Still open: the “run billing” action.** Nothing runs a monthly cycle — see A22 | A community can now raise and settle its first invoice by hand; nothing does it on a schedule |
 | B13 🟢 | **`Payments.jsx:113` renders `Method: **{inv.paymentMethod}**`** — JSX, not markdown, so residents see literal asterisks around the method. | Remove the asterisks or use `<strong>` | Cosmetic; we send the method exactly as the seed data spells it |
-| B14 🟡 | **The amenity reports page computes all six KPIs in the browser** (`amenityReportsService.calculateAmenityReports`), including one labelled **Total Revenue**. Same failure as B11, on a money figure. | Read `kpis` from `GET /amenity-reports` and use `rows` only for the table | The table pages correctly; the revenue figure quietly becomes the revenue of one page |
-| B15 🟡 | **The approvals table cannot say how many days a request covers.** One click now decides the whole request, and a three-day booking rendered as its first day alone would tell an admin they are approving one day. | Render `dayCount` (and `dates`) on the approval row | Admins approve more than the row shows |
-| B17 🔴 | **The admin Settings screen saves nothing.** `Settings.jsx` is four `useState` toggles and `handleSave = () => showToast('Admin Settings Saved Successfully')`. No store slice, no service module, nothing persisted — an admin flips four switches, is told they saved, and loses all four on reload. It is the only screen in the product whose save button is a lie, which is why **every field name in `API.md` §11 is ours**: there was no existing shape to match. | Wire the four toggles to `GET`/`PUT /settings` and `PUT /billing-settings`, and rename any field where you prefer a different word — now, while nothing depends on them | The endpoints persist correctly and the screen keeps discarding what an admin typed |
+| B14 ✅ | ~~**The amenity reports page computes all six KPIs in the browser** (`amenityReportsService.calculateAmenityReports`), including one labelled **Total Revenue**. Same failure as B11, on a money figure.~~ **Answered 2026-08-12 by building it** — `AmenityReportsPage.jsx:75` reads `report.data.kpis` from `GET /amenity-reports`; the browser reducer is gone. | Nothing further | The revenue figure is now an aggregate over every matching row, not over one page |
+| B15 ✅ | ~~**The approvals table cannot say how many days a request covers.** One click now decides the whole request, and a three-day booking rendered as its first day alone would tell an admin they are approving one day.~~ **Answered 2026-08-12 by building it** — `ApprovalRow.jsx:66-68` renders `dayCount`. | Nothing further | An admin now sees the size of what one click decides |
+| B17 ✅ | ~~**The admin Settings screen saves nothing.** `Settings.jsx` is four `useState` toggles and `handleSave = () => showToast('Admin Settings Saved Successfully')`. No store slice, no service module, nothing persisted — an admin flips four switches, is told they saved, and loses all four on reload. It is the only screen in the product whose save button is a lie~~ — **answered 2026-08-12 by building it**: `Settings.jsx:93` writes `PUT /settings` (`:130-131`) and `PUT /billing-settings` (`:137-144`) and reads both back. **Every field name in `API.md` §11 is still ours**: there was no existing shape to match, and nobody ever renamed one. | Nothing further to wire. The rename window is closing — a field is now persisted under each of our names | The names we chose are now the names in the database |
 | B16 🟢 | **The amenity card's two badges are stored constants in the mock** — the gym claims 5 pending requests against 1, and ₹4,800 in dues against ₹1,600 in charges. | Nothing: use the values as sent | We derive both; your numbers start being right |
+
+#### B2, answered by building it — 2026-08-10
+
+The item said: *"We store a text label; 'complaints assigned to me' stays impossible."* It is possible
+now, and the whole of the service-operations feature stands on it.
+
+`work_orders` and `work_order_assignments` (`0036`) carry the assignment as a **row keyed on
+`staff_assignments.id`**, not as a string. `GET /worker/jobs` is that query, and it is the entire job
+list of the worker portal. `assignTechnician` in `DepartmentDetail.jsx` now writes `assigneeStaffId`
+alongside the label, and the demo screen's own reads — "which complaints is this member holding" —
+switched from `startsWith(member.name)` to an id comparison.
+
+**The label was kept beside the id, deliberately**, and the residue is worth stating rather than
+implying it was free: five files read `complaint.assignee` for display, and renaming across all of
+them buys a demo nothing. So a staff member renamed after an assignment still shows their old name on
+that complaint until it is next written. Recorded as D26 / §4.27 of
+`plans/SERVICE_OPERATIONS_PROGRESS.md`.
+
+**The select this item asked for exists**, in the sense that matters: the assignment write takes a
+staff id from the roster. Whether `Complaints.jsx`'s own free-text box becomes a `<select>` is still
+a frontend change and still yours — but it is now a cosmetic one, because nothing downstream depends
+on that string any more.
 
 > **Answer / meeting notes:** ______________________________________________
 
@@ -856,13 +909,13 @@ For scanning. `A`/`C`/`D` reference the sections above.
 | A22 | Automatic billing and late fines are stored as policy and read by nothing; no scheduler, no fine engine | Storage free; either feature is a step of its own |
 | A23 | Visitor pre-approval defaults on, SMS broadcast defaults **off** — both stored, both read by nothing | One default value each |
 | A24 | Module state is reported, never enforced; `backend_status` replaces the guard | One dependency to add later |
-| B17 | The Settings screen persists nothing, so its field names are ours | Free while nothing calls them |
+| B17 | ~~The Settings screen persists nothing, so~~ its field names are ours — the screen now persists all four (2026-08-12) | ~~Free while nothing calls them~~ — no longer free; a row exists under each name |
 | B9 | Unknown category names are created on department save, not rejected | One guard |
 | B10 | Naming a head promotes or creates the matching staff row | One helper function |
 | B11 | The money tiles are served by an endpoint the frontend does not call yet | Free |
-| B12 | No dashboard screen can issue an invoice; the endpoints exist regardless | Free |
-| B14 | The reports page's Total Revenue is computed in the browser; the aggregate exists | Free |
-| B15 | The approvals row does not render `dayCount`, so one click decides more than it shows | Free |
+| B12 | ~~No dashboard screen can issue an invoice~~ — it can since 2026-08-12; no screen runs a *recurring* cycle | Free |
+| B14 | ~~The reports page's Total Revenue is computed in the browser~~ — it reads the aggregate since 2026-08-12 | Free |
+| B15 | ~~The approvals row does not render `dayCount`~~ — it does since 2026-08-12 | Free |
 | B16 | The amenity card's two badges are derived here, not stored | Free |
 | D5 | `departments.status` keeps `active`/`archived`; the API maps to `Active`/`Inactive` | One CHECK while unapplied |
 | D6 | Invoice numbers unique per community; no stored `overdue`; nullable payer | Data migration once applied |
@@ -898,6 +951,7 @@ For scanning. `A`/`C`/`D` reference the sections above.
 | — | `GET /settings/modules` is unpaginated and readable by **any** authenticated role, unlike the rest of §11 | One dependency |
 | — | `module_catalogue` has a read policy and **no write policy at all** — it is seed data, changed by migration | One policy |
 | — | `PUT /settings/modules` writes every catalogue key, so a key dropped from the array turns off rather than keeping its old value | One `where` clause |
+| — | The resident amenities table shows bookings without a Pay control; paying lives on `Payments.jsx` alone, even though `isPayable` and `outstandingAmount` now reach both screens (2026-08-12) | One mutation reused, if wanted — but two Pay buttons means two idempotency-key owners |
 | C2 | Migrations `0004`–`0009` reserved for the auth workstream | Renumber |
 | D1 | Additive now, rename `associations`/`units`/`apartments` later | One mechanical migration |
 | D3 | R1 not applied to `apartments` | Two indexes |

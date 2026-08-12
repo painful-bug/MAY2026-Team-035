@@ -2,8 +2,7 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useOnboardingStore } from '../store/onboardingStore';
-import { AUTH_ROUTES } from './authRoutes';
-import { homeRouteFor } from '../lib/auth/authService';
+import { AUTH_ROUTES, homeRouteFor } from './authRoutes';
 
 export default function OnboardingFlowRoute({
   minimumStep,

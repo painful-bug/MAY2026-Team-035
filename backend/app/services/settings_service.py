@@ -79,6 +79,8 @@ def _to_profile(row: dict) -> CommunityProfile:
         community_type_label=community_type_label(community_type),
         status=row.get("community_status") or "Active",
         created_at=_instant(row.get("community_created_at")),
+        latitude=row.get("latitude"),
+        longitude=row.get("longitude"),
     )
 
 
@@ -202,6 +204,8 @@ def update_settings(
 
     if payload:
         repo.save_settings(client, community_id, payload)
+    if "latitude" in supplied and "longitude" in supplied:
+        repo.save_location(
+            client, community_id, float(body.latitude), float(body.longitude)
+        )
     return get_settings_snapshot(client, user_id)
-
-

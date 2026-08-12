@@ -288,7 +288,7 @@ Recorded so the gaps read as decisions rather than oversights.
 | Not done | Why |
 |---|---|
 | Edit the auth seam | Owned by a parallel workstream. `handle_new_user`, `is_admin`, `invitation_service`, `auth_service`, `core/tokens`, `core/security` are theirs. |
-| Edit the frontend | The frontend is a dummy-data demo and its team owns it. One scoped exception was granted, for `PendingRegistrations.jsx`. |
+| Edit the frontend | The frontend is a dummy-data demo and its team owns it. Two scoped exceptions were granted: `PendingRegistrations.jsx`, and — for the service-operations feature, at the product owner's instruction — the worker portal and the manager and gate screens that go with it. The second exception is **additive**: `src/pages/WorkerDashboard/`, `src/features/worker/`, `src/features/calendar/`, `src/layouts/WorkerLayout.jsx`, `src/lib/communityColor.js`, `src/lib/push/`, `public/sw.js` are all new files, and the only shared files touched are the route table, `App.jsx`, `main.jsx` and one line in `authService.js` — the last flagged for the auth owner. None of it reads or writes the demo's Zustand slices. |
 | Apply any migration | No credentials should reach this workstream. The user applies them. |
 | Make the invite token optional | It is a mandatory second factor. Redemption binds to the authenticated account's email. |
 | Adopt Supabase Realtime | It requires giving the browser a Supabase key, reversing §2's constraint. A security trade to make on purpose, not a performance tweak. |

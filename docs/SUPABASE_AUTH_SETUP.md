@@ -5,7 +5,9 @@ following dashboard configuration before setting `AUTH_CAPTCHA_ENABLED=true` or
 enabling email/password in production.
 
 1. In **Authentication → Providers → Email**, enable Email and enable **Confirm
-   email**. Set the site URL to the deployed frontend origin.
+   email**. Set backend `AUTH_EMAIL_CONFIRMATION_REQUIRED=true`; production
+   startup rejects `false`. The application flag and Supabase project setting
+   must agree. Set the site URL to the deployed frontend origin.
 2. In **Authentication → URL Configuration**, add exact redirect URLs:
    `https://app.example.com/auth/confirm-email` and
    `https://app.example.com/auth/reset-password`. Keep the backend OAuth
@@ -31,12 +33,11 @@ enabling email/password in production.
    password share the same verified Supabase email identity; HomeBandhu RBAC
    still derives exclusively from the active database membership.
 
-For an existing hosted project, apply all forward-only migrations after `0007`:
-`0008_blacklisted_residents.sql`,
-`20260730163759_normalize_community_statuses.sql`,
-`20260730164555_add_access_request_applicant_profile.sql`,
-`20260730165410_add_resident_access_request_decision_rpcs.sql`, and
-`20260730170036_make_resident_approval_legacy_index_compatible.sql`. Run
-database advisors first and use the normal migration workflow. Do not manually
-expose `blacklisted_residents` to browser clients; its search exclusion is
-enforced by backend-owned RPC calls.
+Local Supabase explicitly sets `auth.email.enable_confirmations=false`; pair it
+with backend `AUTH_EMAIL_CONFIRMATION_REQUIRED=false` only for local/test use.
+Production deployment is blocked until a real confirmation email and session
+establishment smoke test passes.
+
+The linked hosted project was verified through migration `0047` on 2026-08-11.
+Apply later timestamped migrations through the normal forward-only migration
+workflow; never modify a migration already recorded in the hosted history.

@@ -68,6 +68,25 @@ _COMPLAINT_STATUS_TO_WIRE = {
 # renders `High`, `Medium`, `Low` and puts those strings in a `<select>`.
 _COMPLAINT_PRIORITY_TO_WIRE = {"low": "Low", "medium": "Medium", "high": "High"}
 
+# Who a comment is for. The frontend says `resident`
+# (`createComplaintsSlice.js:182`) and so does API.md; the column, both
+# `add_complaint_comment` RPCs and every read filter say `public`, and
+# `complaint_comments_visibility_check` (0020:101) rejects anything else.
+#
+# Neither side can move -- renaming the wire word breaks a shipped client,
+# renaming the column breaks four RLS predicates -- which is the exact situation
+# this module was written for. Forwarding the request unmapped is what made every
+# comment a 422.
+#
+# Deliberately **not** a round trip: two wire words collapse onto one stored
+# value, and nothing reads a visibility back out to a client. The read paths ask
+# `visibility = 'public'` and return the comment or do not.
+_COMMENT_VISIBILITY_TO_STORAGE = {
+    "resident": "public",
+    "public": "public",
+    "internal": "internal",
+}
+
 _COMPLAINT_PRIORITY_TO_STORAGE = {
     "low": "low",
     "medium": "medium",
@@ -305,6 +324,17 @@ def complaint_priority_to_storage(value: str | None) -> str | None:
     return _COMPLAINT_PRIORITY_TO_STORAGE.get((value or "").strip().lower())
 
 
+def comment_visibility_to_storage(value: str | None) -> str | None:
+    """Wire comment visibility -> the stored value. None when unrecognised.
+
+    ``None`` rather than defaulting to ``public``, because the two answers a
+    caller can get wrong here are not symmetrical: guessing ``public`` for a word
+    this map has not heard would publish to the resident a comment somebody may
+    have meant to keep internal. A 422 naming the field is the safe failure.
+    """
+    return _COMMENT_VISIBILITY_TO_STORAGE.get((value or "").strip().lower())
+
+
 def visitor_status_to_wire(value: str | None) -> str:
     """Stored visitor status -> the string the frontend renders.
 
@@ -419,3 +449,65 @@ def late_fee_period_to_storage(value: str | None) -> str | None:
 def backend_status_to_wire(value: str | None) -> str:
     """``module_catalogue.backend_status`` -> a phrase for a settings screen."""
     return _BACKEND_STATUS_TO_WIRE.get((value or "").lower(), "Not implemented")
+
+
+# `SecurityDashboard.jsx:388-400` offers five incident types as display strings
+# and today writes them into an interpolated sentence on an activity feed, so
+# there is no stored vocabulary to reconcile with -- `0040` is choosing one for
+# the first time. It chooses snake case, because that is what every other
+# constrained column in this schema holds, and keeps the frontend's five words
+# on the wire because they are already on a screen.
+#
+# `other` is in the stored set and not on the frontend's list. A closed
+# vocabulary with no escape hatch is a form people work around by picking the
+# nearest wrong option, which corrupts the report the column exists for.
+_INCIDENT_CATEGORY_TO_STORAGE = {
+    "security concern": "security_concern",
+    "security_concern": "security_concern",
+    "medical emergency": "medical_emergency",
+    "medical_emergency": "medical_emergency",
+    "fire alarm": "fire_alarm",
+    "fire_alarm": "fire_alarm",
+    "unauthorized access": "unauthorised_access",
+    "unauthorised access": "unauthorised_access",
+    "unauthorised_access": "unauthorised_access",
+    "property damage": "property_damage",
+    "property_damage": "property_damage",
+    "other": "other",
+}
+
+# Both spellings of *unauthorised* are accepted above and only one is rendered.
+# The frontend's `<option>` says `Unauthorized access`; the column says
+# `unauthorised_access`. Rendering the frontend's spelling keeps a shipped screen
+# unchanged, and accepting both keeps a client that has learnt the stored word
+# from being refused -- the posture `comment_visibility_to_storage` takes.
+_INCIDENT_CATEGORY_TO_WIRE = {
+    "security_concern": "Security concern",
+    "medical_emergency": "Medical emergency",
+    "fire_alarm": "Fire alarm",
+    "unauthorised_access": "Unauthorized access",
+    "property_damage": "Property damage",
+    "other": "Other",
+}
+
+
+def incident_category_to_storage(value: str | None) -> str | None:
+    """An incident type from the wire -> the stored value, or None if unknown.
+
+    ``None`` for an unrecognised word rather than a fallback to ``other``: a
+    typed category that quietly becomes *Other* is a report with a hole in it,
+    and the service turns this into a 422 naming what it accepts.
+    """
+    if value is None:
+        return None
+    return _INCIDENT_CATEGORY_TO_STORAGE.get(value.strip().lower())
+
+
+def incident_category_to_wire(value: str | None) -> str:
+    """Stored incident category -> the words the security dashboard renders."""
+    return _INCIDENT_CATEGORY_TO_WIRE.get((value or "").lower(), "Other")
+
+
+def incident_categories() -> list[str]:
+    """Every category a client may send, in the order a form should offer them."""
+    return list(_INCIDENT_CATEGORY_TO_WIRE.values())

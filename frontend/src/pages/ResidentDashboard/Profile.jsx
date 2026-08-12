@@ -1,32 +1,59 @@
 import React, { useState } from 'react';
-import { useApp } from '../../store/useApp';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Phone, PhoneCall, Plus, Users } from 'lucide-react';
+import { residentApi } from '../../features/resident/residentApi';
+import { useAuthStore } from '../../store/authStore';
 
+// Wired to `docs/API.md` §14 / `backend/app/api/v1/routers/resident_home.py`.
+//
+// **Shape changes from the demo.**
+// - The flat-members table read `users` filtered by `apartmentId` from the
+//   admin/tenant roster. `GET /me/household` is narrower and correct: it is
+//   scoped to the caller's own flat by the server, carries a `source` field
+//   (`member` vs `contact`) the old model never had, and a contact added here
+//   grants no account -- unlike `createUsersSlice.addPhoneToApartment`, which
+//   used to manufacture a whole user row for a phone number.
+// - The five hard-coded "Emergency / Gate", "Administrative" ... contacts are
+//   now `GET /directory/contacts`, served from `departments` so the list
+//   cannot go stale the way five numbers typed into a component always do.
+//
+// **Not fixed here.** `currentUser.flat` / `currentUser.tower` are still the
+// auth session's placeholders (`lib/auth/authService.js` hard-codes
+// `flat: '—', tower: '—'`) -- no resident endpoint returns a human-readable
+// flat/tower label, only an opaque `unitId`. Reported as a blocker rather than
+// invented here.
 export default function Profile() {
-  const { currentUser, users, addPhoneToApartment } = useApp();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const queryClient = useQueryClient();
   const [newPhone, setNewPhone] = useState('');
   const [newName, setNewName] = useState('');
 
-  // Everyone registered to this flat (PRD: one flat can hold several numbers).
-  const flatMembers = users.filter(
-    (u) => currentUser && u.apartmentId === currentUser.apartmentId
-  );
+  const householdQuery = useQuery({
+    queryKey: ['resident', 'household'],
+    queryFn: () => residentApi.household(),
+  });
+  const contactsQuery = useQuery({
+    queryKey: ['resident', 'directory-contacts'],
+    queryFn: () => residentApi.directoryContacts(),
+  });
+
+  const addPhone = useMutation({
+    mutationFn: (payload) => residentApi.addHouseholdPhone(payload),
+    onSuccess: (household) => {
+      queryClient.setQueryData(['resident', 'household'], household);
+      setNewPhone('');
+      setNewName('');
+    },
+  });
 
   const handleAddNumber = (e) => {
     e.preventDefault();
     if (!newPhone.trim()) return;
-    addPhoneToApartment(currentUser.apartmentId, newPhone, newName.trim() || undefined);
-    setNewPhone('');
-    setNewName('');
+    addPhone.mutate({ phoneE164: newPhone.trim(), fullName: newName.trim() || '' });
   };
 
-  const contacts = [
-    { name: 'Security Main Gate', phone: '+91 99999 11111', type: 'Emergency / Gate' },
-    { name: 'Society Management Office', phone: '+91 99999 22222', type: 'Administrative' },
-    { name: 'Plumber Assistance', phone: '+91 99999 33333', type: 'Maintenance Staff' },
-    { name: 'Electrician Assistance', phone: '+91 99999 44444', type: 'Maintenance Staff' },
-    { name: 'Fire Guard Room', phone: '040-1234567', type: 'Emergency' },
-  ];
+  const household = householdQuery.data || [];
+  const contacts = contactsQuery.data || [];
 
   return (
     <div className="space-y-6">
@@ -40,7 +67,7 @@ export default function Profile() {
         <div className="lg:col-span-5 bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-6">
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-2xl bg-indigo-650 text-white font-extrabold text-2xl flex items-center justify-center shadow-lg shadow-indigo-150">
-              {currentUser?.name.charAt(0)}
+              {currentUser?.name?.charAt(0)}
             </div>
             <div>
               <h3 className="text-lg font-extrabold text-slate-855">{currentUser?.name}</h3>
@@ -75,56 +102,94 @@ export default function Profile() {
         <div className="lg:col-span-7 bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-4">
           <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
             <PhoneCall className="w-5 h-5 text-indigo-650" />
-            <h3 className="font-extrabold text-slate-805 text-sm">Emergency & Utility Contacts</h3>
+            <h3 className="font-extrabold text-slate-805 text-sm">Management & Emergency Contacts</h3>
           </div>
 
-          <div className="divide-y divide-slate-50">
-            {contacts.map((c) => (
-              <div key={c.name} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-bold text-slate-800">{c.name}</p>
-                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">{c.type}</p>
+          {contactsQuery.isLoading ? (
+            <p className="py-6 text-center text-xs font-semibold text-slate-400">Loading contacts…</p>
+          ) : contactsQuery.error ? (
+            <p role="alert" className="py-6 text-center text-xs font-semibold text-rose-600">
+              {contactsQuery.error.message || 'Could not load the contact directory.'}
+            </p>
+          ) : contacts.length === 0 ? (
+            <p className="py-6 text-center text-xs font-semibold text-slate-400">
+              No departments have published a contact number yet.
+            </p>
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {contacts.map((c) => (
+                <div key={c.id} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">{c.name}</p>
+                    <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                      {c.category}
+                      {c.opensAt && c.closesAt ? ` · ${c.opensAt}–${c.closesAt}` : ''}
+                    </p>
+                  </div>
+
+                  {c.phoneE164 ? (
+                    <a
+                      href={`tel:${c.phoneE164}`}
+                      className="px-3.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5"
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                      {c.phoneE164}
+                    </a>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-slate-400">No number on file</span>
+                  )}
                 </div>
-                
-                <a 
-                  href={`tel:${c.phone}`}
-                  className="px-3.5 py-1.5 bg-slate-50 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5"
-                >
-                  <Phone className="w-3.5 h-3.5" />
-                  {c.phone}
-                </a>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Flat members — add another number without needing the admin (PRD #8) */}
+      {/* Flat members — add another number without needing the admin */}
       <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-slate-50">
           <Users className="w-5 h-5 text-indigo-650" />
-          <h3 className="font-extrabold text-slate-805 text-sm">Numbers Registered to Flat {currentUser?.flat}</h3>
+          <h3 className="font-extrabold text-slate-805 text-sm">Numbers Registered to Your Flat</h3>
         </div>
 
-        <div className="divide-y divide-slate-50">
-          {flatMembers.map((m) => (
-            <div key={m.id} className="py-2.5 first:pt-0 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-bold text-slate-800">{m.name}</p>
-                <p className="text-[11px] text-slate-500 font-semibold">{m.phone}</p>
+        {householdQuery.isLoading ? (
+          <p className="py-4 text-center text-xs font-semibold text-slate-400">Loading household…</p>
+        ) : householdQuery.error ? (
+          <p role="alert" className="py-4 text-center text-xs font-semibold text-rose-600">
+            {householdQuery.error.message || 'Could not load the household list.'}
+          </p>
+        ) : household.length === 0 ? (
+          <p className="py-4 text-center text-xs font-semibold text-slate-400">
+            Nobody is registered to your flat yet.
+          </p>
+        ) : (
+          <div className="divide-y divide-slate-50">
+            {household.map((m) => (
+              <div key={m.id} className="py-2.5 first:pt-0 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-bold text-slate-800">
+                    {m.fullName || (m.source === 'contact' ? 'Unnamed contact' : 'Unnamed member')}
+                  </p>
+                  <p className="text-[11px] text-slate-500 font-semibold">
+                    {m.phoneE164 || 'No number'}
+                    {m.relationship ? ` · ${m.relationship}` : ''}
+                  </p>
+                </div>
+                <span
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                    m.status === 'Active'
+                      ? 'text-emerald-700 bg-emerald-50 border-emerald-100'
+                      : m.status === 'Contact'
+                      ? 'text-slate-500 bg-slate-100 border-slate-200'
+                      : 'text-amber-700 bg-amber-50 border-amber-100'
+                  }`}
+                >
+                  {m.status}
+                </span>
               </div>
-              <span
-                className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
-                  m.status === 'Active'
-                    ? 'text-emerald-700 bg-emerald-50 border-emerald-100'
-                    : 'text-amber-700 bg-amber-50 border-amber-100'
-                }`}
-              >
-                {m.status}
-              </span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         <form onSubmit={handleAddNumber} className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-2">
           <input
@@ -141,11 +206,15 @@ export default function Profile() {
           />
           <button
             type="submit"
-            className="sm:col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all shadow-sm shadow-indigo-100 inline-flex items-center justify-center gap-1.5"
+            disabled={addPhone.isPending}
+            className="sm:col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all shadow-sm shadow-indigo-100 inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
           >
-            <Plus className="w-4 h-4" /> Add Number
+            <Plus className="w-4 h-4" /> {addPhone.isPending ? 'Adding…' : 'Add Number'}
           </button>
         </form>
+        {addPhone.error && (
+          <p role="alert" className="text-xs font-semibold text-rose-600">{addPhone.error.message}</p>
+        )}
       </div>
     </div>
   );

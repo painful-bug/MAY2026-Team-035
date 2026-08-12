@@ -56,8 +56,21 @@ export default function ApprovalRow({
       <td className="whitespace-nowrap px-4 py-4 text-xs font-bold text-slate-600 sm:px-5">
         {booking.residentFlat || '—'}
       </td>
+      {/* The request's first day, and how many days go with it. Approving used
+          to be a per-day act, so a three-day request appeared three times and
+          could be approved on Monday and rejected on Tuesday. One row now
+          decides all of it — which an admin can only weigh if the row says how
+          much "all of it" is. */}
       <td className="whitespace-nowrap px-4 py-4 text-xs font-bold text-slate-600 sm:px-5">
         {formatBookingDate(booking.date)}
+        {booking.dayCount > 1 && (
+          <span className="mt-0.5 block text-[10px] font-semibold text-indigo-600">
+            {booking.dayCount} days
+            {booking.dates?.length > 1
+              ? ` · to ${formatBookingDate(booking.dates[booking.dates.length - 1])}`
+              : ''}
+          </span>
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-xs font-bold text-slate-600 sm:px-5">
         {formatTimelineTimeRange(booking.startTime, booking.endTime)}
@@ -65,8 +78,12 @@ export default function ApprovalRow({
       <td className="whitespace-nowrap px-4 py-4 text-xs font-semibold text-slate-500 sm:px-5">
         {getBookingTypeLabel(booking.bookingType)}
       </td>
+      {/* `requestedAt` is when the resident asked; `createdAt` is when this
+          particular day's row was written. They are the same instant today and
+          would part company the moment a series grows a day, so the field that
+          means what the column says is preferred. */}
       <td className="whitespace-nowrap px-4 py-4 text-xs font-semibold text-slate-500 sm:px-5">
-        {formatRequestedOn(booking.createdAt)}
+        {formatRequestedOn(booking.requestedAt ?? booking.createdAt)}
       </td>
       <td className="whitespace-nowrap px-4 py-4 sm:px-5">
         <ApprovalStatusBadge status={booking.status} />
@@ -77,7 +94,7 @@ export default function ApprovalRow({
             <button
               type="button"
               disabled={isApproving}
-              onClick={() => onApprove(booking.id)}
+              onClick={() => onApprove(booking.bookingSeriesId)}
               className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-[11px] font-bold text-white shadow-md shadow-indigo-100 transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
             >
               <Check className="h-3.5 w-3.5" />

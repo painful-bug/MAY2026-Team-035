@@ -8,7 +8,7 @@ list and the merge stays clean.
 The routers here serve the admin screens that the shared dashboard snapshot
 cannot: anything needing pagination, filtering, or a write. Reads that the
 snapshot already satisfies are deliberately absent — see
-``docs/RECONCILIATION_ADDENDUM.md`` C-8.
+``docs/plans/RECONCILIATION_ADDENDUM.md`` C-8.
 """
 
 from __future__ import annotations

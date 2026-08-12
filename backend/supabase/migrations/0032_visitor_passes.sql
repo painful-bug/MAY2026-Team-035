@@ -94,6 +94,60 @@
 -- rather than a constraint.
 -- ---------------------------------------------------------------------------
 
+-- Older hosted projects can lack these baseline tables despite sharing the
+-- baseline migration history. Establish their original shape before extending it.
+create table if not exists public.visitor_requests (
+  id uuid primary key default gen_random_uuid(),
+  community_id uuid not null references public.communities(id) on delete cascade,
+  requested_by_membership_id uuid not null references public.community_memberships(id),
+  visitor_name text not null,
+  visitor_phone_e164 varchar(20),
+  status public.visitor_status not null default 'expected',
+  pass_hash text unique,
+  valid_from timestamptz,
+  valid_until timestamptz,
+  approved_by_membership_id uuid references public.community_memberships(id),
+  checked_in_at timestamptz,
+  checked_out_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- The legacy event log belongs to visitor_access_requests, not the baseline's
+-- visitor_requests. Keep it intact under a distinct name when it is empty; a
+-- populated log needs an explicit mapping to preserve its historical links.
+do $$
+declare
+  v_rows bigint;
+begin
+  if to_regclass('public.visitor_events') is not null
+     and not exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'visitor_events'
+          and column_name = 'visitor_request_id'
+     ) then
+    if to_regclass('public.legacy_visitor_events') is not null then
+      raise exception 'Legacy visitor-events archive table already exists.';
+    end if;
+
+    select count(*) into v_rows from public.visitor_events;
+    if v_rows <> 0 then
+      raise exception 'Cannot reconcile populated legacy visitor events without an explicit data migration.';
+    end if;
+
+    alter table public.visitor_events rename to legacy_visitor_events;
+  end if;
+end $$;
+
+create table if not exists public.visitor_events (
+  id uuid primary key default gen_random_uuid(),
+  visitor_request_id uuid not null references public.visitor_requests(id) on delete cascade,
+  actor_membership_id uuid references public.community_memberships(id),
+  event_type text not null,
+  created_at timestamptz not null default now()
+);
+
 alter table public.visitor_requests
   add column if not exists purpose         text,
   add column if not exists purpose_details text,
@@ -210,7 +264,14 @@ $$;
 comment on function public.expire_visitor_passes(uuid) is
   'Settle this community''s lapsed passes into `expired`, releasing their codes. Run before each issue; nothing else writes that status.';
 
-grant execute on function public.expire_visitor_passes(uuid) to authenticated;
+-- Its one caller is `create_visitor_pass` in section 6, which is SECURITY
+-- DEFINER, so the grant to `authenticated` was never reached. What it did allow
+-- was any signed-in user to settle *any* community's lapsed passes on demand --
+-- harmless in effect, since it only writes the status a pass has already earned,
+-- but it takes a community id from the caller and checks nothing, which is the
+-- shape of the next bug rather than this one.
+revoke all on function public.expire_visitor_passes(uuid)
+  from public, anon, authenticated;
 grant execute on function public.expire_visitor_passes(uuid) to service_role;
 
 -- ---------------------------------------------------------------------------
@@ -306,7 +367,11 @@ $$;
 comment on function public.notify_community_roles(uuid, text[], text, jsonb, uuid) is
   'Notify every active member of a community holding one of these roles.';
 
-grant execute on function public.notify_community_roles(uuid, text[], text, jsonb, uuid) to authenticated;
+-- See the note on `notify_member` in 0030. This one is the widest of the three:
+-- it takes the role list as an argument, so a caller who could reach it directly
+-- chose both the audience and the words.
+revoke all on function public.notify_community_roles(uuid, text[], text, jsonb, uuid)
+  from public, anon, authenticated;
 grant execute on function public.notify_community_roles(uuid, text[], text, jsonb, uuid) to service_role;
 
 -- 0031's function, now a named audience over the general one. The name is what
@@ -617,6 +682,18 @@ begin
   -- all.
   --
   -- The visitor's name travels; the code never does. 10.8's one hard rule.
+  --
+  -- **Corrected 2026-08-11.** The url read `/security/visitors?pass=<id>`, and
+  -- no such route has ever existed: the gate portal built in the security step
+  -- is `/security` (the barrier), `/security/registers`, `/security/incidents`,
+  -- `/security/shifts` and `/security/emergency`. `App.jsx`'s catch-all sends
+  -- anything else to `/`, so every guard who tapped this notification landed on
+  -- the marketing page. `/security` is the gate screen, and its expected-visitor
+  -- panel is what an approved pass is *for*. An admin -- included in this
+  -- audience only so that a community with nobody holding `security` is still
+  -- told -- gets redirected to their own portal instead, which is a downgrade
+  -- from a wrong page to a merely unhelpful one; the visitor's name is in the
+  -- body either way.
   perform public.notify_community_roles(
     v_row.community_id,
     array['security', 'admin'],
@@ -627,7 +704,7 @@ begin
                  when 'reject'  then 'A visitor was rejected'
                  else 'A visitor pass was cancelled' end,
       'body',  v_row.visitor_name,
-      'url',   '/security/visitors?pass=' || p_pass_id::text,
+      'url',   '/security',
       'pass_id', p_pass_id
     ),
     v_actor

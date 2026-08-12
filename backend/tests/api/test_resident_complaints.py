@@ -271,6 +271,52 @@ def test_the_urgency_is_translated_to_the_stored_priority(
     assert only(complaints, "raise_complaint")["priority"] == "high"
 
 
+def test_the_residents_department_guess_reaches_the_database(
+    resident_api_client: TestClient, csrf_headers: dict[str, str], complaints: dict
+) -> None:
+    """The pick is a fallback, and a fallback that never arrives is no fallback.
+
+    `resolve_complaint_department` (`complaint_department_routing`) tries the *category* first and only
+    reaches this when the category maps to no department -- so it decides
+    exactly the cases the catalogue cannot: "Other", and anything nobody has
+    mapped yet. If the field were dropped between the form and the RPC, the
+    symptom would be complaints piling up in the admin's triage queue with
+    nothing to say why.
+    """
+    resident_api_client.post(
+        PATH,
+        json={
+            "title": "Lift stuck",
+            "category": "Other",
+            "departmentId": "lifts-department",
+        },
+        headers=csrf_headers,
+    )
+
+    assert only(complaints, "raise_complaint")["department_id"] == "lifts-department"
+
+
+def test_not_sure_sends_an_explicit_null_rather_than_nothing(
+    resident_api_client: TestClient, csrf_headers: dict[str, str], complaints: dict
+) -> None:
+    """"Not sure" is the default answer on the form and the honest one.
+
+    It has to arrive as an explicit ``None`` -- that is what makes the third
+    rule fire and lands the complaint in triage. Leaving the key out entirely
+    would hand the decision to the RPC's own default, which is the same value
+    today and is not the same contract.
+    """
+    resident_api_client.post(
+        PATH,
+        json={"title": "Something is wrong", "category": "Other"},
+        headers=csrf_headers,
+    )
+
+    raised = only(complaints, "raise_complaint")
+    assert "department_id" in raised
+    assert raised["department_id"] is None
+
+
 def test_an_unknown_urgency_is_refused_rather_than_defaulted(
     resident_api_client: TestClient, csrf_headers: dict[str, str], complaints: dict
 ) -> None:

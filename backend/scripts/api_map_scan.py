@@ -4,6 +4,7 @@ Run from ``backend/``::
 
     python scripts/api_map_scan.py            # report
     python scripts/api_map_scan.py --strict   # exit 1 on any finding
+    python scripts/api_map_scan.py --max-findings 20  # reject baseline growth
 
 ``export_openapi.py --check`` proves the yaml matches what FastAPI *declares*.
 It cannot prove the declaration matches what the handler *does* -- a handler
@@ -162,7 +163,20 @@ def _spellings(path: str) -> set[str]:
 
 
 def _mentioned_in(text: str, path: str) -> bool:
-    return any(spelling in text for spelling in _spellings(path))
+    """Is this path written out anywhere in ``text``?
+
+    The match is anchored on the left, and that is not a detail. A plain
+    substring test says ``GET /communities/search`` is documented because
+    ``§18`` documents ``GET /worker/communities/search`` -- a *different*
+    endpoint that happens to end the same way. That hid a genuinely
+    undocumented operation until the mapper was regenerated on 2026-08-11 and
+    its row disagreed with the scan. Nothing may precede a spelling except a
+    boundary: a longer path is not a mention of the shorter one.
+    """
+    return any(
+        re.search(rf"(?<![\w/-]){re.escape(spelling)}", text)
+        for spelling in _spellings(path)
+    )
 
 
 def _documented_in_api_md(text: str, path: str) -> bool:
@@ -250,6 +264,11 @@ def main() -> int:
     parser.add_argument(
         "--strict", action="store_true", help="exit 1 when anything is reported"
     )
+    parser.add_argument(
+        "--max-findings",
+        type=int,
+        help="exit 1 only when findings exceed this recorded baseline",
+    )
     args = parser.parse_args()
 
     spec = yaml.safe_load(_SPEC.read_text(encoding="utf-8"))
@@ -303,6 +322,8 @@ def main() -> int:
         )
     else:
         print("\nno findings.")
+    if args.max_findings is not None and len(findings) > args.max_findings:
+        return 1
     return 1 if findings and args.strict else 0
 
 

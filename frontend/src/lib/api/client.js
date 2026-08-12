@@ -2,10 +2,12 @@ const API_BASE = '/api/v1';
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 
 function csrfToken() {
-  return document.cookie
-    .split('; ')
-    .find((cookie) => cookie.startsWith('hb_preauth_csrf=') || cookie.startsWith('hb_recovery_csrf=') || cookie.startsWith('__Host-hb_csrf=') || cookie.startsWith('hb_csrf='))
-    ?.split('=')[1] ?? '';
+  const cookies = document.cookie.split('; ');
+  for (const name of ['__Host-hb_csrf=', 'hb_csrf=', 'hb_recovery_csrf=', 'hb_preauth_csrf=']) {
+    const match = cookies.find((cookie) => cookie.startsWith(name));
+    if (match) return match.slice(name.length);
+  }
+  return '';
 }
 
 let refreshPromise;
@@ -82,6 +84,45 @@ export async function api(path, options = {}, { retry = true, timeoutMs } = {}) 
     });
   }
   return payload;
+}
+
+// A file, not a payload — `api()` above always parses JSON, and
+// `GET /security/exports/{dataset}` answers `text/csv`. Rather than teach
+// `api()` a second content type, this is its sibling: same cookie session, same
+// `ApiError` on failure (the error body IS json, even here), and the browser's
+// own download path for the success case.
+//
+// No 401-refresh retry, unlike `api()`. A download is always a button a person
+// just pressed, so a stale session surfaces as the inline error that button
+// already renders, and a silent refresh would only move the same failure later.
+export async function download(path, { filename } = {}) {
+  const response = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = payload?.error;
+    throw new ApiError({
+      status: response.status,
+      code: error?.code || 'request_failed',
+      message: error?.message || 'Could not download that file.',
+      details: error?.details || null,
+    });
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename || filenameFrom(response) || 'download.csv';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** The server names the file in `Content-Disposition`; honour it when it does. */
+export function filenameFrom(response) {
+  const header = response.headers?.get?.('Content-Disposition') || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  return match ? decodeURIComponent(match[1].trim()) : '';
 }
 
 export async function prepareAnonymousCsrf() {
