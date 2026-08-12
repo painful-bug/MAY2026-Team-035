@@ -44,15 +44,49 @@ class StaffMember(CamelModel):
     phone: str | None = None
     #: The exact string the frontend renders in ``staff[].role`` ("Technician").
     role: str | None = None
-    #: Structural rank: ``member`` | ``supervisor`` | ``head``. Separate from
+    #: Structural rank: ``manager`` | ``supervisor`` | ``member``. Separate from
     #: ``role`` because the seed data proves the two are not a function of each
     #: other -- two departments' heads render as 'Supervisor' and 'Manager'.
+    #:
+    #: Was ``head`` until 0035. Four vocabularies disagreed about this one word,
+    #: and ``supervisor`` was in this docstring while being a value the CHECK
+    #: constraint had never allowed -- an advertised rank no write could produce.
+    #: The department's *head* is still called that everywhere the API says
+    #: ``head``; that is the person holding ``rank = 'manager'``.
     rank: str = "member"
     shift: str | None = None
     status: str = "active"
     membership_id: str | None = None
+    #: The service provider behind this row, when the person was hired through
+    #: an application rather than typed into the department form. Null is the
+    #: ordinary case and stays so -- A7 made a roster a list of names, and 0035
+    #: only stopped that being the *only* thing it could be.
+    #:
+    #: It is here because the two things a manager can do to a roster row take
+    #: two different ids: removal takes this row's ``id``, and blacklisting
+    #: takes the provider's. Without this field one screen cannot offer both.
+    service_provider_id: str | None = None
     #: Open complaints this member holds *in this department* (A8).
     active_assignment_count: int = 0
+    #: Jobs and shifts still booked in their name (``0043``). Not the same
+    #: number as ``activeAssignmentCount``, which counts open *complaints*: a
+    #: complaint can sit with nobody scheduled, and a job can outlive the
+    #: complaint that caused it.
+    #:
+    #: It is here because it decides which verb a roster row offers. Removal is
+    #: refused while this is non-zero, so a screen that did not know the number
+    #: could only find out by trying — and a manager would experience the rule
+    #: as a button that sometimes errors.
+    open_commitment_count: int = 0
+    #: ``pending`` while a departure is open on this row, ``approved`` once the
+    #: manager set a leave date that has not arrived yet, otherwise null. The
+    #: engine is already (wholly or from the date) frozen against this person
+    #: when it is set.
+    departure_status: str | None = None
+    #: The leave date the row is heading toward — the requested one while
+    #: pending, the decided one once approved. Null for an undated (immediate)
+    #: request. What the roster tile renders as "leaving <date>".
+    departure_effective_at: datetime | None = None
 
 
 class DepartmentSummary(CamelModel):
@@ -66,7 +100,8 @@ class DepartmentSummary(CamelModel):
     #: ...paired with their ids, per the R23 label+id rule.
     category_ids: list[str] = Field(default_factory=list)
 
-    #: The head's name. Backed by the staff row with ``rank = 'head'``.
+    #: The head's name. Backed by the staff row with ``rank = 'manager'``
+    #: (``'head'`` before 0035). ``head`` stays the wire word.
     head: str | None = None
     head_staff_id: str | None = None
     email: str | None = None

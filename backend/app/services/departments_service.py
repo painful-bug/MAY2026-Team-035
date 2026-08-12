@@ -30,7 +30,11 @@ from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 _VALID_KINDS = ("service", "security")
-_VALID_SHIFTS = ("Day", "Evening", "Night")
+# Widened to match `staff_assignments_shift_check` as 0035 corrects it. Before
+# that they were disjoint on three of five words: this tuple accepted `Day`,
+# which the CHECK rejected, and the CHECK accepted `Morning` and `Full Day`,
+# which this rejected. Only `Evening` and `Night` could be saved at all.
+_VALID_SHIFTS = ("Day", "Evening", "Night", "Full Day", "Rotating")
 _VALID_STAFF_STATUSES = ("active", "inactive")
 
 
@@ -44,7 +48,11 @@ def _to_staff(row: dict) -> StaffMember:
         shift=row.get("shift"),
         status=row.get("status", "active"),
         membership_id=row.get("membership_id"),
+        service_provider_id=row.get("service_provider_id"),
         active_assignment_count=row.get("active_assignment_count") or 0,
+        open_commitment_count=row.get("open_commitment_count") or 0,
+        departure_status=row.get("departure_status"),
+        departure_effective_at=row.get("departure_effective_at"),
     )
 
 

@@ -161,8 +161,14 @@ identical envelope whether or not there is data, so there is one shape to design
 **Today:** [`createPendingRequestsSlice.js:36`](../frontend/src/store/slices/createPendingRequestsSlice.js)
 builds the flat as `` `${request.tower}-${request.flat}` ``. That is right when the request came from
 the registration form, where `addPendingRequest` sets `flat: formData.flatNumber` — a bare `505`,
-giving `C-505`. But the seeded requests in [`data/pendingRequests.js`](../frontend/src/data/pendingRequests.js)
-already store `flat: 'C-505'`.
+giving `C-505`. But the seeded requests in `data/pendingRequests.js` already store `flat: 'C-505'`.
+
+> **Overtaken 2026-08-11.** `data/pendingRequests.js` was deleted in `94556e5`, when the pending
+> registrations screen started reading the API instead of seed data, so the second of the two code
+> paths is gone and the collision cannot occur. The item is left in place because the *disagreement*
+> it describes — whether `flat` holds a bare number or a full code — is a real question about the
+> field, and `createPendingRequestsSlice.js:36` still builds the value by joining. `app/domain/units.py`
+> still normalises both shapes on our side.
 
 **So approving a seeded request creates a resident in flat `C-C-505`** — a flat that does not exist
 and never will. Two code paths disagree about whether `flat` holds a number or a full code.
@@ -187,10 +193,16 @@ person to write this expression will get it wrong the same way.
 
 - [`Departments.jsx:22`](../frontend/src/pages/AdminDashboard/Departments.jsx) offers a **fixed
   checkbox list of six** — Plumbing, Electrical, Infrastructure, Cleaning, Security, Others.
-- [`CreateDepartment.jsx:79`](../frontend/src/pages/AdminDashboard/CreateDepartment.jsx) is a
-  **free-text box**, and its placeholder is *"e.g. Leaking pipes"* — which is a symptom, not a
-  category. A department created there can claim categories no complaint will ever carry, because
-  `raiseComplaint` picks from the fixed list.
+- `CreateDepartment.jsx:79` is a **free-text box**, and its placeholder is *"e.g. Leaking pipes"* —
+  which is a symptom, not a category. A department created there can claim categories no complaint
+  will ever carry, because `raiseComplaint` picks from the fixed list.
+
+> **Resolved 2026-08-11.** There is now one department-create path, not two: `CreateDepartment.jsx`
+> was deleted when the department screens were wired to `POST /departments`, and the fixed list in
+> `Departments.jsx` is the only way in. **The third disagreement below is not resolved**: department
+> categories are claimed by name and the API does not hold a closed list of them
+> (`departments_service.py:237`), so `Others` is still a category a department can claim and no
+> complaint carries. That is the half of this item still worth ten minutes.
 
 There is a third disagreement underneath: the seeded vocabulary has **five** categories. `Others` is
 in the checkbox list and in neither the seed data nor any complaint.

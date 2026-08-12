@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node src/lib/api/client.test.mjs",
+    "test": "node src/lib/api/client.test.mjs && node src/lib/api/download.test.mjs && node src/features/security/offline/offlineGate.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

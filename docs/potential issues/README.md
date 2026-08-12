@@ -1,22 +1,56 @@
 # Potential issues
 
-Findings turned up while fixing [#22](https://github.com/painful-bug/MAY2026-Team-035/issues/22),
-none of which belong to that issue. Each one below is written so it can be **pasted straight into a
-new GitHub issue** — copy the title, the labels, and everything under *Body*.
+Findings that are real, are nobody's current task, and would otherwise be forgotten. Each is written
+so it can be **pasted straight into a new GitHub issue** — copy the title, the labels, and everything
+under *Body*.
 
-They are ordered by how much it would hurt to leave them. Nothing here is a guess: every claim names
-the file and line it came from, and the "How to confirm" step is one you can run yourself.
+Nothing here is a guess. Every claim names the file and line it came from, and every entry carries a
+**How to confirm** step you can run yourself rather than take on trust.
+
+## Index
 
 | # | Title | Kind | Urgency |
 |---|---|---|---|
-| 1 | OAuth callback never checks which provider started the sign-in | Security (latent) | Before a second provider is enabled |
-| 2 | `roles.py` documents an RBAC model the code no longer uses | Correctness trap | Soon — it invites a wrong fix |
-| 3 | No rate limiting on the guessable or mail-sending endpoints | Security | Before public launch |
-| 4 | No migration has ever been applied to any database | Deployment blocker | Now |
-| 5 | Supabase email templates do not match our own setup document | Configuration | Now — it is half of #22 |
-| 6 | 149 lint violations make a CI lint gate impossible | Tech debt | Whenever the auth work settles |
-| 7 | Design docs outside `API.md` still describe phone/SMS OTP | Doc drift | Low |
-| 8 | `/auth/*` speaks `snake_case`, everything else speaks `camelCase` | Consistency | Low, but decide it deliberately |
+| 1 | [OAuth callback never checks which provider started the sign-in](#1-oauth-callback-never-checks-which-provider-started-the-sign-in) | Security (latent) | Before a second provider is enabled |
+| 2 | [`roles.py` documents an RBAC model the code no longer uses](#2-rolespy-documents-an-rbac-model-the-code-no-longer-uses) | Correctness trap | **Resolved 2026-08-10** — see the note under its body |
+| 3 | [No rate limiting on the guessable or mail-sending endpoints](#3-no-rate-limiting-on-the-guessable-or-mail-sending-endpoints) | Security | Before public launch |
+| 4 | [No migration has ever been applied to any database](#4-no-migration-has-ever-been-applied-to-any-database) | Deployment blocker | Now |
+| 5 | [Supabase email templates do not match our own setup document](#5-supabase-email-templates-do-not-match-our-own-setup-document) | Configuration | Now — it is half of #22 |
+| 6 | [149 lint violations make a CI lint gate impossible](#6-149-lint-violations-make-a-ci-lint-gate-impossible) | Tech debt | Whenever the auth work settles |
+| 7 | [Design docs outside `API.md` still describe phone/SMS OTP](#7-design-docs-outside-apimd-still-describe-phonesms-otp) | Doc drift | Low |
+| 8 | [`/auth/*` speaks `snake_case`, everything else speaks `camelCase`](#8-auth-speaks-snake_case-everything-else-speaks-camelcase) | Consistency | Superseded in scope by 11 |
+| 9 | [The resident portal is still a demo](09-resident-portal-is-still-a-demo.md) | Unfinished wiring | Before any demo involving a resident |
+| 10 | [51 API operations have no frontend consumer](10-api-operations-with-no-frontend-consumer.md) | Inventory | Low as a defect, high as a planning input |
+| 11 | [The naming contract in `API.md` §1.3 is wrong](11-snake-case-in-the-published-contract.md) | Doc defect | Low, but it is a contract giving a wrong answer |
+| 12 | [Four notification parameters that no screen reads](12-notification-parameters-no-screen-reads.md) | Silent UX defect | Low each; they share a failure mode with no alarm on it |
+| 13 | [Dead code in files this workstream does not own](13-dead-code-in-files-this-workstream-does-not-own.md) | Tech debt | Low — written down because nothing else will |
+
+## Three vintages, and why they are stored differently
+
+**1–8** came out of fixing [#22](https://github.com/painful-bug/MAY2026-Team-035/issues/22) and live
+inline below, in the order they were written.
+
+**9–11** came out of the end-to-end compatibility sweep of 2026-08-11 — a check of every persona's
+path from auth through the resident, admin, guard, security-manager and worker portals — and each has
+a file of its own, because each needed more than a screenful: an inventory, the contract it says is
+wrong, and a link to that contract.
+
+**12–13** came out of fixing something else on the same day, which is the usual way: correcting one
+notification's deep link raised the question of how many others were half-corrected, and deleting one
+dead function raised the question of how much else nothing reaches. Both are inventories with a
+script behind them — `backend/tests/test_notification_links.py` and
+`backend/scripts/dead_code_sweep.py` — so both can be re-derived rather than believed. Both also
+stop at the ownership line: the entries are findings in other people's code, recorded rather than
+changed.
+
+**Two more findings from the same sweep are not here, because they were fixed instead.** They are
+recorded in [`docs/CHANGE_LOG.md`](../CHANGE_LOG.md) and named here so the sweep's output can be
+traced in full:
+
+| Finding | What it was | Where the fix is |
+|---|---|---|
+| `/security-manager` was unreachable by any user the system can create | the portal predicate in `auth_service.py` required a `manager` membership, and nothing mints one — `gate_admin_community_for` (`0040:589`) had defined a security manager as a *ranked security* membership since the day it was written | `backend/app/services/auth_service.py` (`_portal_for`), `backend/tests/test_session_portal.py`, and [`docs/design/AUTH_AND_SESSION_DESIGN.md`](../design/AUTH_AND_SESSION_DESIGN.md) §5.4 |
+| Four notification deep links resolved to the landing page | migrations `0032`, `0036`, `0037` and `0043` emitted `url` values naming routes that do not exist | the four migrations, plus `backend/tests/test_notification_links.py`, which now checks every emitted `url` against `App.jsx`'s route table |
 
 ---
 
@@ -81,6 +115,15 @@ Add a route test that starts at one provider and calls back at another.
 ## 2. `roles.py` documents an RBAC model the code no longer uses
 
 **Labels:** `backend`, `tech-debt`, `documentation`
+
+> **Resolved 2026-08-10** (Phase 2 Step 2 dead-code sweep): the first suggested
+> fix, with one amendment discovered while doing it — `Role` itself is **not**
+> dead. `memberships_repository.py` and `invitations_repository.py` import it
+> as the typed name for the enum values, so the sweep deleted the hierarchy
+> (`_IMPLIED_ROLES`, `effective_roles`, `role_satisfies`, `satisfies_any`,
+> `parse_role`) and `tests/test_roles.py`, kept `Role` and `display_role`, and
+> rewrote the docstring to say what the guards actually are. Original text kept
+> below for the record.
 
 ### Body
 
@@ -173,9 +216,16 @@ response shape, so the contract is settled — only the implementation is missin
 
 ### Body
 
-`backend/supabase/migrations/` holds 22 files, from `0001_baseline.sql` through `0032_visitor_passes.sql`:
-10 views, 24 write RPCs, columns on 11 baseline tables, and the visitor-pass, notification and
-realtime subsystems. **None of them has been run against any environment, including `0001`.**
+`backend/supabase/migrations/` holds **37 files** — `0001_baseline.sql` through
+`0047_security_roster.sql`, plus six timestamped ones from the auth workstream. **None of them has
+been run against any environment, including `0001`.**
+
+> **Recounted 2026-08-11.** This said 22 files, `0001` through `0032`, when it was written on
+> 2026-08-10. Fifteen have landed since: the resident money and home surfaces, service providers,
+> hiring, work orders, the dispatch engine, conversations, gate operations, person-addressed
+> notifications, departures, direct messages and the security roster. Every one of them is unapplied
+> too, so the finding did not change — only its size did. Which is the argument for the finding: the
+> longer this stays open the more there is to go wrong on the first run, and it goes wrong all at once.
 
 **Why it matters.** Every "this endpoint works" claim in the repository currently means "the SQL it
 needs exists in a file". A static check confirms every RPC and column the repositories reference is
@@ -230,6 +280,11 @@ string contains `token_hash=`. The confirmation page should show an active butto
 
 **Labels:** `tech-debt`, `backend`, `tooling`
 
+> **Recounted 2026-08-11: 153.** The figures below are as of the day this was written and the
+> distribution has not changed shape — the growth is `E501` in files added since. The point is the
+> same at either number, and it is the point rather than the count that decides anything: the
+> baseline is non-zero, so no *new* violation can be caught either.
+
 ### Body
 
 `ruff check .` in `backend/` reports **149 errors**:
@@ -280,7 +335,7 @@ between changes, since it touches their files broadly.
 `docs/API.md` has been brought in line with what the code does — Google OAuth plus email/password,
 no OTP anywhere. Other documents were not, and still describe the abandoned design as current:
 
-- `docs/BACKEND_PLAN.md` — lines 79, 747, 759 and 902 describe `sign_in_with_otp` / `verify_otp`, a
+- `docs/plans/BACKEND_PLAN.md` — lines 79, 747, 759 and 902 describe `sign_in_with_otp` / `verify_otp`, a
   `POST /auth/otp/verify` endpoint, and a `SupabaseOtpProvider` marked **default**
 - `docs/diagrams/HomeBandhu-Architecture-Classes.puml:220` — a `verify_otp()` method on a class
 
@@ -298,6 +353,14 @@ diagram is meant to reflect the built system.
 ## 8. `/auth/*` speaks `snake_case`, everything else speaks `camelCase`
 
 **Labels:** `consistency`, `api`
+
+> **Scope widened 2026-08-11.** The premise below — that the seam is auth-shaped — is wrong. The
+> compatibility sweep counted **48** snake_case properties in the generated spec, and **28 of them
+> are on surfaces that have nothing to do with auth**: community onboarding, access requests and the
+> amenity admin write. The boundary is chronological, not functional.
+> [Issue 11](11-snake-case-in-the-published-contract.md) has the full list and supersedes this
+> entry's scope. The decision it asks for is still the decision below, taken across five surfaces
+> rather than one.
 
 ### Body
 

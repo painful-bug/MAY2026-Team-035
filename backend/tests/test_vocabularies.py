@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from app.domain.vocabularies import (
+    comment_visibility_to_storage,
     complaint_status_filter,
     complaint_status_to_wire,
     status_to_storage,
@@ -113,3 +114,54 @@ def test_every_word_this_surface_renders_can_be_filtered_by():
     for stored in BASELINE_COMPLAINT_STATUS:
         shown = complaint_status_to_wire(stored)
         assert stored in complaint_status_filter(shown)
+
+
+# ---------------------------------------------------------------------------
+# Comment visibility
+#
+# The same shape of bug as the statuses above, and it had the same cause: the
+# request was forwarded to the database unmapped. `complaint_comments` allows
+# only `public` and `internal` (0020:101); the frontend, API.md and the schema
+# default all say `resident`. Every comment posted through
+# `POST /complaints/{id}/comments` was therefore a 23514 -> 422.
+# ---------------------------------------------------------------------------
+
+# complaint_comments_visibility_check, as created by 0020:101.
+STORED_COMMENT_VISIBILITY = {"public", "internal"}
+
+
+@pytest.mark.parametrize(
+    ("wire", "expected"),
+    [
+        # What the frontend actually sends -- createComplaintsSlice.js:182.
+        ("resident", "public"),
+        ("internal", "internal"),
+        # Accepted too, so a client that has already learnt the stored word is
+        # not forced back through the display word to talk to us.
+        ("public", "public"),
+        ("  Resident  ", "public"),
+        ("INTERNAL", "internal"),
+    ],
+)
+def test_comment_visibility_to_storage(wire, expected):
+    assert comment_visibility_to_storage(wire) == expected
+
+
+@pytest.mark.parametrize("wire", ["resident", "public", "internal"])
+def test_every_stored_visibility_satisfies_the_check_constraint(wire):
+    """The test that actually protects `POST /complaints/{id}/comments`.
+
+    Its sibling above would still pass if the map returned `resident` for
+    `resident`, which is exactly the bug that shipped.
+    """
+    assert comment_visibility_to_storage(wire) in STORED_COMMENT_VISIBILITY
+
+
+def test_an_unknown_visibility_is_rejected_rather_than_defaulted():
+    """Not symmetrical with the other unknowns in this module, and deliberately
+    so: guessing `public` here would publish to the resident a comment somebody
+    may have meant to keep internal."""
+    assert comment_visibility_to_storage("private") is None
+    assert comment_visibility_to_storage("admins") is None
+    assert comment_visibility_to_storage("") is None
+    assert comment_visibility_to_storage(None) is None

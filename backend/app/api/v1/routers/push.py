@@ -16,14 +16,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.admin_deps import require_csrf_unsafe
-from app.api.deps import get_active_membership, get_request_client
+from app.api.deps import get_current_user, get_request_client
 from app.domain.notification_schemas import (
     PushSubscriptionResult,
     RegisterPushSubscription,
     UnregisterPushSubscription,
     VapidPublicKey,
 )
-from app.domain.schemas import MembershipContext
+from app.domain.schemas import Principal
 from app.services import push_service
 from supabase import Client
 
@@ -36,13 +36,15 @@ router = APIRouter(tags=["push"], dependencies=[Depends(require_csrf_unsafe)])
     summary="Public key for PushManager.subscribe",
 )
 async def vapid_key(
-    _: MembershipContext = Depends(get_active_membership),
+    _principal: Principal = Depends(get_current_user),
 ) -> VapidPublicKey:
     """The public half of this server's VAPID keypair.
 
     Public by construction -- that is what the pair is for -- but still behind a
-    membership guard, because an unauthenticated endpoint that names your push
-    key is free reconnaissance for no benefit.
+    sign-in guard, because an unauthenticated endpoint that names your push key
+    is free reconnaissance for no benefit. Identity rather than membership,
+    matching the two routes below: a caller who may subscribe must be able to
+    read the key they subscribe with.
 
     **A client must re-read this on load and compare it against the
     `applicationServerKey` its stored subscription was created with.** A
@@ -60,10 +62,16 @@ async def vapid_key(
 )
 async def subscribe(
     body: RegisterPushSubscription,
-    membership: MembershipContext = Depends(get_active_membership),
+    _principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> PushSubscriptionResult:
-    """Register the calling browser against the caller's membership.
+    """Register the calling browser against the signed-in person.
+
+    **Identity is the whole guard, and no membership is required.** Since
+    ``0041`` a push subscription is keyed on the profile, so this works for a
+    service provider who has registered and not yet been hired -- the caller for
+    whom out-of-app delivery matters most, because what they are waiting for
+    arrives while the app is closed.
 
     The body is `PushSubscription.toJSON()` unchanged, so the frontend posts what
     the Push API handed it rather than transcribing it -- a transcription step is
@@ -75,9 +83,7 @@ async def subscribe(
     the row rather than adding one. A repeat is a 200, not a 409: the client is
     describing a state, not creating a resource.
     """
-    return push_service.register(
-        client, membership_id=membership.id, body=body
-    )
+    return push_service.register(client, body=body)
 
 
 @router.post(
@@ -87,7 +93,7 @@ async def subscribe(
 )
 async def unsubscribe(
     body: UnregisterPushSubscription,
-    membership: MembershipContext = Depends(get_active_membership),
+    _principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> PushSubscriptionResult:
     """Stop pushing to one browser.
@@ -110,6 +116,4 @@ async def unsubscribe(
     an error because the state was already reached, or because an operator lost a
     key, would leave them unable to do the one thing they asked for.
     """
-    return push_service.unregister(
-        client, membership_id=membership.id, body=body
-    )
+    return push_service.unregister(client, body=body)

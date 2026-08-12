@@ -1,12 +1,18 @@
 # HomeBandhu API reference
 
-**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-08
+**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-11
 
 > ## Where the numbers stand
 >
-> The live surface is **99 operations across 86 paths**, all of them in
+> The live surface is **179 operations across 150 paths**, all of them in
 > [`openapi.yaml`](openapi.yaml), all carrying a user-story verdict (§16). Every `###` heading below
 > corresponds to an operation that exists; that is checked mechanically rather than by eye.
+>
+> *(This banner read **163 across 138** until 2026-08-11 — three sessions and sixteen operations
+> stale. It was one of seven hand-maintained totals found drifting in a sweep on that date, in
+> documents whose per-endpoint contents were correct throughout; see `CHANGE_LOG` Session 58. What
+> **is** checked mechanically is the sentence after this one, and the `--check` that regenerates the
+> spec. A count in prose is not.)*
 >
 > **Two contract-wide rules that apply to every endpoint below.**
 >
@@ -404,6 +410,28 @@ is never usable as an ordinary login.
 signed-in identity with no membership yet, and otherwise the membership that decides which portal
 loads.
 
+**`portal` is a closed list**, and it is the only value a client should route on. It is *not* the
+membership role: the backend computes it from facts the browser does not hold, which is the whole
+reason it exists as a separate field.
+
+| `portal` | Who gets it |
+|---|---|
+| `resident` | a `resident` membership |
+| `admin` | an `admin` membership |
+| `worker` | a `worker` membership — **or no membership at all**, if the caller is a registered service provider awaiting hire |
+| `security` | a `security` membership with no roster seniority |
+| `security-manager` | a `security` membership whose active `staff_assignments.rank` is `manager` or `supervisor`, **or** a `manager` membership whose department is `kind = 'security'` |
+| `manager` | a `manager` membership on any other department |
+
+The two spellings of `security-manager` are D3 — rank and role are separate axes — and the first is
+the one real people have, because hiring mints only `security` and `worker` memberships. The
+authoritative predicate is `gate_admin_community_for` in migration `0040`, which guards the roster
+writes; `portal` is derived to agree with it. See
+[`docs/design/AUTH_AND_SESSION_DESIGN.md`](design/AUTH_AND_SESSION_DESIGN.md) §5.6.
+
+A session with no membership and no `portal` is somebody about to register a society; `capabilities`
+carries `resident` alongside `admin` for an admin, who may use the resident surfaces.
+
 | Status | Code | Cause |
 |---|---|---|
 | `401` | `authentication_error` | No refresh cookie, or it is invalid, expired or revoked |
@@ -589,13 +617,25 @@ absolute rule in §5.3 is enforced rather than remembered.
 
 #### `GET /api/v1/notifications`
 
-The caller's own feed, newest first. **Any active member** — an admin receives `complaint.raised` and
+The caller's own feed, newest first. **Any signed-in person** — an admin receives `complaint.raised` and
 `access_request.created`, and a feed that refused them would mean building a second one later.
 
-**There is no recipient parameter, and the tenancy here is doubled.** The recipient is the membership
-`get_active_membership` resolved from Postgres, and `notifications` also carries an RLS policy of its own
-(`is_own_membership`), so a query that asked for someone else's rows would come back empty from the database
-regardless of what the API did. This is the first table in this backend where that is true.
+**Not "any active member", and the difference is a whole population.** Since `0041` the recipient of a
+notification is a **profile**, so these three routes and the three in §5.3 guard on identity alone. A service
+person registers before anybody has hired them, applies to departments, and is told the answer — all of it
+while holding no membership anywhere. Under the membership-keyed shape the row could not be written, the feed
+view's join would have dropped it, and the read policy would have refused it. The caller waiting on an answer
+was precisely the caller who could not be told one.
+
+**There is no recipient parameter, and the tenancy here is doubled.** The recipient is the profile behind the
+verified session, and `notifications` also carries an RLS policy of its own
+(`recipient_profile_id = auth.uid()`), so a query that asked for someone else's rows would come back empty
+from the database regardless of what the API did. This is the first table in this backend where that is true.
+
+**One feed across every community.** A person with memberships in four societies reads one list and one
+badge, not four summed by the client. `recipient_membership_id` survives on the row and still says which
+community a notification was *about* — it is the audience of the SSE frame and the `community_id` on the feed
+view — it is simply no longer who the notification is *for*.
 
 | Query | Default | Notes |
 |---|---|---|
@@ -632,7 +672,7 @@ and the count, and a badge told `0` while one is already waiting stays wrong unt
 | Status | When |
 |---|---|
 | `200` | Feed returned, or the state was reached |
-| `401` / `403` | No session; no active membership, or a failed CSRF pair on the two writes |
+| `401` / `403` | No session, or a failed CSRF pair on the two writes. **No membership is required** |
 | `404` | Only on `/{notificationId}/read` — unknown, or not the caller's |
 
 ### 5.3 Web Push — `GET /push/vapid-key`, `POST /push/subscriptions`, `POST /push/subscriptions/unregister`
@@ -661,7 +701,7 @@ wrongly showing two lines costs a scroll.
 
 | Route | Body | Notes |
 |---|---|---|
-| `GET /push/vapid-key` | — | `{ publicKey }`. Public by construction, still behind a membership guard: an unauthenticated endpoint naming our key is free reconnaissance for no benefit |
+| `GET /push/vapid-key` | — | `{ publicKey }`. Public by construction, still behind a sign-in guard: an unauthenticated endpoint naming our key is free reconnaissance for no benefit |
 | `POST /push/subscriptions` | `PushSubscription.toJSON()` — `{ endpoint, keys: { p256dh, auth }, userAgent? }` | Idempotent on `endpoint`. A repeat is `200`, not `409`: the client is describing a state |
 | `POST /push/subscriptions/unregister` | `{ endpoint }` | Always `200`, even when the row had already gone |
 
@@ -686,7 +726,7 @@ pushes simply stop arriving.
 | Status | When |
 |---|---|
 | `200` | Key returned, or subscription registered/removed |
-| `401` / `403` | No session; no active membership, or a failed CSRF pair |
+| `401` / `403` | No session, or a failed CSRF pair. **No membership is required** — see below |
 | `422` | The subscription document is missing an endpoint or a key |
 | `503` `push_not_configured` | This server has no VAPID keypair. Only `GET /push/vapid-key` and `POST /push/subscriptions` |
 
@@ -695,12 +735,31 @@ sender never starts, and **everything else in the product works normally** — i
 turning notifications off must not depend on an operator not having lost a key. Push is an enhancement; an
 unconfigured environment must not be a broken environment.
 
-> **This ships backend-complete and unverifiable end to end.** Nothing in `frontend/public/` is a service
-> worker, no manifest exists, and no resident page opens a connection of any kind — so no push can be
-> *observed* arriving yet. The backend tests cover registration and idempotency, payload construction, the
-> `410`-prunes-the-subscription rule and the claim's at-most-once behaviour, with the call to the push service
-> mocked. That is honest coverage of this half and should not be described as more. What the frontend must add
-> is listed in `RESIDENT_BACKEND_DESIGN.md` §10.6.
+**A subscription belongs to a person, not to a membership** (`0041`). Two things follow, and both were
+defects before it.
+
+- **A service provider with no membership can turn push on.** The worker profile screen shipped a push toggle
+  on 2026-08-10 that posted to an endpoint requiring an active membership, so the one caller it was built for
+  got a `403`. Out-of-app delivery matters most to exactly that person: what they are waiting for arrives
+  while the app is closed.
+- **A person in two societies gets both.** `endpoint` is unique across the whole table by design — the
+  endpoint URL *is* the browser's identity to the push service — so a row keyed on a membership meant that
+  subscribing the same browser from a second society **moved** the row and silently stopped the first
+  society's pushes. Nothing had ever held two memberships until the service-operations build.
+
+**Neither write names an owner.** Once the row is keyed on the profile, the only value a caller could
+legitimately send is their own id, so accepting one and validating it against the session it arrived in would
+be a parameter that exists to be checked. The RPCs read `auth.uid()` instead — the forgery surface is removed
+rather than guarded.
+
+> **~~This ships backend-complete and unverifiable end to end.~~ Closed 2026-08-10.** This note said nothing
+> in `frontend/public/` was a service worker, so no push could be *observed* arriving. `frontend/public/sw.js`
+> now exists — registered from `main.jsx`, handling `push` and `notificationclick` — with
+> `src/lib/push/pushClient.js` doing permission, subscription and unsubscription against
+> `GET /push/vapid-key`. The backend tests still mock the call to the push service, which is the honest limit
+> of an in-process suite; what changed is that the other end of the wire exists. Today the subscribe control
+> is on the service partner's profile screen only, which is placement rather than capability — any portal
+> turns push on with one call to `enablePush()`.
 
 ## 6. People
 
@@ -778,6 +837,15 @@ Add a comment. **Any member.** `201 Created`.
 `visibility` is `resident` (default, visible to the resident and on the timeline) or `internal`
 (**admins only**, never returned to a resident).
 
+> **`resident` is a wire word, not a stored one.** The column, both `add_complaint_comment` RPCs and
+> every read filter say `public`, and `complaint_comments_visibility_check` allows nothing else. The
+> service translates, in `app/domain/vocabularies.py`, alongside the status mapping it sits next to.
+> Until 2026-08-09 it did not: the request was forwarded unmapped, so **every comment posted through
+> this endpoint failed** with a `23514` surfaced as a `422` — including the frontend's, which sends
+> `resident` verbatim. The wire vocabulary documented here is unchanged and is the contract; `public`
+> is accepted too, so a client that has learnt the stored word is not forced back through the
+> display word.
+
 > **Correction.** This section previously said an internal comment is "never written to the
 > timeline". It is — `0020` writes a `comment_added` event for every comment, because the timeline it
 > was written for is admin-facing, and the policy on `complaint_events` scopes rows to the complaint
@@ -794,7 +862,8 @@ leaves no timeline row.
 |---|---|---|
 | `403` | `forbidden` | Not a member, or a non-admin asked for `internal` |
 | `404` | `not_found` | No such complaint |
-| `409` | `conflict` | Empty message, or unknown visibility |
+| `409` | `conflict` | Empty message |
+| `422` | `unknown_visibility` | `visibility` is not `resident`, `public` or `internal` |
 
 ### `GET /api/v1/complaints`
 
@@ -996,11 +1065,14 @@ Page through departments, each with its roster. **Requires `ADMIN`.**
           "name": "Ramesh Kumar",
           "phone": "+91 98765 41001",
           "role": "Supervisor",
-          "rank": "head",
+          "rank": "manager",
           "shift": null,
           "status": "active",
           "membershipId": null,
-          "activeAssignmentCount": 2
+          "serviceProviderId": null,
+          "activeAssignmentCount": 2,
+          "openCommitmentCount": 0,
+          "departureStatus": null
         }
       ]
     }
@@ -1017,12 +1089,39 @@ cannot change. It costs one extra query per page, not one per department.
 vocabularies have exactly two values, so the mapping is lossless in both directions. Whether the
 column should simply say `inactive` is `DECISIONS_NEEDED.md` D5.
 
-`rank` (`member` \| `supervisor` \| `head`) and `role` (`"Technician"`, `"Manager"`) are **separate
-fields on purpose.** The seed data proves they are not a function of each other: two departments'
-heads render as `Supervisor` and `Manager`. Any derivation rule would silently rewrite one of them.
+`rank` (`member` \| `supervisor` \| `manager`) and `role` (`"Technician"`, `"Plumber"`) are
+**separate fields on purpose.** The seed data proves they are not a function of each other: two
+departments' heads render as `Supervisor` and `Manager`. Any derivation rule would silently rewrite
+one of them. `head` was the third value until `0035`; the department's *head* is still called that
+everywhere the API says `head`, and is the person holding `rank = 'manager'`.
+
+That separation is also what the frontend had wrong. `STAFF_ROLES` existed three times with three
+different value sets, because one list was answering both questions at once — `Manager` and
+`Supervisor` are ranks and `Technician` and `Gate Officer` are trades. One list per question now,
+in `frontend/src/lib/staffVocabulary.js`, and `role` is a free-text field with suggestions rather
+than a select, because `job_title` carries no check constraint and a closed list would be a screen
+inventing a rule the database does not have.
+
+**`serviceProviderId` says whether this row is a person with an account** (`0042`). Null is the
+ordinary case and stays so — `0019` A7 made a roster a list of names, and `0035` only stopped that
+being the *only* thing it could be. It is projected because the two things a manager can do to a
+roster row take two different ids: removal takes this row's `id`, and
+[`POST /departments/{id}/blacklist`](#post-apiv1departmentsdepartmentidblacklist) takes the
+provider's. Without it one screen cannot offer both, which is how the gap was found.
 
 `activeAssignmentCount` counts open complaints held by that member **within that department**, which
 is what the detail screen shows.
+
+**`openCommitmentCount` is a different number, and the difference matters** (`0043`). That one counts
+open *complaints*; this counts jobs and shifts actually **booked** in their name — a complaint can
+sit with nobody scheduled, and a job can outlive the complaint that caused it. It is projected
+because it decides which verb a roster row offers:
+[removal](#post-apiv1departmentsdepartmentidmembersstaffidremove) is refused while it is non-zero, so
+a screen that did not know the number could only find out by trying, and a manager would experience
+the rule as a button that sometimes errors.
+
+`departureStatus` is `pending` while somebody is on their way out, otherwise null. The dispatch
+engine is already frozen against that person when it is set.
 
 | Status | Code | Cause |
 |---|---|---|
@@ -2928,20 +3027,29 @@ not the API, is what makes a guarantee true. The rest of §F is unchanged — th
 Storage bucket `complaint-attachments` does not exist yet (F2), and rate limiting (F3) and optimistic
 concurrency (F4) are unowned.
 
-**`POST /notices` emits no notification, and it is the one place the `0030` substrate is not wired.**
-Every other user-visible event — complaint transitions, visitor decisions, payments — writes a
-notification row in the same statement that writes the thing it is about. Publishing a notice writes
-the notice and stops, so a resident who has not opened the app learns nothing. That is `US-2.4`
-verbatim, which is why it stays **partial** (§16.4). It is one call to `notify_community_roles` inside
-`notices_service.create_notice`, `notices` belongs to the admin workstream, and it is not being
-retrofitted here because it should land in the transaction rather than beside it.
+**~~`POST /notices` emits no notification.~~ Closed 2026-08-10 by `0041`.** This paragraph named the
+one place the `0030` substrate was not wired: every other user-visible event wrote a notification in
+the same statement that wrote the thing it was about, and publishing a notice wrote the notice and
+stopped. It proposed a call inside `notices_service.create_notice` and then declined to make one,
+because it belonged *in* the transaction rather than beside it.
 
-**`frontend/public/` has no service worker.** Web Push is served end to end on the backend — VAPID
-keys, the subscription table, the sender (§5.3) — and a browser cannot receive a push without a
-`sw.js` registering `push` and `notificationclick` handlers. Until it exists, every notification in
-this API is only observable inside an open tab, which is the precise thing `US-2.1`, `US-2.4` and
-`US-2.7` ask to stop requiring — so all three stay partial on a file this repository does not own.
-`RESIDENT_BACKEND_DESIGN.md` §10.5 states the shape it needs; the file itself is the frontend team's.
+The resolution kept that requirement and dropped the call. `notices_notify_residents` is an
+`after insert` trigger, so it runs inside the insert's own transaction by construction, and
+`insert_notice` stays the single-statement PostgREST write its docstring defends. `US-2.4` is
+**served** (§16.4).
+
+**~~`frontend/public/` has no service worker.~~ Closed 2026-08-10.** This paragraph said that Web
+Push was served end to end on the backend — VAPID keys, the subscription table, the sender (§5.3) —
+and that a browser could not receive one without a `sw.js` registering `push` and
+`notificationclick`, so `US-2.1`, `US-2.4` and `US-2.7` all stayed partial *"on a file this
+repository does not own"*.
+
+That file now exists: `frontend/public/sw.js`, registered from `main.jsx`, with
+`src/lib/push/pushClient.js` handling permission, subscription and unsubscription against
+`GET /push/vapid-key`. **`US-2.7` is the one that moves to served** — the service worker was its
+only remaining gap. `US-2.4` followed on 2026-08-10 once `0041` gave a published notice a writer.
+`US-2.1` stays partial for a reason that was never about the browser: nothing writes the
+visitor-approval *question*, because that is gate software this repository does not contain.
 
 **Visitors are now half-built, and it is worth being exact about which half.** §13 serves everything
 a *resident* does: mint a pass, list and read their own, and answer or withdraw one. Nothing serves
@@ -3010,10 +3118,18 @@ shortfall is named in every row rather than being inferable from a blank cell.
 
 ### 16.1 Scope, stated once
 
-This branch is the **admin dashboard** backend. Two whole surfaces the stories assume — the resident
-mobile app and the security gate — have no workstream. That is the agreed scope, not a miss, and
-it accounts for 11 of the 24 stories on its own. The matrix still lists them, because a story with
-no owner is a decision that should be visible rather than a silence.
+~~This branch is the **admin dashboard** backend. Two whole surfaces the stories assume — the
+resident mobile app and the security gate — have no workstream. That is the agreed scope, not a
+miss, and it accounts for 11 of the 24 stories on its own.~~
+
+**Overtaken on 2026-08-11, and struck through rather than deleted because the sentence above is the
+reason half this section is worded the way it is.** Both of those surfaces now have one. The
+resident backend landed in July (§13, §14), the service and gate surfaces in Phase 1 (§18, §19), and
+the gate's *frontend* — the last thing standing between `US-3.5` and a served verdict — on
+2026-08-11. Nothing in this branch is scoped to the admin dashboard any more; where a paragraph
+below still says otherwise it is a record of when it was written, not a claim about today. The
+matrix still lists every story, because a story with no owner is a decision that should be visible
+rather than a silence.
 
 **One structural cause explains most of §3 and half of §2.** A staff member has no login: `POST
 /departments/{id}/staff` writes a `staff_assignments` row and leaves `membership_id` null on
@@ -3027,9 +3143,19 @@ stories starts with deciding whether staff get accounts — see
 | | Served | Partial | None |
 |---|---|---|---|
 | §1 Administrative staff (6) | 3 | 3 | 0 |
-| §2 Resident (12) | 5 | 5 | 2 |
-| §3 Security manager (6) | 0 | 1 | 5 |
-| **Total (24)** | **8** | **9** | **7** |
+| §2 Resident (12) | 7 | 3 | 2 |
+| §3 Security manager (6) | 5 | 0 | 1 |
+| **Total (24)** | **15** | **6** | **3** |
+
+> **Recounted 2026-08-11 from the per-story verdicts in §16.3–§16.5; it previously read 8 / 9 / 7
+> with §3 at 0 / 1 / 5, and had been wrong since 2026-08-10.** Worth naming as a class of defect
+> rather than fixing quietly: every individual verdict was correct and machine-checked — `US-3.1`,
+> `US-3.3`, `US-3.4` and `US-3.6` moved to *served* when `0040` landed, `US-3.5` on 2026-08-11 — and
+> the *aggregate of those verdicts* was stale, because `api_map_scan.py` cross-checks each story's
+> verdict across this file, [`USER_STORIES.md`](product/USER_STORIES.md) and
+> [`api_annotations.py`](../backend/scripts/api_annotations.py), and checks nobody's arithmetic. A
+> summary derived by hand from checked inputs is the one line in a verified document that can still
+> lie, and it is the line a reader in a hurry reads first.
 
 The shape of that table was, until 2026-08-04, the honest summary of this branch: **the
 administrator's stories substantially built, the resident's built but unreachable, and the security
@@ -3065,10 +3191,10 @@ approving one is a tap rather than a journey. The half that remains is the **hom
 an operating-system surface, on a product that is a web application with no native client. Recording
 this as served would claim a capability the platform does not have.
 
-**US-2.7 is the deliberate exception.** It is backend-complete and still recorded partial: the
-notifications are written, both transports carry them, and no phone can receive one until the
-frontend has a service worker. That is the one row in this table where *served* would be a claim
-about software this repository does not contain.
+**US-2.7 was the deliberate exception, and stopped being one on 2026-08-10.** It said: *backend
+complete and still recorded partial — the notifications are written, both transports carry them, and
+no phone can receive one until the frontend has a service worker.* The service worker was then
+built, so the row moves to **served** and the exception disappears rather than being explained away.
 
 ### 16.3 Administrative staff
 
@@ -3200,17 +3326,28 @@ and a much cheaper one.
 > **US-2.1 stays partial for a reason that is not a missing feature.** Its answer exists — approve
 > and reject are real, and they notify the gate. What does not exist is the *question*:
 > `visitor.approvalRequested` is written when somebody arrives unannounced, and nothing writes it,
-> because that is gate software this repository does not contain. On top of that sits the same
-> absent service worker as US-2.7. A story about being asked cannot be served by building the reply.
+> because that is gate software this repository does not contain. A story about being asked cannot
+> be served by building the reply. *(This also cited "the same absent service worker as US-2.7";
+> that file shipped 2026-08-10 and US-2.7 is now served. It was never US-2.1's only gap.)*
 >
 > `require_visitor_preapproval` also stays unread, and correctly — see §15.
+
+> **The table and paragraph below are the state as compiled on 2026-07-30, kept for the same reason
+> the rest of this entry keeps its layers — but two of their rows are now false and an unmarked stale
+> row is a trap rather than a record.** `0032` shipped the visitor-pass writes: `POST /visitor-passes`
+> plus `approve`, `reject` and `cancel`, all listed in the endpoint table above. So *"any write
+> endpoint — missing"* and *"what is absent is `POST /visitors` and everything after it"* are both
+> answered. What is **not** answered, and is the whole of US-2.1's remaining gap, is the *question*
+> side: nothing writes `visitor.approvalRequested`, because a guard-raised approval request has no
+> endpoint (`resident_visitor_passes.py:134-140`). *(Corrected 2026-08-11, while answering "are there
+> any user stories left".)*
 
 | Object | State |
 |---|---|
 | `visitor_requests`, `visitor_events` | **Exist in the baseline** — status enum, `valid_from` / `valid_until`, `pass_hash`, check-in/out timestamps |
 | `GET /dashboard/snapshot` → `visitors[]` | **Exists**, and filters to the caller's own for non-admins |
 | `community_settings.require_visitor_preapproval` | **Stored by `0018`**, read by nothing |
-| Any write endpoint | **Missing** |
+| Any write endpoint | ~~**Missing**~~ — shipped in `0032`; see the correction above |
 
 The gap is narrower than "no visitor surface". The table models a pre-approval and the read is
 already scoped correctly per resident; what is absent is `POST /visitors` and everything after it.
@@ -3243,22 +3380,30 @@ web application with no native client and none planned (`PO`, 2026-08-03), so th
 browser can do — a PWA install and a shortcut, not an OS widget. No endpoint closes that, and calling
 this served would be a claim about the platform rather than about the API.
 
-#### US-2.4 — Notifications for notices — **partial**
+#### US-2.4 — Notifications for notices — **served**
 
 | Endpoint | Role |
 |---|---|
 | [`GET /notices`](#get-apiv1notices) | The resident's read of the board — published notices only |
-| [`POST /notices`](#121-post-notices--post-a-notice) | Publishes immediately; fires the `notices` SSE trigger |
-| [`GET /notifications`](#get-apiv1notifications) | The feed a notice notification would land in, once `POST /notices` writes one |
+| [`POST /notices`](#121-post-notices--post-a-notice) | Publishes immediately, and every active resident is notified by a trigger |
+| [`GET /notifications`](#get-apiv1notifications) | The feed the notice notification lands in |
 
-**Shortfall, as it was:** the same missing push transport as US-2.1. The event reaches connected
-admin browsers. A resident who has not opened the app learns nothing — which is the story verbatim.
+> **Closed, 2026-08-10, by `0041_person_notifications.sql`.** The last gap was one writer, not one
+> transport: `notification_service`'s renderer has carried a title for `notice.published` since the
+> substrate shipped, and nothing ever emitted it.
 
-**Shortfall now:** the transport exists (§5.2, §5.3) and `POST /notices` does not yet call
-`notify_member`. One line inside the write, and it lands with the notice in the same transaction —
-which is the discipline the whole design insists on, and the reason it is not being retrofitted here.
-`0033` gives residents somewhere to read a notice; the story is about being *told* about one, and a
-read endpoint is not a notification.
+**Why it is a trigger and not a line in the service.** `notices_repository.insert_notice` is a plain
+PostgREST insert, deliberately — a single-table, single-statement write, so the transaction PostgREST
+gives it for free is the whole transaction it needs. There is no RPC to add a `perform` to, and
+adding one purely to hang a notification off it would replace a correct one-statement write with a
+function whose only extra job is what a trigger does for nothing. `0030` §5 already made this exact
+argument about the SSE outbox: **delivery is a property of the system, not something each writer
+remembers.**
+
+`notices_notify_residents` fires `after insert ... when (new.published_at is not null)`, fans out
+through `notify_community_roles` to `role = 'resident'`, and excludes the author — an admin who posts
+a notice is not told about their own notice. The `when` clause is what keeps a future draft state
+silent, and `published_at` has been nullable for that reason since `0018`.
 
 #### US-2.5 — Simple complaint submission with priority — **served**
 
@@ -3323,7 +3468,11 @@ can report progress without faking a status change.
 > its default and **every complaint reports progress 0, or 100 once resolved.** The number this story
 > is about is written correctly and then not read.
 
-#### US-2.7 — Complaint lifecycle notifications — **partial**
+#### US-2.7 — Complaint lifecycle notifications — **served**
+
+> **Moved from partial to served, 2026-08-10.** The paragraphs below were written while the verdict
+> was *partial* and are left standing, because the reasoning in them is still correct — it just no
+> longer describes a gap. The one thing that changed is that `frontend/public/sw.js` now exists.
 
 | Endpoint | Role |
 |---|---|
@@ -3466,12 +3615,60 @@ expiry date rather than a card you have to go and find.
 
 | Story | Verdict |
 |---|---|
-| US-3.1 event-specific access codes | **partial** — see below |
+| US-3.1 event-specific access codes | **served** — as of `0040`; see below |
 | US-3.2 auto guest access on booking | **none** |
-| US-3.3 digital registers | **none** — no table |
-| US-3.4 water tanker log | **none** — no table |
-| US-3.5 offline fallback verification | **none** |
-| US-3.6 retention + downloadable reports | **none** for gate operations |
+| US-3.3 digital registers | **served** — §19 |
+| US-3.4 water tanker log | **served** — §19 |
+| US-3.5 offline fallback verification | **served** — as of 2026-08-11; the gate screen now caches the bundle and verifies against it |
+| US-3.6 retention + downloadable reports | **served** for gate operations — §19 |
+
+> **Four of these six moved on 2026-08-10, and the section below was written when none of them had.**
+> `0040` built the gate: two registers, incidents, shifts, posts, credential verification, an offline
+> bundle and a CSV export. The paragraphs that follow are left as compiled — they are the record of
+> what was true, and the corrections are stated inline rather than by rewriting them, which is this
+> folder's convention for a claim that has been overtaken.
+>
+> **`US-3.1` is served.** The prose below says the fifth requirement — one code admitting *many*
+> guests — is *"the one thing the current model cannot express, since a pass belongs to one
+> request"*. That turned out to be wrong in a way worth recording: `guest_count` has been a column
+> since `0032` and **nothing had ever read it**, so the model could already express the requirement
+> and no endpoint had ever asked. `verify_gate_credential` counts admissions against it. The genuine
+> schema change the paragraph predicted was never needed.
+>
+> ~~**`US-3.5` is partial rather than served**, and the missing half is not in the backend. The server
+> side is complete — a time-boxed bundle to cache, and a reconcile that re-verifies every queued
+> admission and records its own verdict beside the device's claim. What is missing is the gate
+> screen that holds the bundle and verifies against it.~~
+>
+> **Closed 2026-08-11.** The gate screen exists: `frontend/src/pages/SecurityDashboard/GateHome.jsx`
+> over `features/security/offline/`. It caches the bundle in `localStorage`, verifies a scanned
+> credential locally with `crypto.subtle.digest('SHA-256')` against `codeHash`/`passHash`, queues
+> every offline scan under a `crypto.randomUUID()` `sourceClientId`, and reconciles on the browser's
+> `online` event or on demand. Three things about it are deliberate and worth stating here because
+> they are properties of the *story*, not of the code:
+>
+> * **Every offline verdict is labelled provisional on screen.** A device holding the bundle can
+>   check a hash and a validity window; it cannot know how many of a four-guest party are already
+>   inside, or that the resident cancelled the pass after the bundle was cut. The card says so in
+>   words rather than looking like the server agreed.
+> * **The device never returns `departed`.** The guest-count arithmetic needs `visitor_events`, so an
+>   offline second scan reads as another admission and reconcile decides which it was.
+> * **Rejected entries survive reconcile and stay on screen until dismissed one at a time.** An
+>   admission the server refuses is the single most important thing this mechanism can report, and
+>   clearing it with the rest of the batch would throw it away.
+>
+> This is also the first place in the codebase where `localStorage` holds domain truth rather than a
+> render cache, overriding the rule in `store/appStore.js` — deliberately, for one screen, with the
+> reasoning written in `offlineGate.js`'s header. The safety property is reconcile, not the cache.
+>
+> This previously read *"`frontend/public/` has no service worker, which is also why `US-2.7`'s push
+> cannot buzz a phone"*. **That file shipped 2026-08-10**, closing US-2.7 — and the sentence
+> overstated its role here anyway: `localStorage` holds a bundle without a service worker, and what
+> the worker actually buys `US-3.5` is surviving a reload during the outage.
+>
+> **`US-3.6`'s verdict below is unchanged in its reasoning and changed in its conclusion.** It said
+> retention was not the gap and the two real gaps were *(a)* gate data to retain and *(b)* the
+> download. §19 supplies both.
 
 **US-3.1 is closer than the rest and nobody planned it that way.** `visitor_requests` carries
 `pass_hash` (a hashed code, unique), `valid_from` and `valid_until` (a scheduled window that can be
@@ -3519,32 +3716,66 @@ downloadable report — the same export gap as US-1.6.
 
 ### 16.6 Endpoints that serve no story, and why that is fine
 
-**48 of the 99 operations map to no story in the document.** Not a defect — the team wrote stories
+**106 of the 179 operations map to no story in the document.** Not a defect — the team wrote stories
 about pain points in an existing product, not about the plumbing every product needs.
+
+> **~~90 of the 163~~ — recounted 2026-08-11, and the table below was rebuilt rather than
+> patched.** The old table's rows were a hand-made grouping that had stopped matching the spec: four
+> whole families were missing from it (departures, direct messages, the gate roster, the worker's
+> own availability), and two others had merged upstream without merging here. It summed to 74 when
+> the spec said 106. **Every row below is now one `x-no-user-story` group in
+> [`openapi.yaml`](openapi.yaml)** — same grouping, same counts, same rationale, so the next
+> divergence is a diff rather than an arithmetic error. The rationale column here is the short form;
+> the spec carries each one in full.
 
 | Group | Ops | API type | Why no story |
 |---|---|---|---|
 | `/auth/*` | 16 | Functional | Nobody writes a user story about signing in until it breaks |
-| `/access-requests/*`, `/admin/access-requests/*` | 7 | Feature | Joining a community; the interviews were with people already in one |
-| `/invitations/*`, `/admin/invitations` | 3 | Feature | Same |
+| `/departments/{id}/{applications,candidates,invitations,blacklist,members}`, `/worker/{applications,communities}` | 11 | Feature | Applying, inviting, hiring, removing and barring. It *enables* US-2.7, US-2.8 and US-3.3–US-3.6 without serving any of them — none can begin until somebody has been hired |
+| `/access-requests/*`, `/admin/access-requests/*`, `/invitations/*`, `/admin/invitations` | 10 | Feature | Joining a community; the interviews were with people already in one |
+| `/departments/{id}/departures/*`, `/departments/{id}/staff/{staffId}`, `/worker/communities/{staffId}/departure` | 10 | Feature | Leaving: a dated request the manager decides, releasing booked work back to the pool. Everybody described being hired and nobody described quitting — the person who quits is not in the room when the society is interviewed |
+| `/security/{posts,roster,shifts}` | 7 | Master data | Where a guard stands and who is standing there. All four gate stories assume it exists and none describes creating it; the security manager was not in the room either |
+| `/worker/{availability-rules,calendar,unavailability}` | 6 | Feature | A service person's own calendar, leave and working week. The dispatch sweep reads these to decide who can be offered a job, so a wrong answer is a resident told nobody is available — but nobody described their own availability as a problem with their society |
+| `/work-orders/{id}`, `/departments/{id}/work-orders`, `/complaints/{id}/{work-orders,schedule}` | 5 | Feature | The supervisor's queue, the job record, the edit. **Three operations on this surface *do* map** — proposing a time, assigning a person, moving or cancelling a visit. Claiming US-2.8 for a screen only the department can open would make the matrix say a resident sees something they cannot |
+| `/messages/*` | 5 | Feature | The chat dock, from the PO's 2026-08-10 instruction. No interviewee asked for chat; the PO did, and the thread-lock clause is theirs verbatim |
+| `/service-providers*` | 5 | Feature | A service person registering themselves. The stories were collected from residents and committee members; **nobody interviewed the plumber** |
+| `/conversations/*` | 4 | Feature | The chat between a department and a service person. Every hiring decision is made after somebody asked a question; today that happens on a phone nobody logs |
+| `/worker/jobs*`, `/worker/snapshot` | 4 | Feature | The worker's own queue and the aggregate behind it. **Four operations on this surface *do* map** — accepting, starting, completing and reporting a failed visit all reach the resident |
 | `/communities/*`, `/onboarding/community` | 3 | Feature | Founding a community — a once-per-community act |
 | `/dashboard/amenities` `POST` · `PUT` · `DELETE` | 3 | Master data | Amenity catalogue upkeep; the stories assume amenities already exist |
-| `/settings`, `/billing-settings` | 3 (of 4) | Configuration | Configuration behind other features |
-| `/amenities/available` | 1 | Feature | Reading the catalogue. The booking stories assume a resident already knows which amenity they are booking |
-| `/notifications/{id}/read`, `/notifications/read-all` | 2 | Feature | Managing the list rather than being notified. US-2.1, US-2.4 and US-2.7 all ask to be *told* |
-| `/push/vapid-key`, `/push/subscriptions`, `/push/subscriptions/unregister` | 3 | Non-functional | Web Push plumbing. A resident experiences US-2.1; nobody experiences a VAPID key |
-| `/complaints/{id}/read` | 1 | Feature | Bookkeeping the unread badge US-2.6 and US-2.8 imply. Nobody narrates having read an update when asked what is wrong with complaints |
+| `/push/{vapid-key,subscriptions}` | 3 | Non-functional | Web Push plumbing. A resident experiences US-2.1; nobody experiences a VAPID key |
+| `/settings` `PUT`, `/billing-settings` | 2 | Configuration | Configuration behind other features |
 | `/invoices/mine`, `/invoices/{id}/pay` | 2 | Feature | **Listing and paying maintenance dues.** A whole screen, and no story: `US-2.12`, the only payment story anybody wrote, is specifically about *amenity booking* payment, and mapping an invoice path onto it would claim coverage the interviews never gave |
-| `/invoices/{id}/payments` | 1 | Feature | The admin's record of a maintenance payment taken outside the app. **Moved here from `US-2.12` on 2026-08-04** — see the note below |
 | `/me/household`, `/me/household/phones` | 2 | Feature | Who is registered to a flat, and adding a number without waiting for an admin. Drawn from the prototype's Profile screen; the stories are about reaching **management** (US-2.9, US-2.10), not about the household reaching itself |
+| `/notifications/{id}/read`, `/notifications/read-all` | 2 | Feature | Managing the list rather than being notified. US-2.1, US-2.4 and US-2.7 all ask to be *told* |
+| `/settings` `GET` | 1 | Configuration | Same, **with one exception worth its own row**: `modules[].backendStatus` reports which features are unimplemented, which makes it the only endpoint that describes this matrix's gaps in machine-readable form |
+| `/amenities/available` | 1 | Feature | Reading the catalogue. The booking stories assume a resident already knows which amenity they are booking |
+| `/complaints/{id}/read` | 1 | Feature | Bookkeeping the unread badge US-2.6 and US-2.8 imply. Nobody narrates having read an update when asked what is wrong with complaints |
+| `/invoices/{id}/payments` | 1 | Feature | The admin's record of a maintenance payment taken outside the app. **Moved here from `US-2.12` on 2026-08-04** — see the note below |
+| `/skills` | 1 | Master data | The global catalogue of trades. The hiring stories assume a plumber can say they are a plumber |
 | `/health` | 1 | Non-functional | Platform liveness, deliberately outside `/api/v1` |
 
 **The API type is the point of this table, not the absence.** Each of these operations carries
 `x-no-user-story` in [`openapi.yaml`](openapi.yaml), stating `Not covered by user story` and then
 what the operation *is*. `Functional`, `Configuration`, `Master data` and `Non-functional` are
-plumbing, and their absence from the story set is expected. **`Feature` is not**: 22 operations here
+plumbing, and their absence from the story set is expected. **`Feature` is not**: 72 operations here
 are user-facing capability nobody wrote a story for. That is a finding about the story set, not
 about the API, and §16.7 is where it turns into work.
+
+**Twenty-five of those ~~47~~ 72 arrived together, and they say something the earlier ones did not.** The
+service-operations surface — registration, hiring, conversations, and the supervisor's half of
+dispatch — maps to no story because the interviews were conducted with people who *live* in a
+society and people who *run* one. The service person is the third party in every complaint the
+resident stories describe, and not one question was put to them. That is a gap in the research, not
+in the API, and it is a different kind of gap from "nobody narrates clearing a badge".
+
+**`0036` is the first of these four migrations to move the *mapped* count, and it moved it by five.**
+Proposing a visit, assigning a person, moving one, cancelling one and reading when somebody is coming
+all reach the resident, which is what US-2.7 and US-2.8 are about — lifecycle notifications, and
+knowing who is responsible and when to expect action. Twenty-one operations of hiring machinery
+mapped to nothing; the first ten that put a named person at a door mapped to two stories. That is the
+shape of the gap stated precisely: the story set is about outcomes residents experience, and this
+feature spent four steps building the thing that produces them.
 
 **One of those 22 arrived by a correction rather than by new code.**
 `POST /invoices/{id}/payments` carried `US-2.12` in the generated spec until 2026-08-04, and should
@@ -3568,13 +3799,25 @@ nothing let a resident learn an amenity id, which is a defect no amount of readi
 would surface. **A `Feature` row is not always a story someone forgot to write; sometimes it is one
 nobody could have written.**
 
+> **Recount, 2026-08-11 — the current figures, and the last three lines of history behind them.**
+> Straight out of `x-user-stories` in the generated spec: **73 operations serve at least one story,
+> 106 serve none, 73 + 106 = 179.** By API type the 106 are `Feature` 72, `Functional` 16,
+> `Master data` 11, `Non-functional` 4, `Configuration` 3. The three steps since the count below:
+> `0043`/`0045` added the ten departure operations, `0046` the five message operations, and `0047`
+> the roster read — **sixteen operations, none of which maps to a story**, which is the same finding
+> the paragraphs above make and not a new one. The command that produces these numbers is in
+> [`api_yaml_mapper.md`](api_yaml_mapper.md) §6.3.
+>
 > **The totals move with the surface, and these are recounted, not estimated.** The figures above
-> come from `x-user-stories` in the generated spec. **51 operations serve at least one story, 48
-> serve none, and 51 + 48 = 99.** `0033` added eight operations, of which four map and four do not,
+> come from `x-user-stories` in the generated spec. **56 operations serve at least one story, 74
+> serve none, and 56 + 74 = 130.** `0033` added eight operations, of which four map and four do not,
 > and step 7 added a ninth, `GET /resident/snapshot`, which maps. The `Feature` count moved from 17
-> to 21 on those eight and then to 22 when `POST /invoices/{id}/payments` gave up a story it had
-> never earned. `Functional`, `Configuration`, `Master data` and `Non-functional` are unchanged at
-> 16, 3, 3 and 4.
+> to 21 on those eight, then to 22 when `POST /invoices/{id}/payments` gave up a story it had never
+> earned, then to 42 when `0034`, `0035` and `0038` added twenty-one operations of which twenty are
+> `Feature` and one is `Master data` — **not one of which maps to a story** — and then to **47** on
+> `0036`'s ten, five of which do. So the mapped count stood still for three steps and moved for the
+> first time on the step that schedules a visit. `Functional`, `Configuration` and `Non-functional`
+> are unchanged at 16, 3 and 4; `Master data` is 4.
 >
 > **An earlier version of this section said 33 and was wrong** — a different kind of error, worth
 > keeping visible. The groups always summed to 36; the 33 came from subtracting the endpoints
@@ -3610,7 +3853,7 @@ Ordered by cost against value, not by story number.
 | 5 | Add `departments.building_id` | US-2.10 | One column, one filter |
 | 6 | ~~Build the visitor write endpoints~~ — **done for the resident half** (`0032`, §13): US-2.2 closes. US-2.1 does not, because nothing raises the request it answers, and US-3.2 does not, because whether an approved booking should mint passes is a ruling nobody has made | US-2.2 | Closed; the gate half is a separate surface |
 | 7 | ~~Choose a push transport~~ — **done**: Web Push over our own VAPID keypair (§5.3) | US-2.1, US-2.4, US-2.7 | Was an architecture decision; now the emitters remain |
-| 8 | Add CSV export | US-1.6, US-3.6 | Small, and asked for twice |
+| 8 | ~~Add CSV export~~ — **half done**: `GET /security/exports/{dataset}` ships the gate's four datasets (§19), so **US-3.6 closes**. US-1.6 does not — the administrative reports it asks for are a different surface with a different query behind it, and nothing exports them yet | US-1.6, ~~US-3.6~~ | What is left is the admin half |
 
 **Items 2, 4 and 5 are three small changes that close or half-close three stories.** They are the whole
 argument for keeping this matrix. None would have been found by reading the code, because none of
@@ -3637,6 +3880,11 @@ that is the whole difference this item made.
 > partial — because what remains is a service worker in `frontend/public/`, which is not a backend
 > task at all. The visitor, notice and payment emitters are steps 5 and 6.
 >
+> **That last exception is spent.** `frontend/public/sw.js` was built on 2026-08-10 and US-2.7 is
+> **served** in §16.4. Item 7 has now closed three of its four stories; US-2.1 is the one still
+> open, and it is open for a reason no transport fixes — nothing raises the approval request it
+> answers, which is a missing *write*, not a missing delivery.
+>
 > Worth recording plainly: **items 1 and 3 closed by different means, and only one of them is a
 > fix.** Item 3 was built. Item 1 was routed around — the fields now reach a resident through a
 > different endpoint, while the projection that drops them is unchanged. The stories are served
@@ -3649,6 +3897,7 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-09 | **§18 added — service personnel.** Six operations backed by `0034`: registering as a service person, editing that registration, setting which trades you offer, the offline toggle, and the global skill catalogue. **The first surface on this API whose caller holds no community membership** — a plumber exists before any society has heard of them — which is why none of these routes resolves one and why CSRF is the only guard on the four writes. Overturns two things in print and says so: `USER_IDENTIFICATION.md` and §16.1's *"a staff member is a name on a roster, not an account"*, and `CONFLICT_RESOLUTIONS.md` R16's *"build nothing against them"* for `skills`. Coverage is unchanged — all six trace to no story, because every story this feature eventually closes begins at **hiring**, which is `0035` and not built. `app/api/deps.py` gained a multi-community resolver at the same time, additively: `get_active_membership` keeps its signature, its `Principal` parameter and its single round trip, and `tests/test_membership_set.py` is the evidence offered to the auth workstream. §18 sits after the meta-sections deliberately; the renumber is deferred to this feature's documentation sweep. |
 | 2026-08-08 | **User-story sweep: the matrix was right and its index was not.** §16's verdicts, `api_annotations.py` and the spec agreed on all 24 stories; [`product/USER_STORIES.md`](product/USER_STORIES.md) — the one-line index of the same matrix — did not, on **six**. US-2.2, US-2.5, US-2.6, US-2.8 and US-2.12 still read *partial* or *none* after they closed, and US-2.3 read *none* after moving to partial. Every one erred toward under-reporting, which is the direction nobody checks. Fixed there, with the stale *reasons* on US-2.1, US-2.4, US-2.9 and US-3.1 rewritten too, and the three `#14-user-stories--endpoints` links under `product/` repointed at §16. Eight operations that carry a story tag were named nowhere in that story's own section — the amenity damage and charges writes (US-1.2), `POST /invoices` (US-1.6), `GET /notifications` (US-2.1, US-2.4, US-2.7), `PATCH /complaints/{id}` (US-2.7, which had no endpoint table at all) and `POST /admins` (US-2.9) — now listed. **US-3.1 was the one real traceability defect**: §16.5 has credited `POST /visitor-passes` and `/cancel` with issuing and revoking a scheduled code since `0032`, while the story was absent from the annotation table, so the spec recorded nothing as serving it. Tagged; counts unmoved at 51 served / 48 none, because both operations already carried US-2.2. Root cause recorded plainly: the export guard checks that every **operation** declares its stories, never that every **story** a verdict credits has an operation — `api_map_scan.py` now asks that too. |
 | 2026-08-04 | **Traceability audit of the generated spec, and §16.6 recounted.** Every route the application registers is in [`openapi.yaml`](openapi.yaml) and every operation carries errors, a description and a story verdict — the export guard had held. Two things it cannot check did not: eight parameters were undescribed (`booking_id`, `pass_id`, `notification_id`, the `Last-Event-ID` header), and **`POST /invoices/{id}/payments` was claiming `US-2.12`**, a story [`USER_STORIES.md`](product/USER_STORIES.md) scopes to *amenity-booking* payment — an overclaim three other documents here already contradicted, including the resident invoice path's written refusal of the same mapping. Now `Feature`, untraced, with the reason recorded. Coverage of operations by story is **51 served / 48 none**; §16.6's header also still said *"47 of the 98"* after the surface grew to 99. |
 | 2026-08-04 | **§14.5 added — `GET /resident/snapshot`, and the resident backend is complete.** The last endpoint of the build order, and the only one that needed no schema change: it is a projection of the endpoints around it, so a bill on the home screen and the same bill on the Payments page are the same model and cannot disagree. **US-2.3 moves from none to partial** — the enabling backend its own *"Backend: None"* note asks for now exists, and the home-screen widget it also asks for is an OS surface a web application does not have. Coverage is 8 served / 9 partial / 7 none across 99 operations. Records one correction to the design document: `activity` is the notification feed, not `member_activity`, because nothing in this project writes that table and §5.8 had already made notifications the durable record of every user-visible event. Also fixes four defects in step 6 — the invoice list was filtered by a *narrower* ownership rule than the settlement path enforces, so a bill raised against the flat was payable and invisible; the Paid tab was defined as "not payable" and so contained cancelled bills; drafts were reaching residents as amounts owed on unissued bills; and a replayed `idempotencyKey` called the gateway before checking for the duplicate and then reported the new verdict over the stored one. |
@@ -3663,3 +3912,2676 @@ that is the whole difference this item made.
 | 2026-07-29 | Build step 5 — Complaints. Adds list, detail, `PATCH`, comments, read receipts and attachments. Retracts the invented SLA urgency multiplier (A3); documents the two competing SLA systems. |
 | 2026-07-29 | Build step 4 — People. Adds `GET /admins`, `PATCH`/`DELETE /residents/{id}`, and the three `/registrations` endpoints. `dashboard.pendingRequests` and `residents[].email` stop being placeholders. |
 | 2026-07-29 | Initial version. Documents the four read-only dashboard endpoints (build step 3) and the pre-existing auth and invitation endpoints. Records the unified error envelope introduced in the same change. |
+
+---
+
+## 18. Service personnel
+
+Backed by migrations `0034`, `0035`, `0036`, `0037`, `0038`, `0039`, `0043` and `0045`. Fifty-five
+operations — `0037` is the engine and adds none of them; `0045` reworks departures and adds the
+three employee-management reads — and they open with the first callers on this API who are **not
+members of any community**. Direct messages (`0046`) are §20, because their audience is every
+portal rather than this population alone.
+
+That is the founding idea of the section. Everywhere else, a caller is a resident, a manager, an
+admin or a security member *of somewhere*, and the request is scoped by an active membership resolved
+from Postgres. A service person — a plumber, an electrician, a guard — registers themselves before
+any society has heard of them, and is hired afterwards.
+
+The subsections follow that person forward: **registration** and the trade catalogue (`0034`),
+**hiring** (`0035`), the **conversation** that precedes and follows it (`0038`), the **work orders**
+they are eventually sent on (`0036`), the **engine** that dispatches those without anybody pressing
+anything (`0037`), and finally **the worker's own portal** (`0039`) — the jobs, the five verbs and
+the working week. Only the last two are things a resident can feel, and they are the only ones that
+map to a user story.
+
+> **Section numbering — a ruling, not a deferral.** This section and §19 sit *after* the three
+> meta-sections (§15 Not yet implemented, §16 User stories, §17 Changelog) instead of before them,
+> which is not where the two previous content sections went. An earlier draft of this note promised a
+> renumber in the documentation sweep. **That sweep happened and cancelled it**, because counting the
+> cost changed the answer: of the 142 §15–§19 references across this repository, **49 are in
+> `CHANGE_LOG.md`** — a dated record whose whole value is that it did not change afterwards. A
+> renumber leaves two options for those 49 and both are worse than an odd ordering: rewrite them, and
+> a historical entry says something it did not say; leave them, and every pointer in the log is
+> silently wrong, which is worse than an odd ordering because a reader believes a pointer. So the
+> numbers stay and this note explains them. Recorded in `plans/SERVICE_OPERATIONS_PROGRESS.md` §6.13.
+
+> **`0039` is the worker portal, not security operations.** The plan reserved that number for gate
+> operations; the worker's own endpoints turned out to need a migration of their own — `0034`–`0037`
+> contain no worker-side write function at all, because until hiring existed there was no worker
+> holding an account to call one — and they come first in the build order. **Security operations is
+> `0040`.**
+
+### What this overturns
+
+`docs/product/USER_IDENTIFICATION.md:55-65` and §16.1 both state that a staff member has no login *by
+construction* — *"a staff member is a name on a roster, not an account"* — and `POST
+/departments/{id}/staff` deliberately leaves `membership_id` null. **That is now overturned.** A
+service person registers, holds an account, and is issued a real `worker` or `security` membership by
+the manager who hires them. The `membership_role` enum has carried both values since the baseline and
+nothing has ever issued one.
+
+`docs/CONFLICT_RESOLUTIONS.md` **R16** parked twelve baseline tables with *"build nothing against
+them"*. `skills` is the first to be un-parked. `staff_skills` is superseded and is deleted at the end
+of this feature, because skills belong to the **person** and not to a roster row — the "which
+communities need my skills" search has to run for someone nobody has hired yet, and a skill keyed to
+a staff assignment gives that person nothing to search with.
+
+### The catalogue is global; a community's categories are not
+
+`skills` is one seeded list of trades. `complaint_categories` is per-community, and `0034` adds a
+nullable `skillId` to it, filled by a trigger that name-matches against the catalogue.
+
+**Without that link the community search returns nothing, for everybody.** It is the only join
+between what a person can do and what a society needs done. A community inventing a category the
+catalogue has no word for is therefore not an error — it means no service person is matched to it,
+and the column stays null.
+
+The written plan had a `skill_categories` join table here. It cannot work: a global skill against
+per-community categories needs one row per *(skill, community)* pair, and would be silently
+incomplete for every community created after the migration ran. One nullable foreign key replaced it.
+
+### No membership guard, and CSRF is doing real work
+
+None of these routes resolves a membership. A registered-but-unhired provider has none, so requiring
+one would refuse them exactly the screens that let them apply for work.
+
+Authorization has not gone away, it has moved: all three write RPCs resolve the caller from
+`auth.uid()` themselves, and `service_providers` carries a read policy and **no insert, update or
+delete policy at all**. There is no path from the API process to a row it does not own. The 403 on
+the four writes is therefore the CSRF pair — which, on routes with no membership guard, is the only
+thing standing between a cross-site form post and someone's registration.
+
+### `GET /api/v1/skills`
+
+The global catalogue of trades. **Requires authentication only.**
+
+Returns a bare array rather than a `Page`: it is twelve rows of seeded reference data, and paging it
+would be an envelope around a constant.
+
+```json
+[{ "id": "…", "name": "Plumbing", "category": "maintenance",
+   "description": "Leaks, taps, drainage, sanitary fittings." }]
+```
+
+`category` is free text — `maintenance`, `facilities` or `security` for the seeded twelve — rather
+than an enum, because the catalogue is data and a closed enum would mean a code change before an
+operator could add a trade. A retired trade is filtered out here rather than deleted, so a provider
+who has held it for two years keeps the row that says so.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials, or credentials that no longer verify |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/service-providers`
+
+Register as a service person. **Requires authentication only.**
+
+```json
+{ "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
+  "bio": null, "phone": "+919876543210",
+  "latitude": 12.9716, "longitude": 77.5946, "serviceRadiusKm": 15 }
+```
+
+**Idempotent on the caller.** A second registration edits the first rather than colliding with it —
+the RPC is an upsert on `profileId` — so a half-finished form resumed on another device is not a 409
+the person cannot act on. The status is still `201`: from the client's side the resource now exists
+either way.
+
+**Coordinates are optional and worth sending.** They decide which communities the person is shown and
+in what order. A provider with none still appears in every search; they sort last, because there is
+no distance to order them by.
+
+The response is the full profile read back from the database, not the request echoed with an id
+attached — see `GET /service-providers/me` for the three fields that could not be echoed.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
+| 422 | `request_validation_error`, `missing_value`, `check_violation` | A name under 2 characters, a latitude outside ±90, a radius over 500 km |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/service-providers/me`
+
+The caller's own profile. **Requires authentication only.**
+
+```json
+{ "id": "…", "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
+  "bio": "", "phone": "+919876543210", "latitude": 12.9716, "longitude": 77.5946,
+  "serviceRadiusKm": 15, "status": "active", "isAvailable": true,
+  "skillIds": ["…"], "skillNames": ["Plumbing"], "communityCount": 2,
+  "createdAt": "…", "updatedAt": "…" }
+```
+
+**404 when the caller has never registered, rather than an empty profile.** The two are different
+answers and the dashboard routes on the difference: an unregistered caller is sent to the
+registration form, not shown a blank one they might take for saved.
+
+**Three fields are not the caller's to set**, which is why every write here re-reads rather than
+echoes. `skillNames` comes from the catalogue, `serviceRadiusKm` defaults in SQL when omitted, and
+`communityCount` is counted from live `worker` and `security` memberships. That last one drives the
+dashboard's empty state — a provider employed nowhere sees the *find work* prompt instead of an empty
+calendar.
+
+`status` is `active` or `suspended`. A suspended provider keeps their profile and their history; they
+simply stop being offered work.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 404 | `service_provider_not_found` | The caller has not registered |
+| 500 | `internal_error` | Unhandled |
+
+### `PATCH /api/v1/service-providers/me`
+
+Edit the details — **everything except the name.** **Requires authentication only.** The `POST`
+body minus `displayName`.
+
+**`displayName` is not accepted here, and sending it is a `422`** (the strict models refuse
+unknown fields). A service person's name and email are identity, edited nowhere in settings — a
+product-owner rule from 2026-08-10. Registration names you; this route never renames you. (`0045`
+made the RPC coalesce a null name onto the stored one, which is what made the field droppable.)
+
+**An omitted field is left alone, not cleared.** The RPC coalesces onto the stored value, so a
+client may send one changed field without first reading the other six and echoing them back — and a
+client that *does* echo them back cannot accidentally erase what it failed to read.
+
+**No 404 — but a name-shaped 422.** The RPC is an upsert, and since `0045` it requires a name only
+when there is nothing stored to keep: a `PATCH` from someone who never registered has no stored
+name to coalesce onto and comes back `422 missing_value` telling them to register first. The two
+routes below are `select into` and raise a real 404.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
+| 422 | `request_validation_error`, `missing_value` | As `POST` |
+| 500 | `internal_error` | Unhandled |
+
+### `PUT /api/v1/service-providers/me/skills`
+
+Set which trades this person offers. **Requires authentication only.**
+
+```json
+{ "skillIds": ["…", "…"] }
+```
+
+```json
+{ "skillCount": 2 }
+```
+
+**A `PUT` of the whole set, not add and remove.** The screen is a list of checkboxes, and two tabs
+toggling different boxes against a delta API is a lost update that nobody notices until a plumber
+stops being offered plumbing.
+
+**An unknown or retired skill id is ignored, not rejected.** The RPC selects against the catalogue
+rather than trusting the argument, so a client holding a stale list saves the trades that still exist
+instead of failing whole. That is what `skillCount` is for: sending eight and being told six is the
+client learning something true.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
+| 404 | `not_found` | The caller has not registered as a service provider |
+| 422 | `request_validation_error` | More than 40 ids, or an id that is not a string |
+| 500 | `internal_error` | Unhandled |
+
+### `PATCH /api/v1/service-providers/me/availability`
+
+The dashboard's offline toggle. **Requires authentication only.**
+
+```json
+{ "isAvailable": false }
+```
+
+```json
+{ "isAvailable": false }
+```
+
+Going offline stops the dispatch sweep offering new jobs — `dispatch_candidates` (`0037` §4) reads
+this column, so the toggle is honoured by the engine itself rather than by a screen. **It does not
+cancel work already accepted**: a worker who agreed to be somewhere at four o'clock has made a
+commitment a toggle does not retract, and a resident has been told their name. Calling that visit off
+is `POST /work-orders/{id}/cancel`, which requires a reason and notifies both of them. The worker's
+*own* way to hand a job back arrives with the worker portal.
+
+The value comes back from the database rather than being echoed, for the same reason as everywhere
+else here: it is the row's answer, and a caller with no row gets a 404 instead of a cheerful `false`.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
+| 404 | `not_found` | The caller has not registered as a service provider |
+| 422 | `request_validation_error` | `isAvailable` missing or not a boolean |
+| 500 | `internal_error` | Unhandled |
+
+### Hiring — one negotiation, two directions
+
+Backed by migration `0035`. Eleven operations, and the thing to understand before reading any of them
+is that **an application and an invitation are one row**. `service_applications` carries a
+`direction`: `applied` when the provider opened it, `invited` when the department did. Acceptance
+does exactly the same three writes either way, so two tables would have meant two inboxes, two decide
+functions and two chances for a hire to be half-done in one of them.
+
+`direction` is what a client switches on to decide which buttons to render. Deriving it from the
+caller's role would require the client to know its own role in every community on the screen, which
+is exactly what a cross-community list does not have.
+
+#### The hire is one transaction, and that is the whole point
+
+`POST /departments/{id}/applications/{applicationId}/decide` with `accepted` writes **three rows
+inside one transaction**: a `community_memberships` row carrying the `worker` or `security` role, a
+`staff_assignments` row carrying the terms and pointing at both the membership and the provider, and
+the decision itself.
+
+Either all three exist or none does. A membership with no roster row is somebody who can sign in and
+has no job; a roster row with no membership is a name on a list with no way in. Neither is repaired
+by a client retrying, which is what a client would do — so the atomicity lives in
+`decide_service_application` and there is no API path around it.
+
+Which role is issued comes from `departments.kind`: a `security` department hires `security`,
+everything else hires `worker`. Both values have been in the `membership_role` enum since the
+baseline and **nothing has ever issued either one**.
+
+#### Two guards, and only one of them is real
+
+Every department-side route names a department in its path. `require_admin_or_manager` at router
+level is a **coarse** filter — it asks whether the caller is an admin or manager *somewhere*,
+resolved from their default membership. It cannot ask about the department in the URL, because that
+department's community is not known until something reads it.
+
+The real check is `can_manage_department(uuid)` in the database, applied by every RPC here and by the
+policy behind every read: an admin of the department's community, or a manager whose own membership
+names that department. A manager of one community calling these routes against another community's
+department passes the router guard and is refused by Postgres. That is the posture
+`design/ADMIN_DASHBOARD_DESIGN.md` §10 asks for — **an id arriving in a URL is never an
+authorization decision.**
+
+The coarse guard is not thereby pointless: it turns "signed-in stranger walks department ids" into a
+403 before any query runs.
+
+#### One side of this notifies nobody, by construction
+
+`notifications.recipient_membership_id` is `not null` and cannot be otherwise — a notification
+belongs to somebody in a community. A service person who has been **invited** or **rejected** holds
+no membership in that community by definition, so there is no row to address.
+
+So an invitation sends nothing, and a rejection sends nothing. `GET /worker/applications` is the
+delivery mechanism for both, which is why it exists as a list rather than as a feed. An
+**acceptance** *is* notified, because the membership the accept just created is the address it goes
+to — the first notification a service person can receive is the one telling them they were hired.
+
+### `GET /api/v1/worker/communities`
+
+Every roster the caller is on. **Requires authentication only.**
+
+```json
+[{ "staffAssignmentId": "…", "communityId": "…", "communityName": "Green Meadows",
+   "communityCity": "Bengaluru", "departmentId": "…", "departmentName": "Plumbing",
+   "departmentKind": "service", "membershipId": "…", "membershipRole": "worker",
+   "rank": "member", "jobTitle": "Plumber", "shift": "Day", "status": "active",
+   "startedAt": "2026-08-09", "endedAt": null }]
+```
+
+**A list, not a value**, and this is the surface the tenancy change in `app/api/deps.py` was made
+for. A plumber hired by three societies has three memberships and one working week; every screen
+downstream of this reads the union rather than a default community.
+
+An empty list drives the dashboard's empty state — a registered provider employed nowhere is shown
+the community search rather than a blank calendar. `?activeOnly=false` includes ended engagements,
+which is the employment history.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 404 | `service_provider_not_found` | The caller has not registered |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/worker/communities/search`
+
+Where the caller could apply, nearest first. **Requires authentication only.**
+
+`?q=` filters by name, `?limit=` and `?offset=` page (clamped to 100).
+
+```json
+[{ "id": "…", "name": "Green Meadows", "city": "Bengaluru", "state": "Karnataka",
+   "communityType": "apartment", "distanceKm": 4.2,
+   "matchingSkillNames": ["Plumbing"],
+   "departments": [{ "id": "…", "name": "Maintenance" }] }]
+```
+
+**`departments` carries ids, not just names, and that is load-bearing.** `POST
+/worker/applications` takes a `departmentId`, and a provider who is not yet a member of the
+community cannot read `GET /departments` to find one — so a search result naming departments without
+identifying them is a screen with nothing to press. Corrected 2026-08-10; it shipped as
+`departmentNames: string[]` and the gap only became visible when the screen that consumes it was
+built. Two parallel arrays were rejected as the fix: `array_agg(distinct …)` sorts by its own
+argument, so the ids would arrive in uuid order and the names in alphabetical order and the two
+would correspond only by accident.
+
+Three rules, all applied in SQL: the community has a department whose categories need one of the
+caller's skills, it has not blacklisted them, and they are not already a member of it. That last one
+is why a resident cannot apply to work in their own society — one person holds one live membership
+per community, so the hire would be refused and offering it would be offering a dead end.
+
+**A community with no coordinates sorts last rather than being hidden**, and so does a provider with
+none. Somebody who has not filled in where they work is still somebody who can work.
+
+**No 404 and no 403.** The search resolves the caller inside the RPC, so an unregistered caller gets
+an empty list rather than an error — which is the honest answer to "which communities need trades you
+have not told us about". A client showing this screen empty should suggest
+`PUT /service-providers/me/skills`, because that is usually the reason.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/worker/applications`
+
+The caller's own negotiations, across every community, newest first. **Requires authentication
+only.** `?status=pending` narrows to the queue.
+
+Both directions in one list — see above. This used to be the *only* way a rejected applicant or an
+invited provider learned the outcome, because neither could be notified: the notification substrate
+addressed a membership and neither of those people holds one. Since `0041` both are notified and this
+is the authoritative read rather than the sole channel.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 404 | `service_provider_not_found` | The caller has not registered |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/worker/applications`
+
+Apply to one department. **Requires authentication only.** `201 Created`.
+
+**Request** — `{ "departmentId": "…", "message": "Available weekday mornings." }`
+
+Returns the negotiation read back from the view, carrying the community name, the provider's skills
+and the distance — none of which the request contained.
+
+**One open negotiation per department at a time**, enforced by a partial unique index rather than a
+read-then-write: applying twice is a `409`, not a duplicate row a manager has to reconcile. A
+*decided* application may be followed by a fresh one, which is what makes removal different from
+blacklisting.
+
+**A blacklisted caller gets the same wording as an ordinary refusal.** Telling somebody they have
+been barred, and by whom, is the community's decision to communicate rather than this endpoint's to
+leak.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the caller is barred in that community |
+| 404 | `not_found` | No such department, or the caller has not registered |
+| 409 | `conflict` | An application to this department is already open, or the caller already belongs to this community |
+| 422 | `request_validation_error` | A message over 2000 characters |
+| 500 | `internal_error` | Unhandled |
+
+### `DELETE /api/v1/worker/applications/{applicationId}`
+
+Withdraw an application the caller opened. **Requires authentication only.**
+
+Returns the withdrawn row rather than `204`, because the screen that called this is a list and the
+row stays on it with a new status. Nothing is deleted — `withdrawn` is a status, and the negotiation
+remains readable by both sides.
+
+**Only the side that opened a negotiation may withdraw it.** A manager cannot make an application
+disappear by withdrawing it instead of rejecting it: a rejection is a record, and this would erase
+it.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the caller did not open this negotiation |
+| 404 | `not_found` | No such application |
+| 409 | `conflict` | Already decided |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/departments/{departmentId}/applications`
+
+The department's inbox, newest first. **Requires `admin` or `manager`** — and see the two-guard note
+above. `?status=pending` narrows to what is actionable.
+
+**Both directions, deliberately.** A manager looking at who wants to work here also needs to see the
+invitations already out, or they will invite somebody they invited last week and get a `409` they
+cannot explain.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `community_role_required`, `forbidden` | Not an admin or manager, or not of *this* department |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/departments/{departmentId}/candidates`
+
+Service people this department could hire, nearest first. **Requires `admin` or `manager`.**
+
+```json
+[{ "id": "…", "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
+   "phoneE164": "+919876543210", "status": "active", "isAvailable": true,
+   "serviceRadiusKm": 15, "distanceKm": 4.2,
+   "matchingSkillNames": ["Plumbing"], "skillNames": ["Plumbing", "Carpentry"],
+   "communityCount": 2, "hasOpenApplication": false }]
+```
+
+The mirror of `GET /worker/communities/search`: the same three rules seen from the other end, plus
+"not already on this roster".
+
+**`matchingSkillNames` is the subset that put them on this list**, and it is not `skillNames`.
+Showing only the second leaves a manager wondering why an electrician is being offered for a plumbing
+department.
+
+`hasOpenApplication` lets the screen offer *view* rather than a second invitation the unique index
+would refuse.
+
+This endpoint checks `can_manage_department` **inside the function**, not only at the router. A
+`SECURITY DEFINER` function that takes a department id and checks nothing would be an enumeration
+endpoint for every service person in the country.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `community_role_required`, `forbidden` | Not a manager of this department |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/departments/{departmentId}/invitations`
+
+Offer somebody a place on the roster. **Requires `admin` or `manager`.** `201 Created`.
+
+**Request** — `{ "serviceProviderId": "…", "rank": "member", "jobTitle": "Plumber",
+"shift": "Day", "message": "We need a plumber on Tuesdays." }`
+
+An invitation **carries its terms**, because the person accepting has to know what they are
+accepting. They cannot change them: `POST .../decide` ignores `rank`, `jobTitle` and `shift` on an
+invitation, so a provider cannot accept themselves in as a manager.
+
+`rank` is `manager` | `supervisor` | `member`. **`head` is accepted as a synonym for `manager`**,
+because that is the word the department screens and `API.md` §8 have always used for the person who
+runs a department; `manager` is what the column stores.
+
+**The invited person is notified** — `0041`, and they were not until then. The reason they could not
+be was the schema: `notifications.recipient_membership_id` was `not null`, and somebody who has not
+been hired here holds no membership to address. That column is nullable now and `notify_profile`
+addresses the person, so a trigger on `service_applications` tells them. Their
+`GET /worker/applications` screen is still the authoritative read; the notification is what makes
+them look at it.
+
+A **rejected** applicant is told too, for the same reason and by the same trigger. Waiting silently
+was the worst of the three outcomes and until `0041` it was the only one with no message.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a manager of this department |
+| 404 | `not_found` | No such service provider |
+| 409 | `conflict` | Already invited, blacklisted here, or already a member of this community |
+| 422 | `unknown_rank`, `request_validation_error` | A rank outside the three |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/departments/{departmentId}/applications/{applicationId}/decide`
+
+Answer a pending application. **Requires `admin` or `manager`. The hire happens here.**
+
+**Request** — `{ "decision": "accepted", "rank": "member", "jobTitle": "Plumber", "shift": "Day",
+"note": null }`
+
+`decision` is `accepted` or `rejected`. **`withdrawn` is deliberately not accepted here**: a manager
+withdrawing an application instead of rejecting it would erase the record that they refused somebody.
+Withdrawal belongs to the side that opened the negotiation and has its own route.
+
+The terms are supplied *here* rather than at application time, because on an application nobody has
+offered any yet — the manager names them at the moment they say yes. Omitting `rank` hires them as a
+`member`.
+
+Three distinct refusals share the `409`: the row was **already decided** (two managers clicked
+accept; the row is locked `for update` and the second one loses), the provider is **blacklisted**
+(re-checked at the moment of hiring, not only at application), or they are **already a member** of
+this community.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the caller is not the side entitled to answer |
+| 404 | `not_found` | No such application |
+| 409 | `conflict` | Already decided, blacklisted, or already a member |
+| 422 | `unknown_decision`, `unknown_rank` | A decision outside the two, or a rank outside the three |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/departments/{departmentId}/members/{staffId}/remove`
+
+Take somebody off the roster and end their membership. **Requires `admin` or `manager`.**
+
+**Request** — `{ "reason": "Contract ended." }`
+
+**Deactivates, never deletes.** Complaints record staff by name, so removing the row would turn every
+past assignment into an unexplained string — the rule `0019` A7 already committed to for typed roster
+names, applied to hired people too. Ending the membership is what removes their access; the row is
+what keeps the history readable.
+
+**They may apply again**, which is the whole difference between this and `POST .../blacklist`.
+
+**Refused with a `409` while anything is still booked in their name** (`0043`). This route stays the
+one-click answer for the ordinary case — a name typed into the department form by mistake, somebody
+never dispatched — and everybody else goes through
+[a departure](#post-apiv1departmentsdepartmentiddepartures), which is what `openCommitmentCount` on
+the roster row is for. The guard lives in the function every removal path funnels through, including
+the bar, so **no path removes somebody holding work**.
+
+**A `POST` and not a `DELETE`, for two reasons.** Nothing is deleted, so the verb would describe
+something that does not happen. And `reason` is a note one person writes about another that reaches
+them in a notification: a `DELETE` cannot carry a body, and the alternative — a query parameter —
+would put it in every access log between the browser and the database.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a manager of this department |
+| 404 | `not_found` | No such roster entry |
+| 409 | `conflict` | They still hold jobs or shifts — open a departure and hand them over |
+| 422 | `request_validation_error` | A reason over 500 characters |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/departments/{departmentId}/blacklist`
+
+Remove, and bar from applying again. **Requires `admin` or `manager`.** `201 Created`.
+
+**Request** — `{ "serviceProviderId": "…", "reason": "Repeated no-shows." }`
+
+**Community-wide, not department-wide**, even though a department id is what identifies the caller's
+authority to do it. A community that will not have somebody back has decided that about the
+community; letting them reapply to the department next door would make the decision meaningless.
+
+**It is not `blacklisted_residents`.** That table is keyed on a profile and is enforced inside
+`search_joinable_communities`, so reusing it would bar this person from *living* here as a side
+effect. A plumber a community will not hire has not been refused a flat.
+
+Three things happen in order: every active roster row they hold in this community is removed, every
+pending negotiation is rejected, and the bar is recorded. A bar that left them still working here
+would not be one.
+
+`reason` is required and stored, because whoever eventually decides whether to revoke it needs to
+know what it was for. The row carries `revokedAt`, so this is reversible.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a manager of this department |
+| 404 | `not_found` | No such department |
+| 422 | `request_validation_error`, `missing_value` | No reason, or one under 3 characters |
+| 500 | `internal_error` | Unhandled |
+
+### 18.7 Leaving — a dated request the manager decides
+
+Backed by `0043` and reworked by `0045`. Ten operations, counting the three employee-management
+reads below.
+
+**A departure used to be one statement.** `remove_department_member` set the roster row inactive,
+ended the membership, and said nothing about the work that person was holding — which does not go
+away. A `work_order_assignments` row with `status = 'accepted'` survived untouched: still pointing
+at tomorrow's slot, still counted as somebody's load by the dispatch sweep, still rendering on the
+resident's complaint as *someone is coming*. Nobody was coming, and the membership that would have
+carried the reminder had just ended, so the one person who could have said so had been logged out.
+The same hole was open on the gate: `security_shifts` kept pointing at a guard who no longer worked
+there, and the rota read as covered.
+
+**So a departure is a state a person is in**, not an event that happens to them — and since
+`0045` that state has a **date**. The worker asks to leave immediately or on a day
+(`requestedEffectiveAt`); until the manager decides, they keep working, but no new work in this
+community whose slot starts on or after that day reaches them — and an undated (immediate) request
+freezes the engine against them entirely. The manager approves **at the requested date or a later
+one at their discretion** (`effectiveAt`), or rejects.
+
+> **What this overturns.** `0043` refused approval with a `409` while anything was booked in the
+> leaver's name — *hand everything over first, then approve*. **The product owner overturned that
+> on 2026-08-10**: the decision whether and when somebody leaves is the manager's, and on approval
+> the leaver's booked work from the effective date onward is **released back to the dispatch pool
+> at a queue priority just below urgent** for reassignment by the ordinary mechanics. Work before
+> the date stays with the leaver; a timekeeper (`dispatch_tasks`, kind `departure_removal`) removes
+> them at the date, and from approval until then the engine gives them nothing new at all. The
+> per-item `reassign` hand-over survives as a tool a supervisor may use before the decision; it is
+> no longer a precondition of it. The gate itself survives in one place: the direct
+> `POST .../members/{staffId}/remove`, which has no decision record and no release step, still
+> refuses while work is booked.
+
+**Four statuses and no `handover`** — `pending` \| `approved` \| `rejected` \| `cancelled`.
+`approved` with a future `effectiveAt` is *leaving, still on the roster*; the roster view carries
+`departureStatus` and `departureEffectiveAt` so a tile can say "leaving Friday". Two counts ride on
+every departure: `openCommitmentCount` (everything booked in their name, dateless — informational
+since the ruling) and `conflictCount` (items from the effective date onward, plus unscheduled ones
+— what approval releases and what the coverage check examines).
+
+#### What counts as outstanding, and the filter that is deliberately absent
+
+Two kinds: `work_order_assignments` in `offered` or `accepted` whose work order is not `completed`,
+`cancelled` or `failed`; and `security_shifts` in `scheduled` or `active`. Both, because the
+instruction was *the same applies for all servicemen regardless of department* — a departure that
+counted only jobs would approve every security departure on the spot.
+
+**Neither is filtered to the future.** A scheduled job whose slot was yesterday and which nobody
+closed is exactly what a departing worker leaves behind, and hiding it would let the departure be
+approved while that job still sat in their name. The count answers *what does this person still
+hold*, not *what is still in the future*. A manager who thinks a stale item should simply die has
+[`POST /work-orders/{id}/cancel`](#post-apiv1work-ordersworkorderidcancel) already.
+
+#### The freeze is the part that is easy to miss — and it is time-aware now
+
+Opening a departure bars the dispatch engine **immediately, for the work the leave would strand**:
+an undated request bars everything (the `0043` behaviour); a dated one bars slots on or after the
+date *plus unscheduled work*, which can land anywhere; an approved departure awaiting its date bars
+everything. `departure_bars_work(staff, slot_start)` (`0045`) is the single predicate, wired into
+`dispatch_candidates`, `security_shift_candidates` and two `before insert or update` triggers —
+whose column lists include the slot columns, so an update that moves a booking past the barrier
+without touching its status is caught too. No other writer — a supervisor assigning by hand, a
+worker accepting an offer that predates their own resignation — can put barred work into a
+departing person's name.
+
+#### `POST /api/v1/worker/communities/{staffId}/departure`
+
+Ask the department's manager to release you, immediately or on a date. **Requires an authenticated
+service provider.** `201`.
+
+**Request** — `{ "reason": "Moving cities.", "effectiveAt": "2026-09-01T00:00:00Z" }`. Omit
+`effectiveAt` to ask to leave immediately; a past date is a `422` — immediate is spelled by
+omission, not by yesterday.
+
+**Response** — a `StaffDeparture`:
+
+```json
+{
+  "id": "…", "communityId": "…", "departmentId": "…", "departmentName": "Plumbing",
+  "staffAssignmentId": "…", "serviceProviderId": "…", "displayName": "Ravi Kumar",
+  "rank": "member", "jobTitle": "Plumber", "initiatedBy": "worker", "status": "pending",
+  "reason": "Moving cities.", "requestedEffectiveAt": "2026-09-01T00:00:00Z", "effectiveAt": null,
+  "decisionNote": null, "decidedAt": null,
+  "openCommitmentCount": 3, "conflictCount": 2, "createdAt": "…", "updatedAt": "…"
+}
+```
+
+**Addressed by roster row, not by community.** A service person hired by three societies is leaving
+exactly one of them and nothing in the session says which; deriving it from a default membership
+would resign them from whichever sorted first.
+
+**`initiatedBy` is `worker` whenever the row is the caller's own**, even when that caller also
+manages the department. Who is leaving decides this, not what else they are allowed to do.
+
+**The department's managers *and its supervisors* are notified.** Supervisors are notified because
+they are the people who will do the reassigning — and no existing helper could reach them, because a
+supervisor is a **rank on a roster row** (D3) rather than a membership role. `0043` adds
+`notify_department_leadership` for exactly that audience.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or that roster row is not yours |
+| 404 | `not_found` | Not registered as a service provider, or no such roster entry |
+| 409 | `conflict` | A departure is already open on that row, or the row is no longer active |
+| 422 | `request_validation_error` | A reason over 500 characters, or a leave date in the past |
+| 500 | `internal_error` | Unhandled |
+
+#### `DELETE /api/v1/worker/communities/{staffId}/departure`
+
+Withdraw the request and lift the freeze. **Requires an authenticated service provider.**
+
+**Response** — `{ "message": "Request withdrawn." }`
+
+**Keyed on the roster row rather than the departure id**, because the screen calling this is showing
+a community card and not a request: making cancel carry an id would mean it needed a read that
+request did not.
+
+**Withdrawing something that is not open is a `404`, not a reassuring `200`.** A success here would
+tell a provider their request was withdrawn when the manager had already approved it — and the next
+screen they see is the one that no longer lists the community.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or that roster row is not yours |
+| 404 | `not_found` | No open request on that row |
+| 409 | `conflict` | Already decided between the read and the write |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/departments/{departmentId}/departures`
+
+Who is leaving, and how much of their handover is left. **Requires `admin` or `manager`.**
+
+Optional `?status=pending`. Unfiltered it returns settled departures too, newest first, which is
+what makes it an answer to *why is this roster shorter than last month*.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not a manager of this department |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/departments/{departmentId}/departures/{departureId}`
+
+One departure with its handover list. **Requires `admin` or `manager`.**
+
+**Response** — a `StaffDeparture` plus `items`:
+
+```json
+{
+  "id": "…", "status": "pending", "openCommitmentCount": 2,
+  "items": [
+    { "kind": "work_order", "itemId": "…", "referenceId": "…",
+      "title": "Leaking tap in B-402", "startsAt": "…", "endsAt": "…", "status": "accepted" },
+    { "kind": "security_shift", "itemId": "…", "referenceId": "…",
+      "title": "Main gate", "startsAt": "…", "endsAt": "…", "status": "scheduled" }
+  ]
+}
+```
+
+**Jobs and shifts in one array**, told apart by `kind`, because a handover works through one list —
+a department running both would otherwise need a screen that knew in advance which halves it was
+going to get. `itemId` is what `POST .../reassign` takes; `referenceId` is the work order or the
+post behind it, for display and linking only.
+
+**Two database clients, in order, and the order is the authorisation.** The departure is read with
+the caller's own client so RLS decides whether they may see it; only then is the item list read
+through `staff_departure_items`, which is `service_role` only because it returns complaint titles.
+Reading the items first would hand a stranger a department's work list on a guessed uuid.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not a manager of this department |
+| 404 | `not_found` | No such departure, or the policy hides it |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/departments/{departmentId}/departures`
+
+Start a departure for somebody on the roster, immediately or for a date. **Requires `admin` or
+`manager`.** `201 Created`.
+
+**Request** — `{ "staffId": "…", "reason": "Contract ending.", "effectiveAt": "2026-09-01T00:00:00Z" }`
+(`effectiveAt` optional; omitted means immediately).
+
+The manager's half of the same process a worker starts from their own portal, through the same RPC.
+The person being moved off **is** notified; a worker opening their own is not, because they know.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a manager of this department |
+| 404 | `not_found` | No such roster entry |
+| 409 | `conflict` | A departure is already open, or the row is no longer active |
+| 422 | `request_validation_error` | No `staffId`, a reason over 500 characters, or a past date |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/departments/{departmentId}/departures/{departureId}/reassign`
+
+Hand one job or shift to somebody else. **Requires `admin`, `manager` or a supervisor of this
+department.**
+
+**Request** — `{ "kind": "work_order", "itemId": "…" }`, or with `"staffAssignmentId": "…"`.
+
+**Omitting `staffAssignmentId` is the ordinary case** and means *take the best candidate the dispatch
+ranking returns* — the same ranking auto-assignment uses, ordering by whoever already has a job in
+this community that day, then by who is least loaded, then by who is nearest. Naming somebody is the
+override for when a manager knows something the ranking does not. The API supplies no default,
+because a default here would stop the handover following that ranking at all.
+
+**The writer is `assign_work_order`, unchanged** — the same function the supervisor's own assign
+button calls, so it withdraws the incumbent, books the successor, writes the `job_assigned` complaint
+event, and notifies both the new worker and the resident. A second implementation beside it would be
+a second definition of *book this person on this job*.
+
+**A shift gets its own sweep.** `security_shift_candidates` applies the same exclusions and orders by
+**fewest shifts that week, then nearest** — adjacency does not transfer, because a guard's shifts are
+a rota rather than a route, and copying that sort key would be copying a clause that means nothing
+here.
+
+**An `offered` item is withdrawn rather than handed to a successor**, and the dispatch ping is
+re-armed. Nobody had accepted it — the same question is sitting in four other workers' feeds — and
+picking somebody would quietly turn a question into a booking that its holder was never asked about.
+
+**A supervisor may do this; only a manager may approve the departure.** Handover is the work; ending
+somebody's employment is a different decision.
+
+`409` when nobody in the department is free for that slot. The job is **not** cancelled and the
+departure is **not** approved anyway: the three real options — pick somebody, reschedule, cancel —
+are endpoints that already exist, and a manager looking at one unmovable job is the right place for
+this to stop.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a supervisor of this department |
+| 404 | `not_found` | No such departure, or that item is not in their name |
+| 409 | `conflict` | Nobody free for the slot, the departure is decided, or the successor is the person leaving |
+| 422 | `request_validation_error`, `invalid_item_kind` | A `kind` that is neither `work_order` nor `security_shift` |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/departments/{departmentId}/departures/{departureId}/decide`
+
+Approve — at the requested date or a later one — or reject. **Requires `admin` or `manager`.**
+
+**Request** — `{ "decision": "approve" }`, optionally with
+`"effectiveAt": "2026-09-15T00:00:00Z"` (the manager's later date; omitted means the requested one,
+or now), or `{ "decision": "reject", "note": "…" }`.
+
+**Approving picks the leave date and releases the conflicting work.** Booked items from the
+effective date onward — plus unscheduled ones — go back to the dispatch pool at **queue priority 1,
+just below urgent auto-assigns at 2**, so their reassignment starts today rather than on the
+leaver's last morning. Work before the date stays with the leaver. An immediate approval releases
+everything (stale past-dated items included) and removes them now; a dated one arms the timekeeper,
+which releases whatever is still booked at the date and then removes them. *Until 2026-08-10 this
+route refused approval with a `409` while anything was outstanding; that rule is overturned — a
+product-owner ruling, recorded at the top of this subsection.*
+
+**`approve` and `reject`, not `accepted` and `rejected`.** An application ends up in a *state*; a
+departure is an *act* somebody performs. Sharing one vocabulary between the two would mean one of
+them was named for the other's grammar.
+
+Removal — now or at the date — runs through
+[`remove_department_member`](#post-apiv1departmentsdepartmentidmembersstaffidremove) — the same
+function the direct removal route calls, so there is **one removal path and not two**. The direct
+route keeps its zero-commitment `409`; approval satisfies it by releasing first.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or not a manager of this department |
+| 404 | `not_found` | No such departure |
+| 409 | `conflict` | Already decided |
+| 422 | `request_validation_error`, `invalid_decision` | A decision that is neither `approve` nor `reject` |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/departments/{departmentId}/staff/{staffId}`
+
+One employee, as the employee page sees them. **Requires `admin` or `manager`.**
+
+**Response** — the roster row the roster tab already renders (same view, same shape — one mapping,
+not two that drift), plus `departure`: the pending request, or the approved one whose date has not
+arrived, or null.
+
+**`404` for a row in another department as much as for a missing one.** The path's department is a
+scope: a URL that renders somebody from a different department is a link that lies, and the
+schedule read below it would leak complaint titles across department lines.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not a manager anywhere |
+| 404 | `not_found` | No such roster row in this department, or the policy hides it |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/departments/{departmentId}/staff/{staffId}/schedule`
+
+One employee's jobs and shifts in a window. **Requires `admin` or `manager`.**
+
+`?from=…&to=…` (ISO instants, both optional). Finished work is kept — a schedule shows what
+happened, not only what looms — and **unscheduled jobs always appear**, whatever the window: work
+with no slot can land anywhere, which is also why a departure treats it as conflicting. Items are
+the handover shape (`kind`, `itemId`, `referenceId`, `title`, `startsAt`, `endsAt`, `status`).
+
+Two clients, in order, the [`GET .../departures/{id}`](#get-apiv1departmentsdepartmentiddeparturesdepartureid)
+authorisation: the roster row is read with the caller's own client first, so RLS decides whether
+they may see this person at all.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not a manager anywhere |
+| 404 | `not_found` | No such roster row in this department |
+| 422 | `request_validation_error` | `from`/`to` that are not instants |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/departments/{departmentId}/departures/{departureId}/coverage`
+
+The manager's match button. **Requires `admin` or `manager`.**
+
+For every item the departure would strand — from the requested (or decided) effective date onward —
+up to five people who could take it, ranked by the same sweep auto-assignment uses for jobs and by
+lightest week for shifts:
+
+```json
+[
+  { "kind": "work_order", "itemId": "…", "title": "Leaking tap in B-402",
+    "startsAt": "…", "status": "accepted",
+    "candidateCount": 2, "candidateNames": ["Asha Nair", "Vikram Shah"] },
+  { "kind": "security_shift", "itemId": "…", "title": "Main gate",
+    "startsAt": "…", "status": "scheduled",
+    "candidateCount": 0, "candidateNames": [] }
+]
+```
+
+**A `candidateCount` of zero is the answer "there are none"** — the doc's own words: *"If there are
+none, it says so."* It renders as a statement, never as an error, because the decision screen needs
+to show an unmovable item beside a movable one. An unscheduled job also counts zero: the sweep
+cannot place work with no slot, and saying so beats pretending.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not a manager anywhere |
+| 404 | `not_found` | No such departure, or the policy hides it |
+| 500 | `internal_error` | Unhandled |
+
+#### A bar ejects; it does not queue
+
+`POST .../blacklist` is the deliberate exception, and it is worth stating beside the rule it breaks.
+Somebody barred for misconduct keeping tomorrow's job until a supervisor has found five successors is
+the opposite of what a bar is for. So a bar **releases** rather than hands over: it withdraws their
+assignments, returns each work order to `offered` — which re-arms the dispatch ping by itself, so the
+engine finds the replacements — cancels their future shifts, and tells the department's leadership
+how many items moved. An orderly departure hands over; a bar ejects and the engine re-dispatches.
+
+### What `0035` changed underneath the department screens
+
+Three constraint corrections landed with this step and are visible through §8's endpoints.
+
+**`rank` is now `manager` | `supervisor` | `member`.** It was `head` | `member`, while this document
+§8 said `member` | `supervisor` | `head` and the ERD said `manager` | `supervisor` | `worker`.
+`supervisor` was advertised in the schema docstring and rejected by the CHECK constraint — an
+advertised rank no write could produce. **`head` remains the wire word** for the person who runs a
+department; they hold `rank = 'manager'`.
+
+**`departments.kind` is now `service` | `security`.** The CHECK allowed `internal` | `vendor` |
+`hybrid`, which nothing writes; Python and this document both validated `service` | `security`. The
+two sets did not intersect, so **every department create or update naming a kind was a `422`** until
+`0035`. Only requests omitting `kind` worked, which is why it went unnoticed.
+
+**`shift` is now `Day` | `Evening` | `Night` | `Full Day` | `Rotating`.** The CHECK allowed
+`Morning` | `Evening` | `Night` | `Full Day` while Python validated `Day` | `Evening` | `Night`.
+Three of the five words failed on one side or the other; only `Evening` and `Night` could be saved.
+
+All three were free to correct because no migration in this project has ever been applied to a
+database. They will not be free a second time.
+
+### Conversations — the guard that is not in the router
+
+Backed by migration `0038`. Four operations, and they are the only ones in this document with **no
+role guard at all**. That is the design, not an omission.
+
+The other two routers in this feature bracket the choice. A provider route is guarded by identity
+alone, because the caller may belong to no community yet. A department route is guarded by `admin` or
+`manager`, because every path under it names a department. A conversation is neither: it belongs to
+**one department and one provider**, so participation is a property of the row rather than of the
+caller's role, and there is no role a router could check that would answer it.
+
+So the authorization lives next to the data. `is_conversation_participant` is called by both read
+policies and both write functions, and it resolves to the same rule the rest of §18 uses —
+`can_manage_department`, plus that provider. **Supervisors are deliberately outside it**: this is the
+hiring conversation, and a supervisor's conversation is with a complainant about a job, which is
+`complaint_comments` and §7.
+
+The consequence is visible from outside, and it is the reason the status codes below are not
+symmetric:
+
+| The caller is not in the thread | The answer |
+|---|---|
+| `GET /conversations` | The thread is absent from the list |
+| `GET /conversations/{id}` | `404`, not `403` |
+| `POST /conversations/{id}/messages` | `403` |
+
+**A hidden thread is a `404` on purpose.** A `403` would confirm the thread exists, which would make a
+department's conversations with every other provider enumerable by walking ids and reading which
+refusals came back. The write is a `403` because by then the caller has named a thread they can
+already see.
+
+**There is one thread per (department, provider) pair, forever.** A unique constraint, not a
+convention — which is what lets `POST /conversations` be an upsert rather than a read-then-write.
+Two managers opening the same chat in the same second get the same thread; without the constraint
+they would get two, each holding half the conversation, and no query could put them back together.
+The thread outlives every application in it, so a provider who applied, was rejected, and applied
+again a year later is still talking in the same place.
+
+**There are no notifications on this surface, and no unread counts.**
+`notifications.recipient_membership_id` is not nullable, and the provider a manager most needs to
+reach — an invited one, not yet hired — holds no membership in that community. A notification path
+that worked for half the threads and silently not for the rest is worse than an honest one: the
+conversation list is the delivery mechanism until the worker portal subscribes to events.
+
+### `GET /api/v1/conversations`
+
+Every thread the caller is part of, most recent first. **Requires authentication only.**
+`?departmentId=` narrows it to one department.
+
+```json
+[
+  {
+    "id": "…", "communityId": "…", "communityName": "Green Meadows",
+    "departmentId": "…", "departmentName": "Plumbing", "departmentKind": "service",
+    "serviceProviderId": "…", "providerDisplayName": "Ravi Kumar",
+    "providerHeadline": "Plumber, 12 years", "providerProfileId": "…",
+    "lastMessageBody": "Can you start Monday?", "messageCount": 2,
+    "lastMessageAt": "2026-08-09T10:00:00Z", "createdAt": "2026-08-09T09:00:00Z"
+  }
+]
+```
+
+**One inbox, not one per community.** A service person hired by three societies talks to three
+departments and has one screen; omitting `departmentId` is what that screen calls.
+
+**`departmentId` narrows and cannot widen.** It filters on top of what the policy already allows, so
+a caller passing a department they have no part in gets an empty list rather than somebody else's
+threads. That is why it is safe to take from the query string at all.
+
+Both counterparts are named on every row rather than one "other side" field. Which of them is the
+other side depends on who is asking, and the caller knows that better than this endpoint does.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/conversations`
+
+Open the thread for a (department, provider) pair, or return the one that already exists.
+**Requires authentication only.**
+
+```json
+{ "departmentId": "…", "serviceProviderId": "…" }
+```
+
+Responds `201` with the full thread — the same shape as the read below.
+
+**Idempotent, and `201` either way.** This is what a "Message" button calls every time it is pressed,
+rather than something a client must call once and remember. The response carries the messages because
+a thread that already existed already has some, and the caller is about to render them.
+
+Either side may open it: a manager sizing up a candidate, or a provider asking a question before
+applying. **Anyone else gets a `403`** — creating the thread would otherwise be exactly how a stranger
+joined it, which is why this is the one operation in the group that refuses by name instead of hiding.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the caller is neither side of this pair |
+| 404 | `not_found` | No such department, or no such service provider |
+| 422 | `validation_error` | Missing ids |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/conversations/{conversationId}`
+
+One thread and its messages, oldest first. **Requires authentication only.**
+
+```json
+{
+  "conversation": { "id": "…", "departmentName": "Plumbing", "…": "…" },
+  "messages": [
+    {
+      "id": "…", "conversationId": "…", "body": "Can you start Monday?",
+      "authorSide": "department", "authorName": "Priya Nair",
+      "authorProfileId": "…", "createdAt": "2026-08-09T10:00:00Z"
+    }
+  ]
+}
+```
+
+**One response rather than two round trips**, because "a thread with no messages" and "a thread you
+cannot see" are different answers — `200` with an empty list, and `404` — and splitting the read
+would deliver them separately.
+
+**`authorSide` is what a renderer switches on, not the author's id.** The two sides are stored in two
+different tables — a membership and a provider row, because an invited provider holds no membership
+in the community yet — and the view collapses that into one word so no client has to know it. Which
+side a message is from is decided by the *thread*, so a provider who has since been hired, and who
+now holds both a membership and a provider row, still reads as `provider` in their own thread.
+
+Author names are resolved as they are now, not as they were when the message was written — the same
+convention complaint comments use.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 404 | `not_found` | No such conversation, or the policy hides it |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/conversations/{conversationId}/messages`
+
+Append one message. **Requires authentication only** — and participation, which the database checks.
+
+```json
+{ "body": "Monday works." }
+```
+
+Responds `201` with the stored message.
+
+**The stored message, not the request.** The body is trimmed and the author's name and side are
+resolved server-side, so a client that optimistically appended its own request to the list would be
+showing something nobody else sees.
+
+`body` is 1–4000 characters, matching the CHECK constraint exactly, so an empty or over-long message
+is a `422` naming the field rather than a `422` naming a constraint.
+
+**The other side is notified, and the two directions are addressed differently.** Added by `0041`;
+`0038` shipped this endpoint silent, and the reason it stayed silent for three build steps is the
+reason `0041` exists at all — the side most in need of telling is the provider, and a provider who
+has not been hired holds no membership for a notification to be addressed to.
+
+- **Provider → department:** `notify_member`, once for each active membership `can_manage_department`
+  would accept — the community's admins, plus managers whose membership names that department or
+  names no department at all.
+- **Department → provider:** `notify_profile`, because that side may belong to no community.
+
+Kind `conversation.message` both ways. Self-notification is impossible by construction rather than by
+an exclusion argument: the author is one side of a two-sided thread and every recipient is the other.
+The body carries a 140-character preview — a push that says only *"new message"* makes the reader
+open the app to find out whether it mattered, and §5.3's absolute rule is about a *secret* in a
+payload, which a message somebody typed to you is the opposite of.
+
+**A profile-addressed notification produces no SSE frame**, because `sse_events.community_id` is
+`not null` and a person with no membership has no community for the frame to belong to. The feed and
+Web Push carry it, which is what the portal reads.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the caller is not part of this thread |
+| 404 | `not_found` | No such conversation |
+| 422 | `validation_error` | Empty or over-long body |
+| 500 | `internal_error` | Unhandled |
+
+### Work orders — the state machine, before there is an engine to drive it
+
+Backed by migration `0036`. Ten operations, and they are the first in this section that a **resident**
+can feel: a complaint stops being a status and becomes a person arriving at an hour.
+
+This un-parks the second half of `CONFLICT_RESOLUTIONS.md` **R16**, which said of `work_orders` and
+`work_order_assignments` — *"tag each `Phase 2 — no v1 endpoint, no v1 RLS policy`, and build nothing
+against them."* Both tables have existed since `0001` with no index, no policy, no function and no
+Python reference. They are extended here rather than replaced, exactly as `0019` extended
+`departments`.
+
+#### What is deliberately absent
+
+**No timers, no queue and no dispatcher — in `0036`.** They arrived immediately afterwards in
+`0037`; see *The engine* below. `0036` deliberately shipped every transition and not one thing that
+makes a transition happen on its own, because building half a queue would have left rows nothing
+reads and a loop nothing services — the failure mode where a feature looks present and is not.
+
+The consequence is the rule that step was arranged around, and it outlived the step: **every
+transition the engine makes automatically is reachable by hand first.** A state machine whose only
+exit from a state is a background job is one nobody can test, and the first time it wedges there is
+no lever to pull. That is why `POST /work-orders/{id}/assign` accepts a job still in
+`awaiting_resident` — it was the hand-operated form of the resident timeout before `0037` existed,
+and it is now the manual override for the same transition.
+
+**Three statuses are declared and not yet reachable.** `in_progress`, `completed` and `failed` are in
+the CHECK constraint and nothing writes them: they belong to the worker, and the worker's endpoints
+are the next step but one. They are declared now because the vocabulary is one line and splitting it
+across two migrations would mean dropping and re-adding a constraint to add three words.
+
+**No proposed-slots column and no slot-options table.** A supervisor proposes *one* time; the
+resident confirms or declines; a different time is a reschedule, which the supervisor already has. No
+`jsonb` list, no table holding two rows that are read once and discarded. If it later turns out
+residents must choose between alternatives, that is a table then — and it will be a table with a
+reason.
+
+#### The lifecycle
+
+| Status | Means | Reached by |
+|---|---|---|
+| `draft` | Raised, nothing proposed. The complaint is still a conversation. | `POST /complaints/{id}/work-orders` with no slot; a resident declining |
+| `awaiting_resident` | A time was proposed for a job at somebody's home. | Creating or rescheduling with a slot, `subjectKind: resident` |
+| `offered` | A time is settled and nobody holds the job. | The resident confirming; creating with a slot on a `facility` job |
+| `scheduled` | Somebody is booked for that hour. | `POST /work-orders/{id}/assign` |
+| `cancelled` | Called off, with a reason. Terminal. | `POST /work-orders/{id}/cancel` |
+| `in_progress` · `completed` · `failed` | The worker's own transitions. | *Not yet reachable — see above* |
+
+**A complaint may carry several work orders**, and that is why the assignment is not columns on
+`complaints`. A failed visit is rescheduled and a reopened complaint goes to a different supervisor;
+both are a second job. Assignee columns on `complaints` would have been the smaller change and would
+also have closed `DECISIONS_NEEDED` **B2**, but one complaint could then only ever have one scheduled
+visit — and the second visit is the one that matters.
+
+#### One asymmetry, stated because it is the only one
+
+The resident may **confirm** a proposed time and may **decline** it. They may not move it afterwards.
+**The reschedule after assignment is the supervisor's alone**, because by then it is a change to two
+people's days and only one of them is on that screen. A resident who needs a different hour says so
+in a comment, and the supervisor reschedules.
+
+#### The constraint this step exists to carry
+
+```sql
+exclude using gist (
+  staff_assignment_id with =,
+  tstzrange(scheduled_start_at, scheduled_end_at, '[)') with &&
+) where (status = 'accepted' and scheduled_start_at is not null)
+```
+
+Drawn in `erd/homebandhu.dbml:614` since the ERD was written and never built. A person cannot be in
+two places at once, and the schema is where that is said. It is the same construct `amenity_bookings`
+has carried since the baseline — the same problem gets the same solution rather than a new one — and
+it needs `btree_gist`, which is not a new requirement: `0001` both installs the extension and
+declares an exclusion constraint that cannot exist without it.
+
+**The `where` clause is the half worth reading twice.** It covers only `accepted` rows, because
+`dispatch_ping_candidates` offers one slot to several workers and lets exactly one take it.
+Constrain the offers and the dispatcher could only ever ask one person at a time, which defeats the
+point of asking.
+
+A double-booking is refused **twice**: `assign_work_order` checks for an overlap and raises `HB409`
+naming the worker, and the constraint refuses it again if a concurrent request beat the check.
+`23P01` now maps to `409` alongside `23505`, so a race and a mistake are indistinguishable to a
+client — which is correct.
+
+#### `POST /api/v1/complaints/{complaintId}/work-orders`
+
+Supervisor triage. **Requires ADMIN, MANAGER, WORKER or SECURITY** — and, in the database, that you
+supervise the department.
+
+```json
+{
+  "departmentId": null,
+  "skillId": null,
+  "subjectKind": "resident",
+  "locationText": "Flat B-402",
+  "scheduledStartAt": "2026-08-12T10:00:00Z",
+  "scheduledEndAt": "2026-08-12T11:00:00Z",
+  "note": "Bringing a replacement cartridge."
+}
+```
+
+Responds `201` with the work order.
+
+**Omitting the slot is the other half of the fork, not an incomplete request.** A supervisor who
+wants to ask the resident something first creates a `draft` and the conversation carries on in `POST
+/complaints/{id}/comments` exactly as it does today. Nothing is proposed and nobody is notified.
+Supplying a slot proposes a visit — `awaiting_resident` plus a notification on a `resident` job, and
+straight to `offered` on a `facility` one, because there is nobody whose door is being knocked on.
+
+**`departmentId` and `skillId` are both derived when omitted** — the department from the complaint,
+the skill from the category. `0034` gave `complaint_categories` a `skill_id` precisely so nobody has
+to answer *"which trade is this"* twice.
+
+**`priority` is not a field.** A job's urgency *is* the complaint's urgency and is inherited at
+creation. This also corrects a third vocabulary collision found in passing: `work_orders.priority`
+defaulted to `normal` and was unconstrained, while `complaints.priority` is checked against `low` |
+`medium` | `high`. Two value sets for one name is the same defect `0031` refused when it declined to
+carry two *names* for one idea.
+
+**The router guard is coarse and is meant to be.** A department supervisor holds a `worker` membership
+with the `supervisor` *rank* on their roster row — rank is not role, and `0035` settled that
+deliberately — so the only role filter that admits every legitimate caller admits every worker too.
+The real check is `can_supervise_department(uuid)` inside Postgres, applied by every RPC on this
+surface. An id arriving in a URL is never an authorization decision.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed; you do not supervise that department; or it belongs to another community |
+| 404 | `not_found` | No such complaint |
+| 409 | `conflict` | The complaint names no department and none was supplied |
+| 422 | `validation_error` | Half a slot, an end before its start, or an unknown `subjectKind` |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/complaints/{complaintId}/work-orders`
+
+Every job raised against one complaint, newest first. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+A read rather than a derivation from the timeline. `complaint_events` records *that* a job was
+scheduled, which is the right shape for a narrative and the wrong one for *"is anybody coming on
+Tuesday"*.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not staff in any community |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/departments/{departmentId}/work-orders`
+
+The department's queue. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+Soonest first, with the unscheduled underneath — a draft with no time is not the most urgent thing on
+the screen, it is the thing nobody has decided about yet. Filter with `?status=awaiting_resident` for
+the jobs waiting on somebody else, or `?status=draft` for the ones waiting on you.
+
+The filter narrows on top of the policy and never decides visibility: a supervisor asking for another
+department's queue gets an empty list from `can_read_work_order`, not somebody else's work.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not staff in any community |
+| 422 | `validation_error` | Over-long `status` |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/work-orders/{workOrderId}`
+
+One job with its assignment history. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+```json
+{
+  "id": "…",
+  "status": "scheduled",
+  "priority": "medium",
+  "subjectKind": "resident",
+  "complaintTitle": "Kitchen tap leaking",
+  "departmentName": "Plumbing",
+  "skillName": "Plumber",
+  "locationText": "Flat B-402",
+  "scheduledStartAt": "2026-08-12T10:00:00Z",
+  "scheduledEndAt": "2026-08-12T11:00:00Z",
+  "respondBy": null,
+  "assigneeName": "Ravi Kumar",
+  "staffAssignmentId": "…",
+  "assignments": [
+    { "id": "…", "status": "accepted",  "workerName": "Ravi Kumar", "isAutoAssigned": false },
+    { "id": "…", "status": "withdrawn", "workerName": "Anil Das",   "isAutoAssigned": false }
+  ]
+}
+```
+
+**`assignments` is a history, not a holder.** Withdrawn and declined rows stay, because *"we sent Ravi
+and he could not get in, so we sent Anil"* is the question a supervisor actually asks. The current
+holder is the top-level `assigneeName`, which is null while nobody has it.
+
+**Four populations can read this, for four different reasons** — the community's admins, the
+department's supervisors, the worker holding an assignment, and the resident whose complaint it
+answers. That rule is `can_read_work_order` in `0036` §4, stated once and used by both RLS policies
+and every endpoint. A job the policy hides is a **`404`, not a `403`**, for the same reason a hidden
+conversation is: refusals must not be enumerable.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not staff in any community |
+| 404 | `not_found` | No such work order, or the policy hides it |
+| 500 | `internal_error` | Unhandled |
+
+#### `PATCH /api/v1/work-orders/{workOrderId}`
+
+Edit what the job is. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+```json
+{ "skillId": "…", "subjectKind": "facility", "locationText": "Basement pump room", "priority": "high" }
+```
+
+**Not the time and not the state.** Those have their own routes because each carries a rule and a
+notification — a reschedule moves a worker's booking and tells two people, a cancellation frees a
+slot — and a general-purpose `PATCH` is precisely the shape that skips them. The request model has no
+field for either, so sending one changes nothing rather than failing loudly, which is the behaviour a
+client can rely on.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or you do not supervise that department |
+| 404 | `not_found` | No such work order |
+| 409 | `conflict` | The job is completed or cancelled |
+| 422 | `validation_error` | Unknown `subjectKind` or `priority` |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/work-orders/{workOrderId}/assign`
+
+Book somebody, and book their hour. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+```json
+{
+  "staffAssignmentId": "…",
+  "scheduledStartAt": "2026-08-12T10:00:00Z",
+  "scheduledEndAt": "2026-08-12T11:00:00Z"
+}
+```
+
+Responds `200` with the job and its assignment history.
+
+**Writes an `accepted` assignment, not an offer.** A supervisor naming a person is a decision, not a
+question; the offer-and-wait path belongs to `0037`. Until that exists, this is also the manual form
+of it.
+
+**The slot is optional and defaults to the job's own.** Sending one assigns and reschedules in a
+single write, which is the common case. What is *not* allowed is assigning a job that has no time at
+all: a booking with no hour is a booking the exclusion constraint cannot see, because the constraint
+is partial on `scheduled_start_at is not null`. That is a `409` — *"Schedule this job before
+assigning it."*
+
+**Any previous acceptance is withdrawn, not deleted.** One holder at a time, and the record of who
+was booked and unbooked survives.
+
+This is the `409` **this step exists to produce**. `0036` refuses a double-booking by name —
+*"Ravi Kumar is already booked during that time."* — and the constraint refuses it again underneath.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or you do not supervise that department |
+| 404 | `not_found` | No such work order, or no such roster entry |
+| 409 | `conflict` | Already booked across that slot · not on this roster · the job has no time yet · the job is closed |
+| 422 | `validation_error` | A backwards slot |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/work-orders/{workOrderId}/reschedule`
+
+Move the visit. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+```json
+{ "scheduledStartAt": "…", "scheduledEndAt": "…", "note": "Resident asked for the afternoon." }
+```
+
+Both ends are required — this is not a partial edit, because the assignment's range moves with the
+job and a range needs two ends.
+
+**Where it lands depends on whether anybody holds it.** A job already assigned stays `scheduled` and
+the resident is *told*; sending it back to `awaiting_resident` would strand a booked worker on an
+answer that may never come. A job nobody holds returns to `awaiting_resident` on a `resident` job —
+the resident agreed to a different hour, so they are asked again — or to `offered` on a `facility`
+one.
+
+The accepted assignment moving is what re-checks the overlap constraint: putting a booked worker onto
+an hour they already have is the same double-booking as assigning them there in the first place.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or you do not supervise that department |
+| 404 | `not_found` | No such work order |
+| 409 | `conflict` | The job is closed, or the worker is booked across the new time |
+| 422 | `validation_error` | A missing or backwards slot |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/work-orders/{workOrderId}/cancel`
+
+Call the job off. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
+
+```json
+{ "reason": "Resident is away until the 20th." }
+```
+
+Terminal, **and it takes the assignment with it**. A cancelled job that left an accepted assignment
+standing would block an hour in a worker's calendar for work nobody is going to do — the kind of bug
+that surfaces as *"the dispatcher says everyone is busy"*.
+
+`reason` is required and reaches both the worker and the resident in a notification. A cancellation
+nobody can explain is the one that produces the phone call this feature exists to prevent.
+
+**A `POST` and not a `DELETE`**, for the two reasons `POST .../remove` gives in §18's hiring
+subsection: nothing is deleted, and `DELETE` cannot carry a reason that must not travel in a query
+string.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or you do not supervise that department |
+| 404 | `not_found` | No such work order |
+| 409 | `conflict` | The job is already completed or cancelled |
+| 422 | `validation_error` | Missing or too-short `reason` |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/complaints/{complaintId}/schedule-request`
+
+The visit proposed for my complaint. **Requires RESIDENT.**
+
+```json
+{
+  "workOrderId": "…",
+  "complaintId": "…",
+  "status": "awaiting_resident",
+  "departmentName": "Plumbing",
+  "skillName": "Plumber",
+  "locationText": "Flat B-402",
+  "scheduledStartAt": "2026-08-12T10:00:00Z",
+  "scheduledEndAt": "2026-08-12T11:00:00Z",
+  "respondBy": "2026-08-11T10:00:00Z",
+  "awaitingResponse": true,
+  "assigneeName": null
+}
+```
+
+**Not only the visits awaiting an answer.** A resident who has already confirmed still needs to see
+the time and, once somebody is booked, the name — and a screen that had to call a second endpoint for
+that would show the confirmation blink out of existence the moment they pressed the button.
+`awaitingResponse` is what tells the screen which of the two it is looking at.
+
+**This returns the newest *live* job**, not simply the newest. A complaint may carry several over its
+life, and returning the newest would let a cancelled retry hide the visit that replaced it.
+
+`respondBy` is when the association stops waiting and schedules anyway. It is populated the moment a
+time is proposed, so the deadline is visible from the first screen rather than arriving as a surprise.
+
+**A narrower projection than `GET /work-orders/{id}` on purpose.** It carries when, where and who; it
+does not carry the supervisor's membership id, the skill routing or the failed-attempt count, which
+are the association's business *about* the resident rather than theirs.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `forbidden` | Not a resident of this community |
+| 404 | `schedule_request_not_found` | No live job — nothing proposed, or everything proposed was cancelled |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/complaints/{complaintId}/schedule`
+
+Confirm or decline a proposed visit. **Requires RESIDENT.**
+
+```json
+{ "response": "confirmed", "note": null }
+```
+
+Responds `200` with the re-read `ScheduleRequest`, so a screen sees the answer land rather than
+assuming it.
+
+**Neither resident route takes a work-order id.** A resident should not have to have read one to
+answer a question that was put to them, and an endpoint that accepted one would have to decide what
+happens when it names a different complaint's job. Resolving the job from the complaint makes that
+question unaskable.
+
+**Resident-only, matching the precedent §14 set** for reopening and confirming a resolution: not
+because an admin could not press the button, but because this is the resident's verdict about their
+own home, and an admin answering for them is a record that says something untrue. The database
+refuses it too — `respond_to_work_order_schedule` checks `is_own_membership` against whoever raised
+the complaint — so the role guard is the early, clear error rather than the boundary.
+
+**Declining is not a counter-proposal**, and clears the time with it: leaving a declined slot on the
+row would leave a calendar entry for a visit nobody agreed to. Either way the supervisor who proposed
+it is notified *directly* rather than the whole admin list — they asked the question, and they are the
+one who has to act on the answer.
+
+**You may answer once.** Once the job has left `awaiting_resident` — you confirmed, or the supervisor
+assigned somebody rather than keep waiting — this is a `409`.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the visit was not proposed to you |
+| 404 | `schedule_request_not_found` | No live job on this complaint |
+| 409 | `conflict` | The visit is no longer waiting on you |
+| 422 | `validation_error` | `response` was not `confirmed` or `declined` |
+| 500 | `internal_error` | Unhandled |
+
+#### The timeline learns five words, and no migration was needed
+
+`complaint_events.event_type` is `text` with **no CHECK constraint** (`0001`:70), so `job_created`,
+`job_scheduled`, `job_declined`, `job_assigned` and `job_cancelled` were added by teaching
+`_EVENT_LABELS` and `_event_message` in `resident_complaints_service.py` and nowhere else. The
+existing nine event types live in the same two places.
+
+That is why there is no `work_order_events` table: it would need its own view, its own renderer and
+its own RLS, and would split one complaint's story across two timelines.
+
+### The engine — `0037`, and why it adds no endpoints
+
+`0037_dispatch_engine.sql` is the only migration in this feature that contributes **zero
+operations** to the API. It has no router, no service and no schema module, and that is what it is:
+a table of due times, one trigger, and four functions that Postgres runs on its own.
+
+`dispatch_tasks` holds every future action the engine intends to take, one row each — which makes
+the whole of its behaviour inspectable with a single `select`, and means a restart loses nothing.
+`app/core/dispatcher.py` claims what is due every fifteen seconds and calls `fire_dispatch_task`;
+**Python owns only *when***. Every decision — who is free, who gets the offer, what the resident is
+told — happens in SQL, because every notification in this product is written inside the transaction
+that caused it and a dispatcher deciding things in Python would have to give that up.
+
+Four kinds of task, and since `0039` all four have handlers:
+
+| Kind | Armed when | What it does |
+|---|---|---|
+| `resident_timeout` | a visit is proposed for a home | Proceeds with the visit and tells the resident. **Does not close the complaint** |
+| `ping` | a job reaches `offered` | Offers it to the best few candidates, then arms `auto_assign` for 30 minutes out |
+| `auto_assign` | a `high` priority job reaches `offered`, or 30 minutes after a ping | Books the top candidate outright and tells both sides |
+| `failed_visit_escalation` | a worker reports a failed visit — two hours later | Tells the department's manager, or the community's admins where there is no manager |
+
+The escalation's idempotency check is the one worth reading, because it is **not** a status check. A
+supervisor answering a failed visit raises a *new* work order rather than editing the failed one, so
+the failed one stays `failed` for good and a status check would escalate it again on every
+redelivery. What it checks instead is whether a newer work order exists on the same complaint — if
+one does, a human has already dealt with it.
+
+**Nothing enqueues a task by hand.** One `after insert or update` trigger on `work_orders` keeps the
+queue in agreement with the status: `awaiting_resident` arms the timeout, `offered` arms the ping or
+the auto-assign, `failed` closes everything and arms the escalation, and *anything else closes every
+open task on the job*. That last clause is why
+`cancel_work_order` did not have to learn what a dispatch task is, and why a future write path
+cannot forget to arm one.
+
+**It is at-least-once, which is the reverse of what push chose.** `app/core/push.py` marks a
+notification sent *before* sending it, so a crash loses a buzz rather than repeating one — right for
+something that vibrates a phone at 3am, wrong here, because a dropped `resident_timeout` is a
+complaint left waiting forever with nobody coming. So the claim takes a five-minute lease, a task can
+fire twice, and every firing function re-reads the job and returns without writing if the world has
+already moved on.
+
+Two simplifications are worth naming because the source document asks for something else. Ordering
+candidates *"within 1 km of an adjacent job"* becomes **"already has a job in this community that
+day"** — no work order carries usable coordinates, and inside one complex every job is a two-minute
+walk. And a resident who never answers has their **visit go ahead**, not their complaint
+auto-resolved: closing a complaint the resident never saw is a product decision, not one a background
+job should make quietly at 2am.
+
+The sweep also excludes anybody who has **declined this particular job**. Without that, the ordinary
+sequence produces the worst outcome the engine can produce: five workers are pinged, one declines,
+thirty minutes later the auto-assign asks for the single best candidate — and the decliner is still
+in the set, still ranks first on adjacency and load, and finds the job booked in their name.
+
+### The worker's portal — `0039`, and why none of it has a role guard
+
+Fourteen operations, and the notable thing about all of them is the guard: **authenticated only,
+with no membership requirement** — the same as registration and hiring, but here it is a correction
+rather than a convenience.
+
+`require_membership_role("worker", "security")` reads the role off the caller's *default*
+membership. This is the one surface in the product that is deliberately cross-community: a plumber
+hired by three societies and living in a fourth has a default membership of `resident`, and that
+guard would refuse them their own job list — silently, and only for the people the feature exists
+for. Widening it to *any* worker membership would still refuse a department manager who is on a
+roster and has been offered a job.
+
+The question a guard would be reaching for is *does this caller hold this assignment*, which is not
+a question about roles at all. It has one implementation — `is_own_staff_assignment` in `0036` — and
+the three views and eight functions behind these routes all use it. **No route here takes a worker
+id, a provider id or a community id**, so there is nothing a caller could send that would widen what
+comes back.
+
+That is also why every refusal on this surface is a `404` rather than a `403`. A job the caller holds
+no assignment on does not exist as far as these endpoints are concerned; a `403` would confirm that
+the id is real.
+
+#### `GET /api/v1/worker/snapshot`
+
+Everything the worker dashboard renders, in one call. **Requires authentication only.**
+
+```json
+{ "provider": { "id": "…", "displayName": "Ravi Kumar", "isAvailable": true, … },
+  "communities": [ { "staffAssignmentId": "…", "communityName": "Green Meadows", … } ],
+  "pendingOffers": [ { "assignmentId": "…", "complaintTitle": "Leaking tap", … } ],
+  "today": [ … ], "nextJob": { … }, "openJobCount": 3,
+  "isAvailable": true, "unreadNotifications": 4,
+  "generatedAt": "2026-08-10T18:02:11Z" }
+```
+
+**A null `provider` is not an error, it is the empty state.** A caller who has never registered gets
+a snapshot with nothing in it rather than a `404`, and a registered caller employed nowhere gets an
+empty `communities` — so the dashboard decides between *show the registration form*, *show the
+community search* and *show the week* from one response instead of interpreting two failures.
+`GET /service-providers/me` still `404`s, because there the question being asked is different.
+
+`today` and `nextJob` answer different questions and both are needed: at six in the evening today's
+list is history, and what a worker wants then is tomorrow morning.
+
+`unreadNotifications` counts across **every** community the caller works in. It is the one place a
+user can see the multi-community seam this feature added to `app/api/deps.py`.
+
+Sequential reads, so `generatedAt` is when the payload was assembled rather than when any part of it
+was true — the same honesty `GET /resident/snapshot` prints about itself.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/worker/jobs`
+
+Every offer and booking the caller holds, soonest first. **Requires authentication only.**
+
+`?assignmentStatus=offered` · `?status=in_progress` · `?from=` · `?to=`
+
+```json
+[{ "assignmentId": "…", "workOrderId": "…", "assignmentStatus": "offered",
+   "workOrderStatus": "offered", "priority": "medium", "subjectKind": "resident",
+   "scheduledStartAt": "2026-08-11T09:00:00Z", "scheduledEndAt": "2026-08-11T10:00:00Z",
+   "isAutoAssigned": false, "communityId": "…", "communityName": "Green Meadows",
+   "departmentName": "Plumbing", "complaintTitle": "Leaking tap",
+   "skillName": "Plumbing", "locationText": "B-204", "failedAttemptCount": 0 }]
+```
+
+**Two status filters, because there are two states and they answer different questions.**
+`assignmentStatus` is *what is being asked of me*; `status` is *what is happening to the job*. A
+withdrawn assignment on a job that went ahead without you is visible under the first and invisible
+under the second, which is exactly the distinction a worker wondering "what happened to that one" is
+making.
+
+The `assignmentId` is the row's identity rather than the work order's: two workers can hold two
+assignments on one job — one accepted, one withdrawn — and only one of them is the caller's.
+
+Unscheduled rows sort **last**. An offer with no time yet is not the most urgent thing on the screen.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 422 | `validation_error` | A malformed `from` or `to` |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/worker/jobs/{workOrderId}`
+
+One job, with what somebody needs in order to turn up at it. **Requires authentication only.**
+
+Adds to the list shape: `complaintDescription`, `residentName`, `residentPhoneE164`,
+`residentUnitCode`.
+
+Those four are on this route and not on the list, deliberately. A worker on their way to a flat needs
+all of them; a worker scrolling a month of finished jobs needs none, so the list query does not
+select them. They are null on a `facility` job, where there is no door and nobody to meet.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 404 | `worker_job_not_found` | No such job, **or** not one of yours |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/worker/jobs/{workOrderId}/accept`
+
+Take an offered job, and book the hour. **Requires authentication only.** No body.
+
+**This is the race the whole feature has been building toward.** `dispatch_ping_candidates` offers
+one job to five people on purpose, so two of them tapping this within the same second is the ordinary
+case and not the edge one. The RPC locks the work order before it reads anything: the second caller
+waits, re-reads a job that now says `scheduled`, and gets *somebody has already taken this job*
+rather than an exclusion-constraint violation. `work_order_assignments_no_overlap` is still
+underneath and still the guarantee; it is just not the thing anybody should have to read.
+
+Accepting withdraws every other offer on the job — withdrawn, not deleted, so *"we asked five and
+Anil took it"* survives. A second tap by the same worker is **not** a conflict: they already hold it,
+which is the answer they were asking for.
+
+It also retires the pending `auto_assign` task, through `0037`'s trigger and without this endpoint
+naming the queue. That is why "somebody already took it" needs no second mechanism.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair |
+| 404 | `worker_job_not_found` | No such job, or you were never offered it |
+| 409 | `conflict` | Somebody took it · the offer is closed · you are already booked then |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/worker/jobs/{workOrderId}/decline`
+
+Say no to an offer. **Requires authentication only.**
+
+```json
+{ "reason": "Already committed that morning" }
+```
+
+**Nothing else happens, and that is the design.** The job stays `offered`, the other four still hold
+their offers, and the `auto_assign` armed alongside the ping is still due in thirty minutes. What
+changes is that the dispatch sweep now excludes the caller **from this job** — a worker who declined
+and was then auto-assigned the same job anyway is the outcome that would teach everybody to ignore
+the button. The exclusion is scoped to the work order, not to the person: next week's job is still
+theirs to be offered.
+
+`reason` is optional here and required on `/unable`, and the asymmetry is the point. A worker who was
+asked and is not free owes nobody an explanation; a worker who went and could not do the work is
+reporting something the next person has to act on.
+
+**An accepted job cannot be declined.** By then a resident has been told a name and an hour, and
+getting out of it is `/unable` or a call to the supervisor — both of which tell somebody.
+
+No `complaint_events` row is written. The resident does not need to learn that five people were asked
+and one said no; the assignment history records it for the supervisor, who is who it is about.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair |
+| 404 | `worker_job_not_found` | No such job, or you were never offered it |
+| 409 | `conflict` | The offer is no longer open — including because you accepted it |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/worker/jobs/{workOrderId}/start`
+
+The worker is on site. **Requires authentication only.** No body.
+
+Moves the job to `in_progress`, writes a `job_started` event and notifies the resident. Idempotent: a
+second tap on a job already in progress is a client that lost a response, not an error.
+
+The notification is one D9's amendment permits — this is not a progress bar ticking, it is somebody
+about to ring the doorbell.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair |
+| 404 | `worker_job_not_found` | No such job, or you do not hold it |
+| 409 | `conflict` | The job is not `scheduled` |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/worker/jobs/{workOrderId}/complete`
+
+The work is done. **Requires authentication only.**
+
+```json
+{ "notes": "Replaced the washer and the cartridge." }
+```
+
+**The complaint stays open.** Those look like one act and are not: a resident whose tap still drips
+after the visit has a complaint that is emphatically not resolved, and `POST
+/complaints/{id}/resolution` already gives them the button that says so. A worker's word is evidence,
+not a verdict.
+
+Accepted from `scheduled` as well as `in_progress`, and not out of leniency: somebody who fixed the
+tap and forgot to press *start* has done the work, and an API that refuses to record it teaches them
+the app is lying about what happened.
+
+`notes` reaches the resident in the notification, so it is written to be read by them rather than
+filed.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair |
+| 404 | `worker_job_not_found` | No such job, or you do not hold it |
+| 409 | `conflict` | The job is cancelled, failed or already closed |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/worker/jobs/{workOrderId}/unable`
+
+The visit could not be completed. **Requires authentication only.**
+
+```json
+{ "reason": "Nobody was home at the agreed time" }
+```
+
+`reason` is **required**. *"Could not be done"* with nothing after it is the report that guarantees a
+second wasted visit: nobody downstream can tell *nobody was home* from *the part is out of stock*,
+and those need opposite responses. It reaches the resident too, because half the reasons a visit
+fails are things only they can fix.
+
+Counts the attempt (`failedAttemptCount`), closes the assignment as `failed`, and moves the job to
+`failed` — which is what arms `failed_visit_escalation` two hours out. If nobody has raised a
+replacement job by then, the department's manager is told, or the community's admins where the
+department has no manager.
+
+The answer to a failed visit is a **new** work order rather than an edit to this one, which is why
+the job stays `failed` afterwards and why the escalation asks whether a newer job exists rather than
+whether this one moved.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair |
+| 404 | `worker_job_not_found` | No such job, or you do not hold it |
+| 409 | `conflict` | The job is not `scheduled` or `in_progress` |
+| 422 | `validation_error` | No reason, or one under three characters |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/worker/calendar`
+
+Everything occupying the caller's time in one range, earliest first. **Requires authentication
+only.** `?from=` and `?to=` are both **required**.
+
+```json
+[{ "kind": "job", "id": "assignment-id", "startsAt": "2026-08-12T09:00:00Z",
+   "endsAt": "2026-08-12T10:00:00Z", "title": "Leaking tap", "subtitle": "B-204",
+   "communityId": "…", "communityName": "Green Meadows",
+   "workOrderId": "…", "status": "scheduled" },
+ { "kind": "unavailable", "id": "block-id", "startsAt": "2026-08-13T00:00:00Z",
+   "endsAt": "2026-08-15T00:00:00Z", "title": "Family wedding", "status": "provider" }]
+```
+
+**One list, two kinds.** A calendar that returned jobs and made the client fetch leave separately
+would draw a worker as free on a day they had booked off, for as long as the second request took to
+arrive. It is a merge in the service rather than a union in SQL, because both halves are already
+views with their own definition of *mine* and a third statement that had to agree with both is one
+more place for that to drift.
+
+Both bounds are required. An unbounded calendar read is a request for everything a worker has ever
+done, which no screen wants and which gets slower every month.
+
+Declined offers and cancelled jobs are **not** here. A calendar is a claim about where somebody will
+be, and a job they turned down is not one.
+
+No colours. `communityId` is on every job entry and plan D15 derives the colour from a hash of it, so
+the same society is the same colour on every device with nothing stored and nothing to configure.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 422 | `validation_error` | A missing or malformed bound |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/worker/unavailability` · `POST` · `DELETE /{blockId}`
+
+The caller's own leave. **Requires authentication only.**
+
+```json
+{ "startsAt": "2026-08-13T00:00:00Z", "endsAt": "2026-08-15T00:00:00Z",
+  "reason": "Family wedding" }
+```
+
+**Global across every community that employs the caller**, because a plumber on holiday is on
+holiday in all four societies and asking them to say so four times is how three of them end up
+booking him. The block is written against their `service_providers` record, which is the distinction
+`0036` added the column for. `scope` says which kind a row is: `provider` for the caller's own,
+`roster` for one recorded against a single roster row — the second exists for a name typed into the
+departments form by an admin, and cannot be written here.
+
+The `GET`'s range filter matches on **overlap**, not on start: a fortnight of leave that a one-week
+calendar sits in the middle of belongs in that week's answer, and filtering `startsAt` against both
+bounds would drop precisely the block that matters most.
+
+**Overlapping blocks are allowed.** Two rows saying "not available" say the same thing rather than
+contradicting each other — the dispatch sweep reads them with `not exists` — and refusing them would
+refuse a perfectly sensible *away all week, especially Tuesday*.
+
+Marking a window unavailable does **not** cancel work already accepted. A booking a resident has been
+told about is not retracted by a calendar edit.
+
+`DELETE /api/v1/worker/unavailability/{blockId}` answers `204`: unlike a withdrawn application, a
+block that is gone leaves nothing on the screen it came from.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair (writes only) |
+| 404 | `service_provider_not_found` | The caller has not registered |
+| 404 | `not_found` | No such block, or not one of yours |
+| 422 | `validation_error` | The block ends before it starts |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/worker/availability-rules` · `PUT`
+
+The week the caller is willing to work. **Requires authentication only.**
+
+```json
+{ "rules": [{ "weekday": 1, "startTime": "09:00:00", "endTime": "17:00:00",
+              "effectiveFrom": "2026-08-01", "effectiveTo": null }] }
+```
+
+**An empty list means always available, not never.** That is how `dispatch_candidates` reads it, and
+the opposite reading would make every newly hired worker invisible to the engine until somebody
+filled in a form — the kind of failure nobody would diagnose. `weekday` is 0–6 with Sunday at 0,
+matching Postgres `extract(dow ...)`, which is what the sweep compares against.
+
+**A `PUT` of the whole set, not add and remove**, for the reason `PUT /service-providers/me/skills`
+gives: the screen is a week with seven rows on it, and two tabs editing different days against a
+delta API is a lost update nobody notices until somebody is booked on their day off.
+
+The `GET` is not in the written plan and was added while building: a `PUT` of a whole set with no way
+to read the current one is an editor that opens blank and silently erases whatever the person set
+last week.
+
+Changing the week does not re-check work already accepted. A commitment made on Tuesday is not undone
+by deciding on Wednesday that Tuesdays are off.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair (`PUT` only) |
+| 404 | `service_provider_not_found` | The caller has not registered |
+| 422 | `validation_error` | A window that ends before it starts, or a weekday outside 0–6 |
+| 500 | `internal_error` | Unhandled |
+
+### What is not here yet
+
+**Nothing.** Gate operations — `0040`, renumbered from `0039` for the reason given at the top of this
+section — landed on 2026-08-10 and are **§19**. The whole loop exists end to end: a complaint is
+triaged into a job, the engine offers it, a worker takes it, starts it, and either finishes it or
+says why they could not; and a guard, hired by the same machinery, works a roster and keeps the
+registers.
+
+**Thirty-six of these forty-five operations serve no user story**, and saying so is not modesty.
+Registration serves nobody's story; hiring and conversations *enable* the stories this feature
+eventually closes without serving any of them; a worker reading their own queue or their own leave
+form is nobody's story either. The nine that do are the ones a resident can feel: proposing a visit,
+assigning a person, moving or cancelling one, reading when somebody is coming, and — since `0039` —
+a worker accepting, starting, finishing or failing the visit. All nine land on US-2.7 and US-2.8,
+which are about lifecycle notifications and about knowing *who* is responsible and *when* to expect
+action.
+
+`POST .../assign` is where `DECISIONS_NEEDED` **B2** is finally answered: the assignee stops being a
+formatted string and becomes a roster row. `POST /worker/jobs/{id}/accept` is where that answer stops
+being a supervisor's guess about who was free and becomes the responsible person's own word.
+
+The design is in [`design/SERVICE_OPERATIONS_DESIGN.md`](design/SERVICE_OPERATIONS_DESIGN.md); the
+decision record and build order are in
+[`plans/SERVICE_OPERATIONS_PLAN.md`](plans/SERVICE_OPERATIONS_PLAN.md); what exists in the branch
+today is in
+[`plans/SERVICE_OPERATIONS_PROGRESS.md`](plans/SERVICE_OPERATIONS_PROGRESS.md).
+
+---
+
+## 19. Security operations — the gate
+
+Backed by migrations `0040` and `0047`. Twenty operations, and the surface that finally gives the
+third department kind something to do.
+
+`security` has been a `membership_role` since the baseline and a `departments.kind` since `0035`. A
+guard is hired by the same RPC that hires a plumber, holds skills, books leave and appears on the
+same calendar — §18's machinery, reused verbatim. What none of it describes is a guard's actual
+work, because a shift is a post occupied for a window rather than a job dispatched to an address, and
+a gate register is not a complaint.
+
+**This section closes four stories that have read *Backend: None* since they were written** —
+`US-3.3`, `US-3.4`, `US-3.5` and `US-3.6` — and finishes a fifth, `US-3.1`, which was not the plan.
+
+### The guard is the opposite of §18's, and that is deliberate
+
+`/worker/*` declares no role at all: a service person's surface is cross-community by construction,
+so a role guard there would read the wrong one of a worker's four memberships.
+
+A gate is the mirror image. **A register entry, a shift and an incident are each a fact about exactly
+one society**, so this section goes back to the house shape — a role guard at the router, and a
+community resolved from the caller's own membership rather than accepted from a request body. **No
+route here takes a community id.**
+
+One difference from the admin surface is worth naming. The guard is not
+`require_membership_role("security", "admin", "manager")`, which reads the role off the caller's
+*default* membership. A guard who lives in one society and works the barrier of another has a default
+membership of `resident`, and that check would refuse them their own register. The dependency scans
+the caller's memberships for one that holds a gate role instead. Its limit is real and stated rather
+than hidden: **a guard employed by two societies gets the first of the two**, ordered by
+`isDefaultCommunity`. There is no request field that could resolve that without becoming a community
+id in a body.
+
+Underneath, `0040` carries two permission levels rather than one:
+
+| Predicate | Who | What it gates |
+|---|---|---|
+| `gate_community_for` | Any `security`, `admin` or `manager` membership | The registers, incidents, credential verification, the bundle, the reconcile |
+| `gate_admin_community_for` | `admin` or `manager` — **or** a `security` membership whose roster row is ranked `manager` or `supervisor` | Posts and the shift roster |
+
+Two rather than one, because the alternative is a system where every guard can rewrite the rota, and
+the alternative to *that* is one where the security manager cannot log a tanker. The second predicate
+is the first place `D3`'s rank-and-role split has to be honoured in code rather than described: a
+security *manager* is a `security` membership with a rank, not a `manager` membership.
+
+### `GET /api/v1/security/posts`
+
+Every guard post in the caller's community, by name. **Requires `security`, `admin` or `manager`.**
+
+```json
+[{ "id": "…", "communityId": "…", "departmentId": "…", "name": "Main Gate",
+   "locationText": "North entrance", "latitude": null, "longitude": null,
+   "isActive": true, "createdAt": "…", "updatedAt": "…" }]
+```
+
+`includeInactive=true` adds the deactivated ones. **A post is deactivated and never deleted**,
+because a register entry recorded two years ago still names it and `US-3.6` is a story about reading
+records that old.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `unauthorized` | Not signed in |
+| 403 | `community_role_required` | You do not hold a gate role anywhere |
+
+### `POST /api/v1/security/posts`
+
+Create a post. **Requires a security manager, or an admin.**
+
+```json
+{ "name": "Basement Ramp", "locationText": "Level -1", "departmentId": "…" }
+```
+
+Answers `201` with the post read back. A live post name is unique per community — case- and
+whitespace-insensitively, so *Main Gate* and *main gate* are one place.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not a security manager of this community |
+| 409 | `conflict` | A live post already has that name here |
+| 422 | `post_name_required` | No name was given |
+
+### `PATCH /api/v1/security/posts/{postId}`
+
+Rename, relocate or deactivate a post. **Requires a security manager, or an admin.**
+
+Every field is optional and **an omitted field is left alone rather than blanked** — a form with six
+fields and one change should not have to send the other five back. Answers `200` with the post.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not a security manager of this community |
+| 404 | `not_found` | No such post in this community |
+
+### `GET /api/v1/security/shifts`
+
+The roster. **Requires `security`, `admin` or `manager`.**
+
+```json
+[{ "id": "…", "postId": "…", "postName": "Main Gate", "staffAssignmentId": "…",
+   "guardName": "Ravi Kumar", "guardPhoneE164": "+91…", "guardJobTitle": "Gate Officer",
+   "guardRank": "member", "startsAt": "…", "endsAt": "…", "status": "scheduled",
+   "notes": null }]
+```
+
+`from` and `to` filter on **overlap** rather than on start. A night shift that began at 22:00
+yesterday is the shift a guard on duty at 01:00 is looking at, and filtering by start alone would
+drop exactly the row that matters. `status` and `postId` narrow further.
+
+**`shiftId` is the filter for a caller who arrived from a notification.** `security_shift.assigned`
+(`0043`) links the guard a shift was handed *to*, carrying that shift's id, and `0045` lets the
+departure behind the handover be scheduled weeks out — so the row is routinely outside whatever
+window the screen chose. Widening the window is not the answer: this list is capped at 200 rows
+ordered by start, so a wider range on a busy gate can truncate away the very row that was asked for.
+One id, one row, no window. An unknown id answers `200 []` and **not `404`** — the same answer as a
+quiet fortnight, so this cannot be used to test whether a shift exists somewhere the caller cannot
+see.
+
+`guardRank` is the roster rank — `manager`, `supervisor` or `member` — and not the membership role.
+`D3` made those separate axes and §8 already prints the rule.
+
+### `POST /api/v1/security/shifts`
+
+Put a guard on a post for a window. **Requires a security manager, or an admin.**
+
+```json
+{ "staffAssignmentId": "…", "startsAt": "2026-08-11T22:00:00Z",
+  "endsAt": "2026-08-12T06:00:00Z", "postId": "…", "notes": "Handover at 06:00" }
+```
+
+**A guard cannot be in two places at once, and that is a GiST exclusion constraint rather than a
+check in the application** — the same construct `work_order_assignments` carries and the baseline's
+`amenity_bookings` has carried since `0001`. The overlap is refused *by name* first, so the answer is
+*Ravi Kumar is already on a shift during that time* rather than a raw `23P01`.
+
+The partial predicate differs from the work-order one and the difference is the point. Assignments
+constrain only `accepted` rows, because the dispatcher offers one slot to five workers and one takes
+it. Nobody offers a shift to five guards, so the predicate here is everything except `cancelled` — a
+*completed* shift still occupied that evening, and a new one written over it is a rota error rather
+than a historical curiosity.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not a security manager of this community |
+| 404 | `not_found` | No such staff member or post in this community |
+| 409 | `conflict` | That guard is already on a shift then |
+| 422 | `validation_error` | The shift ends before it starts |
+
+### `PATCH /api/v1/security/shifts/{shiftId}`
+
+Move a shift, or start and end one. **Requires a security manager — except for the caller's own
+shift.**
+
+**A guard may send `status` alone for a shift that is theirs**, which is what *End Shift & Logout*
+does — a control the security layout has offered since before this table existed. Any other field, or
+anybody else's shift, is the security manager's. `0040` decides which of the two applies **from the
+shape of the request** rather than from a flag the client sets, because a flag the client sets is a
+flag the client can lie about.
+
+`status` is `scheduled`, `active`, `completed`, `cancelled` or `missed`.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | Not your shift, and you do not run the roster |
+| 404 | `not_found` | No such shift in this community |
+| 422 | `unknown_shift_status` | Not one of the five |
+
+### `GET /api/v1/security/roster`
+
+The guards the shift form may offer. **Requires a security manager, or an admin.** Backed by
+migration `0047`.
+
+```json
+[{ "staffAssignmentId": "…", "name": "Ravi Kumar", "phoneE164": "+919876543210",
+   "jobTitle": "Gate Officer", "rank": "member", "shift": "Night" }]
+```
+
+**This endpoint exists because two permission models did not meet.** `POST /security/shifts` needs a
+`staffAssignmentId`, and the person who fills that form in is usually a security *manager* — a
+`security` membership whose roster rank is `manager` or `supervisor`, because `D3` made rank and role
+separate axes. Every roster read this API had lived under §18's department-hiring surface, whose
+guard is the *membership* role. So the one person the shift form was built for was the one person who
+could not fetch the list of guards to put in it. `0047`'s function answers with the same predicate
+the shift write already trusts.
+
+**Deliberately narrower than what the shift RPC accepts.** `schedule_security_shift` will roster any
+active staff row in the community — a name typed into the departments form with no membership behind
+it is a valid guard. This picker lists only staff of departments whose `kind` is `security`, because
+a shift form that offers the plumbing roster is a form that offers a mistake.
+
+`rank` is the roster rank; `shift` is the preference label `0035` constrains (`Day`, `Evening`,
+`Night`, `Full Day`, `Rotating`) and **not** a `security_shifts` row.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not a security manager of this community |
+
+### `GET /api/v1/security/material-movements`
+
+The inward/outward register. **Requires `security`, `admin` or `manager`.** `US-3.3`.
+
+```json
+[{ "id": "…", "direction": "inward", "description": "12 bags of cement",
+   "quantity": 12, "unit": "bags", "isReturnable": false, "expectedReturnAt": null,
+   "returnedAt": null, "carrierName": "Suresh", "vehicleNumber": "KL07AB1234",
+   "unitId": null, "unitCode": null, "postName": "Main Gate",
+   "recordedAt": "…", "isOutstanding": false, "isOverdue": false }]
+```
+
+`outstanding=true` is the report the returnable column exists for: **what went out and has not come
+back.** `isOverdue` is that same fact past its expected return date. Both are derived in SQL rather
+than stored, for the reason `isOverdue` on a complaint is — a stored flag needs somebody to flip it at
+midnight and is wrong until they do.
+
+`from`, `to` and `direction` narrow the range.
+
+### `POST /api/v1/security/material-movements`
+
+Write one entry into the register. **Requires `security`, `admin` or `manager`.** `US-3.3`.
+
+```json
+{ "direction": "outward", "description": "Ladder", "quantity": 1,
+  "isReturnable": true, "expectedReturnAt": "2026-08-12T18:00:00Z",
+  "carrierName": "Suresh", "vehicleNumber": "KL07AB1234", "postId": "…",
+  "sourceClientId": "gate-1-000481" }
+```
+
+Answers `201` with the entry read back.
+
+**`sourceClientId` makes this safe to retry.** A gate device that queued entries while disconnected
+and then lost its connection again mid-upload can send the whole queue a second time: the id it
+generated is unique per community, and a replay returns the original row rather than a conflict.
+
+A return date on a non-returnable item is refused before the round trip. It is a contradiction that
+would otherwise produce a *still out* report quietly disagreeing with itself.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+| 422 | `unknown_direction` | Not `inward` or `outward` |
+| 422 | `not_returnable` | A return date on a non-returnable item |
+
+### `POST /api/v1/security/material-movements/{movementId}/return`
+
+The returnable item came back. **Requires `security`, `admin` or `manager`.** `US-3.3`.
+
+```json
+{ "returnedAt": "2026-08-12T17:40:00Z" }
+```
+
+Omit `returnedAt` for now. **Idempotent:** the second guard to press *returned* is telling the truth
+and the row already says so, so it is a `200` with the recorded time rather than a conflict about
+one.
+
+| Status | Code | Cause |
+|---|---|---|
+| 404 | `not_found` | No such entry in this community |
+| 409 | `conflict` | That entry was not recorded as returnable |
+
+### `GET /api/v1/security/water-tankers`
+
+The tanker log, newest arrival first. **Requires `security`, `admin` or `manager`.** `US-3.4`.
+
+```json
+[{ "id": "…", "supplierName": "Kerala Water Supply", "tankerNumber": "KL07TX4412",
+   "volumeLitres": 12000, "driverName": "Manoj", "driverPhoneE164": "+91…",
+   "arrivedAt": "…", "departedAt": null, "postName": "Main Gate", "isOnSite": true }]
+```
+
+`onSite=true` is *still here*; `from` and `to` bound the arrivals.
+
+### `POST /api/v1/security/water-tankers`
+
+Log a tanker at the gate. **Requires `security`, `admin` or `manager`.** `US-3.4`.
+
+```json
+{ "tankerNumber": "kl07tx4412", "supplierName": "Kerala Water Supply",
+  "volumeLitres": 12000, "driverName": "Manoj", "sourceClientId": "gate-1-000482" }
+```
+
+Answers `201`. **The number is stored upper-cased**, because a plate written down by two guards on
+two shifts is one vehicle and a report that splits it into two is the report nobody trusts.
+
+`departedAt` may be sent now if the tanker has already left; the usual case is to omit it and `PATCH`
+later. `sourceClientId` works exactly as it does on the material register.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+| 422 | `validation_error` | No tanker number |
+
+### `PATCH /api/v1/security/water-tankers/{logId}`
+
+Record the departure, or correct a mis-keyed volume. **Requires `security`, `admin` or `manager`.**
+`US-3.4`.
+
+```json
+{ "departedAt": "2026-08-10T11:20:00Z", "volumeLitres": 11500 }
+```
+
+An omitted field is left alone. An auditable record needs both ends of the visit, which is the whole
+reason this route exists rather than folding the departure into the arrival.
+
+| Status | Code | Cause |
+|---|---|---|
+| 404 | `not_found` | No such entry in this community |
+| 422 | `validation_error` | It cannot leave before it arrived |
+
+### `GET /api/v1/security/incidents`
+
+Incidents, most recent first. **Requires `security`, `admin` or `manager`.** `US-3.3`.
+
+```json
+[{ "id": "…", "category": "Fire alarm", "severity": "high", "status": "open",
+   "summary": "Alarm on the third floor", "details": null, "locationText": "Block B",
+   "postName": null, "occurredAt": "…", "resolvedAt": null,
+   "reportedByName": "Ravi Kumar" }]
+```
+
+`status` and `severity` narrow; `from` and `to` bound `occurredAt`.
+
+`category` is the display vocabulary — `Security concern`, `Medical emergency`, `Fire alarm`,
+`Unauthorized access`, `Property damage`, `Other`. The column stores snake case and
+[`vocabularies.py`](../backend/app/domain/vocabularies.py) holds the map, the same seam §7 uses for
+comment visibility.
+
+### `POST /api/v1/security/incidents`
+
+File an incident. **Requires `security`, `admin` or `manager`.** `US-3.3`.
+
+```json
+{ "summary": "Alarm on the third floor", "category": "Fire alarm",
+  "severity": "high", "details": "Cleared by 02:20, no evacuation",
+  "locationText": "Block B", "occurredAt": "2026-08-10T02:00:00Z" }
+```
+
+Answers `201`. **This closes a real gap rather than adding a feature**: the form already exists on
+the security dashboard and today appends an interpolated *string* to an in-memory activity feed,
+which is the same defect `DECISIONS_NEEDED` **B2** names on the complaint assignee.
+
+**`high` and `critical` notify the community's admins and managers; `low` and `medium` are a
+record.** That line is where `ARCHITECTURE.md`'s notification rule lands here — a thing that happened
+is not automatically a thing worth a push at 2 a.m.
+
+An unrecognised category is a `422` naming the six rather than a silent fall back to `Other`, because
+a typed category that quietly becomes *Other* is a report with a hole in it. `Other` is in the set on
+purpose: a closed vocabulary with no escape hatch is a form people work around by picking the nearest
+wrong option.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+| 422 | `unknown_incident_category` | Not one of the six |
+| 422 | `unknown_severity` | Not `low`, `medium`, `high` or `critical` |
+
+### `PATCH /api/v1/security/incidents/{incidentId}`
+
+Acknowledge, re-grade or resolve an incident. **Requires `security`, `admin` or `manager`.**
+`US-3.3`.
+
+```json
+{ "status": "resolved", "details": "Fault in the panel; contractor called" }
+```
+
+**Moving an incident back off `resolved` clears `resolvedAt`**, so the timestamp never outlives the
+status that justified it.
+
+| Status | Code | Cause |
+|---|---|---|
+| 404 | `not_found` | No such incident in this community |
+| 422 | `unknown_incident_status` | Not `open`, `acknowledged` or `resolved` |
+
+### `POST /api/v1/security/gate/verify`
+
+Check a scanned QR or a typed security code, and act on it. **Requires `security`, `admin` or
+`manager`.** `US-3.1`, `US-3.5`.
+
+```json
+{ "credential": "483920", "presentedAt": null }
+```
+
+```json
+{ "verdict": "admitted", "detail": "Admitted. 1 of 2.", "passId": "…",
+  "visitorName": "Anil", "guestCount": 2, "unitCode": "B-204",
+  "residentName": "Asha Menon", "validFrom": "…", "validUntil": "…" }
+```
+
+**This is the half of `US-3.1` that was missing.** `0032` has minted and stored `codeHash` and
+`passHash` since the visitor passes shipped, and until now nothing ever read one back — so a resident
+could issue a pass and no gate could check it. §13 recorded the obligation; this discharges it.
+
+**The credential is hashed before it leaves the API process.** The same `hash_secret` that minted the
+code at creation, so the comparison is hash-to-hash the whole way down and the six digits a visitor
+read off their phone never reach a query or a log. Sending either the code or the QR token works —
+the gate should not have to tell the API which of the two it just read.
+
+**A refusal is a `200` with a verdict, not a `4xx`.** The guard asked a question and got an answer;
+making *that code is not recognised* an error status would split one act across the client's success
+and failure paths. The `4xx` codes below are about the guard, not the visitor.
+
+**A second scan admits the next guest, and the last one is the way out.** `guestCount` has been a
+column since `0032` and nothing had ever read it — so the obvious first-in-second-out implementation
+would have admitted one guest of a two-hundred-guest function and turned the rest away, which is
+exactly the failure `US-3.1` describes. Once everybody named on the pass is inside, the next scan
+checks the group out. That is why there is no separate check-out endpoint: at a barrier there is one
+action, and it is *scan*.
+
+| `verdict` | Means |
+|---|---|
+| `admitted` | Let them through. `detail` counts the group; the resident is notified |
+| `departed` | Everybody was inside; now checked out |
+| `refused` | Cancelled, rejected, not yet approved by the resident, or already closed |
+| `not_yet_valid` | A real pass, but later |
+| `expired` | The window has passed |
+| `not_found` | No such code at this gate |
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+| 422 | `validation_error` | Nothing was presented |
+
+### `GET /api/v1/security/offline-bundle`
+
+The passes this gate may need while disconnected. **Requires `security`, `admin` or `manager`.**
+`US-3.5`.
+
+```json
+{ "generatedAt": "…", "expiresAt": "…", "communityId": "…",
+  "hashAlgorithm": "sha256",
+  "passes": [{ "passId": "…", "codeHash": "…", "passHash": "…",
+               "visitorName": "Anil", "guestCount": 2, "unitCode": "B-204",
+               "validFrom": "…", "validUntil": "…" }] }
+```
+
+`hours` is 1–48 and defaults to 12.
+
+**Hashes only.** There is no plaintext code anywhere in this database to hand out — the resident saw
+theirs once, at creation. The device hashes what it scans with SHA-256 and compares locally, which is
+why the algorithm is named in the payload rather than assumed.
+
+**The bundle is not signed, and that is a decision rather than an omission.** The plan called for a
+signature; writing it showed it would be theatre. A signature the device verifies against a key the
+device holds protects nothing — the same person who can edit the cache can delete the check beside
+it, because both are JavaScript on their machine. What makes an offline admission safe is that it is
+**provisional until reconciled**; see the next endpoint.
+
+**Stated honestly, because it is the one disclosure in this API worth arguing about:** this is a list
+of live pass hashes for one community, and a six-digit code hashed with SHA-256 is a 10⁶ search
+space, so the hashing obscures nothing from whoever holds the file. That is acceptable *here* and
+nowhere else — the gate device is already authorised to admit exactly those visitors, so the bundle
+tells the guard what the guard's job is. It is why the read is gate staff only and why it is
+time-boxed.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+
+### `POST /api/v1/security/offline-reconcile`
+
+Submit the queue an offline gate built, and get the server's verdicts. **Requires `security`, `admin`
+or `manager`.** `US-3.5`.
+
+```json
+{ "entries": [{ "sourceClientId": "gate-1-000481", "credential": "483920",
+                "presentedAt": "2026-08-10T09:04:00Z", "claimedVerdict": "admitted" }] }
+```
+
+```json
+{ "accepted": 38, "rejected": 1, "replayed": 1,
+  "outcomes": [{ "sourceClientId": "gate-1-000481", "serverVerdict": "admitted",
+                 "detail": "Admitted.", "wasReplay": false }] }
+```
+
+**Idempotent per entry, on the device's own `sourceClientId`.** A device that lost its connection
+mid-upload sends the whole queue again; entries already reconciled come back with `wasReplay: true`
+and their original verdict, untouched. That matters more here than anywhere else in this API, because
+re-running the verification on a replay would check the visitor *out* — a second scan is a departure.
+
+**Every entry is its own transaction.** A queue of forty in which the eleventh is malformed
+reconciles the other thirty-nine, which is the whole point of reconciling rather than submitting: the
+device has already discarded its copy by then.
+
+**A rejected entry is not an error either.** It becomes a row in `offline_reconcile_log` holding the
+device's claim and the server's answer side by side, readable by the community's admins — deliberately
+not by the guard whose entries are being checked. That log is what makes an unsigned bundle safe, and
+it is the reason the bundle can be unsigned.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+| 422 | `validation_error` | An entry with no client id, or an empty queue |
+
+### `GET /api/v1/security/exports/{dataset}`
+
+One register as CSV. **Requires `security`, `admin` or `manager`.** `US-3.6`.
+
+`dataset` is `material-movements`, `water-tankers`, `incidents` or `shifts`. `from` and `to` bound
+the range. Answers `text/csv` with `Content-Disposition: attachment`.
+
+**One route rather than four**, because the four differ in their columns and in nothing else: four
+routes would be four copies of the same range validation, the same disposition header and the same
+writer, and the fifth dataset would arrive as a fifth copy. An unknown dataset is a `422` naming the
+four rather than an empty file.
+
+**Oldest row first**, unlike every list on this surface. A screen wants the most recent thing at the
+top; a spreadsheet opened for an audit reads forwards through time, and re-sorting fifteen thousand
+rows is the first thing the reader would otherwise do.
+
+**Retention needed no implementation, and the story is still served.** Nothing this backend writes is
+ever aged out, so *"six months, one year, or longer"* is answered by `from` and `to` rather than by a
+policy. The gap `US-3.6` named for gate operations was only ever two things: data to retain, and the
+download. Both exist now.
+
+**Cells beginning `=`, `+`, `-` or `@` are prefixed with an apostrophe.** Those are formula leaders in
+every spreadsheet, and every one of them is reachable from a text field a guard types at the
+barrier — so without it an export is a path from *anyone who can walk up to the gate* to *code that
+runs when the security manager opens the audit report*. CSV quoting does not help: the spreadsheet
+strips the quotes before evaluating the cell. The character is prefixed rather than stripped, because
+stripping would silently turn a quantity of `-5` into `5`, and a register that alters the numbers it
+is auditing is worse than one that shows an apostrophe.
+
+| Status | Code | Cause |
+|---|---|---|
+| 403 | `forbidden` | You are not on duty in this community |
+| 422 | `unknown_dataset` | Not one of the four |
+
+### What this section does not do
+
+**No `GET /security/snapshot`.** Every screen here is a list with a date range, and a snapshot would
+be a twentieth read assembled from six that already exist. §18's worker snapshot earns its place
+because a worker's dashboard is four unrelated questions; a gate's is one register at a time.
+
+**No notification on a register write.** Nobody needs a push saying a tanker arrived. An incident
+notifies, and only at `high` or `critical`, because that is the one entry here somebody is waiting
+for.
+
+**Nothing verifies a code at a gate that has never been online.** The bundle has to be fetched before
+the outage. That is inherent to the design and not a gap in it — a device that has never
+authenticated has no community, and a gate credential system that trusts an unauthenticated device is
+not one.
+
+~~**`US-3.5` stays `partial`, and the missing half is not here.** The server side is complete: a
+time-boxed bundle to cache, and a reconcile that re-verifies. What is missing is the browser side —
+`frontend/public/` has no service worker, which is also why `US-2.7`'s push cannot buzz a phone.
+That is Step 8.~~
+
+**`US-3.5` is served as of 2026-08-11.** The browser side shipped with the gate portal —
+`GateHome.jsx` over `features/security/offline/`, which caches this bundle, hashes a scanned code
+with Web Crypto and compares it locally, queues each offline scan under its own `sourceClientId`,
+and posts the queue to `/security/offline-reconcile` when the connection returns. Every locally
+decided verdict is shown as **provisional**, and an entry the server rejects stays on the guard's
+screen until they dismiss it. The prediction above about the service worker was also wrong in its
+reasoning: `localStorage` holds a bundle without one, and the worker (which shipped 2026-08-10 for
+`US-2.7`) only buys surviving a reload mid-outage. See §16.5 for the full note.
+
+## 20. Direct messages — the chat dock
+
+Backed by `0046`. Five operations, one audience rule, and a lock. The chat dock mounts on **every
+portal** — admin, worker, security, security-manager, resident — which is why this is its own
+section rather than a subsection of §18: the population is everyone, not service personnel.
+
+**Two people, one thread.** A direct thread is one row per pair per community, participants stored
+in canonical order so the same two people cannot exist as two threads; opening one is an upsert.
+This is deliberately not an extension of §18.4's hiring conversation — that schema is structurally
+a department↔provider channel, and it stays one. **Counterpart names are snapshots** taken when the
+thread opens (and refreshed on re-open), because `profiles` is readable only by its owner; the
+known cost is that a rename shows stale until the pair's next open.
+
+**Who may reach whom** is one predicate shared by the directory and the write: both active members
+of the community, and either one is an admin or manager — **"the association committee" is the
+`admin` role** in this product; the offices are not separate roles (`USER_IDENTIFICATION.md`) — or
+they share a department. Residents therefore reach the office and not each other.
+
+**The work-order thread is the one channel a resident and a serviceman share**, and it ends with
+the job. Either participant may open it while the work order is live; a trigger locks it — and
+writes a system line into the transcript — the moment the order goes terminal. A locked thread
+stays readable (*"may have to be documented well"* — the product owner's words) and refuses new
+messages with a `409`. That is the protection asked for: no private line survives the work.
+
+### `GET /api/v1/messages/recipients`
+
+`?communityId=…`. **Requires authentication only.** The dock's "to" field: department colleagues,
+managers, admins — each `{ profileId, displayName, label }`, where `label` is `Admin`, `Manager` or
+a department name, for display and nothing else.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 422 | `request_validation_error` | No `communityId` |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/messages/threads`
+
+**Requires authentication only.** One mailbox across every community; the RLS policy is what makes
+the list the caller's. `counterpartName` is resolved per caller — the same row answers "who is this
+with" differently for its two participants.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/messages/threads`
+
+Open (or return) a thread. **Requires authentication only.** `201`.
+
+**Request** — `{ "communityId": "…", "recipientProfileId": "…" }` for a person, **or**
+`{ "workOrderId": "…" }` for a live job's channel. Exactly one subject; both or neither is a `422`
+before anything is written.
+
+Idempotent on the pair: opening a chat that exists returns it, so a client calls this whenever a
+name is picked rather than remembering whether it has.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or the pair is not allowed |
+| 404 | `not_found` | No such work order |
+| 409 | `conflict` | The job is already terminal, or has no worker-and-resident pair |
+| 422 | `request_validation_error`, `thread_subject_required`, `community_id_required` | Zero or two subjects, or a person without a community |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/messages/threads/{threadId}`
+
+**Requires authentication only.** The thread with its messages, oldest first. A message with a null
+`authorProfileId` is a **system line** — "the job ended, this conversation is closed" — written by
+the database when the lock landed, so the silence has an explanation in the transcript itself.
+
+**`404` covers missing and not-yours alike**; a stranger walking thread ids learns nothing from the
+difference, and the message read happens only after the thread read succeeds.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 404 | `not_found` | No such thread, or the policy hides it |
+| 500 | `internal_error` | Unhandled |
+
+### `POST /api/v1/messages/threads/{threadId}/messages`
+
+**Requires authentication only.** `201`. **Request** — `{ "body": "…" }`, 1–4000 characters.
+
+**The `409` is the lock**, not an error path: a work-order thread whose job completed refuses new
+messages so a serviceman cannot keep a private line to a resident after the work is done. The
+counterpart is notified (`dm.message`) inside the same transaction, through `notify_profile` —
+person-addressed, because a provider counterpart may hold no membership at all.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
+| 404 | `not_found` | No such thread, or the policy hides it |
+| 409 | `conflict` | The thread is locked |
+| 422 | `request_validation_error` | An empty body, or one over 4000 characters |
+| 500 | `internal_error` | Unhandled |

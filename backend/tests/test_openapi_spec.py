@@ -97,6 +97,25 @@ def test_checked_in_spec_matches_the_code():
         "/api/v1/billing-settings",
         "/api/v1/amenity-reports",
         "/api/v1/settings",
+        # The service-operations aggregate. Nine routers behind one
+        # `include_router` in `service_api.py`, which is exactly the arrangement
+        # this test exists to catch: dropping that one line would delete sixty
+        # operations and raise nothing anywhere.
+        #
+        # `worker/snapshot`, `worker/calendar` and `security/posts` were added on
+        # 2026-08-10, and their absence is worth naming rather than quietly
+        # fixing: this list said "four routers" while eight were mounted, so the
+        # three newest were covered only by the aggregate's own line. A
+        # parametrised list is only as good as its last update.
+        "/api/v1/service-providers/me",
+        "/api/v1/worker/communities",
+        "/api/v1/worker/snapshot",
+        "/api/v1/worker/calendar",
+        "/api/v1/departments/{department_id}/candidates",
+        "/api/v1/conversations",
+        "/api/v1/work-orders/{work_order_id}",
+        "/api/v1/complaints/{complaint_id}/schedule-request",
+        "/api/v1/security/posts",
         # Theirs. Listed because our admin_router is mounted from the same
         # aggregator, so a mistake there could drop their routes instead of ours.
         "/api/v1/dashboard/snapshot",

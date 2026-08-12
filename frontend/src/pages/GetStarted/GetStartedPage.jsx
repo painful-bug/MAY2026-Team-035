@@ -1,8 +1,7 @@
 import { Building2, Search } from 'lucide-react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import JoinCommunityTab from '../../features/registration/components/JoinCommunityTab';
-import { homeRouteFor } from '../../lib/auth/authService';
-import { AUTH_ROUTES } from '../../routes/authRoutes';
+import { AUTH_ROUTES, homeRouteFor } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
 

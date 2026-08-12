@@ -47,6 +47,12 @@ _CUSTOM = {
 # reporting its own failure for what is squarely the caller's mistake.
 _STANDARD = {
     "23505": (ConflictError, "unique_violation"),       # duplicate key
+    # `23P01` is the GiST exclusion constraints: an amenity booked twice for one
+    # slot (`0001`), a worker sent to two places at once (`0036`). It belongs
+    # beside `23505` because it is the same answer -- somebody else has that
+    # already -- and without it a double-booking surfaced as a bare 400 whose
+    # message could not say which of the caller's fields was the problem.
+    "23P01": (ConflictError, "exclusion_violation"),
     "23503": (ValidationError, "foreign_key_violation"),  # references a missing row
     "23514": (ValidationError, "check_violation"),        # failed a CHECK
     "23502": (ValidationError, "not_null_violation"),

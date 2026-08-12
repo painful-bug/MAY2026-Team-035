@@ -1,18 +1,13 @@
-"""Role definitions and the RBAC hierarchy.
+"""Role names and their display labels.
 
-The five roles mirror the ``user_role`` Postgres enum (see
-``supabase/migrations/0001_init.sql``) and the ``user_role`` claim injected into
-every access token by the custom access-token hook.
-
-Capability model:
-
-* ``ADMIN`` is a superset of ``RESIDENT`` — an administrator is also a resident
-  of the community, so any resident-gated resource is reachable by an admin.
-* ``MANAGER``, ``WORKER`` and ``SECURITY`` are distinct staff capabilities
-  that do not imply one another or resident access.
-
-:func:`role_satisfies` is the single source of truth for "does this role meet
-this requirement" and is used by both the API guards and the tests.
+The five values mirror the ``membership_role`` Postgres enum. This file once
+carried an RBAC hierarchy (``role_satisfies`` and friends) claiming to be "the
+single source of truth" for authorization — it never was: the live guards are
+``require_membership_role`` in ``app/api/deps.py`` and the ``can_*`` predicates
+in SQL, both of which read the membership row, not a token claim. The hierarchy
+was deleted in the Phase 2 dead-code sweep (docs/potential issues/ item 2);
+what remains is what the codebase actually uses — the :class:`Role` names and
+the display-label mapping.
 """
 
 from __future__ import annotations
@@ -38,51 +33,14 @@ def display_role(role: str) -> str:
 
 
 class Role(str, Enum):
-    """A user's role within a community."""
+    """A user's role within a community.
+
+    Still imported by ``memberships_repository`` and ``invitations_repository``
+    as a typed name for the enum values — which is why the sweep kept it.
+    """
 
     RESIDENT = "RESIDENT"
     MANAGER = "MANAGER"
     WORKER = "WORKER"
     SECURITY = "SECURITY"
     ADMIN = "ADMIN"
-
-
-# Roles each role implicitly satisfies, in addition to itself.
-_IMPLIED_ROLES: dict[Role, frozenset[Role]] = {
-    Role.ADMIN: frozenset({Role.RESIDENT}),
-}
-
-
-def effective_roles(role: Role) -> frozenset[Role]:
-    """Return every role ``role`` satisfies, including itself."""
-    return frozenset({role}) | _IMPLIED_ROLES.get(role, frozenset())
-
-
-def role_satisfies(user_role: Role, required: Role) -> bool:
-    """Return True if ``user_role`` meets the ``required`` role.
-
-    An admin satisfies a resident requirement; staff roles satisfy only
-    themselves.
-    """
-    return required in effective_roles(user_role)
-
-
-def satisfies_any(user_role: Role, required: tuple[Role, ...]) -> bool:
-    """Return True if ``user_role`` satisfies at least one of ``required``."""
-    return any(role_satisfies(user_role, role) for role in required)
-
-
-def parse_role(value: str | None) -> Role | None:
-    """Parse a raw claim/string into a :class:`Role`, or None if invalid."""
-    if not value:
-        return None
-    normalized = value.upper()
-    # The browser prototype used Technician and Serviceman as global roles.
-    # They are worker specialisations in the membership-based model.
-    normalized = {"TECHNICIAN": "WORKER", "SERVICEMAN": "WORKER"}.get(
-        normalized, normalized
-    )
-    try:
-        return Role(normalized)
-    except ValueError:
-        return None

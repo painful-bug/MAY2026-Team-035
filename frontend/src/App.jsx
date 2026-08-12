@@ -2,12 +2,14 @@ import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useApp } from './store/useApp';
 import ToastContainer from './components/common/ToastContainer';
+import ChatDock from './components/chat/ChatDock';
 import DashboardDataBootstrap from './components/dashboard/DashboardDataBootstrap';
 
 // Layouts
 import ResidentLayout from './layouts/ResidentLayout';
 import AdminLayout from './layouts/AdminLayout';
 import SecurityLayout from './layouts/SecurityLayout';
+import WorkerLayout from './layouts/WorkerLayout';
 
 // Public Pages
 import LandingPage from './pages/Landing/LandingPage';
@@ -24,13 +26,13 @@ import AdminProfilePage from './pages/AdminProfile/AdminProfilePage';
 import OnboardingSuccessPage from './pages/OnboardingSuccess/OnboardingSuccessPage';
 import OnboardingReviewPage from './pages/OnboardingReview/OnboardingReviewPage';
 import AccountPage from './pages/Account/AccountPage';
+import DepartmentHiring from './pages/AdminDashboard/DepartmentHiring';
+import EmployeeDetail from './pages/AdminDashboard/EmployeeDetail';
+import AdminMessages from './pages/AdminDashboard/Messages';
 import JoinPage from './pages/Join/JoinPage';
 import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
-import {
-  AUTH_ROUTES,
-  getDashboardRouteForRole,
-} from './routes/authRoutes';
+import { AUTH_ROUTES, homeRouteFor } from './routes/authRoutes';
 import { useAuthStore } from './store/authStore';
 import { ONBOARDING_STEPS } from './data/onboarding';
 
@@ -56,8 +58,26 @@ import AdminSettings from './pages/AdminDashboard/Settings';
 import AdminAmenities from './pages/AdminDashboard/Amenities';
 import AdminDepartments from './pages/AdminDashboard/Departments';
 import AdminDepartmentDetail from './pages/AdminDashboard/DepartmentDetail';
-import SecurityDashboard from './pages/SecurityDashboard/SecurityDashboard';
-import SecurityManagerDashboard from './pages/SecurityManagerDashboard/SecurityManagerDashboard';
+import GateHome from './pages/SecurityDashboard/GateHome';
+import SecurityRegisters from './pages/SecurityDashboard/Registers';
+import SecurityIncidents from './pages/SecurityDashboard/Incidents';
+import SecurityShifts from './pages/SecurityDashboard/Shifts';
+import SecurityEmergency from './pages/SecurityDashboard/Emergency';
+import SecurityOverview from './pages/SecurityManagerDashboard/Overview';
+import SecurityRoster from './pages/SecurityManagerDashboard/Roster';
+import ManagerIncidents from './pages/SecurityManagerDashboard/ManagerIncidents';
+import SecurityExports from './pages/SecurityManagerDashboard/Exports';
+import AdminSecurityIncidents from './pages/AdminDashboard/SecurityIncidents';
+
+// Service Partner Pages
+import WorkerHome from './pages/WorkerDashboard/Dashboard';
+import WorkerCalendar from './pages/WorkerDashboard/Calendar';
+import WorkerAvailability from './pages/WorkerDashboard/Availability';
+import WorkerCommunities from './pages/WorkerDashboard/Communities';
+import WorkerMessages from './pages/WorkerDashboard/Messages';
+import WorkerProfile from './pages/WorkerDashboard/Profile';
+import WorkerSettings from './pages/WorkerDashboard/Settings';
+
 import AmenityDetailLayout from './features/amenities/layouts/AmenityDetailLayout';
 import AmenityDashboardPage from './features/amenities/pages/AmenityDashboardPage';
 import AmenityApprovalsPage from './features/amenities/pages/AmenityApprovalsPage';
@@ -96,9 +116,36 @@ function ProtectedRoute({
       : [];
 
   if (allowedRoles.length && !allowedRoles.includes(currentUser.role)) {
-    return <Navigate to={getDashboardRouteForRole(currentUser.role)} replace />;
+    return <Navigate to={homeRouteFor(currentUser)} replace />;
   }
   
+  return children;
+}
+
+// A signed-in identity is the whole guard, with no membership and no role.
+//
+// ProtectedRoute cannot express this: it reads `currentUser`, and
+// `applicationUser()` returns null for anybody whose session carries no
+// membership. That is precisely the service person who has registered and not
+// yet been hired -- the population the worker portal's registration and
+// community-search screens exist for. The same problem, and the same answer, as
+// `require_service_provider` on the backend depending on `get_current_user`
+// alone rather than on membership.
+//
+// What the portal then shows is decided by GET /worker/snapshot, whose null
+// `provider` and empty `communities` are the two empty states.
+function SignedInRoute({ children }) {
+  const isAuthReady = useAuthStore((state) => state.isAuthReady);
+  const sessionContext = useAuthStore((state) => state.sessionContext);
+
+  if (!isAuthReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
+        Restoring your session…
+      </div>
+    );
+  }
+  if (!sessionContext?.identity) return <Navigate to={AUTH_ROUTES.LOGIN} replace />;
   return children;
 }
 
@@ -231,31 +278,32 @@ export default function App() {
             <Route path="profile" element={<ResidentProfile />} />
           </Route>
 
-          {/* Security Operations Dashboard */}
+          {/* Security Operations Dashboard.
+              A security manager is admitted here as well as to their own
+              portal. They hold a gate role — `/security-manager/gate` renders
+              this folder's own pages — and two notifications address a guard's
+              URL to somebody who may by then be ranked manager:
+              `shift.scheduled` (`0040:893`) and `security_shift.assigned`
+              (`0043:950`) both point at `/security/shifts`. Guarding this
+              subtree on `Security` alone would bounce exactly those people to
+              an overview screen that does not answer the notification. */}
           <Route
             path={AUTH_ROUTES.SECURITY_DASHBOARD}
             element={
               <ProtectedRoute
-                requiredRole="Security"
+                requiredRole={['Security', 'SecurityManager']}
                 loginPath={AUTH_ROUTES.LOGIN}
               >
                 <SecurityLayout />
               </ProtectedRoute>
             }
           >
-            <Route index element={<SecurityDashboard view="dashboard" />} />
-            <Route
-              path="visitors"
-              element={<SecurityDashboard view="visitors" />}
-            />
-            <Route
-              path="history"
-              element={<SecurityDashboard view="history" />}
-            />
-            <Route
-              path="emergency"
-              element={<SecurityDashboard view="emergency" />}
-            />
+            <Route index element={<GateHome />} />
+            <Route path="registers" element={<SecurityRegisters />} />
+            <Route path="incidents" element={<SecurityIncidents />} />
+            {/* The URL `0040`'s `shift.scheduled` notification links to. */}
+            <Route path="shifts" element={<SecurityShifts />} />
+            <Route path="emergency" element={<SecurityEmergency />} />
           </Route>
 
           {/* Security Department Manager Dashboard */}
@@ -270,23 +318,38 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<SecurityManagerDashboard />} />
-            <Route
-              path="staff"
-              element={<SecurityManagerDashboard view="staff" />}
-            />
-            <Route
-              path="visitors"
-              element={<SecurityDashboard view="visitors" />}
-            />
-            <Route
-              path="history"
-              element={<SecurityDashboard view="history" />}
-            />
-            <Route
-              path="emergency"
-              element={<SecurityDashboard view="emergency" />}
-            />
+            <Route index element={<SecurityOverview />} />
+            <Route path="roster" element={<SecurityRoster />} />
+            <Route path="incidents" element={<ManagerIncidents />} />
+            <Route path="exports" element={<SecurityExports />} />
+            {/* A manager holds a gate role too, so the guard's own screens
+                serve them unchanged rather than being duplicated. */}
+            <Route path="gate" element={<GateHome />} />
+            <Route path="registers" element={<SecurityRegisters />} />
+            <Route path="emergency" element={<SecurityEmergency />} />
+          </Route>
+
+          {/* Service Partner (worker) portal.
+              Guarded by SignedInRoute, not ProtectedRoute — see its comment.
+              A service person who has registered and not yet been hired holds
+              no membership, so `currentUser` is null and ProtectedRoute would
+              bounce them to /login: exactly the population these screens exist
+              to serve. */}
+          <Route
+            path={AUTH_ROUTES.WORKER_DASHBOARD}
+            element={
+              <SignedInRoute>
+                <WorkerLayout />
+              </SignedInRoute>
+            }
+          >
+            <Route index element={<WorkerHome />} />
+            <Route path="calendar" element={<WorkerCalendar />} />
+            <Route path="availability" element={<WorkerAvailability />} />
+            <Route path="communities" element={<WorkerCommunities />} />
+            <Route path="messages" element={<WorkerMessages />} />
+            <Route path="profile" element={<WorkerProfile />} />
+            <Route path="settings" element={<WorkerSettings />} />
           </Route>
 
           {/* Admin Dashboard Layout */}
@@ -305,6 +368,18 @@ export default function App() {
               element={<AdminDepartmentDetail />}
             />
             <Route
+              path="departments/:departmentId/hiring"
+              element={<DepartmentHiring />}
+            />
+            {/* The employee page: roster tiles open it, and
+                departure.requested notifications deep-link to it. */}
+            <Route
+              path="departments/:departmentId/staff/:staffId"
+              element={<EmployeeDetail />}
+            />
+            {/* The URL 0041's department-side notification links to. */}
+            <Route path="messages" element={<AdminMessages />} />
+            <Route
               path="department/new"
               element={<Navigate to="/admin/departments?create=1" replace />}
             />
@@ -313,6 +388,8 @@ export default function App() {
             <Route path="admins" element={<AdminsList />} />
             <Route path="notices" element={<AdminNotices />} />
             <Route path="complaints" element={<AdminComplaints />} />
+            {/* The URL `0040` sends admins on a high or critical incident. */}
+            <Route path="security/incidents" element={<AdminSecurityIncidents />} />
             <Route path="maintenance" element={<AdminMaintenance />} />
             <Route path="amenities" element={<AdminAmenities />} />
             <Route
@@ -347,6 +424,9 @@ export default function App() {
 
         {/* Global Floating Toast Alert Messages */}
         <ToastContainer />
+
+        {/* The chat dock — every portal, one mount (renders null signed out). */}
+        <ChatDock />
       </BrowserRouter>
   );
 }

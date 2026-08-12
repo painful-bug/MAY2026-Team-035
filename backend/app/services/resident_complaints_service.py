@@ -62,6 +62,21 @@ _EVENT_LABELS = {
     "comment_added": "Comment added",
     "reopened": "Complaint reopened",
     "resolution_confirmed": "Resolution confirmed",
+    # Written by `0036`. No migration was needed for these: `event_type` is
+    # `text` with no CHECK (`0001`:70), so the timeline learns a new word by
+    # being taught it here and nowhere else.
+    "job_created": "Work raised",
+    "job_scheduled": "Visit scheduled",
+    "job_declined": "Visit declined",
+    "job_assigned": "Technician assigned",
+    "job_cancelled": "Visit cancelled",
+    # Written by `0039`, from the worker's own side. There is deliberately no
+    # `job_accepted`: a worker taking an offer writes `job_assigned`, because
+    # from the resident's side the fact is the same fact -- somebody is now
+    # coming, and this is their name. A second type would say it twice.
+    "job_started": "Work started",
+    "job_completed": "Work completed",
+    "job_failed": "Visit unsuccessful",
 }
 
 
@@ -98,6 +113,35 @@ def _event_message(event_type: str, payload: dict[str, Any]) -> str:
         return f"{confirmed} {feedback}".strip() if feedback else confirmed
     if event_type == "raised":
         return "The complaint was submitted to the management team."
+    if event_type == "job_created":
+        return "The department has taken this up."
+    if event_type == "job_scheduled":
+        when = _text(payload.get("startsAt"))
+        if not when:
+            return "A visit was scheduled."
+        return (
+            "A visit was rescheduled." if payload.get("rescheduled")
+            else "A visit was proposed."
+        ) + f" ({when})"
+    if event_type == "job_declined":
+        return "You declined the proposed time."
+    if event_type == "job_assigned":
+        assignee = _text(payload.get("assigneeName"))
+        return f"{assignee} is coming." if assignee else "A technician was assigned."
+    if event_type == "job_cancelled":
+        return f"The visit was cancelled. {_text(payload.get('reason'))}".strip()
+    if event_type == "job_started":
+        who = _text(payload.get("assigneeName"))
+        return f"{who} has started work." if who else "Work has started."
+    if event_type == "job_completed":
+        notes = _text(payload.get("notes"))
+        done = "The work was completed."
+        return f"{done} {notes}" if notes else done
+    if event_type == "job_failed":
+        # The reason is shown rather than summarised, because half the reasons a
+        # visit fails are things only the resident can fix.
+        why = _text(payload.get("reason"))
+        return f"The visit could not be completed. {why}".strip()
     # `comment_added` says nothing here on purpose: the comment itself is in the
     # thread, and repeating it on the timeline would show it twice.
     return ""

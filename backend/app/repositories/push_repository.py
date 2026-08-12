@@ -4,8 +4,16 @@ Every function here goes through an RPC, and for once that is not the house
 style being applied uniformly -- ``push_subscriptions`` has **RLS enabled with no
 policy**, so there is no direct read or write of this table from any client the
 API holds. ``service_role`` bypasses RLS and is what the sender uses; everything
-a resident does reaches the table through a SECURITY DEFINER function that checks
-``is_own_membership`` first.
+a resident does reaches the table through a SECURITY DEFINER function that reads
+``auth.uid()`` itself.
+
+**The subscription belongs to a person, not to a membership** (``0041``). A
+browser is one person's browser, and ``endpoint`` is unique across the whole
+table by design, so keying the row on a membership meant that subscribing the
+same browser from a second community *moved* the row and silently stopped the
+first community's pushes. It also meant a service provider with no membership
+could not register at all -- which is the caller the worker portal's push toggle
+was built for.
 
 The reason is what the table stores. ``p256dh_key`` and ``auth_key`` are the
 browser's encryption material: a table any authenticated user could read is a
@@ -19,6 +27,11 @@ request client, because the ownership check inside the function reads
 ``auth.uid()`` and there is no such thing on the service client. ``claim_batch``
 and the outcome recorders take the service client, because the sender runs
 without any request at all -- which is the whole point of out-of-app delivery.
+
+Neither write takes an owner argument any more. Once the row is keyed on the
+profile, the only value a caller could legitimately pass is the session's own
+id, so passing it and then validating it against the session it came from is a
+parameter that exists to be checked. The functions read ``auth.uid()``.
 """
 
 from __future__ import annotations
@@ -38,7 +51,6 @@ _SUBSCRIPTION_SELECT = "endpoint, p256dh_key, auth_key"
 def register_subscription(
     client: Client,
     *,
-    membership_id: str,
     endpoint: str,
     p256dh: str,
     auth: str,
@@ -54,7 +66,6 @@ def register_subscription(
         response = client.rpc(
             "register_push_subscription",
             {
-                "p_membership_id": membership_id,
                 "p_endpoint": endpoint,
                 "p_p256dh": p256dh,
                 "p_auth": auth,
@@ -68,14 +79,11 @@ def register_subscription(
     return str(response.data or "")
 
 
-def remove_subscription(
-    client: Client, *, membership_id: str, endpoint: str
-) -> int:
+def remove_subscription(client: Client, *, endpoint: str) -> int:
     """Unregister this browser (RPC). Returns how many rows went."""
     try:
         response = client.rpc(
-            "delete_push_subscription",
-            {"p_membership_id": membership_id, "p_endpoint": endpoint},
+            "delete_push_subscription", {"p_endpoint": endpoint}
         ).execute()
     except Exception as exc:  # noqa: BLE001
         raise translate(
@@ -84,14 +92,12 @@ def remove_subscription(
     return int(response.data or 0)
 
 
-def subscriptions_for(
-    client: Client, *, membership_id: str
-) -> list[dict[str, Any]]:
-    """Every browser this member has registered. Service client only."""
+def subscriptions_for(client: Client, *, profile_id: str) -> list[dict[str, Any]]:
+    """Every browser this person has registered. Service client only."""
     return (
         client.table(_SUBSCRIPTIONS)
         .select(_SUBSCRIPTION_SELECT)
-        .eq("membership_id", membership_id)
+        .eq("profile_id", profile_id)
         .execute()
         .data
         or []

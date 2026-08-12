@@ -195,7 +195,12 @@ $$;
 comment on function public.notify_community_staff(uuid, text, jsonb, uuid) is
   'Notify every active admin and manager of a community. Same audience as the dashboard SSE topic.';
 
-grant execute on function public.notify_community_staff(uuid, text, jsonb, uuid) to authenticated;
+-- Same correction as `notify_member` in 0030: every caller is a SECURITY DEFINER
+-- function, so the EXECUTE check falls to the definer and the grant to
+-- `authenticated` bought nothing while letting any signed-in user broadcast a
+-- notification of their own composition to a whole community's staff.
+revoke all on function public.notify_community_staff(uuid, text, jsonb, uuid)
+  from public, anon, authenticated;
 grant execute on function public.notify_community_staff(uuid, text, jsonb, uuid) to service_role;
 
 -- ---------------------------------------------------------------------------
