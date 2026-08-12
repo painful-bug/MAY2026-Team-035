@@ -67,18 +67,34 @@ _LITERAL = re.compile(r"^'([^']*)'$")
 #:   still a zustand demo and the admin complaint surface belongs to the
 #:   complaint-engine owner (`docs/potential issues/09-…`,
 #:   `docs/COMPLAINT_ENGINE_HANDOFF.md`).
-#: * `/admin/departments?job=` -- there is no supervisor triage screen at all,
-#:   so there is no parameter to read yet (`docs/potential issues/10-…`).
 #: * `/admin/amenities?booking=` -- the admin amenity screen predates the
 #:   notification.
 #:
 #: Two have left this set, both on 2026-08-11: `/security/shifts?shift=`, the
 #: case that prompted counting them at all, and `/worker/messages?conversation=`,
 #: which was the only one of the six that was ours.
+#:
+#: A third left on 2026-08-12: `/admin/departments?job=`. It was on record for
+#: the strongest reason of the four -- *there was no triage screen in any
+#: portal*, so there was nothing that could read the parameter --  and
+#: `20260812120000_work_order_notification_urls` repointed all seven emissions
+#: at `departments/{id}/work-orders`, which does read `job`.
+#:
+#: **One arrived the same day, and it is not new behaviour**: it is what
+#: `emitted_urls` saw once it started following a concatenation onto its second
+#: line. `0045:899` and `0045:1077` send a manager to the employee page to
+#: decide a departure, carrying `?departure=`; `EmployeeDetail.jsx` reads no
+#: query parameter at all, so the manager lands on the right person and finds
+#: the departure themselves. Not fixed here -- the fix is in a shared admin
+#: screen, and this file is the record, not the repair.
+#:
+#: `0043:534` carries the same parameter to the hiring screen and is *not* on
+#: this list, because `0045` re-declared that function: only the surviving
+#: definition of a function is read. See `emitted_urls`.
 IGNORED_QUERY_PARAMETERS = {
     ("/admin/amenities", "booking"),
     ("/admin/complaints", "complaint"),
-    ("/admin/departments", "job"),
+    ("/admin/departments/:departmentId/staff/:staffId", "departure"),
     ("/resident/complaints", "complaint"),
 }
 
@@ -122,7 +138,7 @@ def _join(parent: str, segment: str) -> str:
     return f"{parent.rstrip('/')}/{segment}"
 
 
-#: A `const NAME = (<>…</>);` holding `<Route>` elements, spliced in wherever
+#: A `const NAME = (…);` holding `<Route>` elements, spliced in wherever
 #: `{NAME}` appears inside the tree.
 #:
 #: `HIRING_ROUTES` is the first of these (2026-08-11): the hiring sub-tree is
@@ -131,8 +147,18 @@ def _join(parent: str, segment: str) -> str:
 #: flattens a fragment among `<Route>` children, so this parser has to as well
 #: -- otherwise it reads the definition at file scope, mounts those paths at the
 #: root, and concludes that `/admin/departments/{id}/hiring` does not exist.
+#:
+#: **The body is no longer required to be a `<>…</>` fragment** (2026-08-12).
+#: `WORK_ORDER_ROUTES` is one `<Route>` with no wrapper -- a fragment around a
+#: single element is what a linter removes -- and the pattern that insisted on
+#: `<>` did exactly what the paragraph above warns about: it left
+#: `/departments/:departmentId/work-orders` mounted at the *root*, so
+#: `/admin/departments/{id}/work-orders` was absent from the table and the
+#: triage notifications would have been reported as landing on the catch-all.
+#: The body now runs to the `);` in the first column, which is the only place
+#: that sequence appears in a JSX definition indented like these two.
 _FRAGMENT_DEF = re.compile(
-    r"^const\s+([A-Z][A-Z0-9_]*)\s*=\s*\(\s*<>(.*?)</>\s*\);", re.M | re.S
+    r"^const\s+([A-Z][A-Z0-9_]*)\s*=\s*\(\s*(<.*?)\n\);", re.M | re.S
 )
 _FRAGMENT_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 #: Stands in for "whatever this fragment ends up nested under" while its own
@@ -255,25 +281,97 @@ def component_sources() -> dict[str, Path]:
     return out
 
 
+#: ``create [or replace] function public.name(`` -- the start of a definition.
+#: Matched by name only, not by signature: two overloads of one name would be
+#: conflated, and none of the url-emitting functions has an overload. If one
+#: ever does, this is the line that has to learn about argument lists.
+_FUNCTION_DEF = re.compile(
+    r"^create\s+(?:or\s+replace\s+)?function\s+(public\.\w+)\s*\(", re.M
+)
+
+
+def _surviving_definitions() -> dict[str, str]:
+    """Function name -> the migration file whose definition Postgres keeps.
+
+    Filename order is apply order, so the last file to declare a name is the
+    one that is installed. Nothing here parses bodies: a name is claimed by the
+    file it was last written in, which is all "whose text is live" needs.
+    """
+    latest: dict[str, str] = {}
+    for path in sorted(_MIGRATIONS.glob("*.sql")):
+        for match in _FUNCTION_DEF.finditer(path.read_text(encoding="utf-8")):
+            latest[match.group(1)] = path.name
+    return latest
+
+
+def _enclosing_function(text: str, position: int) -> str | None:
+    """The function whose body ``position`` falls inside, or ``None``.
+
+    The nearest preceding definition wins. A url outside every function -- none
+    exist today -- belongs to no definition and is always read.
+    """
+    found = None
+    for match in _FUNCTION_DEF.finditer(text, 0, position):
+        found = match.group(1)
+    return found
+
+
 def emitted_urls() -> list[tuple[str, int, str]]:
     """``(file, line, path)`` for every `url` a migration writes.
 
     A url is an SQL concatenation -- ``'/admin/departments/' || id::text ||
     '/hiring?tab=roster'`` -- so each ``||`` operand is either a literal, which
     contributes its text, or an expression, which contributes one path segment.
+
+    **A concatenation that runs onto the next line is followed** (2026-08-12).
+    Reading only the first line was a silent hole rather than a missing feature:
+    three urls in `0043` and `0045` wrap at 80 columns, and each was being read
+    as the prefix ``/admin/departments/{param}`` -- a real route, so the check
+    passed, with the half of the path that could be wrong never looked at and
+    the query parameters after the wrap invisible to the parameter check below.
+    Every one of the seven work-order urls repointed by
+    `20260812120000_work_order_notification_urls` wraps the same way, so
+    without this the migration that gave them a screen would have been
+    "verified" against the department list they were being moved off.
+
+    The continuation rule is the one the migrations actually use: a following
+    line whose first token is ``||``. Nothing wider, because a wider rule would
+    start consuming the next `jsonb_build_object` key.
+
+    **Only the surviving definition of a function counts** (2026-08-12). Every
+    correction before the deployment boundary was an edit in place, so the file
+    and the database always agreed and reading all of them was reading the
+    truth. Forward-only changes that; `20260812120000` re-declares six functions
+    from `0037` and `0039`, and the superseded url text stays in those two files
+    forever because they are applied and immutable. A scanner that reads them
+    reports seven links that no longer exist, and -- worse in the other
+    direction -- would go on passing a file whose *current* definition was
+    broken as long as some older one was fine. `_surviving_definitions` below is
+    the same rule Postgres applies: last `create or replace` in filename order
+    wins.
     """
+    surviving = _surviving_definitions()
     out: list[tuple[str, int, str]] = []
     for path in sorted(_MIGRATIONS.glob("*.sql")):
         text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
         for match in _URL_LINE.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            function = _enclosing_function(text, match.start())
+            if function is not None and surviving.get(function) != path.name:
+                continue  # a later migration re-declared this function
+            expression = match.group(1)
+            index = line  # 0-based index of the line *after* the match
+            while index < len(lines) and lines[index].lstrip().startswith("||"):
+                expression += " " + lines[index].strip()
+                index += 1
             pieces = []
-            for piece in match.group(1).rsplit(")", 1)[0].split("||"):
+            for piece in expression.rsplit(")", 1)[0].split("||"):
                 piece = piece.strip().rstrip(",").strip()
                 literal = _LITERAL.match(piece)
                 pieces.append(literal.group(1) if literal else "{param}")
             url = "".join(pieces)
-            assert url.startswith("/"), f"{path.name}: unparsed url {match.group(1)!r}"
-            line = text[: match.start()].count("\n") + 1
+            assert url.startswith("/"), f"{path.name}: unparsed url {expression!r}"
             out.append((path.name, line, url))
     return out
 
@@ -314,6 +412,13 @@ def test_the_route_table_is_actually_parsed() -> None:
         "/security/shifts",
         "/worker",
         "/admin/departments/:departmentId/hiring",
+        # A `const` holding one bare `<Route>` rather than a `<>…</>` fragment.
+        # Until the lifter learned that shape these mounted at the root, and a
+        # notification pointing at the triage screen would have been reported
+        # as landing on the catch-all.
+        "/admin/departments/:departmentId/work-orders",
+        "/manager/departments/:departmentId/work-orders",
+        "/security-manager/departments/:departmentId/work-orders",
         "/resident/complaints",
     ):
         assert expected in routes, f"{expected} missing from the parsed table"
@@ -475,15 +580,22 @@ UNREWRITTEN_FOR_A_MANAGER = {
     # plumbing manager no longer receives it; the entry stays because this test
     # cannot see an audience.
     "/admin/security/incidents",
-    # Addressed to `work_order.supervisor_membership_id` — a supervisor, whose
-    # portal is `/worker`, not a manager's. It is on this list because the test
-    # checks blind, and it stays unrewritten for a stronger reason than the
-    # others: **the destination does not exist for anybody.** There is no
-    # supervisor triage screen in any portal, so `?job=` has nothing to read it
-    # — `docs/potential issues/10`, and the matching entry in
-    # `IGNORED_QUERY_PARAMETERS` above.
-    "/admin/departments?",
+    # `/admin/departments?job=` used to be here, for the strongest reason on the
+    # list: the destination existed for nobody. The triage screen exists now,
+    # mounted under all three portals, `portalUrl.js` rewrites the path, and
+    # `20260812120000_work_order_notification_urls` points the seven emissions
+    # at it — so the entry is gone rather than excused.
 }
+
+
+#: The alternatives inside `portalUrl.js`'s `DEPARTMENT_SUBSCREEN` -- the
+#: department sub-screens mounted at the same shape under every portal. Held as
+#: data rather than inlined in the pattern below so the mirror test can compare
+#: it with the JavaScript instead of merely checking that a name still appears.
+_SUBSCREENS = ("hiring", "staff/", "candidates/", "work-orders")
+
+#: `const DEPARTMENT_SUBSCREEN = /…/;` in `portalUrl.js`, spanning a line break.
+_JS_SUBSCREEN = re.compile(r"DEPARTMENT_SUBSCREEN\s*=\s*(/.+?/);")
 
 
 def _portal_url(url: str, portal: str) -> str:
@@ -494,7 +606,9 @@ def _portal_url(url: str, portal: str) -> str:
     if base is None:
         return url
     rest = url[len("/admin"):]
-    if re.match(r"^/departments/[^/?#]+/(hiring|staff/|candidates/)", rest):
+    if re.match(
+        r"^/departments/[^/?#]+/(" + "|".join(_SUBSCREENS) + ")", rest
+    ):
         return base + rest
     if rest == "/messages" or rest.startswith("/messages?"):
         return base + rest
@@ -513,7 +627,15 @@ def test_the_python_mirror_matches_the_javascript_rule_table() -> None:
     """A second implementation is only safe while it is checked against the
     first. The four rules are read out of `portalUrl.js` by name rather than by
     behaviour -- enough to fail loudly if somebody adds a fifth here and not
-    there, or renames one."""
+    there, or renames one.
+
+    **The sub-screen list is compared by content**, not by name. Naming was
+    enough while the list was three entries nobody touched; `work-orders` joined
+    it on 2026-08-12 for the work-order notification repoint, and a name check
+    would have passed just as happily with the JavaScript half of that change
+    reverted -- leaving every one of the seven links bouncing a department
+    manager home while this file asserted they were fine.
+    """
     source = (
         _ROOT / "frontend" / "src" / "features" / "notifications" / "portalUrl.js"
     ).read_text(encoding="utf-8")
@@ -525,6 +647,20 @@ def test_the_python_mirror_matches_the_javascript_rule_table() -> None:
     }
     missing = sorted(token for token in expected if token not in source)
     assert not missing, f"portalUrl.js no longer mentions: {missing}"
+
+    pattern = _JS_SUBSCREEN.search(source)
+    assert pattern, "DEPARTMENT_SUBSCREEN is no longer a regular-expression literal"
+    alternation = re.search(r"\(([^)]*)\)", pattern.group(1))
+    assert alternation, f"no alternation in {pattern.group(1)}"
+    # `staff\/` there, `staff/` here: the escape is JavaScript's, not a rule.
+    javascript = tuple(
+        part.replace("\\", "") for part in alternation.group(1).split("|")
+    )
+    assert javascript == _SUBSCREENS, (
+        "portalUrl.js and this file disagree about which department sub-screens "
+        f"are mounted under every portal:\n  portalUrl.js: {javascript}\n"
+        f"  this file:    {_SUBSCREENS}"
+    )
 
 
 @pytest.mark.parametrize("portal", sorted(_PORTAL_BASES))

@@ -61,8 +61,19 @@ const PORTAL_BASES = {
 
 const ADMIN_PREFIX = '/admin';
 
-/** `/departments/{id}/hiring…`, `/staff/{id}…` or `/candidates/{id}…`. */
-const DEPARTMENT_SUBSCREEN = /^\/departments\/[^/?#]+\/(hiring|staff\/|candidates\/)/;
+/**
+ * `/departments/{id}/hiring…`, `/staff/{id}…`, `/candidates/{id}…` or
+ * `/work-orders…`.
+ *
+ * `work-orders` joined the list on 2026-08-12, with the migration that gave the
+ * seven work-order notifications a screen to land on. The route is mounted
+ * under all three bases by the same `App.jsx` fragment idiom the hiring routes
+ * use, so it carries over here for exactly the reason they do — and without
+ * this line the reader those notifications are most for, a department manager
+ * told a visit failed and was never rebooked, would have been redirected home.
+ */
+const DEPARTMENT_SUBSCREEN =
+  /^\/departments\/[^/?#]+\/(hiring|staff\/|candidates\/|work-orders)/;
 
 /** `/departments/{id}` exactly — the admin's department screen, with no query. */
 const DEPARTMENT_ROOT = /^\/departments\/[^/?#]+(?:[?#].*)?$/;
