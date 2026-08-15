@@ -27,6 +27,7 @@ from typing import Any
 from app.core.exceptions import NotFoundError, ValidationError
 from app.domain.work_order_schemas import (
     AssignWorkOrderRequest,
+    Candidate,
     CancelWorkOrderRequest,
     CreateWorkOrderRequest,
     RescheduleWorkOrderRequest,
@@ -90,6 +91,7 @@ def _to_assignment(row: dict[str, Any]) -> WorkOrderAssignment:
         responded_at=row.get("responded_at"),
         decline_reason=_text(row.get("decline_reason")),
         is_auto_assigned=bool(row.get("is_auto_assigned")),
+        is_forced=bool(row.get("is_forced")),
     )
 
 
@@ -217,6 +219,14 @@ def create(
 def get_detail(client: Client, *, work_order_id: str) -> WorkOrderDetail:
     """One job with its assignment history."""
     return _read_back_detail(client, work_order_id=work_order_id)
+
+
+def candidates(
+    client: Client, *, work_order_id: str, include_excluded: bool = False
+) -> list[Candidate]:
+    return [Candidate(**row) for row in repo.candidates(
+        client, work_order_id=work_order_id, include_excluded=include_excluded
+    )]
 
 
 def list_for_department(

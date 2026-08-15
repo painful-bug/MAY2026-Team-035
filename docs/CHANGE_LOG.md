@@ -145,6 +145,14 @@ clipped under the header). Two rulings worth a record:
   `createPortal(document.body)` (the repo's first; no utility existed). Other in-place overlays
   (amenity form modal, booking ModalLayout) share the latent trap and are flagged, not touched.
 
+## 2026-08-12 — Complaint Engine v2
+
+- `API.md`, `openapi.yaml`, and `api_yaml_mapper.md`: documented and regenerated the skill-based raise, resident cancel, candidate picker, and staff detail API surface.
+- `design-of-components.md`: recorded the tracker, candidate picker, and cancel/re-evaluation dialog responsibilities.
+- `erd/homebandhu.dbml`: added v2 complaint skill/pool, offer-force, cancellation, and complaint-timer relationships.
+
+## 2026-08-12 — Session 72: the seven migrations landed, and the complaints engine got its map
+
 ### The hosted database caught up with the repository
 
 `PO` (the owner applied every file personally, per the standing rule). The seven pending
@@ -2342,16 +2350,17 @@ But the rescan-after-every-pull rule earned its keep once.
 
 ### `backend/scripts/api_annotations.py` → `docs/openapi.yaml`
 
-- `POST /onboarding/community` now declares **422** alongside 401/403/409/500/503, and its
-  description no longer claims 409 is "almost always a name collision" or that 503 means only "not
-  provisioned". **AUDIT.** Commit `7d830e1` rewrote `onboarding_service.create_community` to catch
+- `POST /onboarding/community` now explains its route-specific **422** rationale alongside
+  401/403/409/500/503, and its description no longer claims 409 is "almost always a name collision"
+  or that 503 means only "not provisioned". **422 was already present in the generated OpenAPI
+  operation** through the application-wide `include_router(..., responses={422: ...})` declaration.
+  **AUDIT.** Commit `7d830e1` rewrote `onboarding_service.create_community` to catch
   `APIError` specifically and route it through `app.core.pg_errors.translate`, which maps
-  `23503`/`23514`/`23502`/`22P02`/`22004` to `ValidationError` — a **422 the spec did not list**. It
+  `23503`/`23514`/`23502`/`22P02`/`22004` to `ValidationError`. It
   also added the `founder_onboarding_unavailable` 503 for any failure it cannot attribute to the
   caller, and left 409 `onboarding_failed` reachable only from the row-shape guard.
-  **Nothing mechanical could catch this.** No path, method, or response model moved, so
-  `export_openapi.py --check` passed against the stale declaration and the route diff was empty —
-  the error surface widened underneath a signature that did not change. 404 was deliberately *not*
+  **Nothing mechanical could catch the missing rationale.** No path, method, or response model moved,
+  and the route diff was empty. 404 was deliberately *not*
   added: `translate` can emit it, but this operation looks nothing up by id, and the convention set
   by `POST /complaints` is to declare the reachable subset rather than the whole mapping.
 

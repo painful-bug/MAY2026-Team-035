@@ -962,8 +962,8 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "Found a community and make the caller its first administrator.\n\n"
             "The bootstrap case: the only write that does not require an existing "
             "membership, because it creates one. Requires a verified identity, "
-            "from any enabled provider. **409** if the name collides or the RPC "
-            "returns a row this API cannot read; **422** if the RPC rejects an "
+            "from any enabled provider. **409** for a translated database conflict "
+            "or if the RPC returns a non-object result; **422** if the RPC rejects an "
             "argument; **503** if the registration path has not been provisioned, "
             "or failed in a way this API cannot attribute to the caller."
         ),
@@ -1158,6 +1158,14 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
                 "admin's overdue count uses, so the two screens cannot disagree"
             ),
         ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/cancel"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[("US-2.6", "Lets the resident cancel a pre-start visit or return the complaint for re-evaluation.")],
+    ),
+    ("get", "/api/v1/complaints/staff/complaints/{complaint_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["complaint_transfer"],
     ),
     ("post", "/api/v1/complaints/{complaint_id}/reopen"): op(
         errors=["401", "403", "404", "422", "500"],
@@ -1990,6 +1998,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         no_story=NO_STORY["work_dispatch"],
     ),
     ("get", "/api/v1/work-orders/{work_order_id}"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("get", "/api/v1/work-orders/{work_order_id}/candidates"): op(
         errors=["401", "403", "404", "500"],
         no_story=NO_STORY["work_dispatch"],
     ),

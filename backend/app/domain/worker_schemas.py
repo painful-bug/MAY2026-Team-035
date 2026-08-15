@@ -56,6 +56,7 @@ class WorkerJob(CamelModel):
     #: True when the dispatcher booked this rather than the worker accepting it.
     #: The card reads differently for a job you were given and one you took.
     is_auto_assigned: bool = False
+    is_forced: bool = False
     community_id: str
     community_name: str | None = None
     department_id: str | None = None

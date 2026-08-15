@@ -174,6 +174,11 @@ function AssignForm({ order, roster, onSubmit, pending, error }) {
   const [staffAssignmentId, setStaffAssignmentId] = useState('');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
+  const [includeExcluded, setIncludeExcluded] = useState(false);
+  const candidates = useQuery({
+    queryKey: ['work-orders', 'candidates', order.id, includeExcluded],
+    queryFn: () => workOrdersApi.candidates(order.id, { includeExcluded }),
+  });
   const { slotRequiredToAssign } = permittedActions(order);
 
   return (
@@ -190,7 +195,7 @@ function AssignForm({ order, roster, onSubmit, pending, error }) {
       }}
     >
       <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-500">
-        Put somebody on this job
+        Offer somebody this job
       </p>
       {/* The roster, not a search. `assign_work_order` refuses anybody without a
           `staff_assignments` row in this department by name — offering a wider
@@ -200,14 +205,17 @@ function AssignForm({ order, roster, onSubmit, pending, error }) {
         value={staffAssignmentId}
         onChange={(event) => setStaffAssignmentId(event.target.value)}
       >
-        <option value="">Choose somebody on this roster…</option>
-        {roster.map((member) => (
-          <option key={member.id} value={member.id}>
-            {member.name}
-            {member.role ? ` · ${member.role}` : ''}
+        <option value="">Choose a candidate…</option>
+        {(candidates.data ?? roster).map((member) => (
+          <option key={member.staffAssignmentId || member.id} value={member.staffAssignmentId || member.id} disabled={member.excluded}>
+            {member.displayName || member.name}
+            {member.openJobs !== undefined ? ` · ${member.openJobs} open` : ''}
+            {member.awayUntil ? ` · away until ${whenText(member.awayUntil)}` : ''}
+            {member.excluded ? ' · declined earlier' : ''}
           </option>
         ))}
       </select>
+      <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600"><input type="checkbox" checked={includeExcluded} onChange={(event) => setIncludeExcluded(event.target.checked)} />Show excluded candidates</label>
 
       {/* Optional, and it defaults to the job's own hour — sending one assigns
           and reschedules in a single write, which is the common case. On a job
@@ -252,7 +260,7 @@ function AssignForm({ order, roster, onSubmit, pending, error }) {
         disabled={pending || !staffAssignmentId}
         className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60"
       >
-        <UserCheck className="h-4 w-4" />Book them
+        <UserCheck className="h-4 w-4" />Offer job
       </button>
       <Failure error={error} />
     </form>

@@ -228,7 +228,7 @@ def _my_provider_id(client: Client, *, profile_id: str) -> str:
 def search_communities(
     client: Client, *, query: str | None, limit: int, offset: int
 ) -> list[ServiceableCommunity]:
-    """Communities that need one of the caller's trades, nearest first."""
+    """Nearby communities, with applyable matching departments, nearest first."""
     return [
         ServiceableCommunity(
             id=row["id"],

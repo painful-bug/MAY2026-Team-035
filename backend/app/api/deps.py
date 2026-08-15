@@ -36,8 +36,8 @@ def _extract_token(request: Request, credentials: HTTPAuthorizationCredentials |
 
     if credentials is not None and credentials.credentials:
         return credentials.credentials
-    if request.cookies.get(cookie_name("access")):
-        return request.cookies[cookie_name("access")]
+    if request.cookies.get(cookie_name("access")) or request.cookies.get("__Host-hb_access") or request.cookies.get("hb_access"):
+        return request.cookies.get(cookie_name("access")) or request.cookies.get("__Host-hb_access") or request.cookies.get("hb_access")
     if credentials is None or not credentials.credentials:
         raise AuthenticationError("Missing bearer token.")
     return credentials.credentials
@@ -198,3 +198,4 @@ def require_membership_role(*roles: str) -> Callable[[MembershipContext], Member
         return membership
 
     return _guard
+

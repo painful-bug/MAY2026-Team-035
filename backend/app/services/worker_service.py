@@ -88,6 +88,7 @@ def _job_fields(row: dict[str, Any]) -> dict[str, Any]:
         "responded_at": row.get("responded_at"),
         "decline_reason": _text(row.get("decline_reason")),
         "is_auto_assigned": bool(row.get("is_auto_assigned")),
+        "is_forced": bool(row.get("is_forced")),
         "community_id": row["community_id"],
         "community_name": _text(row.get("community_name")),
         "department_id": _text(row.get("department_id")),

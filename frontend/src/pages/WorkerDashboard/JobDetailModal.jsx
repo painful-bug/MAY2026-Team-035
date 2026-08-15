@@ -68,7 +68,7 @@ export default function JobDetailModal({ workOrderId, onClose }) {
   const actions = !data
     ? []
     : data.assignmentStatus === 'offered'
-      ? ['accept', 'decline']
+      ? (data.isForced ? ['accept'] : ['accept', 'decline'])
       : data.workOrderStatus === 'in_progress'
         ? ['complete', 'unable']
         : data.assignmentStatus === 'accepted' && data.workOrderStatus === 'scheduled'
@@ -116,6 +116,11 @@ export default function JobDetailModal({ workOrderId, onClose }) {
                 {data.priority === 'high' && (
                   <span className="rounded-full bg-rose-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-700">
                     urgent
+                  </span>
+                )}
+                {data.isForced && (
+                  <span className="rounded-full bg-rose-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-700">
+                    Assigned — critical job
                   </span>
                 )}
                 {data.failedAttemptCount > 0 && (

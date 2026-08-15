@@ -37,6 +37,7 @@ _ASSIGNMENT_SELECT = (
     "worker_phone_e164, worker_membership_id, worker_provider_id, "
     "scheduled_start_at, scheduled_end_at, offered_at, responded_at, "
     "decline_reason, is_auto_assigned"
+    ", is_forced"
 )
 
 
@@ -114,6 +115,19 @@ def list_assignments(
         .data
         or []
     )
+
+
+def candidates(
+    client: Client, *, work_order_id: str, include_excluded: bool
+) -> list[dict[str, Any]]:
+    try:
+        response = client.rpc(
+            "work_order_candidates",
+            {"p_work_order_id": work_order_id, "p_include_excluded": include_excluded},
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not load candidates.") from exc
+    return response.data or []
 
 
 def create_work_order(

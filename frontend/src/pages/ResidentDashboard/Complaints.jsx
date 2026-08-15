@@ -23,6 +23,8 @@ import {
 import { residentApi } from '../../features/resident/residentApi';
 import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
 import { residentFaqs } from '../../data/residentFaqs';
+import { ComplaintTracker } from '../../features/complaints/ComplaintTracker';
+import { canCancelUnstartedWork } from '../../features/complaints/trackerProjection';
 
 // The resident's complaints, over the live API: `GET /complaints`,
 // `GET /complaints/{id}`, and the four writes that belong to the person who
@@ -44,19 +46,12 @@ import { residentFaqs } from '../../data/residentFaqs';
 //   narrow the page that was fetched rather than pretending to search the lot.
 //   Status and category *are* parameters and are sent.
 
-const CATEGORIES = [
-  'Plumbing',
-  'Electrical',
-  'Infrastructure',
-  'Cleaning',
-  'Security',
-  'Others',
-];
 
 // The four words a complaint displays as, which is also what `?status=` matches
 // on: two stored statuses render as `Resolved` and two as `In Progress`, so
 // filtering by the word on the row returns every row shown under it.
 const STATUSES = ['Pending', 'In Progress', 'Resolved', 'Cancelled'];
+const CATEGORIES = ['Plumbing', 'Electrical', 'Infrastructure', 'Cleaning', 'Security', 'Others'];
 
 const STATUS_STYLES = {
   Pending: 'border-amber-100 bg-amber-50 text-amber-700',
@@ -91,7 +86,8 @@ const formatDateTime = (value) => {
 const emptyForm = {
   title: '',
   description: '',
-  category: 'Plumbing',
+  category: '',
+  skillId: '',
   urgency: 'Medium',
   location: '',
   departmentId: '',
@@ -255,6 +251,8 @@ function ComplaintDrawer({ complaintId, onClose }) {
   const [comment, setComment] = useState('');
   const [isReopening, setIsReopening] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
+  const [cancelMode, setCancelMode] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   const detail = useQuery({
     queryKey: residentKeys.complaint(complaintId),
@@ -310,8 +308,17 @@ function ComplaintDrawer({ complaintId, onClose }) {
       setRating(0);
     },
   });
+  const cancelWork = useMutation({
+    mutationFn: () => residentApi.cancelComplaintWork(complaintId, { mode: cancelMode, reason: cancelReason }),
+    onSuccess: (complaint) => {
+      afterWrite(complaint);
+      setCancelMode(null);
+      setCancelReason('');
+    },
+  });
 
   const complaint = detail.data;
+  const canCancelWork = canCancelUnstartedWork(complaint?.timeline);
 
   return (
     <div
@@ -424,6 +431,25 @@ function ComplaintDrawer({ complaintId, onClose }) {
             </div>
 
             <ProposedVisit complaintId={complaintId} />
+
+            {canCancelWork && (
+              <section className="rounded-2xl border border-amber-100 bg-amber-50/50 p-4">
+                {cancelMode ? (
+                  <div className="space-y-3">
+                    <p className="text-xs font-bold text-amber-800">
+                      {cancelMode === 'cancel'
+                        ? 'Cancel entirely — to raise this again you’ll start from scratch.'
+                        : 'Send back for re-evaluation — the team will pick someone else.'}
+                    </p>
+                    <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Optional reason" className="w-full rounded-xl border border-amber-100 bg-white p-3 text-xs" />
+                    <div className="flex gap-2"><button type="button" disabled={cancelWork.isPending} onClick={() => cancelWork.mutate()} className="rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white">{cancelWork.isPending ? 'Saving…' : 'Confirm'}</button><button type="button" onClick={() => setCancelMode(null)} className="text-xs font-bold text-slate-600">Back</button></div>
+                    {cancelWork.error && <p role="alert" className="text-xs font-semibold text-rose-600">{cancelWork.error.message}</p>}
+                  </div>
+                ) : <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setCancelMode('cancel')} className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700">Cancel entirely</button><button type="button" onClick={() => setCancelMode('repool')} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-800">Send back for re-evaluation</button></div>}
+              </section>
+            )}
+
+            <ComplaintTracker events={complaint.timeline ?? []} />
 
             <section>
               <h3 className="text-sm font-extrabold text-slate-800">Ticket timeline</h3>
@@ -686,13 +712,14 @@ function RaiseComplaintModal({ onClose, onCreated }) {
     queryFn: () => residentApi.directoryContacts(),
     staleTime: 5 * 60_000,
   });
+  const skills = useQuery({ queryKey: ['skills'], queryFn: residentApi.skills, staleTime: 5 * 60_000 });
 
   const create = useMutation({
     mutationFn: () =>
       residentApi.createComplaint({
         title: form.title.trim(),
         description: form.description.trim(),
-        category: form.category,
+        skillId: form.skillId || null,
         urgency: form.urgency,
         location: form.location.trim(),
         // "Not sure" is the default and the honest answer most of the time. It
@@ -740,7 +767,7 @@ function RaiseComplaintModal({ onClose, onCreated }) {
           className="mt-6 space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!form.title.trim()) return;
+            if (!form.title.trim() || !form.skillId) return;
             create.mutate();
           }}
         >
@@ -756,14 +783,20 @@ function RaiseComplaintModal({ onClose, onCreated }) {
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Category">
-              <select value={form.category} onChange={set('category')} className={selectClass}>
-                {CATEGORIES.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
+            <Field label="Trade">
+              <select required disabled={skills.isLoading || skills.isError} value={form.skillId} onChange={set('skillId')} className={selectClass}>
+                <option value="">{skills.isLoading ? 'Loading trades…' : skills.isError ? 'Trades unavailable' : 'Choose a trade…'}</option>
+                {Object.entries((skills.data ?? []).reduce((groups, skill) => {
+                  const group = skill.category || 'Other';
+                  (groups[group] ||= []).push(skill);
+                  return groups;
+                }, {})).map(([group, options]) => (
+                  <optgroup key={group} label={group}>
+                    {options.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
+                  </optgroup>
                 ))}
               </select>
+              {skills.isError ? <p role="alert" className="text-[10px] font-semibold text-rose-600">{skills.error?.message || 'Trades could not be loaded. Please try again.'}</p> : null}
             </Field>
             <Field label="Urgency">
               <select value={form.urgency} onChange={set('urgency')} className={selectClass}>

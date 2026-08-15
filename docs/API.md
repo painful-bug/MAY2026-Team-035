@@ -42,6 +42,14 @@ This document is the contract between the backend and the React frontend. It is
 names the stories nothing serves yet. The stories and the user identification they came from are
 checked in under **[`product/`](product/)**.
 
+## Complaint Engine v2 additions (2026-08-12)
+
+- `POST /complaints/{complaintId}/cancel` accepts `{ mode: "cancel" | "repool", reason? }` and returns the refreshed resident complaint. It is available only before work starts; a stale request returns `409`.
+- `GET /work-orders/{workOrderId}/candidates?includeExcluded=true` returns the supervisor's ranked offer candidates, including workload, distance, leave end and exclusion flag.
+- `POST /complaints` accepts optional `skillId`; when present, the database validates the active skill and snapshots its name as the complaint category.
+- `POST /work-orders/{workOrderId}/assign` now creates a worker offer. The worker must accept before the job is scheduled.
+- The staff detail read is `GET /complaints/staff/complaints/{complaintId}`. It uses this non-colliding path because the existing resident `GET /complaints/{complaintId}` is already mounted unprefixed.
+
 > **Standing rule.** Every backend change updates this file in the same commit — new endpoints,
 > changed shapes, changed status codes. The frontend team is not in the room, and an endpoint that
 > exists only in Python is invisible to them.
@@ -190,7 +198,7 @@ safe to display. Validation failures add a `details` array:
 ```
 
 This envelope is in [`openapi.yaml`](openapi.yaml) as `ErrorResponse`, and **every operation declares
-the specific codes it can return** — all 72 of them today, and the exporter refuses to write a spec
+the specific codes it can return** — all 99 operations across 86 paths today, and the exporter refuses to write a spec
 in which one does not — each pointing at a shared
 `components/responses` entry. Until 2026-08-02 the spec instead carried FastAPI's stock
 `HTTPValidationError` — `{"detail": [...]}` — on 59 operations and nothing else anywhere: a shape
@@ -208,7 +216,7 @@ from `backend/scripts/api_annotations.py`.
 | Code | Meaning | When |
 |---|---|---|
 | `200 OK` | Success | All reads. Includes empty collections — see §1.6 |
-| `201 Created` | Resource created | `POST /registrations/{id}/approve`, which mints an invitation |
+| `201 Created` | Resource created | 16 current write operations, such as `POST /access-requests` |
 | `400 Bad Request` | `app_error` | Generic business-rule failure |
 | `401 Unauthorized` | `authentication_error` | Missing, malformed or expired bearer token |
 | `403 Forbidden` | `authorization_error` / `insufficient_role` | Authenticated but wrong role |
@@ -438,6 +446,29 @@ carries `resident` alongside `admin` for an admin, who may use the resident surf
 |---|---|---|
 | `401` | `authentication_error` | No refresh cookie, or it is invalid, expired or revoked |
 | `401` | `token_expired` | Access token past its expiry — refresh and retry |
+
+### `POST /api/v1/onboarding/community`
+
+Found a community and make the signed-in caller its first administrator. This bootstrap write is the
+exception to the active-membership rule: it creates the caller's membership. It requires a verified
+access token and the same `X-CSRF-Token`/cookie pair as every unsafe browser request.
+
+**Request.** Required fields are `name`, `community_type` (`apartment` or `layout_villa`),
+`address_line1`, `city`, `state`, `postal_code`, and `admin_profile`. The profile requires `fullName`
+and `unitNumber`; optional structures, map locations, feature keys, contact fields, and a second
+address line are described by `CommunityOnboardingRequest` in [`openapi.yaml`](openapi.yaml).
+
+**200.** Returns `{ "community": { ... }, "admin": { ... } }`: the newly created community and
+founder administrator records.
+
+| Status | When |
+|---|---|
+| `401` | The access token is missing, invalid, expired, or not a verified identity |
+| `403` | The CSRF token/cookie pair is missing or invalid |
+| `409` | The RPC reports a translated database conflict, or returns a non-object result |
+| `422` | The request schema or RPC arguments fail validation |
+| `500` | The RPC result is an object but omits `community` or `admin` |
+| `503` | The registration RPC is unavailable, missing, or fails without a caller-attributable error |
 
 ## 4. Invitations
 

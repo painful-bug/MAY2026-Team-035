@@ -338,7 +338,7 @@ class DepartmentRef(CamelModel):
 
 
 class ServiceableCommunity(CamelModel):
-    """A community that needs one of the caller's trades and has not barred them."""
+    """A nearby community, with matching departments the caller may apply to."""
 
     id: str
     name: str
@@ -347,7 +347,8 @@ class ServiceableCommunity(CamelModel):
     community_type: str | None = None
     distance_km: float | None = None
     matching_skill_names: list[str] = Field(default_factory=list)
-    #: Ids as well as names, because ``POST /worker/applications`` takes a
+    #: Empty when this nearby community has no department matching the caller's
+    #: active skills. Ids as well as names, because ``POST /worker/applications`` takes a
     #: ``departmentId`` and there is no other route to one: a provider who is
     #: not yet a member cannot read ``GET /departments``. Names alone made this
     #: a search result nobody could act on.
