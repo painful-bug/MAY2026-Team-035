@@ -78,11 +78,13 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
         .execute()
         .data["id"]
     )
+    provider_name = f"Ravi Kumar {uuid4().hex}"
     registered = _register_provider(
         provider,
         skill_id=skill_id,
         latitude=22.572645,
         longitude=88.363892,
+        name=provider_name,
     )
     assert registered
 
@@ -107,15 +109,16 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
         .execute()
         .data
     )
-    assert saved["display_name"] == "Ravi Kumar"
+    assert saved["display_name"] == provider_name
 
     community_id = str(uuid4())
     far_community_id = str(uuid4())
+    community_name = f"Near Community {uuid4().hex}"
     service.table("communities").insert(
         [
             {
                 "id": community_id,
-                "name": "Near Community",
+                "name": community_name,
                 "community_type": "apartment",
                 "address_line1": "1 Test Road",
                 "city": "Kolkata",
@@ -184,7 +187,7 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
     found = (
         provider.rpc(
             "search_serviceable_communities",
-            {"p_query": None, "p_limit": 100, "p_offset": 0},
+            {"p_query": community_name, "p_limit": 100, "p_offset": 0},
         )
         .execute()
         .data
@@ -223,6 +226,7 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
         service.table("notifications")
         .select("recipient_membership_id")
         .eq("kind", "service_application_received")
+        .eq("payload->>applicationId", fallback_application)
         .execute()
         .data
     )
@@ -242,7 +246,7 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
     ).execute()
     service.table("notifications").delete().eq(
         "kind", "service_application_received"
-    ).execute()
+    ).eq("payload->>applicationId", fallback_application).execute()
 
     manager_membership = (
         service.table("community_memberships")
@@ -362,6 +366,22 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
         .execute()
         .data
     )
+    visible_invitation = (
+        invitee.table("service_application_overview")
+        .select("id,community_name,department_name,direction,status")
+        .eq("id", invitation_id)
+        .execute()
+        .data
+    )
+    assert visible_invitation == [
+        {
+            "id": invitation_id,
+            "community_name": community_name,
+            "department_name": "Maintenance",
+            "direction": "invited",
+            "status": "pending",
+        }
+    ]
     invitation_staff = (
         invitee.rpc(
             "decide_service_application",
@@ -396,7 +416,7 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
             "search_hireable_service_providers",
             {
                 "p_department_id": department_id,
-                "p_query": None,
+                "p_query": provider_name,
                 "p_limit": 100,
                 "p_offset": 0,
             },
@@ -418,6 +438,7 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
         service.table("notifications")
         .select("recipient_membership_id")
         .eq("kind", "service_application_received")
+        .eq("payload->>applicationId", application_id)
         .execute()
         .data
     )
@@ -504,10 +525,11 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
 
     security_community = str(uuid4())
     security_department = str(uuid4())
+    security_community_name = f"Nearby Security Community {uuid4().hex}"
     service.table("communities").insert(
         {
             "id": security_community,
-            "name": "Nearby Security Community",
+            "name": security_community_name,
             "community_type": "apartment",
             "address_line1": "3 Test Road",
             "city": "Kolkata",
@@ -552,7 +574,7 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
     after_hire = (
         provider.rpc(
             "search_serviceable_communities",
-            {"p_query": "Nearby Security", "p_limit": 20, "p_offset": 0},
+            {"p_query": security_community_name, "p_limit": 20, "p_offset": 0},
         )
         .execute()
         .data
