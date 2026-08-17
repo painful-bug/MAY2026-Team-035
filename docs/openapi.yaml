@@ -7963,7 +7963,7 @@ components:
       title: ServiceSignupTelemetryRequest
       type: object
     ServiceableCommunity:
-      description: A community that needs one of the caller's trades and has not barred them.
+      description: A nearby community, with matching departments the caller may apply to.
       properties:
         city:
           anyOf:
@@ -21858,14 +21858,16 @@ paths:
       x-user-stories: []
   /api/v1/worker/communities/search:
     get:
-      description: 'Where the caller could apply, nearest first.
+      description: 'Nearby communities, nearest first.
 
 
-        Three rules, all applied in SQL: the community has a department whose
+        A row is visible by proximity even if that community has not configured a
 
-        categories need one of the caller''s skills, it has not blacklisted them, and
+        matching department yet. Its application buttons still contain only active
 
-        they are not already a member of it.
+        departments whose categories need one of the caller''s skills. Blacklisted
+
+        communities and communities the caller already belongs to stay hidden.
 
 
         Results are limited to the caller''s service radius. Communities without
