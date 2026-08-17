@@ -3019,6 +3019,8 @@ components:
             type: object
           title: Visitors
           type: array
+        weeklyNew:
+          $ref: '#/components/schemas/WeeklyNewCounts'
       title: DashboardSnapshot
       type: object
     DecideApplicationRequest:
@@ -7961,7 +7963,7 @@ components:
       title: ServiceSignupTelemetryRequest
       type: object
     ServiceableCommunity:
-      description: A community that needs one of the caller's trades and has not barred them.
+      description: A nearby community, with matching departments the caller may apply to.
       properties:
         city:
           anyOf:
@@ -9768,6 +9770,34 @@ components:
       - tankerNumber
       - arrivedAt
       title: WaterTankerLog
+      type: object
+    WeeklyNewCounts:
+      description: 'Rows created in the trailing 7 days -- the dashboard''s trend chips.
+
+
+        Integer counts, always present, `0` when nothing was created. Computed by
+
+        `dashboard_repository.weekly_new_counts` as head-only count queries, so the
+
+        values are whole-community truth rather than a tally of the capped lists.'
+      properties:
+        bookings:
+          default: 0
+          title: Bookings
+          type: integer
+        complaints:
+          default: 0
+          title: Complaints
+          type: integer
+        residents:
+          default: 0
+          title: Residents
+          type: integer
+        visitorRequests:
+          default: 0
+          title: Visitorrequests
+          type: integer
+      title: WeeklyNewCounts
       type: object
     WorkOrder:
       description: A scheduled piece of work against a complaint.
@@ -14674,7 +14704,18 @@ paths:
         title: Real-time sync across modules
   /api/v1/dashboard/snapshot:
     get:
-      description: Return the caller's current, tenant-authorized dashboard records.
+      description: 'Return the caller''s current, tenant-authorized dashboard records.
+
+
+        `weeklyNew` carries the dashboard''s trend counts: rows created in the
+
+        trailing 7 days for `residents` (active resident memberships started in
+
+        the window), `complaints`, `visitorRequests` and `bookings`. Integer
+
+        values, always present, `0` when none -- computed as head-only count
+
+        queries, never derived from the capped lists in the same response.'
       operationId: get_dashboard_snapshot_api_v1_dashboard_snapshot_get
       responses:
         '200':
@@ -21817,14 +21858,16 @@ paths:
       x-user-stories: []
   /api/v1/worker/communities/search:
     get:
-      description: 'Where the caller could apply, nearest first.
+      description: 'Nearby communities, nearest first.
 
 
-        Three rules, all applied in SQL: the community has a department whose
+        A row is visible by proximity even if that community has not configured a
 
-        categories need one of the caller''s skills, it has not blacklisted them, and
+        matching department yet. Its application buttons still contain only active
 
-        they are not already a member of it.
+        departments whose categories need one of the caller''s skills. Blacklisted
+
+        communities and communities the caller already belongs to stay hidden.
 
 
         Results are limited to the caller''s service radius. Communities without

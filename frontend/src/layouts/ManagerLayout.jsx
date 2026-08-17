@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
 import {
   Building2,
   ClipboardList,
@@ -181,7 +182,9 @@ export default function ManagerLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
-          <Outlet />
+          <PortalErrorBoundary>
+            <Outlet />
+          </PortalErrorBoundary>
         </main>
       </div>
     </div>
