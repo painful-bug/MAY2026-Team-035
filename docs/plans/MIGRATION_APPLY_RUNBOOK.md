@@ -632,3 +632,244 @@ snippets embedded in this document), not by an automated suite that will
 catch a future regression the way the other two files' tests would. That gap
 is a candidate for its own follow-up; nothing above depends on closing it
 before applying.
+
+---
+
+# Addendum — the two privilege migrations (pulled 2026-08-12)
+
+Everything above concerns the original seven files, all of which are now
+**applied and verified on the hosted project**. Two further migrations arrived
+from a teammate after that runbook was written and are the only files in
+`backend/supabase/migrations/` still unapplied:
+
+1. `20260812190000_grant_service_role_data_access.sql`
+2. `20260812200000_enable_authenticated_request_client_reads.sql`
+
+**Apply them in that order** — filename order is also dependency order here,
+though the coupling is weak (190000 touches only `service_role`, 200000 only
+`authenticated`; neither reads anything the other writes).
+
+**Why promptly, and not "next week":** until 200000 is applied,
+`public.staff_assignments` on the hosted project has **RLS disabled** — the
+repositories and the `department_staff_overview` view were written on the
+assumption that it was enabled, and it never was.
+
+**Ground truth as of 2026-08-12.** `supabase_migrations.schema_migrations` has
+47 rows; the repository has 49 migration files; the two above are the
+difference. Re-confirm with §0.2's query before you start.
+
+**The SQL Editor will interrupt you.** Both files are almost entirely `grant`,
+`revoke`, `alter` and `create policy` statements, so the editor's **"Potential
+issue detected"** popup ("this query has destructive operation…") **will**
+appear on submit for each file. That is keyword-matching, not analysis — answer
+**"Run query"**. Neither file contains a `drop table`, `drop column`, `delete`,
+`update`, or `truncate`; the only `drop` statements are four
+`drop policy if exists` guards immediately followed by the matching
+`create policy`. A successful run of either file acknowledges with
+**"Success. No rows returned"** and nothing else — no rows, no notices.
+
+---
+
+## 10. `20260812190000_grant_service_role_data_access.sql`
+
+**What it does.** Gives `service_role` the ordinary PostgreSQL object
+privileges it was missing — `usage` on schema `public`, full DML on every
+table (and view) that exists in `public` at apply time, `usage, select` on
+every sequence — because bypassing RLS is a *separate* capability from having
+the table privilege in the first place, and the backend's trusted service
+clients need both. It then sets matching `alter default privileges` so tables
+and sequences created by future migrations inherit the same grants without
+anyone remembering to restate them.
+
+**What to expect.** Five statements, all privilege DDL: `GRANT`, `GRANT`,
+`GRANT`, `ALTER DEFAULT PRIVILEGES`, `ALTER DEFAULT PRIVILEGES`. Expect the
+"Potential issue detected" popup on `grant`/`alter` → **Run query** → **"Success.
+No rows returned"**. Every statement is idempotent: re-granting a privilege
+already held is a documented no-op, and re-issuing the same
+`alter default privileges` overwrites the identical default-ACL entry rather
+than accumulating rows.
+
+**One caveat worth knowing.** `alter default privileges` with no `for role`
+clause applies only to objects created by *the role running this statement*.
+Run it as the same role that applies your migrations (`postgres` in both the
+SQL Editor and `supabase db push`) and future migration tables are covered; if
+some other role ever creates a table in `public`, that table gets no automatic
+service_role grant and needs an explicit one.
+
+**Post-check.**
+
+```sql
+select
+  has_schema_privilege('service_role', 'public', 'USAGE')                   as schema_usage,
+  has_table_privilege('service_role', 'public.communities', 'SELECT')       as sample_select,
+  has_table_privilege('service_role', 'public.communities', 'INSERT')       as sample_insert,
+  has_table_privilege('service_role', 'public.staff_assignments', 'UPDATE') as sample_update,
+  has_table_privilege('service_role', 'public.staff_assignments', 'DELETE') as sample_delete,
+  (select count(*)
+     from pg_default_acl d
+     join pg_namespace n on n.oid = d.defaclnamespace
+    where n.nspname = 'public'
+      and array_to_string(d.defaclacl, ',') like '%service_role=%')         as default_acl_entries;
+-- expect: schema_usage = true, sample_select = true, sample_insert = true,
+--         sample_update = true, sample_delete = true, default_acl_entries = 2
+--         (one entry for relations, one for sequences)
+```
+
+If `default_acl_entries` comes back `1`, only one of the two
+`alter default privileges` statements landed — re-run the whole file, which is
+safe.
+
+---
+
+## 11. `20260812200000_enable_authenticated_request_client_reads.sql`
+
+**What it does.** Closes the mirror-image gap for the request-scoped client:
+FastAPI reads tenant data with the signed-in user's JWT, RLS decides which rows
+that user may see, but PostgreSQL still refuses the query outright unless the
+`authenticated` role holds `SELECT` on the underlying table — which is why
+`department_staff_overview` (a `security_invoker` view over
+`staff_assignments`, `0043_staff_departures.sql:300`) could not be read by a
+JWT client at all. It enables RLS on `staff_assignments` — the one legacy table
+written *for* RLS that never actually turned it on — adds a member/own-provider
+read policy and an admin write policy, grants `insert, update` to
+`authenticated`, then runs a `do` loop granting `SELECT` to `authenticated` on
+every RLS-enabled table in `public`, and finally adds two narrow policies
+letting a service applicant read the one community and the one department
+joined to their own application.
+
+**Statement order matters and is correct.** The `enable row level security` on
+line 9 runs *before* the `do` loop on lines 33–48, so `staff_assignments` is
+itself picked up by the loop and receives its `SELECT` grant there — the
+explicit grant on line 31 deliberately covers only `insert, update`.
+
+**Scope of the blanket grant.** The loop grants `SELECT` only on tables that
+*already* have RLS enabled, so every row it exposes is still filtered by that
+table's existing policies; a table with RLS on and no policy (e.g.
+`sse_events`, `dispatch_tasks`) stays deny-all for `authenticated` after the
+grant. No policy anywhere in the applied chain is `using (true)` or
+`as restrictive`, and the two new `communities`/`departments` policies are
+permissive additions that only *widen* what an applicant may read — they cannot
+narrow what an existing member already sees. Tables created *after* this file
+must opt in explicitly; the loop is a point-in-time sweep, not a standing rule,
+and the file says so in its own header.
+
+**What to expect.** Eleven statements: `ALTER TABLE`, four
+`DROP POLICY`/`CREATE POLICY` pairs, one `GRANT`, and one `DO` block. The
+"Potential issue detected" popup fires on `alter`/`grant`/`drop` → **Run
+query** → **"Success. No rows returned"**. No notices — the `do` block raises
+nothing, it only `execute format(...)`s grants.
+
+**Re-run safety.** Every statement is safe twice: `enable row level security`
+on an already-enabled table is a no-op, each `create policy` is preceded by its
+own `drop policy if exists`, grants are idempotent, and the `do` loop re-issues
+grants that are already held.
+
+**Known nit — do not fix here, and it is latent.** The
+`staff_assignments_admin_write` policy is declared `for all`, but only
+`insert, update` are granted to `authenticated` (line 31). A JWT client
+attempting a `delete` on `staff_assignments` would therefore fail on the
+*privilege* check before the policy is ever consulted — a `42501` "permission
+denied for table staff_assignments", not the clean policy refusal the `for all`
+implies. This is inert today: the backend's only direct table access to
+`staff_assignments` is through the service client
+(`backend/app/services/auth_service.py:289`), which bypasses both checks, and
+every other read goes through `department_staff_overview`. Record it, apply the
+file as written (the file is immutable once applied), and let whoever adds a
+JWT-path delete decide between granting `delete` and narrowing the policy to
+`for insert, update`.
+
+**Post-check.**
+
+```sql
+select
+  (select count(*)
+     from pg_policies
+    where schemaname = 'public'
+      and policyname in (
+        'staff_assignments_read',
+        'staff_assignments_admin_write',
+        'communities_service_application_read',
+        'departments_service_application_read'
+      ))                                                                    as new_policies,
+  (select relrowsecurity from pg_class
+    where oid = 'public.staff_assignments'::regclass)                       as staff_rls_enabled,
+  has_table_privilege('authenticated', 'public.staff_assignments', 'SELECT') as auth_select,
+  has_table_privilege('authenticated', 'public.staff_assignments', 'INSERT') as auth_insert,
+  has_table_privilege('authenticated', 'public.staff_assignments', 'UPDATE') as auth_update,
+  has_table_privilege('authenticated', 'public.staff_assignments', 'DELETE') as auth_delete,
+  (select count(*)
+     from pg_class c
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relkind in ('r', 'p')
+      and c.relrowsecurity
+      and not has_table_privilege('authenticated', c.oid, 'SELECT'))        as rls_tables_still_ungranted;
+-- expect: new_policies = 4, staff_rls_enabled = true, auth_select = true,
+--         auth_insert = true, auth_update = true, auth_delete = false
+--         (that false is the known nit above, not a failure),
+--         rls_tables_still_ungranted = 0
+```
+
+`new_policies = 4` is the whole file: two on `staff_assignments`, one each on
+`communities` and `departments`. Anything less than 4 means a policy pair did
+not land — re-run the file, which is safe.
+
+Functionally, after this file: load a department's roster tab as a signed-in
+admin and confirm `GET /departments/{id}/staff` returns rows rather than a
+permission error, and confirm a service applicant can see the community and
+department names on their own application.
+
+---
+
+## 12. Record both in the ledger
+
+Applying SQL through the SQL Editor does **not** write
+`supabase_migrations.schema_migrations` — the CLI does that, the editor does
+not. Run this once, after both files are in and both post-checks pass, or the
+next `supabase db push` / `migration list --linked` will believe these two are
+still outstanding and try to replay them:
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values
+  ('20260812190000', 'grant_service_role_data_access'),
+  ('20260812200000', 'enable_authenticated_request_client_reads')
+on conflict (version) do nothing;
+```
+
+Then confirm the count:
+
+```sql
+select count(*) from supabase_migrations.schema_migrations;
+-- expect: 49
+```
+
+49 rows against 49 files in `backend/supabase/migrations/` means the hosted
+project and the repository are fully in step — nothing unapplied, nothing
+applied that the repository does not have a file for.
+
+---
+
+## What was checked before this addendum was written
+
+Static only — nothing below was run against any database. Both files were read
+in full, and:
+
+| Check | Result |
+|---|---|
+| Both files parse as valid PostgreSQL (`pglast.parse_sql`) | Pass — 5 statements in 190000, 11 in 200000 |
+| Every function the new policies call exists in the applied chain | `public.is_community_member(uuid)` and `public.is_community_admin(uuid)` are both `0019_departments_on_baseline.sql:81` and `:97`, `security definer`, `set search_path = public`, granted to `authenticated` at `:119`–`:120`; `auth.uid()` is used exactly as every applied policy uses it |
+| Every table the new policies reference exists and has RLS on | `communities` `0001_baseline.sql:256`, `departments` `0033_resident_money_and_home.sql:1280`, `service_applications` `0035_department_roles_and_hiring.sql:1167`, `service_providers` `0034_service_providers.sql:669` |
+| No prior `enable row level security` on `staff_assignments` anywhere in the chain | Confirmed — the table is created in `0001_baseline.sql:63` and altered by `0019:206`, `0035:218`, `0044:32`, none of which enables RLS or grants/revokes on it |
+| No prior grant, revoke or policy on `staff_assignments` | Confirmed — the only privilege statements naming it are in 200000 itself |
+| The four new policy names are unused elsewhere | Confirmed across every `.sql` in `backend/supabase/migrations/` |
+| No applied policy is `using (true)`, `as restrictive`, or granted `to anon`/`to public` in a way the `do` loop's blanket `SELECT` could widen | Confirmed — every policy in the chain is scoped by `auth.uid()` or a membership helper |
+| Statement-by-statement re-run safety | Confirmed for all 16 statements: grants are idempotent, `enable row level security` is a no-op when already on, all four `create policy` statements are guarded by `drop policy if exists`, and the `do` loop re-issues already-held grants |
+| No destructive statement in either file | Confirmed — zero `drop table`, `drop column`, `delete`, `update`, `truncate` |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted `service_role` and `authenticated` roles already hold any of these
+privileges from Supabase's own bootstrap (the grants are idempotent either way,
+so this changes nothing about whether to apply); and the exact table count the
+`do` loop touches, which depends on the hosted `pg_class` at apply time rather
+than on anything in the repository.

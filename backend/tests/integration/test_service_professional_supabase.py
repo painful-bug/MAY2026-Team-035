@@ -557,7 +557,14 @@ def test_service_professional_flow_with_real_user_jwts() -> None:
         .execute()
         .data
     )
-    assert after_hire == []
+    # 20260812181443 deliberately keeps unconfigured/mode-mismatched communities
+    # discoverable: the hired worker still sees the security-only community, but
+    # with nothing to apply to. The cross-mode block itself is the invite guard
+    # asserted below and the apply_to_department guard.
+    assert [row["id"] for row in after_hire] == [security_community]
+    (security_row,) = after_hire
+    assert security_row["matching_skill_names"] == []
+    assert security_row["departments"] == []
     with pytest.raises(APIError):
         admin.rpc(
             "invite_service_provider",

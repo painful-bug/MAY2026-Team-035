@@ -3,7 +3,8 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useApp } from '../store/useApp';
 import { AUTH_ROUTES } from '../routes/authRoutes';
 import Header from '../components/layout/Header';
-import { 
+import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import {
   LayoutDashboard, 
   Users, 
   AlertOctagon, 
@@ -146,7 +147,9 @@ export default function ResidentLayout() {
       <div className="flex-1 flex flex-col min-w-0">
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main className="p-6 flex-1 max-w-7xl w-full mx-auto animate-fade-in">
-          <Outlet />
+          <PortalErrorBoundary>
+            <Outlet />
+          </PortalErrorBoundary>
         </main>
       </div>
     </div>

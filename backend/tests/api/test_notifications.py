@@ -28,6 +28,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_active_membership, get_current_user, get_request_client
+from app.core import push_config
 from app.core.push_config import get_push_settings
 from app.domain.schemas import Principal
 from app.repositories import notifications_repository, push_repository
@@ -123,9 +124,19 @@ def push_configured(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict]:
 
 @pytest.fixture
 def push_unconfigured(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """An environment where nobody has generated a keypair."""
+    """An environment where nobody has generated a keypair.
+
+    ``delenv`` alone is not enough: ``PushSettings`` also reads ``backend/.env``,
+    so on a machine whose ``.env`` holds real VAPID keys the settings would come
+    back configured anyway. Constructing with ``_env_file=None`` keeps the file
+    out of it, so the empty defaults win.
+    """
     for name in ("VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"):
         monkeypatch.delenv(name, raising=False)
+    settings_cls = push_config.PushSettings
+    monkeypatch.setattr(
+        push_config, "PushSettings", lambda: settings_cls(_env_file=None)
+    )
     get_push_settings.cache_clear()
     yield
     get_push_settings.cache_clear()

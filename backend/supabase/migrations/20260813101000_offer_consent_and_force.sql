@@ -92,7 +92,7 @@ begin
   select * into v_complaint from public.complaints where id = v_order.complaint_id;
   perform public.notify_member(v_staff.membership_id, 'job.offered', jsonb_build_object(
     'title', 'A job is available', 'body', coalesce(v_complaint.title, 'Scheduled work'),
-    'url', '/worker/jobs?job=' || v_order.id::text, 'work_order_id', v_order.id, 'complaint_id', v_order.complaint_id));
+    'url', '/worker?job=' || v_order.id::text, 'work_order_id', v_order.id, 'complaint_id', v_order.complaint_id));
   perform public.enqueue_dispatch_task(v_order.id, 'auto_assign', now() + interval '30 minutes');
   return v_id;
 end;
@@ -116,7 +116,7 @@ begin
   insert into public.complaint_events (complaint_id, actor_membership_id, event_type, payload) values
     (v_order.complaint_id, v_order.supervisor_membership_id, 'job_assigned', jsonb_build_object('workOrderId', v_order.id, 'assigneeName', v_pick.display_name, 'forced', true)),
     (v_order.complaint_id, v_order.supervisor_membership_id, 'job_force_assigned', jsonb_build_object('workOrderId', v_order.id, 'assigneeName', v_pick.display_name));
-  perform public.notify_member(v_pick.membership_id, 'work_order.assigned', jsonb_build_object('title', 'You have been assigned a critical job', 'body', coalesce(v_complaint.title, 'Scheduled work'), 'url', '/worker/jobs?job=' || v_order.id::text, 'work_order_id', v_order.id));
+  perform public.notify_member(v_pick.membership_id, 'work_order.assigned', jsonb_build_object('title', 'You have been assigned a critical job', 'body', coalesce(v_complaint.title, 'Scheduled work'), 'url', '/worker?job=' || v_order.id::text, 'work_order_id', v_order.id));
   perform public.notify_complaint_staff(v_order.complaint_id, 'job.force_assigned', jsonb_build_object('title', 'Critical job force-assigned', 'complaint_id', v_order.complaint_id));
   if v_complaint.raised_by_membership_id is not null then perform public.notify_member(v_complaint.raised_by_membership_id, 'work_order.assigned', jsonb_build_object('title', 'Someone is coming for your complaint', 'body', v_pick.display_name, 'url', '/resident/complaints?complaint=' || v_order.complaint_id::text, 'complaint_id', v_order.complaint_id)); end if;
   return v_id;
