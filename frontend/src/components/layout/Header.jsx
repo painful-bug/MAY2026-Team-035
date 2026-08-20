@@ -16,7 +16,6 @@ import {
 export default function Header({ onMenuClick }) {
   const {
     currentUser,
-    users,
     notices,
     visitors,
     complaints,
@@ -25,18 +24,11 @@ export default function Header({ onMenuClick }) {
     setSearchQuery
   } = useApp();
 
-  // The residency chip's data. `currentUser.flat`/`tower` were read here and
-  // the session has never carried either (`applicationUser()` hard-codes both
-  // to '—'), so every member saw "Flat — • Tower —". The snapshot's `users`
-  // projection DOES carry them — `unit_residencies → units → buildings`, keyed
-  // by profile id — so the chip reads its own row from there. The backend uses
-  // the same '—' placeholder for members with no active residency (a pure
-  // admin, typically), so '—' and absence both mean "no unit": the chip hides
-  // rather than render a placeholder. While the snapshot is unavailable the
-  // list is empty and the chip simply stays hidden.
-  const residency = (users ?? []).find((user) => user.id === currentUser?.id);
-  const flat = residency?.flat && residency.flat !== '—' ? residency.flat : '';
-  const tower = residency?.tower && residency.tower !== '—' ? residency.tower : '';
+  // Residency labels come from GET /auth/session. The header can render as
+  // soon as authentication finishes instead of waiting for the much larger
+  // dashboard snapshot; a missing residency still means no chip.
+  const flat = currentUser?.flat && currentUser.flat !== '—' ? currentUser.flat : '';
+  const tower = currentUser?.tower && currentUser.tower !== '—' ? currentUser.tower : '';
   const unitLabel = [flat && `Flat ${flat}`, tower && `Tower ${tower}`]
     .filter(Boolean)
     .join(' • ');

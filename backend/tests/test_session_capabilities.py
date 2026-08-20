@@ -50,16 +50,16 @@ class _Query:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
-    def select(self, *_: Any, **__: Any) -> "_Query":
+    def select(self, *_: Any, **__: Any) -> _Query:
         return self
 
-    def eq(self, *_: Any) -> "_Query":
+    def eq(self, *_: Any) -> _Query:
         return self
 
-    def is_(self, *_: Any) -> "_Query":
+    def is_(self, *_: Any) -> _Query:
         return self
 
-    def limit(self, *_: Any) -> "_Query":
+    def limit(self, *_: Any) -> _Query:
         return self
 
     def execute(self) -> Any:
@@ -87,10 +87,24 @@ def session(monkeypatch: pytest.MonkeyPatch):
     """
 
     def _build(role: str, *, residency: bool) -> tuple[Any, _ServiceClient]:
+        residency_rows = []
+        if residency:
+            residency_rows = [
+                {
+                    "unit_id": UNIT_ID,
+                    "units": {
+                        "unit_code": "4B",
+                        "unit_type": "flat",
+                        "buildings": {
+                            "name": "Emerald",
+                            "building_type": "block",
+                        },
+                    },
+                }
+            ]
         client = _ServiceClient(
             {
-                "unit_residencies": [{"unit_id": UNIT_ID}] if residency else [],
-                "units": [{"unit_code": "4B", "unit_type": "flat", "buildings": None}],
+                "unit_residencies": residency_rows,
             }
         )
         monkeypatch.setattr(auth_service, "get_service_client", lambda: client)
@@ -123,6 +137,8 @@ def test_an_admin_who_lives_here_is_also_a_resident(session) -> None:
 
     assert context.capabilities == ["admin", "resident"]
     assert context.membership.unit_id == UNIT_ID
+    assert context.membership.unit.unit_code == "4B"
+    assert context.membership.unit.building_name == "Emerald"
 
 
 def test_an_admin_who_lives_nowhere_is_only_an_admin(session) -> None:
@@ -145,6 +161,7 @@ def test_the_answer_comes_from_the_residency_table(session) -> None:
     _, client = session("admin", residency=False)
 
     assert "unit_residencies" in client.tables
+    assert "units" not in client.tables
 
 
 def test_a_resident_is_not_given_a_second_copy_of_their_own_capability(

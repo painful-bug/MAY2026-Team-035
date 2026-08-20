@@ -11,7 +11,6 @@ from app.core.supabase_client import (
     get_auth_client,
     get_anon_client,
     get_service_client,
-    get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
 from app.domain.schemas import MembershipContext, MembershipUnit, Principal, Profile, SessionContext
@@ -366,42 +365,28 @@ def _claim_staff_invitations(
     return bool(claimed)
 
 
-def _unit_context(unit_id: str | None) -> MembershipUnit | None:
-    """Human-readable labels for the resolved residency, or nothing.
+def _unit_from_residency(residency: dict | None) -> MembershipUnit | None:
+    """Map the unit embedded in the existing residency read.
 
-    The header chip renders these; the opaque ``unit_id`` alone left it saying
-    "Flat — • Tower —". Display data only, so a failed or empty lookup returns
-    None rather than failing a session that is otherwise valid.
-
-    Standalone homes have ``units.building_id = null``, so the embedded
-    ``buildings`` row is absent and both building fields stay null.
+    The residency is already authoritative for both ``unit_id`` and the admin's
+    resident capability. Embedding its unit avoids a second serial PostgREST
+    request just to render the header. Standalone homes have no building row.
     """
-    if not unit_id:
+    unit = (residency or {}).get("units")
+    if isinstance(unit, list):
+        unit = unit[0] if unit else None
+    if not isinstance(unit, dict) or not unit.get("unit_code"):
         return None
-    try:
-        rows = (
-            get_service_client().table("units")
-            .select("unit_code, unit_type, buildings(name, building_type)")
-            .eq("id", unit_id)
-            .limit(1)
-            .execute().data
-            or []
-        )
-        if not rows:
-            return None
-        row = rows[0]
-        building = row.get("buildings")
-        if isinstance(building, list):
-            building = building[0] if building else None
-        building = building or {}
-        return MembershipUnit(
-            unit_code=row["unit_code"],
-            unit_type=row.get("unit_type"),
-            building_name=building.get("name"),
-            building_type=building.get("building_type"),
-        )
-    except Exception:  # noqa: BLE001 - see the docstring: never fail the session
-        return None
+    building = unit.get("buildings")
+    if isinstance(building, list):
+        building = building[0] if building else None
+    building = building if isinstance(building, dict) else {}
+    return MembershipUnit(
+        unit_code=unit["unit_code"],
+        unit_type=unit.get("unit_type"),
+        building_name=building.get("name"),
+        building_type=building.get("building_type"),
+    )
 
 
 def get_session_context(
@@ -462,7 +447,9 @@ def get_session_context(
     membership = rows[0]
     residency = (
         get_service_client().table("unit_residencies")
-        .select("unit_id")
+        .select(
+            "unit_id,units(unit_code,unit_type,buildings(name,building_type))"
+        )
         .eq("membership_id", membership["id"])
         .is_("ended_at", None)
         .limit(1)
@@ -483,14 +470,15 @@ def get_session_context(
     # nothing but the predicate.
     if role == "admin" and residency:
         capabilities.append("resident")
-    unit_id = residency[0].get("unit_id") if residency else None
+    residency_row = residency[0] if residency else None
+    unit_id = residency_row.get("unit_id") if residency_row else None
     return SessionContext(
         identity=profile,
         membership=MembershipContext(
             id=membership["id"], community_id=membership["community_id"], role=role,
             department_id=membership.get("department_id"),
             unit_id=unit_id,
-            unit=_unit_context(unit_id),
+            unit=_unit_from_residency(residency_row),
         ),
         portal=portal,
         capabilities=capabilities,
