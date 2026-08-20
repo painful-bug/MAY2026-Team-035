@@ -77,7 +77,15 @@ export function applicationUser(context) {
   return {
     id: identity.id, name: identity.full_name || identity.email || 'HomeBandhu member',
     email: identity.email || '', phone: identity.phone || '', role, accessRole,
-    communityId: membership.community_id, apartmentId: membership.unit_id, flat: '—', tower: '—', status: 'Active',
+    communityId: membership.community_id, apartmentId: membership.unit_id,
+    // `membership.unit` carries the human-readable residency labels the header
+    // chip renders. `tower` is null for standalone homes (units without a
+    // building) — a community is apartments XOR standalone homes.
+    flat: membership.unit?.unit_code ?? '—',
+    tower: membership.unit?.building_name ?? null,
+    unitType: membership.unit?.unit_type ?? null,
+    buildingType: membership.unit?.building_type ?? null,
+    status: 'Active',
     // Which department this person runs. `GET /auth/session` has always carried
     // it and nothing copied it across, which was harmless while no screen was
     // scoped to a department — the manager portal is the first, and it has no

@@ -100,7 +100,6 @@ const getComplaintHistory = (complaint) => {
 export default function DepartmentDetail() {
   const { departmentId } = useParams();
   const {
-    departments,
     complaints,
     updateComplaint,
     addComplaintComment,
@@ -111,7 +110,27 @@ export default function DepartmentDetail() {
   const [drawerTab, setDrawerTab] = useState('chat');
   const [message, setMessage] = useState('');
 
-  const department = departments.find((item) => item.id === departmentId);
+  // **The department comes from the API, not from the snapshot.**
+  //
+  // This screen used to read the store's copy for the header and `staff` for
+  // the roster, and both halves of that were the snapshot's skeleton:
+  // `GET /dashboard/snapshot` builds every department as
+  // `{ staff: [], categories: [] }` with only name, description and status
+  // (dashboard_service.py:203), so the category chips, operating hours and
+  // roster here were blank whatever was saved. `hiringApi.department` reads the
+  // full object from the departments list endpoint — one query serves the
+  // header and the roster, so the two can never describe different departments.
+  const rosterQuery = useQuery({
+    queryKey: ['departments', departmentId, 'roster'],
+    queryFn: () => hiringApi.department(departmentId),
+    enabled: Boolean(departmentId),
+  });
+  const department = rosterQuery.data ?? null;
+  const roster = useMemo(
+    () => (rosterQuery.data?.staff ?? []).filter((member) => member.status !== 'inactive'),
+    [rosterQuery.data]
+  );
+
   const departmentComplaints = useMemo(
     () =>
       department
@@ -177,30 +196,6 @@ export default function DepartmentDetail() {
     };
   }, [selectedComplaint]);
 
-  // **The roster comes from the API, not from the snapshot.**
-  //
-  // This screen used to read `department.staff`, and that list has been empty
-  // the whole time: `GET /dashboard/snapshot` builds every department as
-  // `{ staff: [], categories: [] }` (dashboard_service.py:203), so the
-  // "assign technician" control has been offering a choice of nobody. It was
-  // invisible because the typed-in staff the department form used to collect
-  // were written optimistically into the same local array, so the demo looked
-  // right until a reload.
-  //
-  // Those typed-in names are gone — technicians are hired now — so the list has
-  // to be the real one. `hiringApi.department` reads it from the departments
-  // list endpoint, which carries `staff[]` for real, including
-  // `serviceProviderId` since 0042.
-  const rosterQuery = useQuery({
-    queryKey: ['departments', departmentId, 'roster'],
-    queryFn: () => hiringApi.department(departmentId),
-    enabled: Boolean(departmentId),
-  });
-  const roster = useMemo(
-    () => (rosterQuery.data?.staff ?? []).filter((member) => member.status !== 'inactive'),
-    [rosterQuery.data]
-  );
-
   const invitationsQuery = useQuery({
     queryKey: ['departments', departmentId, 'staff-invitations'],
     queryFn: () => departmentsApi.staffInvitations(departmentId, { status: 'pending' }),
@@ -208,7 +203,24 @@ export default function DepartmentDetail() {
   });
   const pendingLeaders = invitationsQuery.data ?? [];
 
+  if (rosterQuery.isPending) {
+    return (
+      <p className="text-sm font-semibold text-slate-500">
+        Loading the department…
+      </p>
+    );
+  }
+  if (rosterQuery.error) {
+    return (
+      <p role="alert" className="text-xs font-semibold text-rose-600">
+        {rosterQuery.error.message}
+      </p>
+    );
+  }
   if (!department) {
+    // The query resolved and no department has this id — a stale link, not a
+    // fetch still in flight (redirecting on `isPending` would bounce every
+    // visit back to the list before the data could arrive).
     return <Navigate to="/admin/departments" replace />;
   }
 

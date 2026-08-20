@@ -334,6 +334,136 @@ components:
       - endTime
       title: AdminBookingRequest
       type: object
+    AdminComplaintRaised:
+      description: 'The id of the complaint that was just filed.
+
+
+        Deliberately not the complaint itself. The resident''s raise **does** read its
+
+        complaint back, because the response carries the SLA deadline the resident is
+
+        about to be held to and could not have computed. The admin has no such gap:
+
+        the admin portal''s complaint list is ``GET /dashboard/snapshot``, which both
+
+        writes on this router already refresh through the shared SSE trigger, so a
+
+        read-back here would return a row the screen is about to receive anyway --
+
+        and would return it through the *resident* projection, which is the wrong
+
+        shape for the screen that asked.'
+      properties:
+        id:
+          title: Id
+          type: string
+        message:
+          title: Message
+          type: string
+      required:
+      - id
+      - message
+      title: AdminComplaintRaised
+      type: object
+    AdminRaiseComplaintRequest:
+      description: 'What the admin portal''s complaint form collects.
+
+
+        The resident''s form (``resident_complaint_schemas.RaiseComplaintRequest``) is
+
+        the shape this mirrors, with one field added and one renamed.
+
+
+        **Added: ``forMembershipId``.** Present means *file this against that
+
+        resident''s membership* -- the complaint becomes theirs, appears on their
+
+        portal and keeps the resident verbs. Absent means the complaint is not
+
+        attached to anybody''s home (an amenity, a lobby, a gate) and belongs to the
+
+        admin portal alone. That single optional field is the whole of the two modes;
+
+        the database derives ``raisedVia`` from it rather than accepting it, because
+
+        a client that could send both could send them contradicting each other.
+
+
+        **Renamed: ``priority``, not ``urgency``.** The resident''s form says
+
+        ``urgency`` because that is the word on the resident''s screen; the admin
+
+        screens have said ``priority`` since the first complaint list. Both translate
+
+        through ``complaint_priority_to_storage`` to the same column, so the two
+
+        portals cannot mean different things by ``High``.
+
+
+        **``expectedResolutionAt`` is absent for the same reason it is absent from
+
+        the resident''s form**, and the reason is stronger here: an admin who could
+
+        send a deadline could quietly give the association''s own complaints a
+
+        different SLA from the residents''. The rule is in the database (§3.3).
+
+
+        ``category`` is optional here, exactly as it is on the resident''s form: a
+
+        caller submitting ``skillId`` gets the trade''s current name snapshotted into
+
+        ``category`` by the RPC, and requiring both would make the admin''s trade
+
+        picker send a string it does not have. "A complaint needs a category" is
+
+        enforced by ``admin_raise_complaint`` -- one place, for both portals -- and
+
+        surfaces as a 422.'
+      properties:
+        category:
+          default: ''
+          maxLength: 80
+          title: Category
+          type: string
+        departmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Departmentid
+        description:
+          default: ''
+          maxLength: 4000
+          title: Description
+          type: string
+        forMembershipId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Formembershipid
+        location:
+          default: ''
+          maxLength: 200
+          title: Location
+          type: string
+        priority:
+          default: Low
+          title: Priority
+          type: string
+        skillId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillid
+        title:
+          maxLength: 200
+          minLength: 1
+          title: Title
+          type: string
+      required:
+      - title
+      title: AdminRaiseComplaintRequest
+      type: object
     AdminSummary:
       description: One admin of the community.
       properties:
@@ -4863,6 +4993,10 @@ components:
         role:
           title: Role
           type: string
+        unit:
+          anyOf:
+          - $ref: '#/components/schemas/MembershipUnit'
+          - type: 'null'
         unit_id:
           anyOf:
           - type: string
@@ -4873,6 +5007,38 @@ components:
       - community_id
       - role
       title: MembershipContext
+      type: object
+    MembershipUnit:
+      description: 'Human-readable labels for a resolved residency.
+
+
+        ``building_name``/``building_type`` are null for standalone homes, whose
+
+        ``units.building_id`` is null -- a community is apartments XOR standalone
+
+        homes, never both.'
+      properties:
+        building_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Building Name
+        building_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Building Type
+        unit_code:
+          title: Unit Code
+          type: string
+        unit_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit Type
+      required:
+      - unit_code
+      title: MembershipUnit
       type: object
     MessageResponse:
       properties:
@@ -7961,7 +8127,7 @@ components:
       title: ServiceSignupTelemetryRequest
       type: object
     ServiceableCommunity:
-      description: A community that needs one of the caller's trades and has not barred them.
+      description: A nearby community, with matching departments the caller may apply to.
       properties:
         city:
           anyOf:
@@ -13153,6 +13319,21 @@ paths:
       description: 'File a complaint against the caller''s own membership.
 
 
+        **The caller must live somewhere.** This route owns the complaint by the
+
+        raiser''s own membership and shows it on their resident portal, which only
+
+        means anything for a membership with an active `unit_residencies` row. Staff
+
+        reporting a broken lift in a block they do not live in use
+
+        `POST /complaints/admin-raise`, which owns the complaint on the admin portal
+
+        instead of putting it in the raiser''s personal list. Until 2026-08-20 this
+
+        route had no guard at all and was the only way for either of them.
+
+
         **The expected resolution time is computed here, not sent.** High → 24h,
 
         Medium → 48h, Low → 72h, applied by the database on insert. The rule used to
@@ -13214,6 +13395,121 @@ paths:
         role: The expected resolution time is computed on insert from that priority, so it exists before
           anyone asks for it
         title: Complaint accountability
+  /api/v1/complaints/admin-raise:
+    post:
+      description: 'File a complaint from the admin portal, in one of two modes.
+
+
+        Related user stories: Resident 2.6 - complaint status tracking with history;
+
+        Resident 2.8 - complaint accountability.
+
+
+        **On behalf of a resident** (`forMembershipId` present). The complaint is
+
+        owned by that resident''s membership: it appears on their portal with the
+
+        chat, the status and the timeline, and they keep the resident verbs --
+
+        confirm the resolution, reopen it, cancel scheduled work. The admin is
+
+        recorded as the *actor* of the `raised` event, which is where the fact that
+
+        somebody else filed it belongs. It is history, not a property of the
+
+        complaint, and it must not be able to move the complaint off the list of the
+
+        person whose home the problem is in.
+
+
+        **Not attached to a unit** (`forMembershipId` absent). A burnt-out lobby
+
+        light, a broken gym treadmill, a gate that will not close. It is owned by the
+
+        admin''s own membership -- somebody has to own it, and the person who noticed
+
+        is the honest answer -- and it is marked admin-portal-only, so it does not
+
+        appear in that admin''s own resident-portal "My Complaints". That list is what
+
+        happened to them at home; a complaint about the lobby is not that.
+
+
+        **This route exists because an admin is also a resident.** There is one
+
+        membership row per person per community, and admins already hold the
+
+        `resident` capability, so `POST /complaints` would have accepted both of
+
+        these calls -- and filed both onto the admin''s resident list, where the
+
+        second one does not belong and the first one is filed against the wrong
+
+        person entirely.
+
+
+        Everything downstream is unchanged: the same category-then-skill department
+
+        routing, the same priority-derived SLA, the same notification to the
+
+        community''s admins and the complaint''s department manager, and the same
+
+        supervisor -> work order pipeline. An admin-raised complaint is a complaint.
+
+
+        `403` when the caller is not an active admin of their community, and when
+
+        `forMembershipId` names a membership in a different community -- refused
+
+        rather than ignored, since filing it into the caller''s own community would
+
+        hand a complaint to a management team that has never heard of the person it
+
+        names. `404` for a `skillId` that names no active trade; `422` for an
+
+        unrecognised `priority` or a complaint with neither a category nor a skill.'
+      operationId: admin_raise_complaint_api_v1_complaints_admin_raise_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminRaiseComplaintRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminComplaintRaised'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Raise a complaint from the admin portal
+      tags:
+      - complaints
+      x-user-stories:
+      - coverage: served
+        id: US-2.5
+        role: The same create the resident has, from the admin portal -- for a resident who called the
+          office instead of using the app, and for the amenity and common-area faults that belong to no
+          flat
+        title: Simple complaint submission with priority
+      - coverage: served
+        id: US-2.6
+        role: An on-behalf complaint is owned by the resident's membership, so the tracking, the timeline
+          and the resident's own verbs are the ones they already have; the admin is recorded as the raised
+          event's actor rather than as its owner
+        title: Complaint status tracking with history
   /api/v1/complaints/staff/complaints/{complaint_id}:
     get:
       operationId: staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get
@@ -21817,14 +22113,16 @@ paths:
       x-user-stories: []
   /api/v1/worker/communities/search:
     get:
-      description: 'Where the caller could apply, nearest first.
+      description: 'Nearby communities, nearest first.
 
 
-        Three rules, all applied in SQL: the community has a department whose
+        A row is visible by proximity even if that community has not configured a
 
-        categories need one of the caller''s skills, it has not blacklisted them, and
+        matching department yet. Its application buttons still contain only active
 
-        they are not already a member of it.
+        departments whose categories need one of the caller''s skills. Blacklisted
+
+        communities and communities the caller already belongs to stay hidden.
 
 
         Results are limited to the caller''s service radius. Communities without

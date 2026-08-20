@@ -63,10 +63,16 @@ def list_notices(client: Client, community_id: str) -> list[dict[str, Any]]:
 
 
 def list_complaints(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
+    # `raised_via` is on both branches because it is not a schema-generation
+    # difference: `20260820150000_admin_raised_complaints.sql` adds it to
+    # `complaints` itself, so a project that has applied that file has it whether
+    # its complaint tables are the legacy shape or the baseline's. **The snapshot
+    # therefore requires that migration**, the same way the resident list does --
+    # see the service's `_complaints` for what the column decides.
     columns = (
-        "id,category,title,description,status,priority,progress_percent,raised_by_membership_id,created_at,updated_at,resolved_at,complaint_events(id,event_type,note,new_status,created_at)"
+        "id,category,title,description,status,priority,progress_percent,raised_by_membership_id,raised_via,created_at,updated_at,resolved_at,complaint_events(id,event_type,note,new_status,created_at)"
         if legacy
-        else "id,category,title,description,status,raised_by_membership_id,created_at,updated_at,resolved_at,complaint_events(id,event_type,payload,created_at)"
+        else "id,category,title,description,status,raised_by_membership_id,raised_via,created_at,updated_at,resolved_at,complaint_events(id,event_type,payload,created_at)"
     )
     return (
         client.table("complaints").select(columns).eq("community_id", community_id)

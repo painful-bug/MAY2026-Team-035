@@ -4,7 +4,7 @@
 
 > ## Where the numbers stand
 >
-> The live surface is **195 operations across 164 paths**, all of them in
+> The live surface is **199 operations across 168 paths**, all of them in
 > [`openapi.yaml`](openapi.yaml), all carrying a user-story verdict (§16). Every `###` heading below
 > corresponds to an operation that exists; that is checked mechanically rather than by eye.
 >
@@ -15,6 +15,12 @@
 > documents whose per-endpoint contents were correct throughout; see `CHANGE_LOG` Session 58. What
 > **is** checked mechanically is the sentence after this one, and the `--check` that regenerates the
 > spec. A count in prose is not.)*
+>
+> *(And **195 across 164** until 2026-08-20, which is the third time. Only **one** of the four new
+> operations is this session's — `POST /complaints/admin-raise`; the spec at `ed9a131` already carried
+> **198 across 167**, so three had been sitting in the generated file with this sentence still saying
+> 195. Found by counting `openapi.yaml` rather than by reading the line, which is the only way this
+> ever gets found.)*
 >
 > **Two contract-wide rules that apply to every endpoint below.**
 >
@@ -44,7 +50,7 @@ checked in under **[`product/`](product/)**.
 
 ## Complaint Engine v2 additions (2026-08-12)
 
-- `POST /complaints/{complaintId}/cancel` accepts `{ mode: "cancel" | "repool", reason? }` and returns the refreshed resident complaint. It is available only before work starts; a stale request returns `409`.
+- `POST /complaints/{complaintId}/cancel` accepts `{ mode: "cancel" | "repool", reason? }` and returns the refreshed resident complaint. It is available only before work starts; a stale request returns `409`. **Requires the resident capability since 2026-08-20** (§7.2), like the other three resident verbs.
 - `GET /work-orders/{workOrderId}/candidates?includeExcluded=true` returns the supervisor's ranked offer candidates, including workload, distance, leave end and exclusion flag.
 - `POST /complaints` accepts optional `skillId`; when present, the database validates the active skill and snapshots its name as the complaint category.
 - `POST /work-orders/{workOrderId}/assign` now creates a worker offer. The worker must accept before the job is scheduled.
@@ -143,6 +149,14 @@ token by a compromised or stale hook therefore grants nothing.
 > section described it as live. It is not: `role_satisfies` is referenced only by its own unit test,
 > and the request guards match membership roles exactly. Where an admin genuinely needs a resident
 > surface, `GET /auth/session` says so explicitly by returning `capabilities: ["admin", "resident"]`.
+
+> **Changed 2026-08-20 — that second capability is now conditional.** An admin is granted `resident`
+> **only when they hold an active `unit_residencies` row**. It used to be granted to every admin
+> outright, which made the session disagree with the per-request guard that asks the same question of
+> the same table (§7.2): a flat-less admin was shown the resident affordances and then `403`'d the
+> moment they used one. The residency read was already being done to populate `unit`, so agreeing
+> with the guard cost a predicate. An admin who does live here is unaffected, and no other role's
+> capability list moved.
 
 **Unsafe methods also need CSRF.** `POST`, `PATCH`, `PUT` and `DELETE` on browser-facing routes require
 an `X-CSRF-Token` header matching the CSRF cookie, and an `Origin` matching the configured frontend.
@@ -419,6 +433,22 @@ is never usable as an ordinary login.
 `GET /auth/session` is what the frontend routes on: it returns `onboarding_eligible: true` for a
 signed-in identity with no membership yet, and otherwise the membership that decides which portal
 loads.
+
+**`membership.unit` names the residency; `membership.unit_id` only identifies it.** When the
+membership has an active residency, the opaque id is accompanied by the labels a header can render:
+
+```json
+"membership": {
+  "id": "…", "community_id": "…", "role": "resident", "department_id": null,
+  "unit_id": "c9a2679a-…",
+  "unit": { "unit_code": "B-1204", "unit_type": "flat", "building_name": "Tower B", "building_type": "block" }
+}
+```
+
+`building_name`/`building_type` are `null` for standalone homes, whose `units.building_id` is null —
+a community is apartments XOR standalone homes. `unit` itself is `null` when there is no residency,
+and also when the unit lookup fails: the labels are display data, and a session that is otherwise
+valid is never refused over them.
 
 **`portal` is a closed list**, and it is the only value a client should route on. It is *not* the
 membership role: the backend computes it from facts the browser does not hold, which is the whole
@@ -976,6 +1006,46 @@ and the queue itself is an inbox, which is a manager's.
 | Guard | `can_manage_department` |
 | Errors | `401`, `403`, `404`, `500` |
 
+### 7.2 Who holds the resident verbs — changed 2026-08-20
+
+**Resident-ness is an active `unit_residencies` row, and never an implication of the role column.**
+There is exactly one `community_memberships` row per person per community
+(`memberships_active_person_community`, `0001`:45), so the administrator who owns flat B-402 has one
+membership and its role is `admin`. Guarding the resident verbs with `require_membership_role("resident")` therefore refused that
+person the verbs on **their own home** — cancelling work in their flat, confirming a resolution they
+are the only witness to, answering a visit proposed to them. That was never a policy anybody chose;
+it was the role column standing in for a fact it does not record.
+
+`require_resident_capability` (`app/api/deps.py`) replaces it on every one of those routes. It passes
+when the role is `resident`, and otherwise asks `unit_residencies` for one active row on the
+membership. Cost is one indexed read, and only for callers who are not already `resident` — the
+overwhelmingly common case does no query at all.
+
+**`GET /auth/session` was changed in the same pass, in the opposite direction.** It has advertised
+`capabilities: ["admin", "resident"]` since Google sign-in landed, but it did so for *every* admin,
+which is the same wrong answer the role guard gave and simply inverted: the portal offered the
+resident buttons to somebody the per-request layer would refuse. It now grants `resident` only on the
+same active-residency test this guard applies, so the two layers answer one question from one table
+(§1.2).
+
+**The refusal is byte-identical to the old one**: `403` `community_role_required`, same message. A
+client that special-cases the resident 403 keeps working, and nothing in the error envelope moved.
+
+> **This narrows one endpoint as well as widening five.** `POST /complaints` used to require only an
+> **active membership**, so a `worker`, `security` or `manager` membership with no flat could raise a
+> complaint onto a resident complaint list they have no residence behind. It now answers `403`
+> `community_role_required`. Their path is `POST /complaints/admin-raise` if they are an admin, and
+> otherwise the association's — a member of staff reporting a fault in a building they do not live in
+> is not the same act as a resident reporting one in their home, and the resident list is the wrong
+> place for it. **No screen outside the resident portal calls `POST /complaints`** (checked across
+> `frontend/src/**` on 2026-08-20), so this closes a hole rather than removing a path anything used.
+
+**Where it applies:** `POST /complaints`, `/cancel`, `/reopen`, `/resolution` (§7), and both resident
+scheduling routes, `GET /complaints/{id}/schedule-request` and `POST /complaints/{id}/schedule`
+(§18). `GET /complaints`, `GET /complaints/{id}` and `POST /complaints/{id}/read` stay on active
+membership: reading and dismissing your own row needs no residency, and the lookups already filter on
+the membership.
+
 ### The two vocabularies
 
 The database column is `priority`; the form field is `urgency`. Neither side is renamed —
@@ -985,6 +1055,89 @@ The database column is `priority`; the form field is `urgency`. Neither side is 
 members, and the mapping is deliberately **not** a round trip: `closed` renders as `Resolved`, because
 the frontend's select has three options and closed is not one of them. What `closed` means is in
 `POST /complaints/{id}/resolution` below.
+
+### `POST /api/v1/complaints/admin-raise`
+
+Raise a complaint **from the admin portal**. **Requires `ADMIN`**, plus CSRF. `201 Created`.
+
+**Request**
+```json
+{
+  "title": "Lobby light out",
+  "description": "The light by the B-block postboxes has been out since Friday.",
+  "skillId": "…",
+  "category": "",
+  "priority": "Low",
+  "location": "B Block lobby",
+  "departmentId": null,
+  "forMembershipId": null
+}
+```
+
+**201** — `{ "id": "…", "message": "Complaint raised." }`
+
+**One optional field decides everything**, and it is `forMembershipId`:
+
+| `forMembershipId` | Owned by | `raised_via` | Where it appears |
+|---|---|---|---|
+| a resident's membership id | **that resident's** membership | `resident` | Their portal, with the chat, the status, the timeline and the resident verbs — and the admin queue, as before |
+| absent | the **admin's own** membership | `admin` | The admin queue only. **Not** on that admin's own resident-portal "My Complaints" |
+
+The first mode is a resident who telephoned the office instead of opening the app. The complaint is
+**theirs**: they can confirm the resolution, reopen it and cancel a proposed visit, exactly as if they
+had filed it. That the administrator typed it is recorded where it belongs — the `raised` event's
+`actorMembershipId` is **always the admin**, and its payload carries `"on_behalf": true`. It is
+history, not a property of the complaint, and it must not be able to move the complaint off the list
+of the person whose home the problem is in.
+
+The second mode is a burnt-out lobby light, a broken treadmill, a gate that will not close. Somebody
+has to own the row and the person who noticed is the honest answer, so it is the admin's — but it is
+marked admin-portal-only, because their "My Complaints" is *what happened to them at home* and a
+complaint about the lobby is not that.
+
+> **`raisedVia` is derived by the database, never accepted from the client.** A request that could
+> send both it and `forMembershipId` is a request that can send them contradicting each other. It is
+> `admin` exactly when `forMembershipId` is absent.
+
+> **Why this is not `POST /complaints` with an extra field.** Because an admin *is* a resident (§7.2)
+> — one membership row, the resident capability granted whenever they hold a flat — the resident
+> endpoint would have **accepted both of these calls** and filed both onto the admin's own resident
+> list, where the second does not belong and the first is filed against the wrong person entirely.
+
+`category` is **optional here, exactly as on the resident's form**: send `skillId` and the database
+snapshots that trade's current name into `category`. Sending neither is a `422` from
+`admin_raise_complaint` — one rule, enforced in one place, for both portals. `priority` is the admin
+screens' word for what the resident's form calls `urgency`; both translate to the same column, so the
+two portals cannot mean different things by `High`. **`expectedResolutionAt` is not accepted**, for
+a stronger version of the reason it is refused on the resident's form: an admin who could send a
+deadline could quietly give the association's own complaints a different SLA from the residents'.
+
+**Everything downstream is unchanged.** The same category-then-skill department routing (§7.1), the
+same priority-derived SLA, the same `notify_complaint_staff` audience, and the same supervisor → work
+order pipeline. An admin-raised complaint is a complaint.
+
+The response is the id and a message rather than the complaint, and that is the deliberate difference
+from `POST /complaints`. The resident's raise returns its row because the SLA deadline is the one
+thing the client could not have computed and is about to display. The admin has no such gap: the
+admin portal's complaint list is `GET /dashboard/snapshot`, which this write refreshes through the
+shared SSE trigger, so a read-back would return a row the screen is about to receive anyway — through
+the *resident* projection, which is the wrong shape for the screen that asked.
+
+**The snapshot tells the two modes apart.** Every complaint row it projects now carries `raisedVia`,
+and a row with `raisedVia: "admin"` reports its `flat` as `"—"`: the admin's own flat number is not
+where the lobby light is, and printing it would attribute a common-area fault to a home.
+
+| Status | Code | Cause |
+|---|---|---|
+| `403` | `forbidden` | Not an active admin of the community — checked by `require_admin` **and again in the RPC**, which is callable by any authenticated role |
+| `403` | `forbidden` | `forMembershipId` names a membership in **another community**, or one that is ended or inactive. Refused rather than ignored: filing it into the caller's own community would hand a complaint to a management team that has never heard of the person it names |
+| `404` | `not_found` | `skillId` names no active trade |
+| `422` | `unknown_priority` | `priority` is not `High`, `Medium` or `Low` |
+| `422` | `check_violation` | Neither `category` nor `skillId`, or an empty `title` |
+
+> **`forMembershipId` is not checked for a residency.** An admin filing on somebody's behalf is
+> stating that this person's home has a problem, and a membership mid-move or still waiting on its
+> `unit_residencies` row is exactly the case where they need somebody to file for them.
 
 ### `PATCH /api/v1/complaints/{complaintId}`
 
@@ -1064,6 +1217,13 @@ personally raised, not the community queue; that is `GET /dashboard/snapshot`. O
 a resident's list to one caller and the whole association's to another is the shape
 `RESIDENT_BACKEND_DESIGN.md` §5.1 exists to prevent.
 
+> **Added 2026-08-20 — this list and the detail below filter on `raised_via = 'resident'`.** A
+> complaint an admin raised **about the building rather than about a home** is owned by their
+> membership and would otherwise appear here, on the one list that means *what happened to me at
+> home*. It is `raised_via = 'admin'` and is excluded. A complaint raised on a resident's **behalf**
+> is `'resident'` and does appear, on that resident's list, with every verb intact — which is the
+> whole point of filing it against their membership. See `POST /complaints/admin-raise`.
+
 | Query | Notes |
 |---|---|
 | `status` | `Pending` \| `In Progress` \| `Resolved` \| `Cancelled`. **Unrecognised is `422`, not an empty page** — a filter typo must not be indistinguishable from *you have no resolved complaints*. Matches on what a complaint **displays as**, not on one stored value: `Resolved` covers `resolved` and `closed`, `In Progress` covers `acknowledged` and `in_progress`. Stored words are not accepted — `?status=Closed` is a `422`, because it is a caller guessing at a vocabulary this API does not speak |
@@ -1085,8 +1245,14 @@ a resident's list to one caller and the whole association's to another is the sh
 
 ### `POST /api/v1/complaints`
 
-Raise a complaint. **Requires an active membership.** `201 Created`, and the body is the complaint as
+Raise a complaint. **Requires the resident capability** — the `resident` role, or any membership
+holding an active `unit_residencies` row (§7.2). `201 Created`, and the body is the complaint as
 `GET /complaints/{id}` would return it.
+
+> **Narrowed 2026-08-20.** This used to require only an active membership, so a `worker`, `security`
+> or `manager` membership with no flat could file onto a resident complaint list. It is now `403`
+> `community_role_required`. An administrator's path is `POST /complaints/admin-raise`, which is
+> above and which is a different act with a different owner.
 
 **Request**
 ```json
@@ -1128,6 +1294,7 @@ for.
 
 | Status | Code | Cause |
 |---|---|---|
+| `403` | `community_role_required` | The caller holds no `resident` role and no active residency (§7.2) |
 | `422` | `unknown_urgency` | Not `High`, `Medium` or `Low`. **Not defaulted** — a silent fallback would file the complaint under a deadline the resident did not choose |
 | `422` | — | Empty or whitespace-only `title` or `category` |
 
@@ -1138,7 +1305,9 @@ must be the caller's own complaint.
 
 A complaint that exists but belongs to somebody else is a **`404`, identical to one that does not
 exist**. The lookup filters on the membership rather than checking afterwards, so there is no code
-path in which the two could be told apart.
+path in which the two could be told apart. Since 2026-08-20 it filters on `raised_via = 'resident'`
+in the same way and for the same reason, so an admin's own building complaint is a `404` on their
+resident portal rather than a row that half-belongs there.
 
 Adds `description`, `resolutionRating`, `residentFeedback`, `timeline[]`, `comments[]`,
 `hasOlderEvents` and `hasOlderComments` to the list row's fields. A timeline entry is
@@ -1157,7 +1326,8 @@ type itself rather than vanishing from the history.
 
 ### `POST /api/v1/complaints/{complaintId}/reopen`
 
-Send a resolved complaint back. **Requires `RESIDENT`**, and it must be their own complaint.
+Send a resolved complaint back. **Requires the resident capability** (§7.2 — the `resident` role, or
+an active residency on any membership), and it must be their own complaint.
 
 **Request** — `{ "reason": "The lift stopped again the same evening." }`
 
@@ -1181,14 +1351,15 @@ Notifies the community's admins and managers. Returns the complaint.
 
 | Status | Code | Cause |
 |---|---|---|
-| `403` | `community_role_required` | Not a resident |
+| `403` | `community_role_required` | No `resident` role and no active residency (§7.2) |
 | `403` | `insufficient_privilege` | Not the resident who raised it |
 | `404` | `not_found` | No such complaint |
 | `422` | `check_violation` | Not currently resolved, or an empty reason |
 
 ### `POST /api/v1/complaints/{complaintId}/resolution`
 
-Accept the resolution and rate it. **Requires `RESIDENT`**, and it must be their own complaint.
+Accept the resolution and rate it. **Requires the resident capability** (§7.2), and it must be their
+own complaint.
 
 **Request** — `{ "rating": 4, "feedback": "Fixed, though it took two visits." }`
 
@@ -3604,6 +3775,20 @@ silent, and `published_at` has been nullable for that reason since `0018`.
 | Endpoint | Role |
 |---|---|
 | [`POST /complaints`](#post-apiv1complaints) | The create endpoint, with `urgency` writing to a real `priority` column (`0031`) |
+| [`POST /complaints/admin-raise`](#post-apiv1complaintsadmin-raise) | The same submission, performed by the office for a resident who telephoned instead of opening the app. Same minimal form, same priority selector, same routing and SLA |
+
+> **The `admin-raise` trace is the on-behalf mode only, and it is worth saying so rather than
+> letting the tag imply more, 2026-08-20.** The story is written from the resident's side — *"as a
+> resident, I want to raise a complaint through a minimal form"* — and its pain point is that
+> submission feels complicated. Filing **on a resident's behalf** serves that honestly: it is the
+> same act, done by the person who took the phone call, and the complaint lands on the resident's
+> own list rather than in a notebook. The endpoint's **other** mode — a complaint attached to no
+> flat, for a lobby light or a gym treadmill — serves **no user story at all**. It is an
+> administrative need the interviews never raised, and it would belong in §16.6 if the operation
+> did not already carry a story for its first mode. Recorded here rather than counted as coverage.
+>
+> **Neither mode moves this story's verdict.** It was already *served* by `POST /complaints`; a
+> second way in does not make it more served.
 
 > **Closed, 2026-08-04, by `0031_resident_complaints.sql`.** Both halves the assessment below asks
 > for landed together: the column, and the endpoint that writes it. The form's minimal shape is
@@ -3637,6 +3822,7 @@ reports `Medium`, permanently.** This story needs one column before it needs an 
 | [`POST /complaints/{complaintId}/resolution`](#post-apiv1complaintscomplaintidresolution) | Closes the loop the story leaves open |
 | [`PATCH /complaints/{complaintId}`](#patch-apiv1complaintscomplaintid) | Writes the status **and its timeline entries in one transaction** |
 | [`POST /complaints/{complaintId}/comments`](#post-apiv1complaintscomplaintidcomments) | `resident` visibility reaches the resident; `internal` reaches neither their thread nor their timeline |
+| [`POST /complaints/admin-raise`](#post-apiv1complaintsadmin-raise) | The ownership half: a complaint filed **on a resident's behalf** is owned by *their* membership, so the tracking, the timeline and their own verbs are the ones they already have. The admin is the `raised` event's actor, not the complaint's owner |
 | `GET /dashboard/snapshot` → `complaints[]` | Returns `status`, `comments[]` and `history[]`, **filtered to the caller's own complaints** for a non-admin |
 
 > **Closed, 2026-08-04, by `0031`.** The shortfall below was real and is no longer this story's
@@ -3910,7 +4096,7 @@ downloadable report — the same export gap as US-1.6.
 
 ### 16.6 Endpoints that serve no story, and why that is fine
 
-**122 of the 195 operations map to no story in the document.** Not a defect — the team wrote stories
+**124 of the 199 operations map to no story in the document.** Not a defect — the team wrote stories
 about pain points in an existing product, not about the plumbing every product needs.
 
 > **~~106 of the 179~~ — recounted 2026-08-12, and the table below rebuilt from the spec a second
@@ -4009,9 +4195,13 @@ nothing let a resident learn an amenity id, which is a defect no amount of readi
 would surface. **A `Feature` row is not always a story someone forgot to write; sometimes it is one
 nobody could have written.**
 
-> **Recount, 2026-08-12 — the current figures.** Straight out of `x-user-stories` in the generated
-> spec: **73 operations serve at least one story, 122 serve none, 73 + 122 = 195.** By API type the
-> 122 are `Feature` 77, `Master data` 21, `Functional` 16, `Non-functional` 5, `Configuration` 3.
+> **Recount, 2026-08-20.** Straight out of `x-user-stories` in the generated spec: **75 operations
+> serve at least one story, 124 serve none, 75 + 124 = 199.** By API type the 124 are `Feature` 79,
+> `Master data` 21, `Functional` 16, `Non-functional` 5, `Configuration` 3. Only one of the four
+> operations added since the previous recount is this session's — `POST /complaints/admin-raise`,
+> which is **mapped** (US-2.5, US-2.6) — so the mapped count moved 73 → 75 and the unmapped 122 →
+> 124 with three operations arriving between the two recounts unremarked. The 2026-08-12 figures
+> this paragraph replaces were **73 / 122 / 195**, `Feature` 77.
 > **The mapped count did not move at all** across Sessions 67–68 — twenty new operations arrived
 > (work-order triage, the amenity admin surface, the money three, `POST /admins`, telemetry,
 > department options, the department-request loop) and four `…/staff` writes were retired, and not
@@ -4117,6 +4307,7 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-20 | **`POST /complaints/admin-raise`, and "resident" stops meaning the role column.** One operation added (surface **195 → 199 across 168 paths**, three of the four having arrived unremarked before today). The endpoint files a complaint from the admin portal in two modes decided by one optional `forMembershipId`: **on a resident's behalf**, owned by their membership and appearing on their portal with every resident verb intact, or **attached to no flat**, owned by the admin and admin-portal-only. Provenance lives in the `raised` event — the actor is always the admin, `"on_behalf": true` in the payload — never in the complaint row, so it cannot move a complaint off the list of the person whose home the problem is in. New column `complaints.raised_via` (`'resident'`\|`'admin'`, `20260820150000_admin_raised_complaints.sql`) says which portal owns the raiser-side view; `complaint_overview` exposes it; `GET /complaints` and `GET /complaints/{id}` filter to `'resident'`; the snapshot's complaint rows carry `raisedVia` and print `flat` as `"—"` for `'admin'`. **Six routes widened and one narrowed** by the new `require_resident_capability` (§7.2): resident-ness is an active `unit_residencies` row, so an admin who owns a flat gets the verbs on their own home, while `POST /complaints` — previously any active membership — now refuses a flat-less `worker`, `security` or `manager` with the same `403` `community_role_required` it always used. `GET /auth/session` grants an admin the `resident` capability only with a residency, so the session and the per-request guard stop disagreeing. **`US-2.5`'s new row is the on-behalf mode only** and §16.4 says so; the unattached mode serves no story. |
 | 2026-08-09 | **§18 added — service personnel.** Six operations backed by `0034`: registering as a service person, editing that registration, setting which trades you offer, the offline toggle, and the global skill catalogue. **The first surface on this API whose caller holds no community membership** — a plumber exists before any society has heard of them — which is why none of these routes resolves one and why CSRF is the only guard on the four writes. Overturns two things in print and says so: `USER_IDENTIFICATION.md` and §16.1's *"a staff member is a name on a roster, not an account"*, and `CONFLICT_RESOLUTIONS.md` R16's *"build nothing against them"* for `skills`. Coverage is unchanged — all six trace to no story, because every story this feature eventually closes begins at **hiring**, which is `0035` and not built. `app/api/deps.py` gained a multi-community resolver at the same time, additively: `get_active_membership` keeps its signature, its `Principal` parameter and its single round trip, and `tests/test_membership_set.py` is the evidence offered to the auth workstream. §18 sits after the meta-sections deliberately; the renumber is deferred to this feature's documentation sweep. |
 | 2026-08-08 | **User-story sweep: the matrix was right and its index was not.** §16's verdicts, `api_annotations.py` and the spec agreed on all 24 stories; [`product/USER_STORIES.md`](product/USER_STORIES.md) — the one-line index of the same matrix — did not, on **six**. US-2.2, US-2.5, US-2.6, US-2.8 and US-2.12 still read *partial* or *none* after they closed, and US-2.3 read *none* after moving to partial. Every one erred toward under-reporting, which is the direction nobody checks. Fixed there, with the stale *reasons* on US-2.1, US-2.4, US-2.9 and US-3.1 rewritten too, and the three `#14-user-stories--endpoints` links under `product/` repointed at §16. Eight operations that carry a story tag were named nowhere in that story's own section — the amenity damage and charges writes (US-1.2), `POST /invoices` (US-1.6), `GET /notifications` (US-2.1, US-2.4, US-2.7), `PATCH /complaints/{id}` (US-2.7, which had no endpoint table at all) and `POST /admins` (US-2.9) — now listed. **US-3.1 was the one real traceability defect**: §16.5 has credited `POST /visitor-passes` and `/cancel` with issuing and revoking a scheduled code since `0032`, while the story was absent from the annotation table, so the spec recorded nothing as serving it. Tagged; counts unmoved at 51 served / 48 none, because both operations already carried US-2.2. Root cause recorded plainly: the export guard checks that every **operation** declares its stories, never that every **story** a verdict credits has an operation — `api_map_scan.py` now asks that too. |
 | 2026-08-04 | **Traceability audit of the generated spec, and §16.6 recounted.** Every route the application registers is in [`openapi.yaml`](openapi.yaml) and every operation carries errors, a description and a story verdict — the export guard had held. Two things it cannot check did not: eight parameters were undescribed (`booking_id`, `pass_id`, `notification_id`, the `Last-Event-ID` header), and **`POST /invoices/{id}/payments` was claiming `US-2.12`**, a story [`USER_STORIES.md`](product/USER_STORIES.md) scopes to *amenity-booking* payment — an overclaim three other documents here already contradicted, including the resident invoice path's written refusal of the same mapping. Now `Feature`, untraced, with the reason recorded. Coverage of operations by story is **51 served / 48 none**; §16.6's header also still said *"47 of the 98"* after the surface grew to 99. |
@@ -6042,7 +6233,9 @@ string.
 
 #### `GET /api/v1/complaints/{complaintId}/schedule-request`
 
-The visit proposed for my complaint. **Requires RESIDENT.**
+The visit proposed for my complaint. **Requires the resident capability** — the `resident` role, or an
+active `unit_residencies` row on any membership (§7.2). Until 2026-08-20 this was the `resident` role
+alone, which refused an administrator the answer to a question about their own flat.
 
 ```json
 {
@@ -6078,13 +6271,13 @@ are the association's business *about* the resident rather than theirs.
 | Status | Code | Cause |
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
-| 403 | `forbidden` | Not a resident of this community |
+| 403 | `community_role_required` | No `resident` role and no active residency in this community (§7.2) |
 | 404 | `schedule_request_not_found` | No live job — nothing proposed, or everything proposed was cancelled |
 | 500 | `internal_error` | Unhandled |
 
 #### `POST /api/v1/complaints/{complaintId}/schedule`
 
-Confirm or decline a proposed visit. **Requires RESIDENT.**
+Confirm or decline a proposed visit. **Requires the resident capability** (§7.2).
 
 ```json
 { "response": "confirmed", "note": null }
@@ -6103,6 +6296,12 @@ because an admin could not press the button, but because this is the resident's 
 own home, and an admin answering for them is a record that says something untrue. The database
 refuses it too — `respond_to_work_order_schedule` checks `is_own_membership` against whoever raised
 the complaint — so the role guard is the early, clear error rather than the boundary.
+
+> **"Resident-only" means the capability, not the role, since 2026-08-20** (§7.2). The paragraph
+> above is unchanged in intent and was being enforced too narrowly: an administrator who owns a flat
+> *is* the resident of that flat, has one membership row saying `admin`, and was refused the answer
+> to a visit proposed to their own home. `is_own_membership` in the RPC is what actually keeps one
+> person from answering for another, and it never depended on the role.
 
 **Declining is not a counter-proposal**, and clears the time with it: leaving a declined slot on the
 row would leave a calendar entry for a visit nobody agreed to. Either way the supervisor who proposed

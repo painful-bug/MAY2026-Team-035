@@ -32,6 +32,23 @@ _OVERVIEW = "complaint_overview"
 _EVENTS = "complaint_events"
 _COMMENTS = "complaint_comments"
 
+#: The value of ``complaints.raised_via`` that means *this complaint belongs on
+#: the raiser's resident portal* (`20260820150000_admin_raised_complaints.sql`).
+#: The other value, ``admin``, marks a complaint an admin raised about something
+#: attached to no home -- an amenity, a lobby, a gate. Those are owned by the
+#: admin's own membership because somebody has to own them, which means the
+#: predicate above them, ``raised_by_membership_id``, matches an admin reading
+#: their own resident portal. Without this second predicate every community
+#: complaint the admin has ever filed would appear in their personal "My
+#: Complaints" list, where none of them happened to them.
+#:
+#: A complaint an admin filed *on a resident's behalf* is ``resident`` and is
+#: therefore included, which is the point: it is that resident's complaint, and
+#: they keep the verbs that go with it. That an admin typed it is in the
+#: ``raised`` event's payload, where it cannot change which list the complaint
+#: appears on.
+_RESIDENT_PORTAL = "resident"
+
 _SUMMARY_SELECT = (
     "id, title, category, status, priority, location, progress_percent,"
     "assignee_label, created_at, updated_at, last_activity_at,"
@@ -83,6 +100,7 @@ def list_mine(
         client.table(_OVERVIEW)
         .select(_SUMMARY_SELECT, count="exact")
         .eq("raised_by_membership_id", membership_id)
+        .eq("raised_via", _RESIDENT_PORTAL)
     )
     if statuses:
         query = query.in_("status", statuses)
@@ -115,6 +133,7 @@ def get_mine(
         .select(_DETAIL_SELECT)
         .eq("id", complaint_id)
         .eq("raised_by_membership_id", membership_id)
+        .eq("raised_via", _RESIDENT_PORTAL)
         .limit(1)
         .execute()
         .data

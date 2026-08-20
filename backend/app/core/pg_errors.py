@@ -14,6 +14,8 @@ surfaces as a 409 rather than an opaque 500.
 
 from __future__ import annotations
 
+import logging
+
 from app.core.exceptions import (
     AppError,
     AuthorizationError,
@@ -124,6 +126,13 @@ def translate(exc: Exception, *, default_message: str) -> AppError:
     code = _extract_code(exc)
     mapping = _CUSTOM.get(code or "") or _STANDARD.get(code or "")
     if mapping is None:
+        # The caller gets only `default_message` (a Postgres error can quote a
+        # row value or a constraint definition), which makes this branch the
+        # one place an unmapped failure is still visible at all — so it must be
+        # logged here or the real SQLSTATE is lost everywhere.
+        logging.getLogger(__name__).warning(
+            "Unmapped database error (sqlstate=%s): %r", code, exc
+        )
         return AppError(default_message)
 
     error_class, error_code = mapping

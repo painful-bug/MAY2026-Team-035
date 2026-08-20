@@ -139,12 +139,20 @@ export default function TokenCombobox({
     }
   };
 
+  // NOT a wrapping <label>: a label forwards any click inside it to its first
+  // labelable descendant, and once a chip exists that descendant is the first
+  // chip's × button — so clicking blank space anywhere in the field silently
+  // removed chips one by one. htmlFor keeps the caption-click-focuses-input
+  // behaviour, which was the only thing the wrapper was buying.
   return (
-    <label className="block space-y-1.5" ref={wrapperRef}>
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+    <div className="block space-y-1.5" ref={wrapperRef}>
+      <label
+        htmlFor={`${listId}-input`}
+        className="text-[10px] font-bold uppercase tracking-wider text-slate-400"
+      >
         {label}
         {required ? <span className="ml-0.5 text-rose-500">*</span> : null}
-      </span>
+      </label>
 
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pb-1">
@@ -169,6 +177,7 @@ export default function TokenCombobox({
 
       <div className="relative">
         <input
+          id={`${listId}-input`}
           type="text"
           role="combobox"
           aria-expanded={open}
@@ -263,6 +272,6 @@ export default function TokenCombobox({
           {error}
         </p>
       ) : null}
-    </label>
+    </div>
   );
 }

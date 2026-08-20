@@ -17,7 +17,290 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-12 — Complaint Engine v2
+## 2026-08-20 (later still) — Q12.1 answered, Q12.2 closed
+
+`PO`: the resident **is** to be notified when a complaint is raised on their
+behalf — the explicit "yes" Q12.1 was waiting for; the mechanism stays with the
+complaint-engine owner and nothing is implemented yet. `AUDIT`: Q12.2 closed by
+running its `pg_proc` query on the hosted database after applying
+`20260820150000` — exactly two rows (`raise_complaint` at 8 args,
+`admin_raise_complaint` at 9), no orphaned overload. Both recorded in
+`COMPLAINT_ENGINE_HANDOFF.md` §12.
+
+## 2026-08-20 (later) — On-behalf complaints get two valid actors
+
+`PO` (product owner, 2026-08-20, fifth ruling of the day): on an on-behalf
+complaint, **both** the resident and the admin hold the lifecycle verbs (cancel,
+reschedule, …); either's action is valid and whoever acts first wins.
+`COMPLAINT_ENGINE_HANDOFF.md` §12 gained an addendum recording the ruling, the
+current-state gap it exposes (the admin `PATCH` accepts only
+`Pending | In Progress | Resolved`, so admins currently have **no** cancel or
+reschedule verb anywhere), and the note that the ruling half-answers Q12.1 — a
+resident expected to act on a complaint has to be told it exists. The design of
+the admin-side verbs stays with the complaint-engine owner; nothing was
+implemented.
+
+## 2026-08-20 — Admins raise complaints, and "resident" stops meaning the role column
+
+`PO` (product owner, 2026-08-20, four rulings): an admin who holds a flat **is**
+the resident of that flat; admins raise complaints **from the admin portal**,
+either on a resident's behalf or attached to no unit; provenance belongs in the
+`raised` event and not on the complaint row; and the resident raise is a resident
+act. The endpoint, the guard and the column that implement them were built the
+same day. Documented here after reading the merged code rather than the interface
+spec that preceded it. **The two disagree in three places and the code is what is
+written down**, since the code is what a client will meet:
+
+1. **`category` is optional on `POST /complaints/admin-raise`**, not required as
+   the spec's request shape had it. A caller sending `skillId` gets the trade's
+   current name snapshotted into `category` by the RPC, exactly as on the
+   resident's form; requiring both would make the admin's trade picker send a
+   string it does not have. *"A complaint needs a category"* is enforced once, in
+   `admin_raise_complaint`, and surfaces as a `422`.
+2. **The session layer no longer grants an admin the `resident` capability
+   unconditionally.** The spec cited that unconditional grant as an existing fact
+   in support of the ruling; implementing the ruling made it wrong, because the
+   guard and the session would then answer the same question from the same table
+   and disagree for a flat-less admin. `GET /auth/session` now requires the
+   residency too.
+3. **A reported orphan `raise_complaint` overload does not survive reading the
+   migrations.** Recorded in the handoff §12 Q12.2 as *checked and not upheld*,
+   with the narrower question that *is* open — the hosted probe cannot see
+   overloads at all — left standing for the engine's owner.
+
+### docs/API.md — the new endpoint, and one guard rule stated once
+
+`DERIVED`. **New §7.2, "Who holds the resident verbs"**, is the rule in one place
+so that seven endpoints can point at it instead of restating it seven ways:
+resident-ness is an active `unit_residencies` row, never an implication of the
+role column, because there is one membership row per person per community and the
+administrator who owns B-402 has exactly one and it says `admin`.
+`require_resident_capability` replaced `require_membership_role("resident")` on
+`/cancel`, `/reopen`, `/resolution` and both resident-scheduling routes, whose
+sections now say "the resident capability" rather than "`RESIDENT`".
+
+**New section `POST /api/v1/complaints/admin-raise`** — request, `201
+{id, message}`, the two modes and the full status table (`403` twice over, `404`
+for an unknown trade, `422` for priority and for a complaint with neither category
+nor skill). Placed with the other admin writes, since it is on `complaints.py` and
+guarded by `require_admin` + CSRF.
+
+**A behaviour NARROWING, recorded as its own note rather than folded into the
+widening.** `POST /complaints` required only an *active membership*; it now
+requires the resident capability, so a `worker`, `security` or `manager`
+membership with no residency gets `403 community_role_required` where it
+previously filed a complaint onto a resident list. This is the one change in the
+session that can take something away from somebody. It was checked before being
+written down: **no screen outside the resident portal calls `POST /complaints`**
+(swept across `frontend/src/**` on 2026-08-20), and an admin's path is
+`/admin-raise`. Recorded at the endpoint, in §7.2, in the API.md §17 changelog and
+here, because a narrowing that is only mentioned where it is convenient is how a
+`403` becomes a support ticket.
+
+Also: `GET /complaints` and `GET /complaints/{id}` now say they filter
+`raised_via = 'resident'`; §1.2's capability note says the `resident` capability
+is granted to an admin only with a residency; the banner and §16.6's totals were
+recounted (below).
+
+### docs/openapi.yaml — regenerated, not edited
+
+`DERIVED`. `cd backend && python scripts/export_openapi.py`, per the standing rule
+at the head of `API.md`. Adds one operation and two components
+(`AdminRaiseComplaintRequest`, `AdminComplaintRaised`).
+`tests/test_openapi_spec.py` passes (30 tests), and `--check` is clean.
+
+**Nothing else in the spec moved, and that is the finding.** Six routes changed
+who may call them and not one path, body, response model or status code changed
+with them, so the generated spec is byte-identical on all six. A guard change is
+invisible to every mechanical check this project has; it exists only in the prose
+of `API.md` §7.2 and the mapper's router notes. Same class as the `0041`
+notification move logged in the mapper's §7 on 2026-08-10.
+
+### docs/api_yaml_mapper.md — §3 regenerated, notes added by hand
+
+`DERIVED`. `python scripts/regen_mapper.py`, per §6.1 step 4 — *do not hand-write
+the row*. One row added under `complaints.py`; **126 existing rows changed**, every
+one of them an `API.md:NNNN` reference moved by this session's edits or a handler
+line number in one of the three touched routers. Hand-written notes added under
+`complaints.py` (why the endpoint is there and not on the resident router, and
+why the path cannot collide), under `resident_complaints.py` (five widenings and
+one narrowing, plus the repository's new `raised_via` filter) and under
+`resident_scheduling.py` (the guard swap, with the no-wire-change consequence).
+
+*(One trap recorded in that file's own changelog: `regen_mapper.py` printed "815
+row(s) differ". It zips old against new line-for-line, so a single inserted row
+makes everything below it compare unequal. The real number is 126.)*
+
+### docs/CHANGE_LOG.md and docs/API.md — three counts found stale, and the drift is not ours
+
+`AUDIT`. `API.md`'s banner said **195 operations across 164 paths** and §16.6 said
+**122 of 195**; the generated spec at `ed9a131` — before this session touched
+anything — already held **198 across 167**. So three operations had arrived
+without either number moving, and this session's one endpoint makes four. Both
+lines now read the counted value (**199 across 168**, and 124 of 199 serving no
+story, with 75 serving one), with the earlier figures kept in place rather than
+overwritten. The mapper's header and §5 got the same treatment. **The test total
+in the mapper's header was deliberately not touched**: only
+`tests/test_openapi_spec.py` was run in this pass, and replacing one unverified
+count with another is how these lines got stale in the first place.
+
+### docs/COMPLAINT_ENGINE_HANDOFF.md — §12, the rulings, and two questions
+
+`PO` → recorded as **decisions, not open questions**, which is the reverse of
+every other section in that file and is why §12 opens by saying so. D1 the
+residency guard (and the matching `GET /auth/session` correction), D2 the
+two-mode endpoint, D3 provenance in the `raised` event with `raised_via` as the
+narrower *which-portal-owns-the-view* flag, D4 the resident-raise narrowing. Names
+the migration (`20260820150000_admin_raised_complaints.sql`, applied by hand by
+the repository owner) and asks the owner to review `admin_raise_complaint`'s
+semantics, since the complaint lifecycle is theirs.
+
+Two genuinely open questions were added for that owner:
+
+- **Q12.1 — nobody tells the resident.** `admin_raise_complaint` calls
+  `notify_complaint_staff`, exactly as `raise_complaint` does, so a resident who
+  telephoned the office now owns a complaint with an SLA clock and three verbs and
+  has no signal that it exists. The default was inherited rather than chosen.
+- **Q12.2 — a claimed orphan `raise_complaint` overload, checked and not upheld.**
+  It was reported that `20260812090300` rebuilt the function at a new arity
+  without dropping the old one. `20260812090300`:271 **does** drop the six-argument
+  signature, and `20260813100000`:75 drops the seven, both exactly. What survives
+  as a real question is narrower: the hosted probe reads PostgREST, which lists
+  one entry per RPC name and therefore **cannot see an overload at all** — so one
+  `pg_proc` query is worth running, and `0031`:410 granted the six-argument version
+  to `authenticated`, which is what would make a survivor reachable rather than
+  merely present. Written up as a verification item, not as a defect.
+
+### docs/COMPLAINT_ENGINE_STATE.md — the orientation document said one thing that is now false
+
+`AUDIT` → `DERIVED`. §2 opened with **"today there is exactly one origin: the
+resident"**, which stopped being true the moment `/admin-raise` merged, and the
+handoff points every new reader at this file *first*. Rewritten to two origins,
+with the mode table and the `raised_via`-is-not-provenance distinction. §8's
+resident heading said *"resident role only"* — now the capability, with the
+`raised_via` read filter noted on the list and the detail; the admin table gained
+`/admin-raise` and the staff detail read it had never listed. §7 gained the fact
+that **no notification reaches the raiser**, which was harmless while the raiser
+was always the person pressing the button. §9 gained the admin raise modal. §10
+item 6, *"a staff-side origin for complaints"*, is **half-closed**: an admin has a
+path, the **gate still does not**, and saying "closed" would lose the half that
+matters to a guard taking a walk-in.
+
+### Pending reconciliation — the ERD and the class diagram do not know about `raised_via`
+
+`AUDIT`, and deliberately **not fixed here**: `docs/erd/homebandhu.dbml` and
+`docs/class-diagram/homebandhu-domain.puml` are not this session's artifacts, and
+a diagram edited from one column's point of view is worse than one that is
+knowingly behind.
+
+- **`erd/homebandhu.dbml`** `Table complaints` (:543) has no `raised_via`. It
+  needs `raised_via text [not null, default: 'resident']` with the CHECK noted, and
+  a comment saying what it is *not* — it is which portal owns the raiser-side
+  view, and **not** provenance, which lives in the `raised` event payload
+  (`on_behalf`). That distinction is the whole ruling and a column added without it
+  will be read as "who filed this".
+- **`class-diagram/homebandhu-domain.puml`** `class Complaint` (:499) needs the
+  same as an attribute (`raisedVia : RaisedVia`), and the aggregate's behaviour
+  note should record that the raiser and the actor of the `raised` event can now
+  be different people — which is the part a class diagram can express and a column
+  cannot.
+- **The wider divergence on this table is older than today** and is *not* created
+  by this change: the ERD still carries `unit_id`, `urgency`, `sla_due_at`,
+  `reopen_count`, `resident_rating` and `version` where the database has
+  `priority`, `expected_resolution_at`, `reopened_count`, `resolution_rating` and
+  `aggregate_version`. Whoever reconciles `raised_via` will be standing in front of
+  all of it; that is a reconciliation pass, not an amendment.
+
+---
+
+## 2026-08-20 — The hosted database is not a baseline database
+
+### docs/HOSTED_SCHEMA_DRIFT_COMPLAINTS.md — new
+
+`AUDIT` (found live: `POST /api/v1/complaints` returned 400 "Could not raise the
+complaint."; the real error, surfaced by the new logging in
+`app/core/pg_errors.py`, was `42703: column "payload" of relation
+"complaint_events" does not exist`). A read-only probe of the linked hosted
+project — column selects plus PostgREST's own OpenAPI description of the schema,
+which reports nullability and every RPC's argument list without touching a row —
+established the cause and its shape. **The linked project was never created from
+`0001_baseline.sql`.** It carries the pre-baseline complaint tables
+(`complaint_events.previous_status/new_status/note`, `complaints.unit_id`,
+`complaints.closed_at`), and every migration from `0018` onward extends them with
+`add column if not exists`, so all of them applied cleanly and none of them
+supplied a column that *only* the baseline declares. Exactly two such columns
+exist on this surface, and both are missing: `complaint_events.payload` (breaks
+45 insert sites across 12 migrations — every complaint write plus the resident
+timeline *read*) and `complaints.aggregate_version` (breaks the four RPCs behind
+`PATCH /complaints/{id}`, reopen, confirm and comment — a second failure hiding
+behind the first, found by probing rather than by any stack trace). A third gap
+is hosted-only in the other direction: `complaints.description` is `not null`
+while the baseline and the wire schema both make it optional. The new document
+records expected-versus-found with the probe behind each line, what each gap
+breaks by user-visible action, the 105 columns across 12 tables, 2 views and 30
+functions that were probed and found **correct** (all seven Complaint Engine v2
+migrations are applied, at the right arities), the objects PostgREST cannot verify at all
+(triggers and CHECK constraints), and the apply-and-verify runbook.
+
+### docs/COMPLAINT_ENGINE_HANDOFF.md — §11, may a complaint have no description?
+
+`AUDIT` → `DERIVED`. Reconciling the two missing columns is bookkeeping and was
+done. The `not null` on `description` is not: the wire makes the field optional
+(`_optional_text(4000) = ""`) and `raise_complaint` writes a real null for it, so
+the hosted column and the API contract disagree about what a complaint is. The
+default taken is the repository's own declaration — the constraint is dropped, a
+complaint may be filed with a title and a category and nothing else — and the
+question of whether that is *right* is logged for the engine's owner, together
+with the note that making it mandatory belongs on the wire rather than back on
+the column. §11 also records that the legacy `note`/`new_status` columns were
+left in place and nothing was backfilled into `payload`, because all five
+complaint-engine tables held 0 rows on the probe date.
+
+**Not a `docs/` artifact, listed here because §11 and the drift report both point
+at it:** the fix is
+`backend/supabase/migrations/20260820120000_hosted_complaint_column_drift.sql` —
+a forward-only timestamped migration, per `backend/supabase/migrations/README.md`,
+rather than a new `patches/` directory. It adds the two columns, drops the one
+constraint, redefines no function (none was stale) and re-checks all three in the
+same transaction.
+
+---
+
+## 2026-08-19 — The departments pages stopped rendering the skeleton
+
+### docs/FRONTEND_WIRING_AUDIT.md — the department reads are now actually called
+
+`AUDIT` (found live: the department edit form prefilled only name, description and status —
+categories, skills, SLA, head, contacts and hours came up blank however much was saved — and the
+department cards showed no category chips). The audit's own §1 exception said the snapshot cannot
+feed `Departments.jsx` and `DepartmentDetail.jsx` and that `GET /departments` is the only source,
+but neither page was ever pointed at it: both rendered the store's snapshot copy, which is the
+hardcoded `{staff: [], categories: []}` skeleton (`dashboard_service.py:203`). `Departments.jsx`
+now reads `GET /departments?pageSize=100` via react-query (`['departments']`), and
+`DepartmentDetail.jsx` reads its header from the same payload its roster query already fetched.
+The zustand slice keeps the writes (toasts, activity log, guards); each page invalidates the
+query key after one, so the UI shows the server's answer rather than the optimistic copy. The
+§1 exception, the §2 table rows for both pages, and the §6 item about the stub were annotated
+to record that the endpoints named there as "the only source" are now the source in fact.
+
+---
+
+## 2026-08-19 — The session learned to name the flat
+
+### `GET /auth/session` now carries `membership.unit` — API.md §3.5, openapi.yaml, api_yaml_mapper.md
+
+`AUDIT` (found live: every portal's header chip read "Flat — • Tower —"). The session response
+carried only the opaque `membership.unit_id`, and `applicationUser()` in the frontend hard-coded
+the placeholders because no endpoint returned a human-readable label — the gap
+`ResidentDashboard/Profile.jsx` had recorded as a blocker. The membership now embeds
+`unit: { unit_code, unit_type, building_name, building_type }`, read from `units` and its
+building in one PostgREST query; `building_*` is null for standalone homes (`units.building_id`
+is null — community type is apartment XOR standalone homes, per the 2026-07-28 ruling), and
+`unit` itself is null when there is no residency or the lookup fails, because display data must
+never fail an otherwise-valid session. §3.5 gained the response fragment; `openapi.yaml` and the
+mapper tables were regenerated (`MembershipUnit` schema added; the session row's editorial cell
+repointed from §1.2 to §3.5, where the shape is now documented). The header renders the real
+labels and drops the "• Tower …" half when there is no building to name.
 
 - `API.md`, `openapi.yaml`, and `api_yaml_mapper.md`: documented and regenerated the skill-based raise, resident cancel, candidate picker, and staff detail API surface.
 - `design-of-components.md`: recorded the tracker, candidate picker, and cancel/re-evaluation dialog responsibilities.

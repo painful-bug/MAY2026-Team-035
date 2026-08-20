@@ -23,7 +23,10 @@ Two exceptions, both verified rather than assumed:
 - **`GET /dashboard/snapshot` stubs department staff.** `dashboard_service.py:203` builds every department as
   `{"staff": [], "categories": []}` — hardcoded empty lists. `Departments.jsx` (1 095 lines) and
   `DepartmentDetail.jsx` (713 lines) are built around staff rosters and per-department complaint queues. Our
-  department reads are the only source, so they stay.
+  department reads are the only source, so they stay. **And since 2026-08-19 both pages actually call them**:
+  `Departments.jsx` renders `GET /departments?pageSize=100` via react-query (`['departments']`) instead of the
+  snapshot's copy in the store, and `DepartmentDetail.jsx` reads its header from the same payload it was already
+  fetching for the roster. The zustand slice keeps the writes; each page invalidates the query key after one.
 - **The snapshot has no `limit`, `cursor`, `q=` or `status=`.** It is a whole-community projection. Anything
   aggregated or filtered server-side (amenity ledger, amenity reports) stays.
 
@@ -44,8 +47,8 @@ Since `appStore` no longer persists tenant data, those writes are lost on refres
 | Amenities — reports | `amenityReportsService`, 0 API calls | ✗ dead | **wired 2026-08-12** — `GET /amenity-reports`, service deleted |
 | Admins | `addAdmin` | ✗ dead, **no endpoint existed** | **added** `POST /admins` |
 | Complaints | `updateComplaint`, `addComplaintComment` | ✗ dead | **kept** (step 5) |
-| Departments | `createDepartment`, `updateDepartment`, `deleteDepartment`, `setDepartmentStatus`, `removeStaffMember` | ✗ dead | **kept** (step 6) |
-| DepartmentDetail | `assignTechnician`, `updateComplaint` | ✗ dead | **kept** (steps 5/6) |
+| Departments | `createDepartment`, `updateDepartment`, `deleteDepartment`, `setDepartmentStatus`, `removeStaffMember` | ✗ dead | **kept** (step 6) — **reads wired 2026-08-19**: the list, cards and edit form render `GET /departments?pageSize=100` (react-query `['departments']`), so the form finally prefills categories, skills, SLA, head, contacts and hours; the slice writes stay and the page invalidates the key after each |
+| DepartmentDetail | `assignTechnician`, `updateComplaint` | ✗ dead | **kept** (steps 5/6) — **header wired 2026-08-19**: the department itself now comes from the same `GET /departments` read the roster was already wired to, rather than the snapshot copy |
 | Notices | `addNotice` | ✗ dead, **no endpoint existed** | **added** `POST /notices` |
 | Maintenance | filter only — read-only | snapshot | — *(ours removed)* |
 | Settings | 4 toggles, `handleSave` only toasts | ✗ dead | **kept** (step 9) |
@@ -183,7 +186,9 @@ Neither was edited here, because both are in files that workstream owns.
 
 1. **`dashboard_service.py` stubs department staff** as `{"staff": [], "categories": []}`. Either fill it, or
    treat `GET /departments` as the supported source and drop the empty keys so the frontend cannot mistake them for
-   "this department has no staff".
+   "this department has no staff". *(Since 2026-08-19 the frontend does the second half itself: both department
+   pages read `GET /departments` and ignore the snapshot's copy, so the empty keys mislead nothing any more —
+   though the store still hydrates them for the slice's duplicate-name and delete guards.)*
 2. **`dashboard_service.py` drops `category` and `urgency` from notices.** `POST /notices` now stores both
    (migration 0018), so adding them to that projection is a one-line change that makes the Notices screen's two
    selects mean something.

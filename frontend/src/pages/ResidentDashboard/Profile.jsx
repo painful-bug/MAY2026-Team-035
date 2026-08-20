@@ -17,11 +17,10 @@ import { useAuthStore } from '../../store/authStore';
 //   now `GET /directory/contacts`, served from `departments` so the list
 //   cannot go stale the way five numbers typed into a component always do.
 //
-// **Not fixed here.** `currentUser.flat` / `currentUser.tower` are still the
-// auth session's placeholders (`lib/auth/authService.js` hard-codes
-// `flat: '—', tower: '—'`) -- no resident endpoint returns a human-readable
-// flat/tower label, only an opaque `unitId`. Reported as a blocker rather than
-// invented here.
+// `currentUser.flat` / `currentUser.tower` are real now: `GET /auth/session`
+// returns `membership.unit` (unit_code + building_name) and
+// `lib/auth/authService.js` maps it. `tower` is null for standalone homes,
+// whose units have no building.
 export default function Profile() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const queryClient = useQueryClient();
@@ -93,7 +92,7 @@ export default function Profile() {
             </div>
             <div className="flex justify-between items-center py-1.5">
               <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Tower Block</span>
-              <span className="text-slate-800">Tower {currentUser?.tower}</span>
+              <span className="text-slate-800">{currentUser?.tower ? `Tower ${currentUser.tower}` : '—'}</span>
             </div>
           </div>
         </div>

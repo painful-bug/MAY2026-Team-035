@@ -69,9 +69,30 @@ def _membership_users(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
 
 
 def _complaints(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, legacy: bool) -> list[dict[str, Any]]:
+    """The admin queue's complaint rows.
+
+    ``raisedVia`` and the flat it suppresses are one decision, not two. Every
+    row's ``flat`` is read from **the raiser's membership**, which was a complete
+    description of a complaint for as long as only residents could raise one. It
+    stopped being one when the admin portal gained
+    ``POST /complaints/admin-raise``: a complaint about the lobby is owned by the
+    admin's own membership, so the unchanged projection would print that admin's
+    home flat beside it -- a number that is true of the person and false of the
+    problem, and false in the direction that sends somebody to the wrong door.
+
+    ``raised_via = 'admin'`` is exactly the set of complaints attached to no
+    home, so it is what blanks the flat. ``—`` rather than ``""`` because that is
+    already this projection's word for *no unit* -- ``_membership_users`` writes
+    it for every member without a residency -- and a second spelling of the same
+    absence is how one table ends up rendering two.
+    """
     result = []
     for row in rows:
         raised_by = users.get(row["raised_by_membership_id"], {})
+        # Defaults to `resident` for a row written before the column existed,
+        # which is what every such row is: until `20260820150000` there was no
+        # other way to raise a complaint.
+        raised_via = str(row.get("raised_via") or "resident")
         events = row.get("complaint_events") or []
         comments = []
         for event in events:
@@ -84,7 +105,8 @@ def _complaints(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *,
             "category": row.get("category") or "General", "status": complaint_status_to_wire(row.get("status")),
             "progress": int(row.get("progress_percent") or (100 if row.get("status") in {"resolved", "closed"} else 0)),
             "urgency": str(row.get("priority") or "Medium").title(), "raisedBy": raised_by.get("name", "Resident"),
-            "userId": raised_by.get("id"), "flat": raised_by.get("flat", "—"),
+            "userId": raised_by.get("id"), "raisedVia": raised_via,
+            "flat": "—" if raised_via == "admin" else raised_by.get("flat", "—"),
             "date": _iso_date(row.get("created_at")), "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"), "resolvedAt": row.get("resolved_at"), "comments": comments,
             "history": events,

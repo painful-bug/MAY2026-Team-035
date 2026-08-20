@@ -79,7 +79,12 @@ export default function Header({ onMenuClick }) {
                 ? currentUser.role === 'SecurityManager'
                   ? 'Security management'
                   : 'On duty'
-                : `Flat ${currentUser.flat} • Tower ${currentUser.tower}`}
+                /* `tower` is null for standalone homes (villas have no
+                   building), so the tower half only renders when there is
+                   one to name. */
+                : currentUser.tower && currentUser.tower !== '—'
+                  ? `Flat ${currentUser.flat} • Tower ${currentUser.tower}`
+                  : `Flat ${currentUser.flat}`}
             </div>
           )}
         </div>

@@ -64,6 +64,56 @@ def update_complaint(
         raise translate(exc, default_message="Could not update the complaint.") from exc
 
 
+def admin_raise_complaint(
+    client: Client,
+    *,
+    actor_membership_id: str,
+    title: str,
+    description: str,
+    category: str,
+    priority: str,
+    location: str,
+    department_id: str | None = None,
+    skill_id: str | None = None,
+    for_membership_id: str | None = None,
+) -> str:
+    """Raise a complaint from the admin portal (RPC). Returns its id.
+
+    A sibling of ``resident_complaints_repository.raise_complaint`` rather than a
+    parameter on it. The two differ in one argument and one derived column, which
+    is exactly the amount of difference that tempts a shared function with a
+    ``for_membership_id=None`` default -- and that function would be one whose
+    every caller has to be checked to see which of two authorization rules it
+    was written under. ``admin_raise_complaint`` is SECURITY DEFINER and refuses
+    a caller who is not an active admin; ``raise_complaint`` refuses one who is
+    not the membership named. Two rules, two entry points.
+
+    ``for_membership_id`` is the only field that decides anything here:
+    ``None`` files the complaint against the admin's own membership and marks it
+    admin-portal-only, and a membership id files it against that resident and
+    leaves it on their portal. The derivation is the database's, not this
+    layer's -- see the migration's §2.
+    """
+    try:
+        response = client.rpc(
+            "admin_raise_complaint",
+            {
+                "p_actor_membership_id": actor_membership_id,
+                "p_title": title,
+                "p_description": description,
+                "p_category": category,
+                "p_priority": priority,
+                "p_location": location,
+                "p_department_id": department_id,
+                "p_skill_id": skill_id,
+                "p_for_membership_id": for_membership_id,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not raise the complaint.") from exc
+    return str(response.data)
+
+
 def add_comment(
     client: Client,
     *,

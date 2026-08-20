@@ -14,7 +14,7 @@ from app.core.supabase_client import (
     get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
-from app.domain.schemas import MembershipContext, Principal, Profile, SessionContext
+from app.domain.schemas import MembershipContext, MembershipUnit, Principal, Profile, SessionContext
 from app.repositories import profiles_repository
 from supabase import Client
 
@@ -366,6 +366,44 @@ def _claim_staff_invitations(
     return bool(claimed)
 
 
+def _unit_context(unit_id: str | None) -> MembershipUnit | None:
+    """Human-readable labels for the resolved residency, or nothing.
+
+    The header chip renders these; the opaque ``unit_id`` alone left it saying
+    "Flat — • Tower —". Display data only, so a failed or empty lookup returns
+    None rather than failing a session that is otherwise valid.
+
+    Standalone homes have ``units.building_id = null``, so the embedded
+    ``buildings`` row is absent and both building fields stay null.
+    """
+    if not unit_id:
+        return None
+    try:
+        rows = (
+            get_service_client().table("units")
+            .select("unit_code, unit_type, buildings(name, building_type)")
+            .eq("id", unit_id)
+            .limit(1)
+            .execute().data
+            or []
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        building = row.get("buildings")
+        if isinstance(building, list):
+            building = building[0] if building else None
+        building = building or {}
+        return MembershipUnit(
+            unit_code=row["unit_code"],
+            unit_type=row.get("unit_type"),
+            building_name=building.get("name"),
+            building_type=building.get("building_type"),
+        )
+    except Exception:  # noqa: BLE001 - see the docstring: never fail the session
+        return None
+
+
 def get_session_context(
     client: Client,
     principal: Principal,
@@ -434,14 +472,25 @@ def get_session_context(
     role = str(membership["role"]).lower()
     portal = _portal_for(membership, role)
     capabilities = [role]
-    if role == "admin":
+    # An admin is also a resident -- **when they actually live here.** One
+    # membership row per person per community, and resident-ness is the active
+    # `unit_residencies` row above, never a role implication (product ruling,
+    # 2026-08-20). Granting the capability unconditionally made the session
+    # disagree with `require_resident_capability`, which asks the same question
+    # per request and answers it from the same table: a flat-less admin was shown
+    # the resident affordances and then 403'd by the guard when they used one.
+    # The residency read is already done, so agreeing with the guard costs
+    # nothing but the predicate.
+    if role == "admin" and residency:
         capabilities.append("resident")
+    unit_id = residency[0].get("unit_id") if residency else None
     return SessionContext(
         identity=profile,
         membership=MembershipContext(
             id=membership["id"], community_id=membership["community_id"], role=role,
             department_id=membership.get("department_id"),
-            unit_id=residency[0].get("unit_id") if residency else None,
+            unit_id=unit_id,
+            unit=_unit_context(unit_id),
         ),
         portal=portal,
         capabilities=capabilities,

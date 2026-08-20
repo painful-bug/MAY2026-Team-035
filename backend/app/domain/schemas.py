@@ -34,12 +34,29 @@ class Profile(BaseModel):
     is_active: bool = True
 
 
+class MembershipUnit(BaseModel):
+    """Human-readable labels for a resolved residency.
+
+    ``building_name``/``building_type`` are null for standalone homes, whose
+    ``units.building_id`` is null -- a community is apartments XOR standalone
+    homes, never both.
+    """
+
+    unit_code: str
+    unit_type: str | None = None
+    building_name: str | None = None
+    building_type: str | None = None
+
+
 class MembershipContext(BaseModel):
     id: str
     community_id: str
     role: str
     department_id: str | None = None
     unit_id: str | None = None
+    # Only the session read populates this; every other resolver leaves it None
+    # because nothing else renders a flat label.
+    unit: MembershipUnit | None = None
 
 
 class MembershipSet(BaseModel):
