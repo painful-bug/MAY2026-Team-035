@@ -24,9 +24,16 @@ export class ApiError extends Error {
 
 async function refresh() {
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
-      method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrfToken() },
-    }).finally(() => { refreshPromise = undefined; });
+    refreshPromise = (async () => {
+      // An idle tab outlives the access and CSRF cookies (~1h) long before the
+      // refresh cookie (days). `require_csrf` accepts the anonymous preauth
+      // token when no access cookie exists, so bootstrap one here — otherwise
+      // the refresh is 403'd before the server ever reads the refresh cookie.
+      if (!csrfToken()) await prepareAnonymousCsrf().catch(() => {});
+      return fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrfToken() },
+      });
+    })().finally(() => { refreshPromise = undefined; });
   }
   return refreshPromise;
 }
