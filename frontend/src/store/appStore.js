@@ -27,6 +27,13 @@ export const useAppStore = create((set, get, api) => ({
       ...createAmenitiesSlice(set, get, api),
       ...createPaymentsSlice(set, get, api),
       ...createDepartmentsSlice(set, get, api),
+      // Trailing-7-day creation counts for the dashboard trend chips —
+      // `{ residents, complaints, visitorRequests, bookings }`, all integers
+      // (fixed contract with the snapshot endpoint). `null` until a snapshot
+      // that carries it arrives, and the chips render nothing for `null`, so
+      // the UI is truthful against both the current backend and the one adding
+      // the field.
+      weeklyNew: null,
       hydrateDashboard: (snapshot) => set({
         users: snapshot.users ?? [],
         complaints: snapshot.complaints ?? [],
@@ -38,9 +45,11 @@ export const useAppStore = create((set, get, api) => ({
         departments: snapshot.departments ?? [],
         activities: snapshot.activities ?? [],
         pendingRequests: snapshot.pendingRequests ?? [],
+        weeklyNew: snapshot.weeklyNew ?? null,
       }),
       clearDashboard: () => set({
         users: [], complaints: [], visitors: [], amenities: [], bookings: [],
         payments: [], notices: [], departments: [], activities: [], pendingRequests: [],
+        weeklyNew: null,
       }),
     }));

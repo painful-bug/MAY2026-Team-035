@@ -453,6 +453,8 @@ dropdown (1) raise a work order, (2) assign the complaint's existing work
 order, or (3) stay a separate "who is accountable" field, shown alongside the
 work order's assignee rather than instead of it?
 
+*(§10's two questions are both settled by the 2026-08-12 rulings — see §11.)*
+
 **New — may work be raised against a complaint that has ended?**
 `create_work_order` reads the complaint's department, its community and the
 slot, and never reads `complaints.status`. A supervisor can therefore raise a
@@ -686,3 +688,38 @@ of taking. The failure mode is written up in `20260813100000`:12, and
 `admin_raise_complaint` opens with the same exact-signature drop for the same
 reason — today it is a no-op, and it is there so that re-running the file cannot
 become the next overload.
+
+---
+
+## 13. Added 2026-08-12 — the rulings: every question in §§0–10 now has an answer
+
+*(Merged from the `services-and-security` line on 2026-08-20. This section
+predates §§11–12, which were written 2026-08-20 and are **not** covered by
+these rulings — their open questions, and the §12 addendum's dual-actor
+design work, stand.)*
+
+A structured decision session with the product owner settled all of this
+file's open questions plus the new operational model. The full specification
+is [`COMPLAINT_ENGINE_PRD.md`](COMPLAINT_ENGINE_PRD.md); its §12 is the
+ledger. Mapping back to this file's sections:
+
+| This file | Ruling |
+|---|---|
+| §0 coupling | Coupled, forward-only projection (R17) — PRD §6.1 |
+| §1 work-done → resolved | The third shape: resolve when no other live job (R4) |
+| §2 auto-resolution | 72h auto-close from `resolved`, 48h reminder, reopen survives (R11) |
+| §3 vocabulary | CHECK-locked registry; four new types (R19) |
+| §4 reopened → different supervisor | Retired: same queue, flagged, prior workers excluded (R12) |
+| §5 priority re-inheritance | Unchanged, still manual (out of scope) |
+| §8 / §10 assignment fork | Option 1: the control raises work; the optimistic field dies (R13) |
+| §9 transfer consent | Unchanged: notify after the fact (R16) |
+| §10 work on ended complaints | Refused in the RPC, HB409 (R14) |
+
+Beyond this file's questions, the same session ruled: manual-first assignment
+with worker consent and a 2h/24h auto-dispatch fallback (R1, R7), `high` is
+the critical tier (R2), forced assignment best-ranked-instant after
+all-declined on high only (R8), freeform in-chat price negotiation (R3),
+slot-first scheduling kept (R6), one skills catalogue feeding both the raise
+dropdown and onboarding (R5), resident cancel until work starts with a
+re-evaluation pool and per-complaint worker exclusion (R9, R10), transfers
+refused while work is live (R15), and supervisors now notified on raise (R18).

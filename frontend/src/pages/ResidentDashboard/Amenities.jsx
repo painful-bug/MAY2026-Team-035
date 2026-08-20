@@ -26,6 +26,11 @@ import {
 } from '../../features/amenities/services/amenityBookingsService.js';
 import { DEFAULT_AMENITY_SETTINGS } from '../../features/amenities/constants/amenitySettings.js';
 import { normalizeAmenityRecord } from '../../features/amenities/utils/amenitySettingsModel.js';
+import {
+  createBookingSlots,
+  formatTime,
+  hasBookableHours,
+} from '../../features/amenities/utils/bookingSlots.js';
 import { residentApi } from '../../features/resident/residentApi.js';
 import { useAppStore } from '../../store/appStore.js';
 import { useAuthStore } from '../../store/authStore.js';
@@ -230,23 +235,9 @@ const getGroupStatus = (records) => {
   return { key: 'mixed', label: 'Mixed Status' };
 };
 
-const timeToMinutes = (time) => {
-  const [hours, minutes] = time.split(':').map(Number);
-  return hours * 60 + minutes;
-};
-
-const minutesToTime = (minutes) =>
-  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(
-    minutes % 60
-  ).padStart(2, '0')}`;
-
-const formatTime = (time) =>
-  new Intl.DateTimeFormat('en-IN', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'UTC',
-  }).format(new Date(`2000-01-01T${time}:00.000Z`));
+// `timeToMinutes` / `minutesToTime` / `formatTime` / `createBookingSlots`
+// moved to `features/amenities/utils/bookingSlots.js` (with the new
+// `hasBookableHours`) so the empty-hours behaviour has unit tests.
 
 // For `startsAt` / `endsAt`, which are instants rather than the wall-clock
 // `HH:MM` strings above. No `timeZone`: the response does not carry the
@@ -260,42 +251,6 @@ const formatInstantTime = (timestamp) => {
         minute: '2-digit',
         hour12: true,
       }).format(value);
-};
-
-const createBookingSlots = (amenity) => {
-  if (!amenity?.openingTime || !amenity?.closingTime) {
-    return [];
-  }
-
-  const minimumDuration =
-    amenity.availabilitySettings.minimumBookingDurationMinutes;
-  const maximumDuration =
-    amenity.availabilitySettings.maximumBookingDurationMinutes;
-  const configuredDuration = amenity.bookingSlotDuration || 60;
-  const duration = Math.min(
-    Math.max(configuredDuration, minimumDuration),
-    maximumDuration
-  );
-  const openingMinutes = timeToMinutes(amenity.openingTime);
-  const closingMinutes = timeToMinutes(amenity.closingTime);
-  const slots = [];
-
-  for (
-    let startMinutes = openingMinutes;
-    startMinutes + duration <= closingMinutes;
-    startMinutes += configuredDuration
-  ) {
-    const startTime = minutesToTime(startMinutes);
-    const endTime = minutesToTime(startMinutes + duration);
-    slots.push({
-      value: `${startTime}-${endTime}`,
-      startTime,
-      endTime,
-      label: `${formatTime(startTime)} - ${formatTime(endTime)}`,
-    });
-  }
-
-  return slots;
 };
 
 const getClosureReason = (amenity, date) => {
@@ -433,6 +388,10 @@ export default function Amenities() {
     () => createBookingSlots(selectedAmenity),
     [selectedAmenity]
   );
+  // "00:00"/"00:00" is how the API spells hours that were never set (NULL in
+  // the amenities row). The slot builder correctly yields nothing for it, but
+  // an empty disabled dropdown explains nothing — the dialog says so instead.
+  const amenityHasBookableHours = hasBookableHours(selectedAmenity);
   const bookingDates = useMemo(
     () => getDatesInRange(date, endDate),
     [date, endDate]
@@ -902,10 +861,15 @@ export default function Amenities() {
                     </p>
                   </div>
                   <div className="space-y-2 border-t border-slate-50 pt-3 text-xs font-bold text-slate-500">
-                    <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-indigo-500" />
-                      <span>{amenity.openingHours}</span>
-                    </div>
+                    {/* Only when the amenity really has hours — `openingHours`
+                        is '' for the NULL-hours rows, and a clock icon beside
+                        nothing is noise. */}
+                    {amenity.openingHours && (
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-indigo-500" />
+                        <span>{amenity.openingHours}</span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-indigo-500" />
                       <span>Capacity: {amenity.capacity ?? 'Not limited'}</span>
@@ -1020,7 +984,9 @@ export default function Amenities() {
                     Opening Time
                   </p>
                   <p className="mt-1 text-sm font-extrabold text-slate-700">
-                    {formatTime(selectedAmenity.openingTime)}
+                    {amenityHasBookableHours
+                      ? formatTime(selectedAmenity.openingTime)
+                      : 'Not set'}
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -1028,7 +994,9 @@ export default function Amenities() {
                     Closing Time
                   </p>
                   <p className="mt-1 text-sm font-extrabold text-slate-700">
-                    {formatTime(selectedAmenity.closingTime)}
+                    {amenityHasBookableHours
+                      ? formatTime(selectedAmenity.closingTime)
+                      : 'Not set'}
                   </p>
                 </div>
                 <div className="col-span-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:col-span-1">
@@ -1158,6 +1126,9 @@ export default function Amenities() {
                       {isCheckingSlots && (
                         <option value="">Checking availability...</option>
                       )}
+                      {!isCheckingSlots && bookingSlots.length === 0 && (
+                        <option value="">No time slots available</option>
+                      )}
                       {!isCheckingSlots &&
                         bookingSlots.map((slot) => (
                           <option
@@ -1216,6 +1187,19 @@ export default function Amenities() {
                   )}
                 </div>
 
+                {/* The honest answer for hours that were never set. Without
+                    it, this state was an empty disabled dropdown and a dead
+                    submit button with no explanation. */}
+                {!amenityHasBookableHours && (
+                  <div className="flex gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>
+                      This amenity has no bookable hours set yet — please
+                      contact your association to have them configured.
+                    </span>
+                  </div>
+                )}
+
                 {(closureReason || formError) && (
                   <div className="flex gap-2 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
                     <AlertCircle className="h-4 w-4 shrink-0" />
@@ -1261,6 +1245,7 @@ export default function Amenities() {
                       isSubmitting ||
                       isCheckingSlots ||
                       Boolean(closureReason) ||
+                      !amenityHasBookableHours ||
                       !timeSlot
                     }
                     className="flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"

@@ -115,6 +115,20 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class WeeklyNewCounts(BaseModel):
+    """Rows created in the trailing 7 days -- the dashboard's trend chips.
+
+    Integer counts, always present, `0` when nothing was created. Computed by
+    `dashboard_repository.weekly_new_counts` as head-only count queries, so the
+    values are whole-community truth rather than a tally of the capped lists.
+    """
+
+    residents: int = 0
+    complaints: int = 0
+    visitorRequests: int = 0  # noqa: N815
+    bookings: int = 0
+
+
 class DashboardSnapshot(BaseModel):
     """One tenant-scoped projection used by all authenticated portals."""
 
@@ -132,6 +146,9 @@ class DashboardSnapshot(BaseModel):
     # until it was added here the badge could never appear, because the key was
     # never sent. Residents get an empty list -- see `dashboard_service.snapshot`.
     pendingRequests: list[dict] = Field(default_factory=list)  # noqa: N815
+    # Trailing-7-day creation counts for the dashboard trend chips, replacing
+    # the frontend's hardcoded "+2 this week" placeholders.
+    weeklyNew: WeeklyNewCounts = Field(default_factory=WeeklyNewCounts)  # noqa: N815
 
 
 class AmenityWrite(StrictModel):

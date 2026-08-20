@@ -17,6 +17,16 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-20 (merge) — live-app-fixes reconciled with main
+
+`AUDIT`: merging `origin/main` (the services-and-security merge, PR #35) into
+`live-app-fixes` conflicted in five files. This log and
+`COMPLAINT_ENGINE_HANDOFF.md` kept both sides' entries; `Header.jsx` took main's
+snapshot-backed residency chip, which subsumes this branch's hide-missing-tower
+fix; `openapi.yaml` and `api_yaml_mapper.md` were regenerated from the merged
+code rather than line-merged; `Departments.jsx` was merged semantically so both
+sides' fixes survive.
+
 ## 2026-08-20 (later still) — Q12.1 answered, Q12.2 closed
 
 `PO`: the resident **is** to be notified when a complaint is raised on their
@@ -301,6 +311,136 @@ never fail an otherwise-valid session. §3.5 gained the response fragment; `open
 mapper tables were regenerated (`MembershipUnit` schema added; the session row's editorial cell
 repointed from §1.2 to §3.5, where the shape is now documented). The header renders the real
 labels and drops the "• Tower …" half when there is no building to name.
+
+## 2026-08-12 — Session 75: Complaint Engine v2 — PRD, implementation plan, testing docs
+
+### docs/COMPLAINT_ENGINE_PRD.md — new
+
+`PO` (structured decision session, 2026-08-12; nineteen rulings, tabled in the PRD's §12 ledger and
+mirrored into the handoff's new §11). Specifies the target complaint engine end to end: manual-first
+assignment with worker consent (offer, not instant assignment — **overturns** `assign_work_order`'s
+built write-accepted-without-asking semantics), forced assignment for high-priority all-declined jobs
+(best-ranked instant, not random), auto-dispatch demoted to a 2h/24h fallback, `high` = critical (no
+fourth priority level), freeform in-chat price negotiation (no money schema), skill-sourced categories
+(one catalogue feeds the resident dropdown and provider onboarding — **overturns** the raise dialog's
+`complaint_categories` sourcing), status coupling via a forward-only projection (**settles** handoff
+§0/§1), resident cancel with a re-evaluation pool, 72h auto-close with a 48h reminder (**settles**
+handoff §2, overturning the product doc's literal 24h), reopen-to-same-queue-with-worker-exclusion
+(**settles** handoff §4, retiring the different-supervisor clause), the admin assign control replaced
+by raise-work (**settles** handoff §8/§10 option 1), work on terminal complaints refused (**settles**
+handoff §10), transfers with live work refused, and the timeline vocabulary CHECK-locked.
+
+### docs/plans/COMPLAINT_ENGINE_V2_IMPLEMENTATION_PLAN.md — new
+
+`DERIVED` (from the PRD). Six new migrations (`20260813100000`–`20260813105000`), backend/frontend
+task breakdown with the repo's rebuild-whole-with-CHANGED-markers convention, and the full testing
+suite plan (39 SQL behaviour assertions, API/vitest additions, eight end-to-end workflow sweeps).
+
+### docs/COMPLAINT_ENGINE_MANUAL_TESTING.md — new
+
+`DERIVED`. Per-role manual walkthroughs (resident, supervisor/manager, worker, admin) plus the
+15-minute cross-role regression sweep.
+
+### docs/COMPLAINT_ENGINE_HANDOFF.md — §11 appended
+
+`PO`. The rulings ledger, so the handoff's open questions visibly close where they were opened.
+
+---
+
+## 2026-08-12 — Session 74: CI diagnosis, and a runbook addendum for the two pulled privilege migrations
+
+### docs/plans/MIGRATION_APPLY_RUNBOOK.md — addendum §10–§12
+
+`AUDIT` (CI's red `database-browser` job prompted the dig; the teammate's fix commit `b9ab138`
+resolved it and brought two migrations the hosted project does not have). The addendum covers
+applying `20260812190000_grant_service_role_data_access.sql` and
+`20260812200000_enable_authenticated_request_client_reads.sql` in the SQL Editor, with per-file
+post-checks and the two ledger inserts (47 → 49). Verified statically before writing: both files
+parse, conflict with nothing applied, and every statement is re-run safe.
+
+The load-bearing finding, recorded in the addendum's "why promptly" note: **no migration in the
+chain ever enabled RLS on `staff_assignments`** — the repositories and the security-invoker
+`department_staff_overview` view were written assuming it was on. On hosted, roster reads work
+today only through Supabase's default grants, unscoped by any policy; `20260812200000` is what
+turns the scoping on. Two notes deliberately recorded rather than fixed (the migration is the
+teammate's): the blanket grant-select loop undoes the deny-by-default `revoke all` posture on
+server-only tables (still deny in practice — no policies exist), and the `for all` admin-write
+policy is paired with an `insert, update`-only grant, so a JWT-path delete would fail with a
+privilege error instead of a policy refusal — latent, since the only direct table access is the
+service client (`auth_service.py:289`).
+
+### docs/API.md §5 — `GET /dashboard/snapshot` gains `weeklyNew`
+
+`DERIVED` (the fix for the live snapshot 500 shipped alongside the field the dashboard chips
+needed). The hosted project is a legacy database with every repository migration applied on top,
+so `0032` renamed its visitor event log to `legacy_visitor_events` and `0023` renamed its booking
+series tables to `legacy_amenity_booking_*` — but `dashboard_repository.py`'s legacy branch still
+read the old names, and PostgREST's PGRST200 on the `visitor_events` embed 500'd the whole
+snapshot. The projections now read the renamed tables. While there, the snapshot response gained a
+top-level `weeklyNew` object — `{residents, complaints, visitorRequests, bookings}`, integer
+counts of rows created in the trailing 7 days, always present, `0` when none, computed as
+head-only count queries — replacing the frontend's hardcoded "+2 this week" chips. Documented in
+§5 because the rest of the snapshot's contract predates this workstream.
+
+### docs/openapi.yaml, docs/api_yaml_mapper.md — regenerated
+
+`DERIVED`. The spec picked up `WeeklyNewCounts` and the snapshot description; the mapper re-run
+re-resolved handler line numbers in `dashboard.py` and the `API.md` line references that moved
+below the new §5 block.
+
+### Frontend shell — a portal error boundary, and the header chip tells the truth
+
+`PO` (the owner's first live admin walk surfaced all four defects; the fixes are `DERIVED`).
+Three shell-level decisions worth recording beyond the bug fixes themselves:
+
+- **Every portal layout now wraps its `<Outlet />` in `PortalErrorBoundary`**
+  (`components/common/PortalErrorBoundary.jsx`). The trigger was a missing `useQuery` import in
+  `Departments.jsx` unmounting the entire app to a blank page; the boundary contains any future
+  render crash to a "Something went wrong here" panel with a retry, self-resetting on navigation.
+  Five layouts, five one-line wraps — they share no common shell to mount it once.
+- **The header residency chip reads the snapshot's `users` projection, not the session.**
+  `currentUser.flat`/`tower` were hard-coded `'—'` placeholders in `applicationUser()` and never
+  real; the chip now finds the signed-in member's own row (unit_residencies → units → buildings)
+  and **hides entirely when there is no unit** — an admin with no residency gets no chip, not
+  dashes. The `'—'` placeholders stay on `applicationUser()` because two demo-era slices still
+  stringify them; nothing user-facing reads them any more.
+- **Trend chips render only from `weeklyNew`.** The hardcoded "+2 this week" strings are gone;
+  a chip renders `+N this week` only for a finite count > 0, so a missing field, a zero, or a
+  down snapshot all render nothing rather than an invented number. The landing page's fake
+  "12 new this month" stays — it is inside the marketing illustration, not a data surface.
+
+### Both snapshots read concurrently — wall time drops from sum-of-RTTs to max
+
+`PO` (the owner reported the amenities tab "takes a long time"; the mechanism is `DERIVED`).
+The admin snapshot issued 15–16 synchronous PostgREST round trips in strict sequence, the
+resident snapshot 6 — wall time was the *sum* of the RTTs to the hosted project. Nothing except
+legacy payments (which filters by the invoice ids just fetched) depends on another read, so both
+services now fan the reads out over a bounded `ThreadPoolExecutor` (invoices→payments chained
+inside one worker) and assemble identically — ~8× in simulation. The shared supabase client was
+verified thread-safe for this fan-out against the installed sources: `table()` builds a fresh
+request builder per call, httpx's session is documented thread-safe, and the lazily-initialised
+`client.postgrest` is forced on the calling thread by the schema probe before any worker starts.
+Wire shape unchanged (`export_openapi.py --check` untouched); a failing read still fails the
+whole request with its own exception, never a partial snapshot.
+
+### Departments form — one manager entry, and modals escape the fade-in trap
+
+`PO` (the owner found the create form carrying two generations of manager entry and the modal
+clipped under the header). Two rulings worth a record:
+
+- **The invitation block is the only place a manager is entered.** The legacy free-text
+  "Department Manager" input is gone; `head` is derived at submit from the first Manager row's
+  name (an edit with no re-entered leadership preserves the stored head). The contact email/phone
+  pair stays but is relabelled "Department contact …" — it describes the department, not a person.
+- **The modal defect was a stacking-context trap, and the fix is portals.** `.animate-fade-in`
+  uses `fill-mode: forwards`, and an animation that targets opacity keeps its element a stacking
+  context for as long as it is applied — which `forwards` makes forever. Every portal layout puts
+  that class on `<main>`, so any `fixed` overlay rendered in place is trapped below the `z-40`
+  header no matter its own z-index. The two departments modals now render through
+  `createPortal(document.body)` (the repo's first; no utility existed). Other in-place overlays
+  (amenity form modal, booking ModalLayout) share the latent trap and are flagged, not touched.
+
+## 2026-08-12 — Complaint Engine v2
 
 - `API.md`, `openapi.yaml`, and `api_yaml_mapper.md`: documented and regenerated the skill-based raise, resident cancel, candidate picker, and staff detail API surface.
 - `design-of-components.md`: recorded the tracker, candidate picker, and cancel/re-evaluation dialog responsibilities.

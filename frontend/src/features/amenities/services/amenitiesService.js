@@ -9,8 +9,13 @@ import { validateAmenitySettings } from '../utils/validateAmenitySettings.js';
 
 const cloneAmenity = (amenity) => normalizeAmenityRecord(amenity);
 
+// A snapshot without `amenities` must read as an empty catalogue, not a
+// TypeError: the snapshot endpoint is shared surface under active backend
+// work, and this file is what turns its failures into the page's error state
+// (an `ApiError` from the 500 → `useAmenitiesStore.error` → "Try again",
+// which calls straight back through here and genuinely refetches).
 const readAmenities = async () =>
-  (await getDashboardSnapshot()).amenities.map(normalizeAmenityRecord);
+  ((await getDashboardSnapshot()).amenities ?? []).map(normalizeAmenityRecord);
 
 const normalizeBookingConfiguration = (amenityData, currentAmenity = {}) => {
   const bookingMode = amenityData.bookingMode ?? currentAmenity.bookingMode;
@@ -124,6 +129,19 @@ export const updateAmenitySettings = async (amenityId, settings) => {
   return updateAmenity(amenityId, updatedAmenity);
 };
 
+// The COMPLETE write vocabulary of `POST/PUT /dashboard/amenities` — the only
+// amenity write endpoints that exist. Their `AmenityWrite` model is
+// `extra="forbid"`, so adding any other key (opening/closing times, a
+// `settings` group) makes every save 422; and the repository behind them
+// writes no hours columns on either schema generation. The Add Amenity form
+// COLLECTS opening/closing times and this function is where they fall on the
+// floor — knowingly, because there is nowhere to send them: the backend's
+// hours-capable save (`SaveAmenityRequest.settings` →
+// `amenities_service.save_amenity`) lost its routes when the catalogue
+// endpoints were removed as duplicates. Until the backend accepts hours on
+// this wire (backend follow-up, reported 2026-08-12), amenity hours CANNOT be
+// persisted from the frontend — which is why the cards no longer display
+// invented ones.
 const toAmenityWrite = (amenity) => ({
   name: amenity.name,
   description: amenity.description ?? '',

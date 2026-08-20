@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
 import {
   Briefcase,
   CalendarDays,
@@ -258,7 +259,9 @@ export default function WorkerLayout() {
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
-          <Outlet />
+          <PortalErrorBoundary>
+            <Outlet />
+          </PortalErrorBoundary>
         </main>
       </div>
     </div>

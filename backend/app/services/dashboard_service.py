@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.exceptions import NotFoundError
@@ -128,7 +129,11 @@ def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, l
             "date": _iso_date(starts_at or row.get("created_at")), "expectedDate": _iso_date(starts_at),
             "expectedTime": _time(starts_at), "eta": _time(starts_at), "validUntil": ends_at,
             "checkedInAt": row.get("checked_in_at"), "checkedOutAt": row.get("checked_out_at"),
-            "createdAt": row.get("created_at"), "events": row.get("legacy_visitor_events") or row.get("visitor_events") or [],
+            # The legacy embed key follows the hosted table name: `0032` renamed
+            # the old event log to `legacy_visitor_events` when the baseline
+            # claimed `visitor_events` for `visitor_requests`.
+            "createdAt": row.get("created_at"),
+            "events": (row.get("legacy_visitor_events") if legacy else row.get("visitor_events")) or [],
         })
     return result
 
@@ -199,44 +204,93 @@ def _payments(invoices: list[dict[str, Any]], payments: list[dict[str, Any]], us
 
 
 def snapshot(membership: MembershipContext) -> DashboardSnapshot:
+    """Assemble the snapshot from concurrent repository reads.
+
+    Every read is one synchronous PostgREST round trip, and none depends on
+    another's result -- they all key off the community id and the legacy flag,
+    both known before the first request -- so sequentially the wall time was
+    the *sum* of ~15 network RTTs. The reads now share a bounded thread pool
+    and the wall time is roughly the slowest read.
+
+    Sharing the singleton service client across the workers is safe here:
+    `client.table()` builds a fresh request builder per call (no per-query
+    state lives on the client), the underlying `httpx.Client` is documented
+    thread-safe, and the one lazily-initialised attribute (`client.postgrest`)
+    is forced on this thread by the `schema_generation()` probe before any
+    worker starts. Nothing in this path calls `.auth()` or otherwise mutates
+    the shared client.
+
+    Error semantics are unchanged: `Future.result()` re-raises the read's own
+    exception, so a failing read still fails the whole snapshot with the same
+    exception type -- never a partial payload.
+    """
     client = get_service_client()
     legacy = dashboard_repository.schema_generation() == "legacy"
-    member_rows = dashboard_repository.list_memberships(client, membership.community_id)
-    users, users_by_membership, _ = _membership_users(member_rows)
-    complaints = _complaints(dashboard_repository.list_complaints(client, membership.community_id, legacy=legacy), users_by_membership, legacy=legacy)
-    visitors = _visitors(dashboard_repository.list_visitors(client, membership.community_id, legacy=legacy), users_by_membership, legacy=legacy)
-    amenities = _amenities(dashboard_repository.list_amenities(client, membership.community_id, legacy=legacy), legacy=legacy)
-    bookings = _bookings(dashboard_repository.list_bookings(client, membership.community_id, legacy=legacy), users_by_membership, legacy=legacy)
-    invoices = dashboard_repository.list_invoices(
-        client, membership.community_id, legacy=legacy
-    )
-    payment_rows = dashboard_repository.list_payments(
-        client,
-        membership.community_id,
-        legacy=legacy,
-        invoice_ids=[row["id"] for row in invoices],
-    )
-    payments = _payments(
-        invoices,
-        payment_rows,
-        users_by_membership, membership, legacy=legacy,
-    )
-    notices = [{"id": r["id"], "title": r["title"], "description": r.get("body") or "", "date": _iso_date(r.get("published_at") or r.get("created_at")), "createdAt": r.get("created_at")} for r in dashboard_repository.list_notices(client, membership.community_id)]
-    departments = [{"id": r["id"], "name": r["name"], "description": r.get("description") or "", "status": "Active" if r.get("is_active") else "Inactive", "staff": [], "categories": []} for r in dashboard_repository.list_departments(client, membership.community_id)]
-    activities = [{"id": r["id"], "text": r.get("action", "Community activity"), "time": r.get("created_at"), "type": "general"} for r in dashboard_repository.list_activity(client, membership.community_id)]
-    # Join requests carry other people's name, email and phone, so only an admin
-    # gets them. Everyone else gets the empty list the field defaults to.
-    pending_requests = (
-        dashboard_repository.list_pending_access_requests(client, membership.community_id)
-        if membership.role == "admin"
-        else []
-    )
+    community_id = membership.community_id
+
+    def _invoices_then_payments() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        # The one genuine dependency: the legacy payments read filters by the
+        # invoice ids it just fetched. Chained inside a single task, so the
+        # pair costs two round trips in one worker, concurrent with the rest.
+        invoices = dashboard_repository.list_invoices(client, community_id, legacy=legacy)
+        payment_rows = dashboard_repository.list_payments(
+            client, community_id, legacy=legacy,
+            invoice_ids=[row["id"] for row in invoices],
+        )
+        return invoices, payment_rows
+
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="snapshot") as pool:
+        member_rows_f = pool.submit(dashboard_repository.list_memberships, client, community_id)
+        complaints_f = pool.submit(dashboard_repository.list_complaints, client, community_id, legacy=legacy)
+        visitors_f = pool.submit(dashboard_repository.list_visitors, client, community_id, legacy=legacy)
+        amenities_f = pool.submit(dashboard_repository.list_amenities, client, community_id, legacy=legacy)
+        bookings_f = pool.submit(dashboard_repository.list_bookings, client, community_id, legacy=legacy)
+        money_f = pool.submit(_invoices_then_payments)
+        notices_f = pool.submit(dashboard_repository.list_notices, client, community_id)
+        departments_f = pool.submit(dashboard_repository.list_departments, client, community_id)
+        activities_f = pool.submit(dashboard_repository.list_activity, client, community_id)
+        # Join requests carry other people's name, email and phone, so only an
+        # admin gets them. Everyone else gets the empty list the field defaults
+        # to.
+        pending_f = (
+            pool.submit(dashboard_repository.list_pending_access_requests, client, community_id)
+            if membership.role == "admin"
+            else None
+        )
+        # The trend chips: rows created in the trailing 7 days, counted in
+        # Postgres (head-only count queries), never derived from the capped
+        # lists above. Handing the pool down folds the four counts into the
+        # same concurrent batch; the call returns once they are all in.
+        weekly_new = dashboard_repository.weekly_new_counts(
+            client,
+            community_id,
+            legacy=legacy,
+            since_iso=(datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
+            executor=pool,
+        )
+
+        member_rows = member_rows_f.result()
+        users, users_by_membership, _ = _membership_users(member_rows)
+        complaints = _complaints(complaints_f.result(), users_by_membership, legacy=legacy)
+        visitors = _visitors(visitors_f.result(), users_by_membership, legacy=legacy)
+        amenities = _amenities(amenities_f.result(), legacy=legacy)
+        bookings = _bookings(bookings_f.result(), users_by_membership, legacy=legacy)
+        invoices, payment_rows = money_f.result()
+        payments = _payments(
+            invoices,
+            payment_rows,
+            users_by_membership, membership, legacy=legacy,
+        )
+        notices = [{"id": r["id"], "title": r["title"], "description": r.get("body") or "", "date": _iso_date(r.get("published_at") or r.get("created_at")), "createdAt": r.get("created_at")} for r in notices_f.result()]
+        departments = [{"id": r["id"], "name": r["name"], "description": r.get("description") or "", "status": "Active" if r.get("is_active") else "Inactive", "staff": [], "categories": []} for r in departments_f.result()]
+        activities = [{"id": r["id"], "text": r.get("action", "Community activity"), "time": r.get("created_at"), "type": "general"} for r in activities_f.result()]
+        pending_requests = pending_f.result() if pending_f is not None else []
     if membership.role == "resident":
         current_profile_id = users_by_membership.get(membership.id, {}).get("id")
         complaints = [row for row in complaints if row.get("userId") == current_profile_id]
         visitors = [row for row in visitors if row.get("userId") == current_profile_id]
         payments = [row for row in payments if row.get("isMine")]
-    return DashboardSnapshot(users=users, complaints=complaints, visitors=visitors, amenities=amenities, bookings=bookings, payments=payments, notices=notices, departments=departments, activities=activities, pendingRequests=pending_requests)
+    return DashboardSnapshot(users=users, complaints=complaints, visitors=visitors, amenities=amenities, bookings=bookings, payments=payments, notices=notices, departments=departments, activities=activities, pendingRequests=pending_requests, weeklyNew=weekly_new)
 
 
 def save_amenity(

@@ -49,8 +49,12 @@ export default function Notices() {
       {/* Notices Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {notices.map((notice) => {
-          const isHigh = notice.urgency === 'High';
-          const isMedium = notice.urgency === 'Medium';
+          // The API stores urgency lowercase (info/important/urgent); the old
+          // demo rows said High/Medium. Compare case-insensitively and accept
+          // both vocabularies so neither generation of data renders unstyled.
+          const urgency = (notice.urgency || '').toLowerCase();
+          const isHigh = urgency === 'urgent' || urgency === 'high';
+          const isMedium = urgency === 'important' || urgency === 'medium';
 
           return (
             <div 
@@ -62,20 +66,27 @@ export default function Notices() {
               <div className="space-y-3">
                 <div className="flex justify-between items-start gap-4">
                   <div className="space-y-0.5">
-                    <span className="text-[9px] font-extrabold px-2 py-0.5 bg-slate-50 border border-slate-100 rounded text-slate-400 uppercase tracking-wider">
-                      {notice.category}
-                    </span>
+                    {/* The snapshot's notice rows don't carry category or
+                        urgency yet — hide the chips rather than render
+                        "undefined". */}
+                    {notice.category && (
+                      <span className="text-[9px] font-extrabold px-2 py-0.5 bg-slate-50 border border-slate-100 rounded text-slate-400 uppercase tracking-wider">
+                        {notice.category}
+                      </span>
+                    )}
                     <h3 className="text-base font-extrabold text-slate-805 pt-1.5 leading-tight">{notice.title}</h3>
                   </div>
-                  <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
-                    isHigh 
-                      ? 'bg-rose-50 text-rose-700 border border-rose-100' 
-                      : isMedium
-                      ? 'bg-amber-50 text-amber-700 border border-amber-100'
-                      : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                  }`}>
-                    {notice.urgency} Priority
-                  </span>
+                  {notice.urgency && (
+                    <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
+                      isHigh
+                        ? 'bg-rose-50 text-rose-700 border border-rose-100'
+                        : isMedium
+                        ? 'bg-amber-50 text-amber-700 border border-amber-100'
+                        : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                    }`}>
+                      {notice.urgency} Priority
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed font-semibold">{notice.description}</p>
               </div>
@@ -139,9 +150,12 @@ export default function Notices() {
                     onChange={(e) => setUrgency(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold"
                   >
-                    <option value="Info">Info / Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
+                    {/* The API's vocabulary (NOTICE_URGENCIES, matched
+                        case-insensitively) — the demo's Low/Medium/High values
+                        were refused with a 422 on every publish. */}
+                    <option value="Info">Info</option>
+                    <option value="Important">Important</option>
+                    <option value="Urgent">Urgent</option>
                   </select>
                 </div>
               </div>

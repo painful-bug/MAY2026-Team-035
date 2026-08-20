@@ -522,6 +522,7 @@ def test_a_filter_value_that_is_not_a_role_or_a_uuid_is_dropped_not_escaped():
 # ---------------------------------------------------------------------------
 
 _PENDING = [{"id": "r1", "applicant_name": "Asha", "applicant_email": "a@example.com"}]
+_WEEKLY = {"residents": 2, "complaints": 1, "visitorRequests": 0, "bookings": 3}
 
 
 def _snapshot_for(role, monkeypatch):
@@ -547,6 +548,11 @@ def _snapshot_for(role, monkeypatch):
         "list_pending_access_requests",
         lambda *a, **k: list(_PENDING),
     )
+    monkeypatch.setattr(
+        dashboard_service.dashboard_repository,
+        "weekly_new_counts",
+        lambda *a, **k: dict(_WEEKLY),
+    )
     monkeypatch.setattr(dashboard_service, "get_service_client", lambda: object())
 
     return dashboard_service.snapshot(
@@ -570,3 +576,296 @@ def test_a_security_guard_does_not_receive_them_either(monkeypatch):
     """The gate is an allowlist on 'admin', not a denylist on 'resident' --
     so every other role is excluded too."""
     assert _snapshot_for("security", monkeypatch).pendingRequests == []
+
+
+# ---------------------------------------------------------------------------
+# The trend counts behind the dashboard chips
+# ---------------------------------------------------------------------------
+
+
+def test_the_snapshot_always_carries_the_four_weekly_new_counts(monkeypatch):
+    """The frontend replaces its hardcoded '+2 this week' chips with exactly
+    this object, so the field name and its four keys are load-bearing."""
+    assert _snapshot_for("admin", monkeypatch).weeklyNew.model_dump() == _WEEKLY
+
+
+def test_weekly_new_defaults_to_zeroes_never_to_absence():
+    """`0` when nothing was created; the key itself must never be missing."""
+    from app.domain.schemas import DashboardSnapshot
+
+    payload = DashboardSnapshot().model_dump()
+
+    assert payload["weeklyNew"] == {
+        "residents": 0, "complaints": 0, "visitorRequests": 0, "bookings": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# The legacy projections, pinned to the hosted schema
+#
+# The hosted project is a legacy database with every repository migration
+# applied on top, so `0032` renamed its visitor event log to
+# `legacy_visitor_events` and `0023` renamed its booking series tables to
+# `legacy_amenity_booking_*`. Embedding or reading the old names is PGRST200 /
+# PGRST205 on every call -- the 500 that took down the whole snapshot.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingClient:
+    """Capture `(table, select)` pairs; answer every query with nothing."""
+
+    def __init__(self):
+        self.queries = []
+
+    def table(self, name):
+        self.queries.append({"table": name, "select": None, "filters": []})
+        return self
+
+    def select(self, columns, **kwargs):
+        self.queries[-1]["select"] = columns
+        self.queries[-1]["select_kwargs"] = kwargs
+        return self
+
+    def eq(self, column, value):
+        self.queries[-1]["filters"].append(("eq", column, value))
+        return self
+
+    def gte(self, column, value):
+        self.queries[-1]["filters"].append(("gte", column, value))
+        return self
+
+    def is_(self, *args):
+        return self
+
+    def in_(self, *args):
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args):
+        return self
+
+    def execute(self):
+        import types
+
+        return types.SimpleNamespace(data=[], count=0)
+
+
+def test_the_legacy_visitor_projection_embeds_the_renamed_event_log():
+    """`visitor_events` now names the baseline table, which has no FK to
+    `visitor_access_requests` -- embedding it is the PGRST200 this pins out."""
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    dashboard_repository.list_visitors(client, ALPHA, legacy=True)
+
+    (query,) = client.queries
+    assert query["table"] == "visitor_access_requests"
+    assert "legacy_visitor_events(event_type,note,occurred_at)" in query["select"]
+    assert ",visitor_events(" not in query["select"]
+
+
+def test_the_baseline_visitor_projection_still_embeds_visitor_events():
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    dashboard_repository.list_visitors(client, ALPHA, legacy=False)
+
+    (query,) = client.queries
+    assert query["table"] == "visitor_requests"
+    assert "visitor_events(event_type,created_at)" in query["select"]
+    assert "legacy_visitor_events" not in query["select"]
+
+
+def test_the_legacy_booking_projection_reads_the_renamed_series_tables():
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    dashboard_repository.list_bookings(client, ALPHA, legacy=True)
+
+    assert [q["table"] for q in client.queries] == [
+        "legacy_amenity_booking_series", "legacy_amenity_booking_occurrences",
+    ]
+
+
+def test_the_service_reads_events_from_the_key_each_schema_embeds():
+    """The repository's embed key and the service's `.get` must move together;
+    this is the pair that drifted apart when `0032` took the old name."""
+    from app.services.dashboard_service import _visitors
+
+    legacy_row = {
+        "id": "v1", "requested_by_membership_id": "m1",
+        "legacy_visitor_events": [{"event_type": "checked_in"}],
+    }
+    baseline_row = {
+        "id": "v2", "requested_by_membership_id": "m1",
+        "visitor_events": [{"event_type": "created"}],
+    }
+
+    assert _visitors([legacy_row], {}, legacy=True)[0]["events"] == [
+        {"event_type": "checked_in"}
+    ]
+    assert _visitors([baseline_row], {}, legacy=False)[0]["events"] == [
+        {"event_type": "created"}
+    ]
+
+
+def test_weekly_new_counts_ask_the_tables_the_deployed_schema_has():
+    """Head-only counts, filtered to the window -- and pointed at the renamed
+    legacy tables, not the names the rename freed up."""
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    counts = dashboard_repository.weekly_new_counts(
+        client, ALPHA, legacy=True, since_iso="2026-08-05T00:00:00+00:00"
+    )
+
+    assert counts == {
+        "residents": 0, "complaints": 0, "visitorRequests": 0, "bookings": 0,
+    }
+    assert [q["table"] for q in client.queries] == [
+        "community_memberships", "complaints",
+        "visitor_access_requests", "legacy_amenity_booking_series",
+    ]
+    for query in client.queries:
+        assert query["select_kwargs"] == {"count": "exact", "head": True}
+        assert ("gte", "created_at", "2026-08-05T00:00:00+00:00") in query["filters"]
+        assert ("eq", "community_id", ALPHA) in query["filters"]
+    memberships = client.queries[0]
+    assert ("eq", "role", "resident") in memberships["filters"]
+    assert ("eq", "status", "active") in memberships["filters"]
+
+
+def test_weekly_new_counts_on_the_baseline_schema():
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    dashboard_repository.weekly_new_counts(
+        client, ALPHA, legacy=False, since_iso="2026-08-05T00:00:00+00:00"
+    )
+
+    assert [q["table"] for q in client.queries] == [
+        "community_memberships", "complaints", "visitor_requests", "amenity_bookings",
+    ]
+
+
+def test_weekly_new_counts_on_an_executor_ask_the_same_four_tables():
+    """The snapshot hands its pool down so the counts join the concurrent
+    batch; the executor path must be the sequential path, only faster."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.repositories import dashboard_repository
+
+    client = _RecordingClient()
+    # One worker keeps the shared recorder's bookkeeping deterministic.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        counts = dashboard_repository.weekly_new_counts(
+            client, ALPHA, legacy=False,
+            since_iso="2026-08-05T00:00:00+00:00", executor=pool,
+        )
+
+    assert counts == {
+        "residents": 0, "complaints": 0, "visitorRequests": 0, "bookings": 0,
+    }
+    assert sorted(q["table"] for q in client.queries) == [
+        "amenity_bookings", "community_memberships", "complaints", "visitor_requests",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The reads run concurrently; the assembly must not care
+# ---------------------------------------------------------------------------
+
+
+def _stub_reads(monkeypatch, **overrides):
+    """Stub every repository read the snapshot performs, `overrides` winning."""
+    from app.services import dashboard_service
+
+    reads = {
+        "list_memberships": lambda *a, **k: [],
+        "list_complaints": lambda *a, **k: [],
+        "list_visitors": lambda *a, **k: [],
+        "list_amenities": lambda *a, **k: [],
+        "list_bookings": lambda *a, **k: [],
+        "list_invoices": lambda *a, **k: [],
+        "list_payments": lambda *a, **k: [],
+        "list_notices": lambda *a, **k: [],
+        "list_departments": lambda *a, **k: [],
+        "list_activity": lambda *a, **k: [],
+        "list_pending_access_requests": lambda *a, **k: [],
+        "weekly_new_counts": lambda *a, **k: dict(_WEEKLY),
+    }
+    reads.update(overrides)
+    for name, stub in reads.items():
+        monkeypatch.setattr(
+            dashboard_service.dashboard_repository, name, stub, raising=True
+        )
+    monkeypatch.setattr(
+        dashboard_service.dashboard_repository, "schema_generation", lambda: "current"
+    )
+    monkeypatch.setattr(dashboard_service, "get_service_client", lambda: object())
+
+
+def test_the_snapshot_assembles_correctly_when_reads_finish_out_of_order(monkeypatch):
+    """The earliest-submitted reads finish last here, so any assembly that
+    depended on completion order (rather than on which future is which) would
+    scramble the payload."""
+    import time
+
+    from app.domain.schemas import MembershipContext
+    from app.services import dashboard_service
+
+    def slow(value, delay):
+        def read(*args, **kwargs):
+            time.sleep(delay)
+            return value
+        return read
+
+    _stub_reads(
+        monkeypatch,
+        # Submitted first, resolves last.
+        list_memberships=slow([{
+            "id": "m1", "profile_id": "p1", "role": "admin", "status": "active",
+            "department_id": None, "profiles": {"full_name": "Asha"},
+            "unit_residencies": [],
+        }], 0.05),
+        list_notices=slow([{"id": "n1", "title": "Water", "body": "off at noon",
+                            "published_at": "2026-08-11T00:00:00Z",
+                            "created_at": "2026-08-11T00:00:00Z"}], 0.02),
+        # Submitted late, resolves first.
+        list_departments=lambda *a, **k: [
+            {"id": "d1", "name": "Gate", "description": "", "is_active": True}
+        ],
+    )
+
+    snap = dashboard_service.snapshot(
+        MembershipContext(id="m1", community_id=ALPHA, role="admin")
+    )
+
+    assert [u["name"] for u in snap.users] == ["Asha"]
+    assert [n["id"] for n in snap.notices] == ["n1"]
+    assert [d["name"] for d in snap.departments] == ["Gate"]
+    assert snap.weeklyNew.model_dump() == _WEEKLY
+
+
+def test_a_failing_read_fails_the_snapshot_with_its_own_exception(monkeypatch):
+    """Concurrency must not soften errors into a partial payload: the read's
+    own exception type propagates, exactly as it did sequentially."""
+    import pytest
+
+    from app.domain.schemas import MembershipContext
+    from app.services import dashboard_service
+
+    class VisitorReadError(RuntimeError):
+        pass
+
+    def boom(*args, **kwargs):
+        raise VisitorReadError("PGRST200")
+
+    _stub_reads(monkeypatch, list_visitors=boom)
+
+    with pytest.raises(VisitorReadError):
+        dashboard_service.snapshot(
+            MembershipContext(id="m1", community_id=ALPHA, role="admin")
+        )

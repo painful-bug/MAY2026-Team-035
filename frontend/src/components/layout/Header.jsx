@@ -14,16 +14,40 @@ import {
 } from 'lucide-react';
 
 export default function Header({ onMenuClick }) {
-  const { 
-    currentUser, 
-    notices, 
-    visitors, 
-    complaints, 
+  const {
+    currentUser,
+    users,
+    notices,
+    visitors,
+    complaints,
     activities,
     searchQuery,
     setSearchQuery
   } = useApp();
-  
+
+  // The residency chip's data. `currentUser.flat`/`tower` were read here and
+  // the session has never carried either (`applicationUser()` hard-codes both
+  // to '—'), so every member saw "Flat — • Tower —". The snapshot's `users`
+  // projection DOES carry them — `unit_residencies → units → buildings`, keyed
+  // by profile id — so the chip reads its own row from there. The backend uses
+  // the same '—' placeholder for members with no active residency (a pure
+  // admin, typically), so '—' and absence both mean "no unit": the chip hides
+  // rather than render a placeholder. While the snapshot is unavailable the
+  // list is empty and the chip simply stays hidden.
+  const residency = (users ?? []).find((user) => user.id === currentUser?.id);
+  const flat = residency?.flat && residency.flat !== '—' ? residency.flat : '';
+  const tower = residency?.tower && residency.tower !== '—' ? residency.tower : '';
+  const unitLabel = [flat && `Flat ${flat}`, tower && `Tower ${tower}`]
+    .filter(Boolean)
+    .join(' • ');
+  const statusChipLabel = currentUser
+    ? ['Security', 'SecurityManager'].includes(currentUser.role)
+      ? currentUser.role === 'SecurityManager'
+        ? 'Security management'
+        : 'On duty'
+      : unitLabel
+    : '';
+
   // Left Panel States
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [panelType, setPanelType] = useState('notifications'); // 'notifications' | 'search'
@@ -68,23 +92,15 @@ export default function Header({ onMenuClick }) {
             <Menu className="w-5 h-5" />
           </button>
 
-          {currentUser && (
+          {/* `departmentName` and `staffRole` were read here once and
+              `applicationUser()` has never set either, so every gate user saw
+              the literal "undefined • undefined" — and then residents saw
+              "Flat — • Tower —" for the same reason. The label is computed
+              above; when there is nothing truthful to say, no chip. */}
+          {statusChipLabel && (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3.5 py-1.5 rounded-full text-xs font-semibold text-slate-600">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-              {/* `departmentName` and `staffRole` were read here and
-                  `applicationUser()` has never set either, so every gate user
-                  saw the literal "undefined • undefined". Neither is in the
-                  session; a guard's post comes from their shift. */}
-              {['Security', 'SecurityManager'].includes(currentUser.role)
-                ? currentUser.role === 'SecurityManager'
-                  ? 'Security management'
-                  : 'On duty'
-                /* `tower` is null for standalone homes (villas have no
-                   building), so the tower half only renders when there is
-                   one to name. */
-                : currentUser.tower && currentUser.tower !== '—'
-                  ? `Flat ${currentUser.flat} • Tower ${currentUser.tower}`
-                  : `Flat ${currentUser.flat}`}
+              {statusChipLabel}
             </div>
           )}
         </div>
@@ -197,15 +213,20 @@ export default function Header({ onMenuClick }) {
                   {notices.slice(0, 3).map((notice) => (
                     <div key={notice.id} className="bg-slate-50 border border-slate-100 rounded-xl p-4 space-y-1.5 hover:bg-slate-100/50 transition-colors">
                       <div className="flex items-center justify-between">
-                        <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                          notice.urgency === 'High' 
-                            ? 'bg-rose-50 text-rose-600' 
-                            : notice.urgency === 'Medium' 
-                            ? 'bg-amber-50 text-amber-600' 
-                            : 'bg-indigo-50 text-indigo-600'
-                        }`}>
-                          {notice.urgency}
-                        </span>
+                        {/* API urgency is lowercase (info/important/urgent);
+                            demo rows said High/Medium — accept both, and hide
+                            the chip when the snapshot carries no urgency. */}
+                        {notice.urgency && (
+                          <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            ['urgent', 'high'].includes(notice.urgency.toLowerCase())
+                              ? 'bg-rose-50 text-rose-600'
+                              : ['important', 'medium'].includes(notice.urgency.toLowerCase())
+                              ? 'bg-amber-50 text-amber-600'
+                              : 'bg-indigo-50 text-indigo-600'
+                          }`}>
+                            {notice.urgency}
+                          </span>
+                        )}
                         <span className="text-[10px] text-slate-400 font-semibold">{notice.date}</span>
                       </div>
                       <h4 className="text-xs font-bold text-slate-800 line-clamp-1">{notice.title}</h4>

@@ -92,17 +92,25 @@ export default function AmenityCard({
         </div>
 
         <div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4">
-          <div className="flex items-start gap-2">
-            <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Opening hours
-              </p>
-              <p className="mt-0.5 text-xs font-bold text-slate-700">
-                {amenity.openingHours}
-              </p>
+          {/* Rendered only when the record really carries hours.
+              `openingHours` used to be back-filled with the settings-form
+              defaults, so this cell said "6:00 AM - 10:00 PM" for amenities
+              whose hours were never set — the snapshot's amenity rows on the
+              hosted schema carry no hours at all, so it said that for every
+              amenity. An absent line is honest; an invented one is not. */}
+          {amenity.openingHours ? (
+            <div className="flex items-start gap-2">
+              <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Opening hours
+                </p>
+                <p className="mt-0.5 text-xs font-bold text-slate-700">
+                  {amenity.openingHours}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : null}
           <div className="flex items-start gap-2">
             <Users className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
             <div>
