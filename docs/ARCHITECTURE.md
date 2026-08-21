@@ -41,7 +41,7 @@ flowchart LR
     UI -->|"fetch with HttpOnly cookies\nCSRF on unsafe methods"| Auth
     UI -->|"registration and invitation requests"| Registration
     Bootstrap -->|"GET dashboard/snapshot"| Dashboard
-    Bootstrap -->|"EventSource dashboard/events"| Dashboard
+    Bootstrap -->|"EventSource events"| Dashboard
     Amenity -->|"authorized amenity CRUD"| Dashboard
 
     Auth -->|"PKCE authorization/exchange"| SupabaseAuth["Supabase Auth"]
@@ -63,7 +63,7 @@ causes is made in SQL**, which is not a stylistic preference — every notificat
 in this system is written inside the transaction that caused it, and a worker
 deciding things in Python would have to give that up.
 
-## Runtime sequence for authenticated dashboards
+## Runtime sequence for the admin dashboard
 
 ```mermaid
 sequenceDiagram
