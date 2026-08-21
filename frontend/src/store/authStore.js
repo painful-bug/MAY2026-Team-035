@@ -3,6 +3,7 @@ import { useAppStore } from './appStore';
 import {
   applicationUser, getApplicationSession, logoutSession, redeemPreparedInvitation,
 } from '../lib/auth/authService';
+import { ApiError } from '../lib/api/client';
 import { queryClient } from '../lib/api/queryClient';
 
 export const AUTH_FLOW_STATE = Object.freeze({
@@ -42,8 +43,21 @@ export const useAuthStore = create((set, get) => ({
       try {
         const context = await getApplicationSession();
         if (get().authGeneration === generation) set(sessionState(context));
-      } catch {
-        if (get().authGeneration === generation) set({ ...initialState, authGeneration: generation, sessionStatus: SESSION_STATUS.ANONYMOUS, isAuthReady: true });
+      } catch (error) {
+        if (get().authGeneration === generation) {
+          if (error instanceof ApiError && error.status === 401) {
+            set({ ...initialState, authGeneration: generation, sessionStatus: SESSION_STATUS.ANONYMOUS, isAuthReady: true });
+          } else {
+            set({
+              ...initialState,
+              authGeneration: generation,
+              sessionStatus: SESSION_STATUS.ERROR,
+              authFlowState: AUTH_FLOW_STATE.ERROR,
+              authError: error instanceof Error ? error.message : 'Could not restore your session.',
+              isAuthReady: true,
+            });
+          }
+        }
       } finally { bootstrapPromise = null; }
     })();
     return bootstrapPromise;

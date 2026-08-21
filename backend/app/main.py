@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from time import perf_counter
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +19,7 @@ from app.api.v1 import api_router
 from app.config import get_settings
 from app.core.dispatcher import dispatcher
 from app.core.exceptions import ErrorResponse, register_exception_handlers
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, get_logger
 from app.core.push import sender
 from app.core.realtime import hub
 
@@ -76,10 +77,22 @@ def create_app() -> FastAPI:
     )
 
     register_exception_handlers(app)
+    request_logger = get_logger("homebandhu.requests")
 
     @app.middleware("http")
     async def prevent_sensitive_response_caching(request: Request, call_next):
+        started = perf_counter()
         response: Response = await call_next(request)
+        duration_ms = (perf_counter() - started) * 1000
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        request_logger.info(
+            "http_request method=%s route=%s status=%d duration_ms=%.2f",
+            request.method,
+            route,
+            response.status_code,
+            duration_ms,
+        )
+        response.headers["Server-Timing"] = f"app;dur={duration_ms:.2f}"
         path = request.url.path
         if path.startswith("/api/v1/auth/") and not path.endswith("/methods"):
             response.headers["Cache-Control"] = "no-store, private"
