@@ -52,6 +52,7 @@ def _to_profile(row: dict[str, Any]) -> ServiceProviderProfile:
         phone=_text(row.get("phone_e164")),
         latitude=row.get("latitude"),
         longitude=row.get("longitude"),
+        location_label=_text(row.get("location_label")),
         service_radius_km=float(row.get("service_radius_km") or 0),
         status=_text(row.get("status")) or "active",
         is_available=bool(row.get("is_available")),
@@ -101,6 +102,7 @@ def save_mine(
         latitude=body.latitude,
         longitude=body.longitude,
         service_radius_km=body.service_radius_km,
+        location_label=body.location_label,
     )
     return get_mine(client, profile_id=profile_id)
 
@@ -118,6 +120,7 @@ def register_mine(
         longitude=body.longitude,
         service_radius_km=body.service_radius_km,
         skill_ids=body.skill_ids,
+        location_label=body.location_label,
     )
     return get_mine(client, profile_id=profile_id)
 
@@ -147,6 +150,7 @@ def get_candidate(client: Client, *, provider_id: str) -> CandidateProfile:
         headline=_text(row.get("headline")),
         bio=_text(row.get("bio")),
         phone=_text(row.get("phone_e164")),
+        location_label=_text(row.get("location_label")),
         service_radius_km=float(row.get("service_radius_km") or 0),
         status=_text(row.get("status")) or "active",
         is_available=bool(row.get("is_available")),

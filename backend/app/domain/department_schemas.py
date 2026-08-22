@@ -66,12 +66,25 @@ class StaffMember(CamelModel):
     #: two different ids: removal takes this row's ``id``, and blacklisting
     #: takes the provider's. Without this field one screen cannot offer both.
     service_provider_id: str | None = None
-    #: Open complaints this member holds *in this department* (A8).
-    active_assignment_count: int = 0
+    #: Live work orders this person **supervises** in this department --
+    #: ``work_orders.supervisor_membership_id``, everything not completed,
+    #: cancelled or failed.
+    #:
+    #: Zero for anyone whose rank is not ``manager`` or ``supervisor``, and that
+    #: is the truth rather than a placeholder: a member's real number is
+    #: ``openCommitmentCount`` below.
+    #:
+    #: **It replaced ``activeAssignmentCount`` on 2026-08-21** (product ruling
+    #: 5). That field counted open complaints by ``assigned_to_membership_id``
+    #: or by a prefix match on ``assignee_label`` -- one column nothing writes
+    #: (complaints are department-pooled; ruling 1 keeps it that way) and one no
+    #: frontend has ever set. It was a constant zero on every row of every
+    #: roster, rendered as "0 open complaints" beside a real number.
+    supervised_work_order_count: int = 0
     #: Jobs and shifts still booked in their name (``0043``). Not the same
-    #: number as ``activeAssignmentCount``, which counts open *complaints*: a
-    #: complaint can sit with nobody scheduled, and a job can outlive the
-    #: complaint that caused it.
+    #: number as ``supervisedWorkOrderCount``, which counts work they are
+    #: accountable *for*: a supervisor holds no booking of their own, and a
+    #: worker's job outlives whoever raised it.
     #:
     #: It is here because it decides which verb a roster row offers. Removal is
     #: refused while this is non-zero, so a screen that did not know the number

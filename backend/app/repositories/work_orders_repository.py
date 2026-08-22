@@ -246,6 +246,40 @@ def assign_work_order(
     return str(response.data or "")
 
 
+def force_assign_work_order(
+    client: Client,
+    *,
+    work_order_id: str,
+    staff_assignment_id: str,
+    scheduled_start_at: str | None,
+    scheduled_end_at: str | None,
+) -> str:
+    """Book a named person outright (RPC). Returns the assignment id.
+
+    The supervisor's explicit override of the consent model (2026-08-22 ruling
+    A4): an ``is_forced`` assignment written straight to ``accepted``, which the
+    worker's card already renders without a Decline button. Its refusals are the
+    offer path's, said the same way -- ``HB404`` for a roster row that is not this
+    department's, ``HB409`` for a closed job or a worker already booked across
+    the slot, and the exclusion constraint behind that as ``23P01``.
+    """
+    try:
+        response = client.rpc(
+            "force_assign_work_order",
+            {
+                "p_work_order_id": work_order_id,
+                "p_staff_assignment_id": staff_assignment_id,
+                "p_scheduled_start_at": scheduled_start_at,
+                "p_scheduled_end_at": scheduled_end_at,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not assign that job."
+        ) from exc
+    return str(response.data or "")
+
+
 def cancel_work_order(
     client: Client, *, work_order_id: str, reason: str
 ) -> None:

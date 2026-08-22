@@ -192,6 +192,21 @@ export default function PendingInvitations({ departmentId, invitations }) {
               <p className="truncate text-[10px] font-semibold text-amber-700">
                 {invitation.email}
               </p>
+              {/* The one state this list could not previously express: they
+                  signed in and were turned away. Without it the row reads
+                  "waiting for first sign-in", which is a lie — and the two
+                  rulings of 2026-08-21 (leadership is never a marketplace
+                  provider; leadership is one community at a time) are refused
+                  at claim time, where there is nobody watching a screen. The
+                  sentence comes from the database so it names which rule. */}
+              {invitation.blockedReason && (
+                <p
+                  role="status"
+                  className="mt-1 whitespace-normal rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-semibold leading-relaxed text-rose-700"
+                >
+                  {invitation.blockedReason}
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 items-center">
               <button

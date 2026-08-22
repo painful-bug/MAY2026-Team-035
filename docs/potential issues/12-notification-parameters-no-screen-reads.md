@@ -21,13 +21,13 @@ the screen rendered, the API returned 200. It is the path-404 defect
 one step later and one degree quieter — a 404 at least sends the user somewhere
 visibly wrong.
 
-### The four still open
+### The four that were open (two remain)
 
 | Path | Parameter | Emitted by | Times | Screen | Whose |
 |---|---|---|---|---|---|
 | `/resident/complaints` | `complaint` | `0031`, `0036`, `0037`, `0039` | **11** | `ResidentComplaints` | see [9](09-resident-portal-is-still-a-demo.md) |
 | `/admin/departments` | `job` | `0037`, `0039` | **7** | `AdminDepartments` | see [10](10-api-operations-with-no-frontend-consumer.md) |
-| `/admin/complaints` | `complaint` | `0031` | **4** | `AdminComplaints` | the complaint-engine owner |
+| ~~`/admin/complaints`~~ | `complaint` | `0031` | **4** | `AdminComplaints` | **Resolved 2026-08-21** |
 | `/admin/amenities` | `booking` | `0033` | **1** | `AdminAmenities` | the amenity author |
 
 **They are not four instances of one bug.** Each needs a different answer, which
@@ -51,10 +51,18 @@ is why they are listed rather than batched:
   parameter. It was invisible until `test_notification_links.py` learned to read
   a url concatenation past its first line; it is now on record in that test's
   `IGNORED_QUERY_PARAMETERS`, which is this issue's inventory in executable form.
-* **`/admin/complaints?complaint=`** belongs to the complaint-engine owner
-  ([`../COMPLAINT_ENGINE_HANDOFF.md`](../COMPLAINT_ENGINE_HANDOFF.md)) and is the
-  cheapest of the four: the screen is real, it lists real complaints, and it needs
-  a `useSearchParams` read and a highlight.
+* **`/admin/complaints?complaint=`** — ~~belongs to the complaint-engine owner and is
+  the cheapest of the four: the screen is real, it lists real complaints, and it
+  needs a `useSearchParams` read and a highlight~~ **Resolved 2026-08-21**, on the
+  product owner's ruling that a `?complaint=` link must highlight on the admin *and*
+  supervisor screens. It cost exactly what the sentence predicted: a
+  `useSearchParams` read and a ring on the card, marked rather than filtered so the
+  rest of the queue stays in view. The pair has left `IGNORED_QUERY_PARAMETERS`.
+  Recorded for the owner in
+  [`../COMPLAINT_ENGINE_HANDOFF.md`](../COMPLAINT_ENGINE_HANDOFF.md) §16, and the
+  worker-portal half — the same defect one portal along, never in this set because
+  the check reads the emitted url and not the per-reader rewrite — closed with it;
+  see [14](14-the-manager-has-hiring-permission-and-no-hiring-screen.md).
 * **`/admin/amenities?booking=`** is one emission, from the booking-payment
   notification in `0033`. The admin amenity screen predates it.
 
@@ -86,7 +94,9 @@ they misread the notification.
 cd backend && python -m pytest tests/test_notification_links.py -q
 ```
 
-`IGNORED_QUERY_PARAMETERS` in that file holds these four pairs and is asserted by
+`IGNORED_QUERY_PARAMETERS` in that file is the live version of this table — three
+pairs today, having gained `?departure=` on 2026-08-12 and lost
+`/admin/complaints?complaint=` on 2026-08-21 — and is asserted by
 **equality**, not as a subset. So the list cannot grow quietly, and a screen that
 starts honouring its parameter fails the suite until somebody removes it from the
 record — which is the point: an improvement nobody notices is an improvement that
@@ -103,7 +113,8 @@ cd backend && python -c "import sys; sys.path.insert(0, 'tests'); from test_noti
 Three of the four are one screen change each, and all three are somebody else's
 screen. In priority order, which is not the order of the table:
 
-1. **`/admin/complaints?complaint=`** — real screen, real data, smallest change.
+1. **`/admin/complaints?complaint=`** — ~~real screen, real data, smallest change~~ done
+   2026-08-21, and it was the smallest change.
 2. **`/admin/amenities?booking=`** — same shape, one emission.
 3. **`/resident/complaints?complaint=`** — do it as part of issue 9, not before.
 4. **`/admin/departments?job=`** — ~~do it when the triage screen is built~~ done

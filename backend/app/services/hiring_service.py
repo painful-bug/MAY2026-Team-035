@@ -137,6 +137,7 @@ def _to_candidate(row: dict[str, Any]) -> HireableProvider:
         is_available=bool(row.get("is_available")),
         service_radius_km=_number(row.get("service_radius_km")),
         distance_km=_number(row.get("distance_km")),
+        location_label=_text(row.get("location_label")) or None,
         matching_skill_names=_names(row.get("matching_skill_names")),
         skill_names=_names(row.get("skill_names")),
         community_count=int(row.get("community_count") or 0),
@@ -277,6 +278,35 @@ def list_my_engagements(
     for engagement in engagements:
         engagement.departure = open_by_staff.get(engagement.staff_assignment_id)
     return engagements
+
+
+def list_my_staff_engagements(
+    client: Client, *, profile_id: str, active_only: bool
+) -> list[ServiceEngagement]:
+    """Every community that employs the caller **as staff rather than as a
+    marketplace provider** -- a manager or a supervisor an administrator created.
+
+    Separate from ``list_my_engagements`` above rather than folded into it,
+    because that function's 404 is a contract: ``GET /worker/communities``
+    answers *"you have not registered"* differently from *"nobody has hired
+    you"*, and the dashboard routes on the difference. This one answers a
+    different question entirely -- *what roster rows does this person hold* --
+    and it is asked by the snapshot, which has no registration to demand.
+
+    No departure is attached. The worker's own departure verbs
+    (``request_my_departure``, ``cancel_my_departure``) both require a provider
+    row, so an engagement reached through this read can never carry one the
+    portal could act on; a manager-opened departure against a supervisor is the
+    manager's screen to show. Recorded rather than half-built.
+
+    Takes the **service** client -- see ``repo.list_engagements_for_profile``.
+    """
+    return [
+        _to_engagement(row)
+        for row in repo.list_engagements_for_profile(
+            client, profile_id=profile_id, active_only=active_only
+        )
+    ]
 
 
 def request_my_departure(
@@ -758,6 +788,13 @@ def _to_invitation(row: dict[str, Any]) -> StaffInvitation:
         status=str(row.get("status") or "pending"),
         claimed_at=row.get("claimed_at"),
         created_at=row["created_at"],
+        # ``.get`` rather than ``[...]``: the two columns arrive with
+        # ``20260821140000``, and a department read must not 500 on a hosted
+        # database where that file has not been applied yet. Absent reads as
+        # "nothing has been refused", which is the truth on such a database --
+        # the refusal is what the migration installs.
+        blocked_reason=row.get("blocked_reason"),
+        blocked_at=row.get("blocked_at"),
     )
 
 

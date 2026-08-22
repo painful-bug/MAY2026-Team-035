@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ClipboardList } from 'lucide-react';
+import { ClipboardList, ShieldAlert } from 'lucide-react';
 
 import ChangeRequests from '../../features/complaints/components/ChangeRequests';
 import DepartmentComplaintList from '../../features/complaints/components/DepartmentComplaintList';
@@ -24,7 +24,7 @@ import { useManagerDepartment } from './useManagerDepartment';
 // requests panel above is their supervisors asking them to.
 
 export default function ManagerComplaints() {
-  const { departmentId, department } = useManagerDepartment();
+  const { departmentId, department, roster } = useManagerDepartment();
   // `?complaint=` is on the notification `complaint_department_routing` sends, so this screen has to
   // read it. A parameter no screen reads is `docs/potential issues/12`, and
   // arriving at a list of forty rows with no idea which one you were told
@@ -65,6 +65,36 @@ export default function ManagerComplaints() {
           </Link>
         )}
       />
+
+      {/* **You are covering this queue.** (Product ruling 3, 2026-08-21.)
+          When the department's last supervisor is removed, the database
+          re-stamps their live work orders onto whoever inherits them and sends
+          the manager a `department.supervision_uncovered` notification. A
+          notification is a moment; this is the standing fact, and it stays up
+          for exactly as long as it is true.
+
+          No new workspace is built behind it and none is needed:
+          `can_manage_department` implies `can_supervise_department`
+          (`0036` §435), so this screen is already a strict superset of the
+          supervisor's.
+
+          The source is `department.staff`, which `useManagerDepartment` already
+          loads for every screen in this portal — no second read, and no chance
+          of the banner and the roster disagreeing. `roster` has the inactive
+          rows filtered out already, so a removed supervisor stops counting the
+          moment the roster refetches. */}
+      {department && roster.filter((member) => member.rank === 'supervisor').length === 0 ? (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4"
+        >
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <p className="text-xs font-semibold leading-relaxed text-amber-900">
+            You&apos;re covering this department&apos;s complaint queue until a
+            new supervisor is invited.
+          </p>
+        </div>
+      ) : null}
 
       <ChangeRequests departmentId={departmentId} />
       <DepartmentComplaintList

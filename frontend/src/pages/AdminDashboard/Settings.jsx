@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
 import { Settings, Shield, Bell, CreditCard, Save } from 'lucide-react';
 import { api } from '../../lib/api/client';
-import LocationCoordinatesInput from '../../components/common/LocationCoordinatesInput';
+import LocationPicker from '../../components/common/LocationPicker';
 import { moneyApi } from '../../features/money/moneyApi';
 
 const numberFieldClass = 'w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold';
@@ -52,7 +52,7 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [gateSecurity, setGateSecurity] = useState(false);
   const [noticeAlert, setNoticeAlert] = useState(false);
-  const [coordinates, setCoordinates] = useState({ latitude: '', longitude: '' });
+  const [coordinates, setCoordinates] = useState({ latitude: '', longitude: '', locationLabel: '' });
   const [billingForm, setBillingForm] = useState(DEFAULT_BILLING_FORM);
 
   useEffect(() => {
@@ -64,6 +64,7 @@ export default function SettingsPage() {
         setCoordinates({
           latitude: data.community?.latitude ?? '',
           longitude: data.community?.longitude ?? '',
+          locationLabel: data.community?.locationLabel ?? '',
         });
       } catch {
         showToast('Failed to load current settings', 'error');
@@ -95,8 +96,8 @@ export default function SettingsPage() {
       showToast('Community coordinates are required', 'error');
       return;
     }
-    // The range check has to live here. `LocationCoordinatesInput` marks its
-    // two inputs `required` with `min`/`max`, but this page saves from a button
+    // The range check has to live here. `LocationPicker` marks its two manual
+    // inputs `required` with `min`/`max`, but this page saves from a button
     // rather than a form submit, and native constraint validation only runs on
     // submit -- so on this screen alone those attributes never fire. Without
     // this, a latitude of 999 reached `PUT /settings`, failed Pydantic's
@@ -131,6 +132,9 @@ export default function SettingsPage() {
             noticeSmsBroadcastEnabled: noticeAlert,
             latitude,
             longitude,
+            // Optional, and only stored when the pair above is sent -- the RPC
+            // that writes it is the one that moves the pin.
+            locationLabel: coordinates.locationLabel?.trim() || null,
           })
         }),
         updateBilling.mutateAsync({
@@ -167,7 +171,15 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-6 text-xs font-semibold text-slate-600">
-          <LocationCoordinatesInput value={coordinates} onChange={setCoordinates} idPrefix="community-settings" required />
+          <LocationPicker
+            value={coordinates}
+            onChange={setCoordinates}
+            idPrefix="community-settings"
+            required
+            legend="Where this society is"
+            hint="Search for the address, or drop the pin. Servicemen are matched to you by distance from this point."
+            labelHint="A short name for the area, shown wherever this society is listed."
+          />
 
           {billingSettings.isLoading ? (
             <p className="text-slate-400 font-semibold">Loading billing settings…</p>

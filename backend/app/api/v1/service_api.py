@@ -3,7 +3,7 @@
 Same arrangement as ``admin_api.py`` and ``resident_api.py``, for the reason
 those give: ``app.api.v1`` mounts this with one import and one
 ``include_router``, so two workstreams never edit the same router list and the
-merge stays clean. Twelve routers, which is all of them.
+merge stays clean. Thirteen routers, which is all of them.
 
 ``complaint_routing`` (0050) sits here for the same ownership reason
 ``resident_scheduling`` does. A complaint is the resident surface's noun, but
@@ -17,6 +17,11 @@ half's author never opens.
 chat dock exists because of this workstream's populations — a manager and
 their employee, a worker and the resident whose job they hold — and its guard
 posture (identity only, RLS does the scoping) matches this aggregate's.
+
+``supervisor_triage`` (2026-08-22) sits here for the ``complaint_routing``
+reason one step along: its two operations straddle both that router and
+``work_orders`` -- the dashboard read answers with complaints *and* jobs -- and
+its population is the department's, which is this aggregate's.
 
 ``worker_jobs`` and ``worker_schedule`` sit beside them and share their prefix
 with ``worker_communities``: ``/worker`` is one portal, and splitting it across
@@ -53,6 +58,7 @@ from app.api.v1.routers import (
     security_operations,
     service_providers,
     skills,
+    supervisor_triage,
     work_orders,
     worker_communities,
     worker_jobs,
@@ -71,4 +77,5 @@ service_router.include_router(resident_scheduling.router)
 service_router.include_router(security_operations.router)
 service_router.include_router(skills.router)
 service_router.include_router(complaint_routing.router)
+service_router.include_router(supervisor_triage.router)
 service_router.include_router(messages.router)

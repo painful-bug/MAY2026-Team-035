@@ -139,6 +139,10 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
         "detail": job_row(),
         "provider_row": provider_row(),
         "engagements": [engagement_row()],
+        # The membership-keyed read, which only the no-provider path uses.
+        # Empty by default so the marketplace empty state stays exactly what it
+        # was: no provider and nothing employing you.
+        "staff_engagements": [],
         "departures": [],
         "unread": 4,
         "calls": [],
@@ -177,6 +181,12 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     ) -> list[dict[str, Any]]:
         return captured["engagements"]
 
+    def fake_staff_engagements(
+        client: Any, *, profile_id: str, active_only: bool
+    ) -> list[dict[str, Any]]:
+        captured["staff_engagements_for"] = profile_id
+        return captured["staff_engagements"]
+
     def fake_departures(
         client: Any, *, staff_ids: list[str], status: str | None = "pending"
     ) -> list[dict[str, Any]]:
@@ -203,6 +213,15 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     monkeypatch.setattr(
         worker_service.hiring_service.repo, "list_engagements", fake_engagements
     )
+    monkeypatch.setattr(
+        worker_service.hiring_service.repo,
+        "list_engagements_for_profile",
+        fake_staff_engagements,
+    )
+    # The no-provider branch reaches for the service client. Nothing in this
+    # suite has a database behind it, and the repository above is replaced
+    # anyway -- so the client is a sentinel rather than a real one.
+    monkeypatch.setattr(worker_service, "get_service_client", lambda: object())
     monkeypatch.setattr(
         worker_service.hiring_service.repo, "departures_for_staff", fake_departures
     )
@@ -339,6 +358,46 @@ def test_api_190_an_unregistered_caller_gets_a_snapshot_not_a_404(
         "status_code": response.status_code,
         "provider": body["provider"],
         "communities": body["communities"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_an_invited_supervisor_gets_their_engagement_with_no_provider_row(
+    worker_client: TestClient, jobs: dict
+) -> None:
+    """The defect live testing found. `claim_staff_invitations` writes a
+    membership and a roster row and no `service_providers` row, so an invited
+    supervisor is *unregistered* by every provider-keyed read -- and the
+    snapshot used to return on the spot, empty. The portal read that as "show
+    the marketplace registration form" and the Complaints screen, which decides
+    supervisor access from `communities[].rank`, had nothing to decide from.
+
+    `provider: null` and a populated `communities` are now an ordinary answer:
+    the two questions -- *do you have a marketplace profile* and *does anybody
+    employ you* -- are asked separately because for leadership they have
+    different answers."""
+    endpoint = "GET /api/v1/worker/snapshot"
+    expected_output = {
+        "status_code": 200,
+        "provider": None,
+        "ranks": ["supervisor"],
+        "department_names": ["Plumbing"],
+        "asked_about": PROFILE_ID,
+    }
+
+    jobs["provider_row"] = None
+    jobs["staff_engagements"] = [
+        engagement_row(rank="supervisor", job_title="Supervisor", shift=None)
+    ]
+    response = worker_client.get(SNAPSHOT)
+    body = response.json()
+    actual_output = {
+        "status_code": response.status_code,
+        "provider": body["provider"],
+        "ranks": [row["rank"] for row in body["communities"]],
+        "department_names": [row["departmentName"] for row in body["communities"]],
+        "asked_about": jobs["staff_engagements_for"],
     }
 
     assert actual_output == expected_output, endpoint

@@ -1,8 +1,10 @@
 import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import DepartmentComplaintList from '../../features/complaints/components/DepartmentComplaintList';
 import { PageHeading } from '../../features/security/components/Primitives';
+import { supervisedEngagement } from '../../lib/staffVocabulary';
 import { workerApi } from '../../features/worker/workerApi';
 
 // The supervisor's complaints.
@@ -25,22 +27,28 @@ import { workerApi } from '../../features/worker/workerApi';
 // and rare, and a portal-wide department switcher is a bigger idea than this
 // screen: it would want to move `communities[]` into a shared context that
 // every worker page reads. Recorded here rather than half-built.
-
-function supervisedEngagement(communities) {
-  return (
-    (communities ?? []).find(
-      (engagement) =>
-        engagement.status === 'active' &&
-        (engagement.rank === 'supervisor' || engagement.rank === 'manager')
-    ) || null
-  );
-}
+//
+// `supervisedEngagement` was a local function here until the work-order queue
+// arrived in this portal (2026-08-21) and asked the same question. It moved to
+// `lib/staffVocabulary`, beside `LEADERSHIP_RANKS` — two copies of "which ranks
+// supervise" is the exact failure that file was created to end. Same predicate,
+// same first-row rule, no behaviour change.
 
 export default function WorkerComplaints() {
   const snapshot = useQuery({
     queryKey: ['worker-snapshot'],
     queryFn: workerApi.snapshot,
   });
+
+  // `?complaint=` is on every `notify_complaint_staff` row, and since
+  // 2026-08-21 `portalUrl.js` sends a supervisor's copy of it here rather than
+  // bouncing them home. Reaching the right screen and then hunting for the row
+  // is the same defect one step later — `docs/potential issues/12` counts it —
+  // so this reads the parameter the manager's screen has always read, and hands
+  // it to the same component. Product owner's ruling, 2026-08-21: the deep link
+  // highlights on the worker and admin screens both.
+  const [params] = useSearchParams();
+  const highlightId = params.get('complaint');
 
   const engagement = supervisedEngagement(snapshot.data?.communities);
 
@@ -76,6 +84,7 @@ export default function WorkerComplaints() {
       <DepartmentComplaintList
         departmentId={engagement.departmentId}
         canMove={false}
+        highlightId={highlightId}
       />
     </div>
   );

@@ -20,9 +20,13 @@ export const messagesApi = {
 };
 
 /**
- * Ask the dock to open, optionally straight onto the New-message view for one
- * community. A window event rather than context plumbing, because the dock is
- * mounted outside <Routes> and its openers are scattered across portals.
+ * Ask the dock to open: `{ threadId }` onto that conversation, `{ communityId }`
+ * onto the New-message view for one community, `{}` onto the mailbox.
+ *
+ * A window event rather than context plumbing, because the dock is mounted
+ * outside <Routes> and its openers are scattered across portals. The `threadId`
+ * form is what the supervisor triage dashboard uses after
+ * `POST /complaints/{id}/chat` hands it the complaint's thread.
  */
 export function openChatDock(detail = {}) {
   window.dispatchEvent(new CustomEvent('hb:chat-open', { detail }));

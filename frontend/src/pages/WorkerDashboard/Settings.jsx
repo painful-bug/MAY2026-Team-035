@@ -6,14 +6,15 @@ import {
   Building2,
   CalendarClock,
   Loader2,
-  LocateFixed,
   LogOut,
   X,
 } from 'lucide-react';
+import LocationPicker from '../../components/common/LocationPicker';
 import { workerApi } from '../../features/worker/workerApi';
 import { useAuthStore } from '../../store/authStore';
 import { communityColor } from '../../lib/communityColor';
 import { disablePush, enablePush, pushEnabled, pushSupported } from '../../lib/push/pushClient';
+import NoMarketplaceProfile from '../../features/worker/NoMarketplaceProfile';
 
 // The settings surface the doc asked for: everything about the person except
 // their name and email — those are identity, shown read-only with the reason —
@@ -285,12 +286,28 @@ function LeaveSection() {
 export default function WorkerSettings() {
   const queryClient = useQueryClient();
   const sessionContext = useAuthStore((state) => state.sessionContext);
-  const profile = useQuery({ queryKey: ['worker-profile'], queryFn: workerApi.profile });
-  const skills = useQuery({ queryKey: ['skills'], queryFn: workerApi.skills });
+  // The whole marketplace half of this screen edits one `service_providers`
+  // row, and a manager or supervisor created by `20260812090200` does not have
+  // one. Until 2026-08-21 that was a spinner with no way out: `profile` errored
+  // rather than resolving, so `form` stayed null and `isPending || !form` held
+  // "Loading settings…" on screen for good. The snapshot answers the question
+  // in one field, so the read is not attempted and the page keeps the parts
+  // that are still theirs — identity, alerts, leaving.
+  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
+  const profile = useQuery({
+    queryKey: ['worker-profile'],
+    queryFn: workerApi.profile,
+    enabled: snapshot.isSuccess && !noMarketplaceProfile,
+  });
+  const skills = useQuery({
+    queryKey: ['skills'],
+    queryFn: workerApi.skills,
+    enabled: snapshot.isSuccess && !noMarketplaceProfile,
+  });
 
   const [form, setForm] = useState(null);
   const [skillIds, setSkillIds] = useState([]);
-  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     if (!profile.data) return;
@@ -299,8 +316,9 @@ export default function WorkerSettings() {
       bio: profile.data.bio ?? '',
       phone: profile.data.phone ?? '',
       serviceRadiusKm: profile.data.serviceRadiusKm ?? 15,
-      latitude: profile.data.latitude ?? null,
-      longitude: profile.data.longitude ?? null,
+      latitude: profile.data.latitude ?? '',
+      longitude: profile.data.longitude ?? '',
+      locationLabel: profile.data.locationLabel ?? '',
     });
     setSkillIds(profile.data.skillIds ?? []);
   }, [profile.data]);
@@ -324,8 +342,9 @@ export default function WorkerSettings() {
         bio: form.bio.trim() || null,
         phone: form.phone.trim() || null,
         serviceRadiusKm: Number(form.serviceRadiusKm) || 15,
-        latitude: form.latitude,
-        longitude: form.longitude,
+        latitude: form.latitude === '' ? null : Number(form.latitude),
+        longitude: form.longitude === '' ? null : Number(form.longitude),
+        locationLabel: form.locationLabel?.trim() || null,
       });
       await workerApi.setSkills(skillIds);
     },
@@ -336,24 +355,56 @@ export default function WorkerSettings() {
     },
   });
 
-  const locate = () => {
-    if (!navigator.geolocation) return;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setForm((current) => ({
-          ...current,
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        }));
-        setLocating(false);
-      },
-      () => setLocating(false),
-      { timeout: 10_000 }
-    );
-  };
+  if (noMarketplaceProfile) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-5">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">Settings</h1>
+          <p className="mt-1 text-sm font-medium text-slate-500">Your details and alerts.</p>
+        </div>
 
-  if (profile.isPending || !form) {
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-extrabold text-slate-700">Account</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Name</p>
+              <p className="text-sm font-semibold text-slate-700">
+                {sessionContext?.identity?.full_name || '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Email</p>
+              <p className="truncate text-sm font-semibold text-slate-700">
+                {sessionContext?.identity?.email || '—'}
+              </p>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] font-medium text-slate-400">
+            Name and email are your identity across every community and cannot be
+            changed here.
+          </p>
+        </section>
+
+        <PushCard />
+
+        <NoMarketplaceProfile
+          title="Nothing else to set here"
+          body="Headline, trades, travel radius and leaving are the marketplace half of this portal. You were hired into a department, so your terms are the department's to change."
+          engagements={snapshot.data?.communities}
+        />
+      </div>
+    );
+  }
+
+  if (snapshot.error || profile.error) {
+    return (
+      <p role="alert" className="py-16 text-center text-sm font-semibold text-rose-600">
+        {(snapshot.error || profile.error).message}
+      </p>
+    );
+  }
+
+  if (snapshot.isPending || profile.isPending || !form) {
     return <p className="py-16 text-center text-sm font-semibold text-slate-400">Loading settings…</p>;
   }
 
@@ -452,25 +503,17 @@ export default function WorkerSettings() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-          <div className="min-w-0">
-            <p className="text-xs font-extrabold text-slate-700">Where you are based</p>
-            <p className="text-[11px] font-medium text-slate-500">
-              {form.latitude != null && form.longitude != null
-                ? `${Number(form.latitude).toFixed(3)}, ${Number(form.longitude).toFixed(3)}`
-                : 'Not set. Community search sorts you last without it.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={locate}
-            disabled={locating}
-            className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {locating ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
-            Update
-          </button>
-        </div>
+        {/* Was a read-only line and an "Update" button that only ever asked the
+            browser for a GPS fix. A denied permission left no way to fix the one
+            field that decides whether community search works at all. */}
+        <LocationPicker
+          value={form}
+          onChange={(next) => setForm((current) => ({ ...current, ...next }))}
+          idPrefix="worker-settings"
+          legend="Where you are based"
+          hint="Search for your area, or drop the pin. Without it, community search sorts you last."
+          labelHint="Shown to societies considering you. They never see your coordinates."
+        />
 
         <div>
           <p className="mb-2 text-xs font-extrabold uppercase tracking-wider text-slate-500">Your trades</p>

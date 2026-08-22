@@ -14,6 +14,9 @@ export const createAssociationRegistration = async ({ onboardingState }) => {
       country_code: onboardingState.countryCode,
       latitude: Number(onboardingState.latitude),
       longitude: Number(onboardingState.longitude),
+      // snake_case like everything else in this one body -- `/onboarding/community`
+      // is the API's documented exception to camelCase (API.md §1.3).
+      location_label: onboardingState.locationLabel?.trim() || null,
       blocks: onboardingState.blocks,
       villas: onboardingState.villas,
       block_locations: onboardingState.blockLocations,

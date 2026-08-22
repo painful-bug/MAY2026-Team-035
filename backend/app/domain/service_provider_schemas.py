@@ -49,6 +49,11 @@ class ServiceProviderProfile(CamelModel):
     phone: str
     latitude: float | None
     longitude: float | None
+    #: What the person calls where they are -- "Andheri West, Mumbai". Suggested
+    #: by the picker's address search or reverse geocode and then editable, so
+    #: it is a claim rather than a measurement. Empty string when never set;
+    #: distance is computed from the coordinates above and never from this.
+    location_label: str
     service_radius_km: float
     #: ``active`` or ``suspended``. A suspended provider keeps their profile and
     #: their history; they simply stop being offered work.
@@ -81,6 +86,13 @@ class CandidateProfile(CamelModel):
     an id that unlocks other surfaces is not something a candidate read should
     hand out.
 
+    ``locationLabel`` **is** here, and is not a reversal of the first rule. It
+    is a coarse place name the person wrote and can edit -- "Andheri West,
+    Mumbai" -- capped at 120 characters by the database precisely so it cannot
+    become a street address. ``distanceKm`` answers *how far from us*; nothing
+    on this card answered *where*, and a manager deciding whom to ring has been
+    reading a blank line where that belongs.
+
     ``phone`` *is* here, and is not a widening: the candidate list and every
     application card have carried ``phoneE164`` since ``0035``. Somebody being
     considered for a job in your building is somebody you may ring.
@@ -91,6 +103,7 @@ class CandidateProfile(CamelModel):
     headline: str
     bio: str
     phone: str
+    location_label: str
     service_radius_km: float
     #: ``active`` or ``suspended``. A suspended provider is not offered by the
     #: candidate search at all, so this is only ever ``active`` when reached
@@ -131,7 +144,26 @@ class UpdateServiceProviderRequest(CamelModel):
     #: provider must repair the pair before proximity search is available.
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+    #: Optional, and independent of the coordinate pair below: a person may drop
+    #: a pin and decline to name it, or rename a place without moving the pin.
+    #: 120 characters matches the database check, and both caps exist to keep
+    #: this a place name rather than a postal address.
+    location_label: str | None = Field(default=None, max_length=120)
     service_radius_km: float | None = Field(default=None, gt=0, le=500)
+
+    @field_validator("location_label")
+    @classmethod
+    def trim_location_label(cls, value: str | None) -> str | None:
+        """Whitespace-only is ``None``, not a blank label.
+
+        The RPC coalesces null onto the stored value, so this is also what makes
+        "I cleared the box and saved" leave the old label alone rather than
+        writing an empty string the constraint would then refuse.
+        """
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
 
     @model_validator(mode="after")
     def coordinates_are_a_pair(self) -> "UpdateServiceProviderRequest":

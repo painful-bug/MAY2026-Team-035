@@ -12,6 +12,7 @@ import {
 import { messagesApi } from '../../features/messages/messagesApi';
 import { workerApi } from '../../features/worker/workerApi';
 import { isProviderProfileComplete } from '../../features/worker/providerProfile';
+import { holdsLeadershipEngagement } from '../../lib/staffVocabulary';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 
@@ -299,6 +300,7 @@ function ThreadView({ threadId, myProfileId, onBack }) {
 
 export default function ChatDock() {
   const sessionContext = useAuthStore((state) => state.sessionContext);
+  const queryClient = useQueryClient();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   // 'list' | 'compose' | a thread id.
@@ -332,18 +334,31 @@ export default function ChatDock() {
     refetchInterval: open ? 30_000 : 90_000,
   });
 
-  // Screens elsewhere (the employee page) ask the dock to open onto New
-  // message for a community. An event, because the dock lives outside
-  // <Routes> and its openers are scattered across portals.
+  // Screens elsewhere ask the dock to open. An event, because the dock lives
+  // outside <Routes> and its openers are scattered across portals. Three
+  // shapes, and the detail says which:
+  //
+  //   `{ threadId }`   — straight into that conversation. The supervisor triage
+  //                      dashboard's chat button opens (or re-opens) a
+  //                      complaint's thread with `POST /complaints/{id}/chat`
+  //                      and then sends the id here. The thread may be seconds
+  //                      old and therefore absent from the mailbox this dock
+  //                      last read, so the list is re-read behind it — the
+  //                      Back button has to land somewhere that contains it.
+  //   `{ communityId }`— the New-message view, pre-scoped (the employee page).
+  //   `{}`             — the mailbox.
   useEffect(() => {
     const onOpen = (event) => {
+      const threadId = event.detail?.threadId || null;
+      const communityId = event.detail?.communityId || null;
       setOpen(true);
-      setComposeCommunity(event.detail?.communityId || null);
-      setView(event.detail?.threadId || (event.detail?.communityId ? 'compose' : 'list'));
+      setComposeCommunity(communityId);
+      setView(threadId || (communityId ? 'compose' : 'list'));
+      if (threadId) queryClient.invalidateQueries({ queryKey: ['dm-threads'] });
     };
     window.addEventListener('hb:chat-open', onOpen);
     return () => window.removeEventListener('hb:chat-open', onOpen);
-  }, []);
+  }, [queryClient]);
 
   const communities = useMemo(() => {
     const map = new Map();
@@ -372,11 +387,17 @@ export default function ChatDock() {
   // While the snapshot is unresolved (pending or error) the dock stays hidden
   // too — the layout is showing a full-screen neutral state, and a bubble
   // popping in and out of it would be the flash the gate exists to prevent.
+  // The verdict itself mirrors WorkerLayout's gate exactly: an incomplete
+  // provider profile hides the dock UNLESS the caller holds a live leadership
+  // posting — a supervisor was hired by an administrator and has no
+  // marketplace profile to complete, and their dashboard's chat buttons open
+  // threads in this very dock.
   if (
     onWorkerSurface
     && (workerSnapshot.isPending
       || workerSnapshot.isError
-      || !isProviderProfileComplete(workerSnapshot.data?.provider))
+      || (!isProviderProfileComplete(workerSnapshot.data?.provider)
+        && !holdsLeadershipEngagement(workerSnapshot.data?.communities)))
   ) {
     return null;
   }

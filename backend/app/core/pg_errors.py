@@ -37,6 +37,18 @@ _CUSTOM = {
     "HB403": (AuthorizationError, "forbidden"),
     "HB404": (NotFoundError, "not_found"),
     "HB409": (ConflictError, "conflict"),
+    # `HB422` has been raised by fifteen call sites across four migrations
+    # since 2026-08-12 -- `invite_staff_member`'s three argument checks,
+    # `update_staff_invitation`'s three, `create_skill`'s and the complaint
+    # routing RPCs' -- and was never mapped. Every one of them surfaced as a
+    # **500 with a generic message**, which is the API reporting its own failure
+    # for what is squarely the caller's mistake: `POST
+    # /departments/{id}/staff-invitations` with `"email": "abc"` clears
+    # Pydantic's `min_length=3` and reaches the RPC's `position('@' …) = 0`
+    # check. Found by the SQLSTATE inventory in
+    # `tests/test_leadership_exclusivity_migration.py`, which asserts that every
+    # custom code a migration raises is mapped here.
+    "HB422": (ValidationError, "validation_error"),
     "HBLOC": (ValidationError, "provider_location_required"),
     "HBUSE": (ConflictError, "pass_already_used"),
     # The separate-account rule, refused from the membership side
@@ -46,6 +58,17 @@ _CUSTOM = {
     # account" and "you already belong here" are two different things to tell a
     # user, and an HTTP status cannot tell them apart.
     "HBSEP": (ConflictError, "professional_account_separate"),
+    # The two leadership rulings of 2026-08-21
+    # (`20260821140000_leadership_exclusivity.sql`). Both are 409s, like
+    # `HB409` and `HBSEP`, because all three answer "this account is the wrong
+    # kind of account". They are separate codes for the reason `HBSEP` is one:
+    # a client that must tell "you are a marketplace professional, and
+    # leadership is not hired from the marketplace" apart from "you already
+    # lead somewhere else, and leadership is one community at a time" cannot do
+    # it from an HTTP status, and reading the message text to find out is the
+    # string matching these SQLSTATEs exist to avoid.
+    "HBMKT": (ConflictError, "leadership_marketplace_conflict"),
+    "HBLED": (ConflictError, "leadership_already_held"),
 }
 
 # Postgres classes worth distinguishing from a generic failure.
@@ -142,5 +165,11 @@ def translate(exc: Exception, *, default_message: str) -> AppError:
     if code in _CUSTOM:
         message = getattr(exc, "message", None) or default_message
     else:
+        # The caller gets only `default_message`, but the Postgres text is the
+        # half that names the violated column or constraint -- without this
+        # line a 23502 is undiagnosable from either side of the wire.
+        logging.getLogger(__name__).warning(
+            "Database error mapped to %s (sqlstate=%s): %r", error_code, code, exc
+        )
         message = default_message
     return error_class(str(message), code=error_code)

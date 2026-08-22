@@ -171,9 +171,19 @@ class AssignWorkOrderRequest(_SlotFields):
     The slot is optional and defaults to the job's own. Sending one assigns and
     reschedules in a single write, which is the common case: the supervisor
     picked the person and the hour at the same moment.
+
+    ``force`` is the 2026-08-22 ruling A4 and defaults to **false**, which is the
+    offer flow unchanged in every respect. ``true`` books the person outright,
+    non-declinable, through the engine's own force-assign mechanics. It is a
+    field on this model rather than a route of its own because it is the same
+    request -- *this person, on this job, at this hour* -- answering the
+    supervisor's question of whether the person may say no.
     """
 
     staff_assignment_id: str
+    #: Override the consent model: assign rather than offer. The worker cannot
+    #: decline, and their card already hides the button for a forced row.
+    force: bool = False
 
 
 class RescheduleWorkOrderRequest(CamelModel):

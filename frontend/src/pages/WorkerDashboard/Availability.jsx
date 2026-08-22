@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
+import NoMarketplaceProfile from '../../features/worker/NoMarketplaceProfile';
 
 // Two different things that both mean "do not send me a job", kept apart
 // because they are apart in the schema and in the dispatcher.
@@ -41,8 +42,25 @@ const localInputValue = (date) =>
 
 export default function WorkerAvailability() {
   const queryClient = useQueryClient();
-  const rules = useQuery({ queryKey: ['worker-rules'], queryFn: workerApi.availabilityRules });
-  const blocks = useQuery({ queryKey: ['worker-unavailability'], queryFn: () => workerApi.unavailability() });
+  // Both writes underneath this screen begin `if v_provider is null then raise
+  // 'Register as a service provider first'` (`0039` 818, 847), and both reads
+  // are keyed on the same provider row — so for a manager or a supervisor,
+  // whom `20260812090200` admits with no provider row at all, every control
+  // here is a button that 404s. They are scheduled by their department rather
+  // than matched by the dispatcher; saying so is more use than a form that
+  // refuses on submit.
+  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
+  const rules = useQuery({
+    queryKey: ['worker-rules'],
+    queryFn: workerApi.availabilityRules,
+    enabled: snapshot.isSuccess && !noMarketplaceProfile,
+  });
+  const blocks = useQuery({
+    queryKey: ['worker-unavailability'],
+    queryFn: () => workerApi.unavailability(),
+    enabled: snapshot.isSuccess && !noMarketplaceProfile,
+  });
 
   // Seven rows of local state seeded from the server, because the editor is a
   // week and the API is a set.
@@ -102,6 +120,19 @@ export default function WorkerAvailability() {
     }));
 
   const field = 'rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-indigo-400';
+
+  if (noMarketplaceProfile) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-xl font-extrabold text-slate-900">Your availability</h1>
+        <NoMarketplaceProfile
+          title="Your hours are your department's"
+          body="The dispatcher matches hours to marketplace professionals it has to find. You were hired into a department, so your week is arranged there rather than here."
+          engagements={snapshot.data?.communities}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

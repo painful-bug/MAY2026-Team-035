@@ -711,7 +711,7 @@ ledger. Mapping back to this file's sections:
 | §3 vocabulary | CHECK-locked registry; four new types (R19) |
 | §4 reopened → different supervisor | Retired: same queue, flagged, prior workers excluded (R12) |
 | §5 priority re-inheritance | Unchanged, still manual (out of scope) |
-| §8 / §10 assignment fork | Option 1: the control raises work; the optimistic field dies (R13) |
+| §8 / §10 assignment fork | Option 1: the control raises work; the optimistic field dies (R13) — **executed 2026-08-21**, see §15 ruling 6 |
 | §9 transfer consent | Unchanged: notify after the fact (R16) |
 | §10 work on ended complaints | Refused in the RPC, HB409 (R14) |
 
@@ -722,4 +722,567 @@ all-declined on high only (R8), freeform in-chat price negotiation (R3),
 slot-first scheduling kept (R6), one skills catalogue feeding both the raise
 dropdown and onboarding (R5), resident cancel until work starts with a
 re-evaluation pool and per-complaint worker exclusion (R9, R10), transfers
-refused while work is live (R15), and supervisors now notified on raise (R18).
+refused while work is live (R15), and supervisors now notified on raise (R18 —
+recorded as settled here on 2026-08-13 and **actually implemented 2026-08-21**;
+see §15 ruling 7 for what shipped in between, which was nothing).
+
+---
+
+## 14. Added 2026-08-21 — who may still *read* a complaint after they leave
+
+**Not a lifecycle change. Nothing about `complaints.status`, the timeline, the
+transfer rules or the dispatch chain moved.** This is here because two of the
+2026-08-21 access-scoping fixes change what a departed supervisor can read of
+your surface, and access to a complaint is close enough to your boundary that
+deciding it silently would be exactly what this file exists to prevent.
+
+**The ruling.** *"Once a supervisor/manager is removed from a community and later
+invited to a different one, they must not be able to see ANYTHING from the old
+community — engagements, complaints, conversations/messages, calendar,
+notifications, anything their portal reads."* (Product owner, 2026-08-21.)
+
+**Your complaint reads were already correct and were not touched.**
+`department_complaints`, `department_change_requests`, `unassigned_complaints`
+and the two decision RPCs all guard on `can_supervise_department` or
+`is_community_admin`, and both of those already require an **active** roster row
+*and* an **active, unended** membership (`0036` §4, `0019` §0). A supervisor
+removed from community A stops passing them the moment
+`remove_department_member` runs. No change was made to any of them, and none is
+needed.
+
+Three things that touch complaint *data* did change, and here is each one with
+what it costs you:
+
+1. **`is_own_staff_assignment` now requires the roster row and the membership to
+   be live.** It is one of the four arms of `can_read_work_order`, so a worker
+   who has left a community stops being able to read the work orders they held
+   there — and therefore the complaint titles and resident details those work
+   orders carry (`my_worker_job` projects `complaint_title`,
+   `complaint_description`, `resident_name`, `resident_phone_e164`). **The
+   complaint itself is untouched**: `complaints` has its own policies, the
+   department still reads every row, and nothing about who *owns* a complaint
+   moved. What ended is one departed person's window onto it.
+
+   *The cost, stated plainly:* a worker who leaves loses their own history. Last
+   month's completed jobs vanish from their calendar with the community. That is
+   what "removal severs access completely" means and it is the ruling rather than
+   an oversight — but if the complaint engine ever wants a "work I have done"
+   read that outlives an engagement, it will need its own predicate rather than
+   this one, and this paragraph is the reason why.
+
+2. **The direct-message policies now require an active membership in the thread's
+   community.** `open_work_order_thread` is the resident↔worker channel for a
+   live job, so this is the worker's side of a conversation *about a complaint*.
+   The thread and its messages are not deleted and the resident still reads the
+   whole conversation; what ends is the departed worker's access. `0046`'s lock
+   trigger (a thread closes when its work order goes terminal) is unchanged.
+
+3. **The notification feed now hides rows keyed to an ended membership.** Several
+   of those rows are yours — `complaint.assigned`, `complaint.transferred`,
+   whatever the engine sends next. A removed supervisor stops seeing community
+   A's complaint notifications. This **overturns a decision `0041` recorded**
+   ("a notification is a copy of something the person was already told, and every
+   inbox in the world retains those"), and the overturn is named in
+   `CHANGE_LOG.md` as the convention requires. If the engine ever needs a
+   notification to survive its recipient's departure, write it with
+   `notify_profile` rather than `notify_member`, or let `notify_member` do it for
+   you — it now files a message addressed to an **already-ended** membership
+   against the person and no community, which is how the "you were taken off a
+   roster" farewell survives.
+
+**One question we did not answer, because it is yours.** A supervisor is removed
+from community A while holding open complaints assigned to them.
+`remove_department_member` refuses the removal while any **work order or shift**
+is still booked in their name (`0043` §9) — but `complaints.assigned_to_
+membership_id` is not counted by `staff_open_commitment_count`, and nothing in
+the departure flow reassigns it. So a departure can complete leaving complaints
+pointing at a membership that has ended, and `department_staff_overview`'s
+`active_assignment_count` will keep counting them against a roster row that is
+now inactive. Nothing we changed makes this worse or better; the access scoping
+above simply makes it visible, because the person it names can no longer open
+them. Whether an approved departure should also clear or reassign
+`assigned_to_membership_id` is a lifecycle question and we have not touched it.
+
+> **Answered the same day — see §15, ruling 1.** The product owner ruled that
+> complaints stay department-pooled and that nothing new writes
+> `assigned_to_membership_id`, which dissolves the question rather than deciding
+> it: the column has one writer and no reader, so there is no per-person
+> complaint ownership to reassign. Two details in the paragraph above are stale
+> as a result. `active_assignment_count` did not "keep counting them" — it
+> counted nothing, ever, and ruling 5 removed it. And what a removal actually
+> strands is the *work orders* those complaints spawned, which ruling 2 now
+> re-stamps.
+
+---
+
+## 15. Added 2026-08-21 — the product owner's rulings on removal continuity
+
+**This section answers §14's open question and eight others.** The user (Lee
+Johns) took the product-owner role for the complaint engine on 2026-08-21 and
+made every ruling below explicitly, in one sitting, after reading §14. They are
+recorded here rather than only in `CHANGE_LOG.md` because seven of the nine
+constrain what this engine may become, and a constraint that lives only in a
+change log is one the next author reads after they have already designed around
+it.
+
+Every ruling is **frozen**. Where one overturns something, it says so.
+
+---
+
+### Ruling 1 — complaints stay department-pooled. §14's open question, closed.
+
+> *"A complaint belongs to the department, not to a person. Nothing new writes
+> `assigned_to_membership_id`."* (PO, 2026-08-21.)
+
+§14 ends by handing you a question: a departure can complete while complaints
+still point at the membership it ended, and whether an approved departure should
+clear or reassign `assigned_to_membership_id` is a lifecycle decision. The answer
+is that **the question dissolves rather than being answered**, because the column
+it is about is not the model.
+
+`complaints.assigned_to_membership_id` has exactly one writer — `update_complaint`
+(`0031` §668, the write at §715, with a `coalesce` that means it can never be
+cleared) — and **no reader anywhere**. No frontend calls `PATCH /complaints/{id}`
+with it. The admin portal's "Assign to staff" dropdown never touched it either
+(see ruling 6). So there is no per-person complaint ownership in this product,
+there never has been, and none is being created.
+
+What this costs you: nothing you had. What it buys: the removal problem stops
+being "how do we move N complaints" and becomes "how do we move the work orders
+those complaints spawned", which is ruling 2 and is a much smaller question,
+because a work order already names a supervisor and already has a lifecycle.
+
+**Consequence for §14's last paragraph.** It is now stale in one detail and you
+should read it with this beside it: `department_staff_overview.active_assignment_count`
+does not "keep counting them against a roster row that is now inactive". It
+counted nothing, ever — see ruling 5 — and the column is gone.
+
+---
+
+### Ruling 2 — removal continuity is work-order re-stamping.
+
+> *"When someone is removed, the live work they supervise goes to whoever is left
+> — another supervisor if there is one, the manager if there is not."*
+> (PO, 2026-08-21.)
+
+**The defect this repairs is not one this file predicted.**
+`work_orders.supervisor_membership_id` (`0036` §1, stamped at §742) is the
+delivery address for five notification kinds:
+
+| Kind | Written by |
+|---|---|
+| `work_order.no_candidates` | `20260812120000` |
+| `work_order.resident_accepted` / `_declined` | `0036` |
+| `work_order.accepted` | `0039` |
+| `work_order.completed` | `0039` |
+| `work_order.failed` | `0039` |
+
+Nothing re-pointed that column when the person it named stopped being a
+supervisor. Before 2026-08-21 the consequence was a message delivered to somebody
+who had left; after `20260821140000` §8 scoped the notification feed to live
+memberships, the consequence is a message **written and instantly invisible**. A
+department's live jobs report their progress into a mailbox nobody can open, and
+nothing errors.
+
+**The target rule, as implemented** (`20260821200000`,
+`department_supervision_successor`):
+
+1. the **least-loaded remaining active supervisor** of the same department whose
+   own membership is live — ties broken by `created_at` then `id`, so the choice
+   is deterministic and re-running the repair moves nothing;
+2. else the department's **manager**: the roster row holding `rank = 'manager'`,
+   then a `manager` membership pinned to this department, then one pinned to no
+   department (which `can_manage_department` reads as "manages any");
+3. else **nobody**, and the work orders are left exactly as they are.
+
+Step 3 is a decision and not a gap. A wrong address is worse than a stale one:
+the stale one at least names the person the department remembers assigning the
+job to. Community admins are deliberately not a step — they are not on the
+department's roster, and `supervisor_membership_id` is the department's own answer
+to "whose job is this".
+
+**Scope.** Live work orders only (not `completed`, `cancelled`, `failed`) and only
+within the department the roster row belonged to. Renaming a finished job
+falsifies a record; and a membership can appear on more than one department's
+work, which re-stamping by membership alone would hand entirely to whichever
+department lost them first.
+
+**Residents and workers see nothing, by construction.** No resident-facing or
+worker-facing read has ever returned a supervisor's identity
+(`resident_complaints_service.py` §194/§226, `20260813105000` §34–63). This is
+worth knowing rather than re-deriving: it is why re-stamping needed no
+notification suppression and no "the supervisor changed" event.
+
+**Where it lives, and why that matters to you.** An `after update` trigger on
+`staff_assignments`, not an edit to `remove_department_member`. Removal has four
+RPC entry paths and a fifth that is not an RPC at all —
+`staff_assignments_admin_write` is `for all to authenticated` with direct grants
+(`20260812200000`), so an admin can flip `status = 'inactive'` through PostgREST
+without touching a function. All five end at the same `update`. If the engine
+ever adds a sixth way for somebody to stop supervising, it gets continuity for
+free provided it goes through that column.
+
+---
+
+### Ruling 3 — the last supervisor's departure is a notification and a banner. Not a new screen.
+
+> *"Tell the manager they're covering it, and show them so on the complaints
+> screen. Don't build them a supervisor workspace — they already have more than
+> the supervisor does."* (PO, 2026-08-21.)
+
+When the removed row was the department's last active supervisor, the manager and
+the community's admins receive one `department.supervision_uncovered` notification
+— *"You are covering …'s complaint queue"* — and the manager's Complaints screen
+carries a banner for as long as the department has no active supervisor.
+
+**The "no new workspace" half is the load-bearing half.**
+`can_manage_department` implies `can_supervise_department` (`0036` §435–454, first
+line of the body), so a manager already passes every guard on every supervisor
+surface, and `/manager/complaints` (`ManagerDashboard/Complaints.jsx`) is a strict
+superset of the supervisor's screen — it has the change-requests panel and the
+move-department verb on top of the same list. Building a supervisor workspace for
+the manager would be building a subset of what they already have.
+
+**One restriction that is not obvious.** The notice fires only for
+`departments.kind = 'service'`. A security department's manager lands in
+`/security-manager`, which has no complaints screen and is not meant to — gate
+work arrives as incidents and shift entries. Sending them a link that redirects
+home is the failure `frontend/src/features/notifications/portalUrl.js` exists to
+prevent. Re-stamping is *not* so restricted: a work order is a work order.
+
+---
+
+### Ruling 4 — removal gets a real confirmation dialog.
+
+> *"You can't take someone off a roster behind a `window.prompt`."*
+> (PO, 2026-08-21.)
+
+Both roster verbs used to open a `window.prompt` asking for a reason, and the
+prompt — by being the only thing in the way — doubled as the confirmation. So
+Remove followed by Enter removed somebody having said nothing about what they held.
+Replaced by a sheet in `ApproveModal`'s style that names the person and their rank,
+states both real counts, warns when they are the department's last supervisor, keeps
+the reason field as the optional thing it always was, and has an explicit Cancel.
+
+The three-state button logic is unchanged — pending departure opens the handover,
+booked items start one, otherwise Remove. The sheet is the confirm layer, not a
+redesign of when each verb is offered.
+
+---
+
+### Ruling 5 — the always-zero roster count dies.
+
+> *"'0 open complaints' on every row is not a number, it's a decoration."*
+> (PO, 2026-08-21.)
+
+`department_staff_overview.active_assignment_count` (`0045` §1450, lateral at
+§1455–1469) counted open complaints matching either `assigned_to_membership_id`
+or a prefix match on `assignee_label`. Ruling 1 keeps the first column dead and no
+frontend has ever written the second, so the number was `0` on every row of every
+roster ever rendered — and the hiring screen displayed it as "N open complaints"
+next to a real one.
+
+Replaced by `supervisedWorkOrderCount`: the live work orders that person
+supervises, `0` for anybody whose rank is not `manager` or `supervisor`. That zero
+is the truth and not a placeholder — a team member's real number is
+`openCommitmentCount`, which is on the same row. The old field is **removed rather
+than renamed in place**, so a client still reading it gets `undefined` instead of
+a wrong number.
+
+---
+
+### Ruling 6 — the admin "Assign to staff" control is removed. R13, executed.
+
+> *"It doesn't assign anyone. Take it out."* (PO, 2026-08-21.)
+
+This is not a new decision: **R13 is in this file's own ruling table** (§13,
+*"Option 1: the control raises work; the optimistic field dies"*) and in
+`COMPLAINT_ENGINE_PRD.md`'s, recorded as settled on 2026-08-13 and never done. The
+control wrote `assigneeStaffId` into zustand and nowhere else — no server saw it,
+no worker was told, and the roster panel beside it counted those local writes back
+as "N active", a number the browser invented that did not survive a reload.
+
+It is replaced by the link R13 named: *Raise work order*, deep-linked to the
+triage screen with `?complaint=…`. That is the assignment that exists — a real
+record, with a real recipient, that outlives a page reload.
+
+**Worth noticing why it survived eight days.** A ruling recorded in a table and
+not executed looks identical, in a later review, to one that was.
+
+---
+
+### Ruling 7 — supervisors really are notified when a complaint is raised. R18, implemented.
+
+> *"R18 says supervisors are notified. They aren't. Make it true."*
+> (PO, 2026-08-21.)
+
+Also not a new decision. R18 — *"supervisors now notified on raise and reopen"* —
+is in this file's §13 summary and in the PRD's ruling table. What shipped was
+`notify_complaint_staff` (`20260812090300` §2b), whose audience is the community's
+admins plus the complaint's own **department manager**, and stops there.
+
+**Why the gap survived a review.** A supervisor is a *rank on a roster row in one
+department*, deliberately (`0043` §386 argues the point at length), so no
+role-based helper can express them — and a reviewer reading the audience as
+"admins and managers" finds it correct, because it is, for the audience it names.
+
+The arm added is `notify_department_leadership`'s own predicate narrowed to the
+complaint's department, `distinct`, excluding admins so nobody is told twice. It
+is in the shared helper rather than at the raise call site, so it holds for every
+complaint-shaped event this engine has: the resident raise, the admin raise, a
+reopen, a resident's cancellation, a forced assignment and an all-declined.
+
+---
+
+### Ruling 8 — the invitation claim pass runs on every session read.
+
+> *"Someone who already lives here should still get their invitation."*
+> (PO, 2026-08-21.)
+
+Not strictly complaint-engine, and recorded here because it changes who can become
+a supervisor at all. `auth_service._claim_staff_invitations` was called only on
+the branch that had already established the caller holds no membership. Anybody
+who already belonged to a community — a resident invited to supervise a
+department, a worker on one roster invited to manage another — never reached it.
+Their invitation was neither applied nor refused: it waited, invisibly, while the
+inviting department went on seeing `pending`.
+
+After `20260821140000`/`20260821170000` the refusal half matters as much: an
+invitation that *cannot* be applied is marked blocked and both sides are told, and
+that announcement was reachable only by the same narrow population. The guard is
+gone. Cost: one GoTrue identity call and one idempotent RPC per `GET /auth/session`
+— a load-time read, not a per-request path.
+
+---
+
+### Ruling 9 — the serviceman release mechanics are untouched.
+
+> *"The re-queue is right. Leave it alone."* (PO, 2026-08-21.)
+
+`release_staff_commitments` puts a departing person's booked work back into the
+dispatch pool at **queue priority 1 — just below urgent auto-assigns at 2**
+(`0045` §7, `0043`). That is what the owner wants and it is recorded here so
+nobody re-opens it while working on ruling 2. `claim_dispatch_batch` and the
+dispatch engine are likewise out of bounds; the migration that implements rulings
+2, 3, 5 and 7 mentions none of the three, and a static test asserts as much.
+
+---
+
+### What is still yours
+
+Nothing in this section moved `complaints.status`, the timeline vocabulary, the
+transfer rules, the auto-resolution timers, or the dispatch chain. Rulings 2 and 3
+sit entirely on the *work order* side of your boundary and on the roster row that
+names its supervisor. Ruling 7 widens an audience without changing a single event.
+Ruling 1 removes a question you were owed an answer to rather than answering it in
+your place.
+
+---
+
+## 16. Added 2026-08-21 — the deep link now highlights on your admin screen
+
+**One ruling, and it touches a file of yours, which is why it is here rather
+than only in the change log.**
+
+> *"A `?complaint=` link must show me which complaint. Do it on the admin screen
+> and the supervisor's screen. Leave the resident one — that portal is still the
+> demo."* (PO, 2026-08-21.)
+
+Eight notification call sites — six in `20260812090300_complaint_department_routing`,
+one in `20260813100000_skill_sourced_complaints`, one in
+`20260820150000_admin_raised_complaints` — write `/admin/complaints?complaint={id}`.
+`AdminDashboard/Complaints.jsx` read no query parameter, so following one landed
+the reader on a queue of up to two hundred cards with nothing saying which. Right
+screen, wrong row — the defect `backend/tests/test_notification_links.py` counts
+in `IGNORED_QUERY_PARAMETERS`, where `("/admin/complaints", "complaint")` had sat
+since that check was written, attributed to you. It has now left that set.
+
+**What was done to your screen, exactly.** It reads `?complaint=` and marks that
+one card: `border-2 border-indigo-400 bg-indigo-50/40` in place of the usual
+hairline border, `aria-current="true"` so the mark is not colour-only, and a
+scroll into view once the snapshot has arrived. **Marked, never filtered** — the
+same rule `features/complaints/components/DepartmentComplaintList` and
+`WorkOrderTriage`'s `?job=` already follow, because a queue narrowed to one card
+hides the rest of an inbox somebody still has to work. The status filter is
+untouched and still mounts at *All*.
+
+**What was not done.** No complaint lifecycle behaviour, no mutation, no route,
+no vocabulary, no status write, no change to the raise modal or the triage
+queue. `complaints.status` is where §0 left it. This is a highlight on a card and
+the record of a ruling; if you would rather mark the row some other way, the
+ruling constrains the *outcome* — the reader can see which complaint — and not
+the treatment.
+
+The supervisor's screen (`WorkerDashboard/Complaints.jsx`) is the same ruling's
+other half and needed no new idea: it already renders
+`DepartmentComplaintList`, which has taken `highlightId` and ringed that card
+since the manager's screen was built, and simply never passed the prop.
+
+**The resident screen is deliberately deferred**, not forgotten.
+`("/resident/complaints", "complaint")` stays on record in that same set. The
+resident portal is still a zustand dummy-data demo
+(`docs/potential issues/09-resident-portal-is-still-a-demo.md`), so highlighting
+a row there would demonstrate nothing about the link that a reader will actually
+follow. When that portal is wired to the API, the entry is the reminder.
+
+## 17. Added 2026-08-22 — your Save button was accused of writing nothing; for the record, it writes everything
+
+A specialist report flagged, in passing, that `AdminDashboard/Complaints.jsx`'s
+*Save Changes* and comment controls "write to zustand only — no server call".
+You may hear this rumour; here is the verification that killed it, so nobody
+spends an afternoon on it again.
+
+**The chain is real, end to end.** `store/slices/createComplaintsSlice.js`
+follows its optimistic store write with `PATCH /complaints/{id}` and
+`POST /complaints/{id}/comments`. Both routes exist in
+`backend/app/api/v1/routers/complaints.py` behind `require_admin`; the service
+translates the screen's vocabulary (`In Progress` → storage status, `resident`
+→ `public` visibility) and writes the edit with its timeline entries in one
+transaction; both writes fire the shared SSE trigger, and
+`DashboardDataBootstrap` re-snapshots the dashboard within a beat, replacing
+the optimistic copy with what your engine actually recorded.
+
+**The one true gap, fixed 2026-08-22 (PO-approved).** A *failed* write fires no
+SSE event, so the refused state sat on the card indefinitely with only a
+transient toast against it. The slice's catch now re-reads the snapshot for
+server truth, falling back to restoring the affected row locally when even that
+read fails. No lifecycle behaviour, vocabulary, route or mutation of yours
+changed — this is purely what the screen shows after your engine says no.
+
+**A note you may care about more than the fix.** The screen's "Staff /
+Assignee" box is free text, persisted as a display label (`assignee_label`) and
+nothing else: it never sends `assigned_to_membership_id` (which §15's ruling 1
+keeps dead) and drives no dispatch — real assignment lives in the work-order
+pipeline. So the label can *say* "Suresh — Electrician" while the pipeline has
+routed the work elsewhere, and nothing reconciles the two. Whether that box
+should keep existing, rename itself to something honest ("shown to the resident
+as…"), or derive from the work order is a judgement about your surface; it is
+recorded here rather than decided.
+
+## 18. Added 2026-08-22 — nobody could raise a work order, and the supervisor dashboard rulings
+
+**The break first, because it was yours to feel.** Every `POST
+/complaints/{id}/work-orders` — the "Raise it" button in triage, supervisor and
+admin alike — answered 422 "Could not raise that job." The cause is not in your
+engine and not in the repository at all: the hosted `work_orders` table is the
+pre-baseline hand-built one and carries legacy columns no migration declares,
+one of which (`title`, NOT NULL, no default) rejected every insert
+`create_work_order` writes. Same disease `20260820120000` cured on
+`complaints`. The cure is the same shape:
+`20260822090000_hosted_work_order_column_drift.sql` (runbook §17) drops the
+insert-blocking legacy NOT NULLs and nothing else — your RPCs, vocabulary and
+lifecycle are untouched, because they were never wrong. Until it is applied,
+raising work stays broken for everyone. Two diagnostic improvements rode
+along: `pg_errors.translate` now logs the real Postgres text server-side for
+mapped standard SQLSTATEs (this bug was undiagnosable without it), and the
+triage screen's error line renders the 422 envelope's field `details`.
+
+**The supervisor dashboard rulings (product owner, 2026-08-22).** The
+supervisor's landing surface is being rebuilt as four sections: new complaints
+(urgent stack on top, category and priority chips), taken-up-but-unassigned,
+assigned-but-pending, and being-worked-right-now. Four decisions touch your
+model; all are the product owner's, taken 2026-08-22:
+
+1. **Take-up is explicit and stamped.** A supervisor presses *Take up* on a new
+   complaint; new columns `complaints.taken_up_by_membership_id` +
+   `taken_up_at` record it, and a new `take_up_complaint` RPC (guarded
+   `can_supervise_department`) is the only writer. To be explicit against
+   §15's ruling 1: this is *triage ownership*, not dispatch —
+   `assigned_to_membership_id` stays dead, the complaint still belongs to the
+   department, and dispatch still happens only through work orders.
+2. **Take-up is visible progress.** It moves the complaint `open →
+   acknowledged`, which the resident already reads as "In Progress". Until
+   now `acknowledged` was written only by the worker-offer trigger
+   (`20260813102000`); it gains this second writer deliberately.
+3. **Re-stamped work is marked now.** §16 chose "no new column" for
+   departure-continuity re-stamping. That is partially reversed: work orders
+   gain `supervision_inherited_at`, stamped by `restamp_department_supervision`,
+   so an inheriting supervisor's dashboard can badge work that arrived by
+   removal rather than by their own hand. Residents and workers still never
+   see supervisor identity; the stamp feeds a supervisor-only surface.
+4. **"Being worked right now" is the worker's own Start.** `start_work_order`
+   gains a `started_at` stamp (today the moment is lost into `updated_at`).
+   A *Pause* verb is deliberately deferred — a paused state would ripple
+   through your status vocabulary and the dispatch triggers, and the section
+   stands without it.
+
+The other two "reassigned" badges ride on what you already expose:
+`returned_to_pool_at` / `reopened_count` for bounced-back work, and the
+department-change events for complaints rerouted in. One new aggregate read,
+`supervisor_triage_snapshot`, will feed all four sections in one call rather
+than the N+1 the triage screen does today; it is a read, it decides nothing.
+
+5. **The take-up timeline wording is frozen** (product owner, 2026-08-22,
+   approved verbatim). The `taken_up` event renders on the resident's
+   timeline as label **"Taken up by the department"** with message **"The
+   department has taken this up."** — deliberately the `job_created` pattern:
+   the department speaks, no supervisor is named, consistent with residents
+   never seeing supervisor identity anywhere on your surface. Lives in
+   `resident_complaints_service.py`'s label/message maps.
+
+## 19. Added 2026-08-22 — your event vocabulary has a bouncer, and the new word was not on the list
+
+Same-day follow-up to §18, recorded because the constraint is yours. Your
+`20260813105000_chat_autopen_and_vocab.sql` put an enumerating CHECK
+(`complaint_events_type_check`) on `complaint_events.event_type` — a good
+bouncer. The §18 dashboard work added a `taken_up` timeline event, reasoned
+from the `0001` baseline ("event_type is text with no CHECK"), and missed
+your constraint entirely; the very first live Take-up press was refused with
+SQLSTATE 23514.
+
+The cure is `20260822150000_taken_up_event_word.sql` (runbook §19): your
+constraint recreated in your file's own drop-and-recreate shape, with
+`taken_up` as the one new word — your twenty-five words all survive, proved
+by derivation in `backend/tests/test_taken_up_event_word_migration.py`
+rather than by anyone's review.
+
+What this means for you going forward: **any new `complaint_events` word now
+costs a constraint migration**, not just a label in
+`resident_complaints_service._EVENT_LABELS`. That is the deal your
+`20260813105000` set up, and it is a good deal — the bouncer caught exactly
+what it exists to catch — but the §18 migration's in-file comment saying a
+new word is free is wrong, and this section is the correction of record. No
+judgement call was taken from you here: the vocabulary decision (that
+`taken_up` exists, and what the resident reads) was already ruled in §18;
+this only lets the database agree.
+
+## 20. Added 2026-08-22 — the supervisor dashboard grows hands, and six rulings touch your engine
+
+The §18 dashboard was read-mostly: one button (Take up), four sections. The
+product owner has now approved an action surface on it — the full design is
+frozen as Amendment 2 of `docs/plans/SUPERVISOR_TRIAGE_SPEC.md`, and this
+section records the rulings that reach into your lifecycle. All six were
+ruled explicitly by the product owner on 2026-08-22; nothing here was
+decided silently.
+
+1. **Supervisors can now resolve.** A new RPC path
+   (`supervisor_resolve_complaint`, guarded by `can_supervise_department`)
+   sets `resolved` + `resolved_at`, writes your existing `status_changed`
+   word, and notifies `complaint.resolved`. Your resident aftermath is the
+   deliberate next act, untouched: confirm-with-rating to `closed`, reopen,
+   48h warning, 72h auto-close. **Cascade ruling**: resolving cancels every
+   unstarted live work order (offers withdrawn, staff notified
+   `job.cancelled`, reason "Complaint resolved by the department") and
+   refuses with a clear 409 while any job is `in_progress`.
+2. **Complaint priority is no longer immutable.** A one-way raise
+   (low → medium → high) with a **new event word `priority_changed`** —
+   under §19's deal, that word ships inside a constraint rebuild in the
+   migration, not as an assumption. Known and intended: raising to high
+   arms your engine's automatic force-assign on the all-declined path.
+3. **`note_added` gains an internal variant.** Supervisor notes carry
+   payload `{internal: true}` and are hidden from the resident timeline;
+   your admin PATCH's resident-visible "Update from management" notes are
+   unchanged. The filter lives in `resident_complaints_service`.
+4. **Complaints get a chat thread.** New `dm_threads.kind = 'complaint'`
+   (one per complaint, raiser + department supervisor), locking on
+   `closed|cancelled` like job threads. It lives beside your timeline, not
+   in it — no complaint event is written for chat.
+5. **Manual force-assign gets a hand on the lever.** A supervisor-triggered
+   endpoint over your forced mechanics: `is_forced = true`, your existing
+   `job_force_assigned` word, your `job.force_assigned` notification,
+   still hidden from the resident timeline. The consent-respecting offer
+   flow stays the default; force is an explicit flag.
+6. **Resident-facing copy, approved verbatim**: "The department raised the
+   priority to {level}." (timeline), "The department opened this chat about
+   '{title}'." (chat seed), "Complaint resolved by the department."
+   (job-cancel reason workers see).

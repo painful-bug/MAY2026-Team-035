@@ -27,8 +27,11 @@ function sessionState(context) {
   };
 }
 
-function startOAuth(provider, next = '/auth/callback') {
-  window.location.assign(`/api/v1/auth/oauth/${encodeURIComponent(provider)}/start?next=${encodeURIComponent(next)}`);
+function startOAuth(provider, next = '/auth/callback', remember = false) {
+  // `remember` is only sent when it was asked for: the backend defaults to a
+  // browser-session refresh cookie, which is the safe answer on a shared device.
+  const rememberParam = remember ? '&remember=true' : '';
+  window.location.assign(`/api/v1/auth/oauth/${encodeURIComponent(provider)}/start?next=${encodeURIComponent(next)}${rememberParam}`);
 }
 
 export const useAuthStore = create((set, get) => ({
@@ -49,11 +52,11 @@ export const useAuthStore = create((set, get) => ({
     return bootstrapPromise;
   },
 
-  beginOAuth: (provider, next) => {
+  beginOAuth: (provider, next, { remember = false } = {}) => {
     set({ authFlowState: AUTH_FLOW_STATE.REDIRECTING, authError: '' });
-    startOAuth(provider, next);
+    startOAuth(provider, next, remember);
   },
-  beginGoogleSignIn: (next) => get().beginOAuth('google', next),
+  beginGoogleSignIn: (next, options) => get().beginOAuth('google', next, options),
 
   completeExternalLogin: async () => {
     const generation = get().authGeneration;

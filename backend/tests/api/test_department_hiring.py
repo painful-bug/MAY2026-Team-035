@@ -448,7 +448,7 @@ def staff_row(**overrides: Any) -> dict[str, Any]:
         "rank": "member",
         "shift": "Day",
         "status": "active",
-        "active_assignment_count": 1,
+        "supervised_work_order_count": 0,
         "open_commitment_count": 2,
         "departure_status": "pending",
         "departure_effective_at": "2026-09-01T00:00:00Z",

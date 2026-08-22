@@ -18,6 +18,11 @@ and `src/store/authStore.js` use that boundary to:
 - start configured OAuth at `/api/v1/auth/oauth/{provider}/start` (with a
   Google compatibility alias), submit email/password credentials to the BFF,
   and complete explicit email-confirmation/password-recovery actions;
+- carry the sign-in card's **Remember me** answer — off by default — on
+  whichever method the user picked: `?remember=true` on the OAuth start, and
+  `remember_me` in the sign-in body. Left off, the backend gives the session a
+  browser-session refresh cookie, so the login page is there again next time
+  rather than the user being signed straight back in (API.md § 1.2);
 - complete the callback by re-reading the server session;
 - redeem a previously prepared invitation; and
 - clear the client session after backend logout.
@@ -72,6 +77,411 @@ short-lived derived view while a page is open; it is not persisted. Financial
 ledger UI keeps no seeded transactions or browser persistence. Booking and
 ledger mutation endpoints remain a follow-up integration boundary and must not
 be represented as durable client-only records.
+
+## Worker portal
+
+- `src/layouts/WorkerLayout.jsx` shows the marketplace registration screen only
+  when the provider profile is incomplete **and** the caller holds no active
+  engagement ranked `manager` or `supervisor` (`holdsLeadershipEngagement` in
+  `src/lib/staffVocabulary.js`, reading `communities[].rank` from
+  `GET /worker/snapshot`). Department leadership never registers — an
+  administrator creates them by email — so the form asked them for coordinates
+  and trades that nothing would ever match them on, and blocked their own
+  Complaints screen behind it. Technicians (`member`) and unregistered
+  marketplace professionals keep the gate unchanged. Four screens that edit or
+  read the `service_providers` row — Profile, Settings, Availability, and the
+  marketplace half of Communities — now say plainly that there is no marketplace
+  profile instead of erroring, 404-ing on save, or, in Settings' case, holding a
+  "Loading settings…" spinner that never resolved.
+
+- `src/features/departments/components/PendingInvitations.jsx` renders
+  `blockedReason` when the API supplies one. The two leadership rulings of
+  2026-08-21 — leadership is never a marketplace provider, and is held in one
+  community at a time — are refused at *claim* time, inside a session read with
+  nobody watching a screen, so this list is the only place the answer surfaces.
+  Without it the row said "waiting for first sign-in", which after a blocked
+  claim is false: they signed in and were turned away. The sentence comes from
+  the database rather than being reconstructed here, so it names which rule
+  refused them. The row stays `pending` and both existing verbs — correct the
+  address, withdraw the invitation — are still offered, because the situation is
+  not terminal.
+
+- **The supervisor's work-order queue is mounted in the worker portal**
+  (`src/App.jsx`, `src/pages/WorkerDashboard/WorkOrders.jsx`,
+  `src/layouts/WorkerLayout.jsx`; product ruling, 2026-08-21 — *"the supervisor
+  is the channel through whom the worker gets the job"*). `WORK_ORDER_ROUTES`
+  was mounted under `/admin`, `/manager` and `/security-manager` and never under
+  `/worker`, which is where `_portal_for` sends every supervisor of a
+  non-security department: their whole workspace was one complaint list. Two
+  routes now serve them — `/worker/work-orders`, which is what the nav item can
+  link to before a snapshot has loaded, and
+  `/worker/departments/:departmentId/work-orders`, the shape every other portal
+  uses — and both render **the same `AdminDashboard/WorkOrderTriage`**, not a
+  copy. No permission changed: every one of the nine work-order endpoints
+  already admitted a `worker` membership at the router and narrows to
+  `can_supervise_department` in Postgres
+  (`backend/tests/api/test_work_orders.py::test_api_337`).
+- The rank and the department both come from `GET /worker/snapshot`'s
+  `communities[]`, which already carries `rank`, `status` and `departmentId` —
+  nothing on the session carries a rank, and a supervisor's department is their
+  roster row's rather than their membership's. `supervisedEngagement` moved out
+  of `WorkerDashboard/Complaints.jsx` into `src/lib/staffVocabulary.js` so the
+  two screens that ask "which department do you supervise" ask it once.
+- The nav entry **"Work orders"** is hidden for rank `member` and for
+  marketplace professionals — the first hidden entry in this sidebar, and only
+  because the layout now holds the rank the registration gate already reads.
+  Anybody who deep-links either URL without an active supervisor engagement gets
+  the Complaints screen's own sentence, in the same words.
+- One thing the mount exposed: `GET /departments/{id}` is
+  `require_admin_or_manager`, so a supervisor cannot make the read that supplies
+  the triage screen's trade list. It is context rather than the screen's
+  subject — the assign box's roster comes from `GET /work-orders/{id}/candidates`,
+  which does admit them — so its refusal now renders as one sentence about the
+  trade box instead of a bare *"You do not have permission for this community
+  action."* under the queue. No portal branch: the sentence is true wherever
+  that read fails.
+
+- **Their notification links now arrive somewhere they may go.**
+  `src/features/notifications/portalUrl.js` rewrites an admin-shaped
+  notification url for the reader's own portal, and its table knew only
+  `manager` and `security-manager` — so a supervisor, whose portal is `worker`,
+  had every link handed back unrewritten and was redirected home by
+  `ProtectedRoute`. The table is now per-portal: `worker` gets department
+  **work-orders**, **complaints** and **messages**, and deliberately not hiring,
+  staff or candidates, because `/worker` mounts no such screen and a rewrite to
+  a route that does not exist fails more confusingly than one that visibly
+  bounces. Manager and security-manager behaviour is unchanged.
+  `portalUrl.test.js` is new — the module's only coverage was the Python mirror
+  in `backend/tests/test_notification_links.py`, which compares this file's
+  source text rather than running it.
+- **The department root joined that list later the same day**, on the product
+  owner's ruling, and it is the one rule in the table that does not point at a
+  screen the portal mounts. It was left out first because a worker's base is a
+  jobs dashboard rather than a department overview — true of the screens, and
+  the wrong question: `/admin/departments/{id}` is Admin-guarded, so a
+  worker-portal reader who follows it is sent to `/worker` by the guard
+  regardless. The only choice on offer was between arriving there deliberately
+  and arriving there via a click that appeared to do nothing. They are a live
+  audience for it rather than a hypothetical one —
+  `notify_department_leadership` includes supervisor-rank roster holders, and
+  `staff_invitation.blocked` carries that url. The doctrine is intact: it
+  forbids rewriting to a route that does not exist, and every portal's base
+  exists. No migration; nothing in the database changed.
+
+## Choosing a location
+
+- `src/components/common/LocationPicker.jsx` replaces `LocationCoordinatesInput`
+  everywhere a person is asked where something is — provider registration and
+  worker settings, founder onboarding, and admin society settings. Four ways in,
+  in that order of prominence: type an address and press **Search** (explicit
+  submit only — the upstream, OpenStreetMap's Nominatim behind
+  `GET /api/v1/geo/search`, forbids autocomplete), click or drag a pin on a
+  Leaflet map with OSM tiles, use the device's location, or open the collapsed
+  *Enter coordinates manually* disclosure and type the two numbers. All four
+  write the same one pair of coordinates, and the first three also fill in an
+  editable, optional `locationLabel` ("Andheri West, Mumbai"), which is now shown
+  on hiring candidate cards and on the worker's own profile. The map lives in
+  `src/components/common/LocationMap.jsx` and is loaded with `React.lazy`,
+  importing Leaflet's stylesheet with it, so it ships as its own chunk
+  (~151 kB JS + 15 kB CSS) that no other route pays for; a chunk that fails to
+  load costs the map and nothing else.
+
+## Taking somebody off a roster
+
+Three changes from the 2026-08-21 product-owner rulings on removal continuity
+(`COMPLAINT_ENGINE_HANDOFF.md` §15).
+
+- **A confirmation sheet replaces two `window.prompt` calls**
+  (`src/pages/AdminDashboard/DepartmentHiring.jsx`, ruling 4). The prompt asked
+  for a reason and, by being the only thing in the way, doubled as the
+  confirmation — so *Remove* followed by Enter took somebody off a roster having
+  said nothing about what they were holding. The sheet names the person and their
+  rank, states both counts the API actually returns (`openCommitmentCount` and
+  the new `supervisedWorkOrderCount`, with zero said out loud rather than
+  hidden), warns *"they are this department's last supervisor — the manager will
+  cover the queue"* when that is true, keeps the reason field as the optional
+  thing it always was, and has an explicit Cancel that writes nothing. Styled
+  after `EmployeeDetail.jsx`'s `ApproveModal`, the only modal precedent on this
+  surface. The three-state button logic is untouched — pending departure opens
+  the handover, booked items start one, otherwise Remove — because the sheet is a
+  confirm layer and not a redesign of when each verb is offered.
+
+- **The manager's Complaints screen says when the queue is theirs**
+  (`src/pages/ManagerDashboard/Complaints.jsx`, ruling 3). While the department
+  has no active supervisor: *"You're covering this department's complaint queue
+  until a new supervisor is invited."* The database sends a
+  `department.supervision_uncovered` notification at the moment the last
+  supervisor is removed; a notification is a moment and this is the standing
+  fact, so it stays up for exactly as long as it is true. The zero-supervisor
+  answer comes from `department.staff`, which `useManagerDepartment` already
+  loads for every screen in this portal — no second read, and no way for the
+  banner and the roster to disagree. **No new workspace sits behind it**:
+  `can_manage_department` implies `can_supervise_department`, so this screen is
+  already a strict superset of the supervisor's.
+
+- **The admin "Assign to staff" dropdown is gone**
+  (`src/pages/AdminDashboard/DepartmentDetail.jsx`, ruling 6 — this executes
+  R13). It wrote `assigneeStaffId` into zustand and nowhere else: no server saw
+  it, no worker was told, and the roster panel beside it counted those local
+  writes back as *"N active"*, a number the browser invented that did not survive
+  a reload. A control that assigns nobody, next to a count that measures nothing,
+  reads as the feature being present. Replaced by the link R13 named — **Raise
+  work order**, deep-linked to the triage screen with `?complaint=…` — which is
+  the assignment that exists. The invented count went with it; the real numbers a
+  roster row carries are on the hiring screen and come from the database.
+
+- **`activeAssignmentCount` is gone from every roster surface** (ruling 5). It
+  counted open complaints by two columns nothing writes, so it rendered as "0
+  open complaints" on every row of every roster, forever. `DepartmentHiring.jsx`
+  and `EmployeeDetail.jsx` now show `supervisedWorkOrderCount` instead, and only
+  for the leadership rows it means anything for.
+
+## Following a complaint notification to the row
+
+Product ruling, 2026-08-21: a `?complaint=` deep link must highlight the
+complaint it names on **both** the worker (supervisor) and the admin complaints
+screens. The resident screen is deliberately left alone while that portal is
+still a dummy-data demo (`docs/potential issues/09-…`).
+
+- **`src/pages/WorkerDashboard/Complaints.jsx` reads `?complaint=` and passes
+  `highlightId`.** Every machine part already existed: the shared
+  `features/complaints/components/DepartmentComplaintList` has taken
+  `highlightId` and ringed that card since the manager's screen was built, and
+  the worker screen renders that same component. It simply never passed the
+  prop — so a supervisor whose link `portalUrl.js` had just started rewriting
+  arrived at their own department queue and then had to find the row. Nothing
+  else about the screen moved: `canMove={false}` and the roster gate are
+  unchanged, and a technician still gets the same refusal sentence whether or
+  not the url carries a complaint.
+
+- **`src/pages/AdminDashboard/Complaints.jsx` reads `?complaint=` and rings the
+  card.** A different surface with a different idiom — it renders the dashboard
+  snapshot's `complaints` projection from the zustand store rather than the
+  shared department list — so the highlight is implemented in its own terms: the
+  named card takes `border-2 border-indigo-400 bg-indigo-50/40` in place of its
+  usual hairline border, carries `aria-current="true"` so the mark is not
+  colour-only, and is scrolled into view once the snapshot has arrived. **Marked,
+  never filtered**, matching the shared list and `WorkOrderTriage`'s `?job=`: a
+  queue narrowed to one card hides the rest of an inbox the reader still has to
+  work. The status filter is untouched and mounts at *All*, so a linked
+  complaint is on screen whatever its status. No lifecycle behaviour, mutation
+  or route changed — this screen belongs to the complaint-engine owner and the
+  ruling is recorded in `docs/COMPLAINT_ENGINE_HANDOFF.md` §16.
+
+- The admin half is what `backend/tests/test_notification_links.py` measures:
+  `("/admin/complaints", "complaint")` has left `IGNORED_QUERY_PARAMETERS`,
+  which is an equality assertion precisely so that a screen starting to honour
+  its parameter is a visible change rather than a silent improvement.
+  `("/resident/complaints", "complaint")` stays on record.
+
+## A refused complaint write no longer stays on screen
+
+An audit rumour (2026-08-21) claimed the admin complaints screen's *Save
+Changes* button wrote to the zustand store only. Verified false on 2026-08-22:
+`store/slices/createComplaintsSlice.js` has sent `PATCH /complaints/{id}` and
+`POST /complaints/{id}/comments` after its optimistic store write since the
+portal was wired to the API, and the SSE re-snapshot
+(`DashboardDataBootstrap`) replaces the optimistic copy with server truth
+within a beat of every successful write.
+
+What the audit *did* expose was the failure path: a **failed** write fires no
+SSE event, so the refused state sat on the card indefinitely with only a
+transient toast to contradict it.
+
+- **`src/store/slices/createComplaintsSlice.js` now corrects the record when
+  the server refuses a write.** The catch re-reads the dashboard snapshot
+  (server truth); if even that read fails — the network being down is usually
+  why the write failed — it restores the one affected row to the last state the
+  server agreed to. Both writers (`updateComplaint`, `addComplaintComment`)
+  get the same treatment and return `null` on failure. Covered by the slice's
+  first test file, `createComplaintsSlice.test.js`.
+
+## The triage screen's error line names the field
+
+`WorkOrderTriage.jsx`'s `Failure` component rendered only `error.message`,
+which for a 422 is the envelope's generic sentence ("The request could not be
+validated.") — the person is left staring at six inputs with no idea which one
+the server meant, which is how the hosted-drift raise failure of 2026-08-22
+surfaced as an undiagnosable red line. The component now also renders the
+envelope's `details` array (`field: message`, one line each) whenever the
+`ApiError` carries it. `client.js` already preserved `details`; no API change.
+
+## The supervisor lands on their department, not on an empty calendar
+
+Added 2026-08-22, phase one of the supervisor triage dashboard. Built against
+the frozen contract in `docs/plans/SUPERVISOR_TRIAGE_SPEC.md`; the product
+rulings behind it are `docs/COMPLAINT_ENGINE_HANDOFF.md` §18.
+
+**The defect this closes.** `_portal_for` sends every service person to
+`/worker`, because rank is not role (`0035`) — the supervisor and the
+technician they dispatch hold the same `worker` membership. So the portal's
+index was `WorkerHome` for both, and `WorkerHome` is a technician's day: offers
+waiting on you, what is booked today, a link to your calendar. A supervisor
+holds no jobs. Their front door was three empty states and a calendar with
+nothing in it.
+
+- **`src/pages/WorkerDashboard/WorkerLanding.jsx`** is the fork and is all it
+  is. It asks `supervisedEngagement` of the `communities[]` on
+  `GET /worker/snapshot` — the only place the browser can learn a rank, and a
+  read `WorkerLayout` has already made under the same react-query key, so the
+  fork costs no request — and renders `WorkerHome` unchanged for a technician
+  or a marketplace professional, `SupervisorDashboard` for a manager or a
+  supervisor. `WorkerHome` itself is untouched: a branch inside it would have
+  made one component answer two jobs.
+- **`src/pages/WorkerDashboard/SupervisorDashboard.jsx`** is the new surface:
+  four stacked sections in the order the work travels — new complaints, taken
+  up by you, assigned with work pending, being worked right now — fed by one
+  read, `GET /departments/{id}/triage-snapshot`, in place of the N+1 the
+  work-order triage screen does today.
+- **The browser never re-buckets.** The contract puts the bucketing rules in
+  Postgres and they are genuinely intricate (a taken-up complaint whose job
+  became engaged appears in `assignedPending` *as its work order*, not in
+  `takenUp`). The page renders the four arrays as they arrive. The one
+  rearrangement it makes is section 1's urgent stack, which the spec pins on
+  the client deliberately: a **stable partition**, High on top, server order
+  preserved inside each half, nothing moved between sections.
+- **`src/lib/triageDisplay.js`** holds every display decision, none of them in
+  React. Category chips take a colour from a deterministic hash of the
+  lowercased, trimmed trade name over a fixed eight-colour palette — the
+  `communityColor.js` idiom, so "Plumbing" is one colour on every device with
+  no column, no migration and no field in any response to drift. The palette
+  deliberately excludes rose and amber, which are the High and Medium priority
+  tones: a category chip that came out rose would read as a priority at a
+  glance. Priority is rose/amber/slate **and always carries its word**, so the
+  one field a supervisor triages on is never colour-only.
+- **Section 1 is complete**, including *Take up* → `POST
+  /complaints/{id}/take-up`. Its refusals render on the card they belong to
+  rather than in a page banner, because a 409 names whoever got there first and
+  that sentence is only useful beside the complaint it is about. Reassignment
+  badges — "Returned to pool", "Reopened ×N", "Moved to this department" — ride
+  on fields the complaint engine already exposes.
+- **Sections 2–4 render minimally this phase** — a title and a status chip
+  behind honest headers and honest empty states. Elapsed time, the assignee and
+  the "Inherited" badge for work re-stamped by a removal wait on product
+  review; the shell ships now so the shape of the page is reviewable rather
+  than described.
+- **Refresh** follows the frozen rule: react-query with a 60s `staleTime`, plus
+  an invalidation hung off the `homebandhu:dashboard-refresh` window event
+  `DashboardDataBootstrap` dispatches after every SSE beat — the pattern
+  `PendingRegistrations.jsx` set. No new SSE channel.
+- **`src/features/triage/triageApi.js`** is the HTTP boundary for both calls,
+  in the house shape: no state, no caching, no error translation.
+
+**Neither endpoint is live yet.** The migration adding `taken_up_at`,
+`started_at` and `supervision_inherited_at` is hand-applied by the owner; until
+it lands, both calls 404 and the page renders its failure line with a retry
+rather than four empty sections that would look like a quiet department. That
+is why `SupervisorDashboard.test.jsx` mocks `lib/api/client` — it is the only
+thing holding the page to the contract until the backend catches up. 33 new
+tests across `src/lib/triageDisplay.test.js` (chip determinism, the palette's
+distance from the priority tones, the urgent partition losing nothing) and
+`SupervisorDashboard.test.jsx` (the fork in both directions, bucketing-free
+rendering, badges, the take-up POST and its 409, the refresh event).
+
+**One gap, recorded rather than half-solved.** Somebody who is a supervisor in
+one society and a technician in another sees the supervisor surface at
+`/worker`, and their own jobs are then reachable only from the calendar. That
+is the same person `supervisedEngagement`'s doc comment already describes —
+one roster row picked out of several — and the fix is the portal-wide
+engagement switcher recorded there, not a second branch in the fork.
+
+## The supervisor dashboard becomes a place to act, not only to look
+
+Added 2026-08-22, phase two of the supervisor triage dashboard, built against
+**Amendment 2** of `docs/plans/SUPERVISOR_TRIAGE_SPEC.md` (product rulings
+A1–A4 of the same day). Phase one's page shell and section 1 are unchanged
+where the amendment did not touch them.
+
+**Five sections now, and each complaint appears exactly once.** `openRequests`
+slots in third — jobs raised that nobody has committed to. The bucketing is
+still entirely the server's and the browser still re-buckets nothing; what
+changed is the contract underneath it. *Committed* replaced *engaged*: an
+offered-but-unaccepted job is an **open request**, not an assignment (ruling
+A3), because the department is still looking for somebody. *Furthest stage
+wins*: a complaint with any live work order is that work order in sections 3–5
+and is not also a card in 1–2. `MinimalRow` is retired — every section draws a
+full card.
+
+- **Three universal actions on every card in every section**, as icon buttons
+  with `aria-label`s and visible focus rings (`triageParts.jsx::CardActions`):
+  - **Eye** → `ComplaintDetailModal.jsx`. Full complaint, category/priority/
+    status chips, the stage in words, the complete staff timeline, and the
+    stage's own buttons repeated inside — the same nodes the card renders, not a
+    second implementation of them.
+  - **Chat** → `POST /complaints/{id}/chat`, then the existing `hb:chat-open`
+    window event with `{ threadId }`. Work-order cards carry `complaintId`, so
+    the thread is the complaint's rather than the job's.
+  - **Note** → a composer posting `POST /complaints/{id}/notes`, 1–2000
+    characters, pending and error states, invalidating the detail query so the
+    note appears on the timeline it was written onto.
+  A work order whose `complaintId` is null (the frozen DTO allows it) keeps all
+  three buttons, disabled, with the reason in their `aria-label` — a card in a
+  row of identical ones that silently lost its controls is harder to read than
+  one that says why.
+- **Stage actions.** §1 *Take up* is unchanged. §2 gains **Raise job request**,
+  which deep-links to the work-order queue's existing raise form
+  (`{portal}/departments/{id}/work-orders?tab=raise&complaint={id}`, ruling A6 —
+  no second inline form) and **Resolved**, behind a confirm step because
+  resolving cancels every unstarted job on the complaint and notifies the
+  workers holding them. §3 gains **Mark as resolved**, **Raise priority** and
+  **Assign**. §4 and §5 are monitor-only, and a test pins that they stay so.
+- **The manual assign is labelled as what it is.** Ruling A4 made it a true
+  force-assign, so the button says *Assign without asking*, the modal says the
+  worker **cannot decline it** and names the ordinary offer flow as the other
+  route, and the confirm reads *Assign {name} — they cannot decline*. It posts
+  `{ staffAssignmentId, force: true }` to the existing assign endpoint; the
+  candidate list is the same ranked `GET /work-orders/{id}/candidates` the queue
+  uses, with earlier decliners shown rather than hidden, because on a forced
+  assignment that is context for the decision.
+- **Raise priority is one-way and says so.** At High the button stays, disabled,
+  with a `title` explaining that this is the top of the scale and the level that
+  arms the dispatch engine's automatic force-assign. Hiding it would have left a
+  supervisor wondering whether the feature exists.
+- **`ChatDock` learns a third opening shape.** `hb:chat-open` already carried
+  `{ communityId }` (compose) and `{}` (mailbox); `{ threadId }` now opens that
+  conversation directly and re-reads the mailbox behind it, because a thread
+  created seconds ago is not in the list the dock last fetched and *Back* has to
+  land somewhere that contains it.
+- **The eye popup reads a different DTO from every other complaint screen**, and
+  `src/lib/triageDisplay.js` is where that seam lives.
+  `GET /complaints/staff/complaints/{id}` answers `to_jsonb(complaints_row)` and
+  raw `complaint_events` rows: snake_case keys and **storage** vocabulary
+  (`open`, `high`). `staffComplaintFields`, `timelineEntries` and
+  `complaintStatusLabel` translate it — the last one carrying the backend's own
+  asymmetry, where `closed` reads as `Resolved` — so no component reads a raw
+  column and no database word reaches the screen. Internal notes
+  (`note_added` with `internal: true`) are shown here under a lock chip; the
+  resident's projection drops them, which is the whole point of them.
+- **Elapsed time in §5 is a live clock**, one 60-second interval for the page
+  and none at all when nothing is under way. Mount-computed would have been less
+  code and wrong on the screen this is: a card that says "under way 5m" three
+  hours later reads as fresh.
+- **The "Inherited" badge ships** (`inheritedAt`, v1 decision 3) on §4/§5 cards —
+  work re-stamped onto this supervisor when somebody left.
+- **React-query hygiene is unchanged**: 60s `staleTime`, the
+  `homebandhu:dashboard-refresh` listener, every mutation invalidating
+  `['supervisor-triage']` (and `['staff-complaint', id]` where the timeline
+  moved), and per-card pending and error state keyed off `mutation.variables` —
+  which is what keeps the resolve 409 about a running job on the one card it is
+  about, verbatim, exactly as the take-up 409 already was.
+
+**New files**: `src/pages/WorkerDashboard/triageParts.jsx` (chip, section, empty,
+failure, icon button, card actions, modal shell — the `JobDetailModal` shell
+idiom, since this codebase has no shared `Modal`),
+`ComplaintDetailModal.jsx`, `NoteComposer.jsx`, `AssignPickerModal.jsx`.
+`src/features/triage/triageApi.js` gains `staffComplaintDetail`, `resolve`,
+`raisePriority`, `addNote` and `openChat`; `workOrdersApi.assign` takes `force`
+through unchanged.
+
+**Only `staffComplaintDetail` exists on the running backend**, and its guard
+widens with this amendment's migration; the other four calls and the snapshot's
+fifth array are hand-applied with it. Until then they 404 and each card or modal
+renders its failure line. 49 new tests: `SupervisorDashboard.test.jsx` (five
+sections, furthest-stage rendering, the universal trio on all eight fixture
+cards, the chat POST and the dock event, the note flow, the raise deep link, the
+resolve confirm and its verbatim 409, the priority button at High, the honest
+force-assign, monitor-only sections), `ComplaintDetailModal.test.jsx`,
+`AssignPickerModal.test.jsx`, `ChatDock.test.jsx` and `triageDisplay.test.js`.
 
 ## Retired client code
 

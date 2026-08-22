@@ -419,24 +419,43 @@ def get_session_context(
             phone=None, email=identity.email,
         )
     rows = _active_memberships(principal.user_id)
-    if not rows:
-        # Leadership does not register (0049). An admin creating a manager has
-        # no profile to attach a membership to -- that person has never signed
-        # in -- so the provisioning waits on their email and is claimed here, on
-        # the one path that has already established there is no membership.
-        #
-        # The email comes from `verified_identity`, never from anything a client
-        # sent: the email IS the authorization, so a caller who could choose it
-        # could admit themselves to any department. `claim_staff_invitations` is
-        # revoked from `authenticated` for the same reason and runs on the
-        # service client.
-        #
-        # Idempotent, so re-running it on every membership-less session read
-        # costs one query and changes nothing. A profile that claims something
-        # is re-read rather than assumed: the claim writes both a membership and
-        # a roster row, and `_portal_for` below needs the membership row itself.
-        if _claim_staff_invitations(profile, principal, access_token):
-            rows = _active_memberships(principal.user_id)
+    # Leadership does not register (0049). An admin creating a manager has no
+    # profile to attach a membership to -- that person has never signed in -- so
+    # the provisioning waits on their email and is claimed here.
+    #
+    # **The claim runs on every session read, not only on the membership-less
+    # one.** It sat inside `if not rows:` until 2026-08-21, and that guard was a
+    # gap rather than an optimization: a person who already belongs to a
+    # community -- a resident, a worker, a supervisor of one department invited
+    # to be manager of another -- never reached the claim at all. Their pending
+    # invitation was neither applied nor refused; it simply waited, invisibly,
+    # while the department that sent it saw `pending` forever. Since
+    # `20260821140000`/`20260821170000` the refusal half matters just as much:
+    # an invitation that *cannot* be applied is marked `blocked` and both sides
+    # are told, and that announcement was reachable only by people with no
+    # membership. Neither half is a thing to make conditional on the reader.
+    #
+    # The email comes from `verified_identity`, never from anything a client
+    # sent: the email IS the authorization, so a caller who could choose it
+    # could admit themselves to any department. `claim_staff_invitations` is
+    # revoked from `authenticated` for the same reason and runs on the service
+    # client.
+    #
+    # **Cost.** One GoTrue `get_user` and one RPC per call. This is
+    # `GET /auth/session`, which the browser calls on load and after a refresh
+    # -- not a per-request path -- and the RPC is a single indexed read on
+    # `staff_invitations` when there is nothing pending, which is the ordinary
+    # case. Nothing is cached: a cached answer to "is there an invitation for
+    # this address" is an invitation that lands late for the length of the cache.
+    #
+    # The re-read stays conditional. `_claim_staff_invitations` returns whether
+    # anything was claimed, and a claim writes both a membership and a roster
+    # row, so `_portal_for` below needs the membership row itself rather than an
+    # assumption -- but a call that claimed nothing has changed nothing, and
+    # re-reading after it would run the membership query twice on every sign-in,
+    # forever.
+    if _claim_staff_invitations(profile, principal, access_token):
+        rows = _active_memberships(principal.user_id)
     if not rows:
         # A member of nothing is usually somebody about to register a society --
         # but it is also a service person who has registered and not yet been

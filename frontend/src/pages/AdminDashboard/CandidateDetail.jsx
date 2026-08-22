@@ -218,6 +218,13 @@ export default function CandidateDetail() {
               {row.distanceKm < 1 ? 'under 1 km away' : `${row.distanceKm.toFixed(1)} km away`}
             </span>
           ) : null}
+          {/* This one *is* on the profile, unlike the distance above: a coarse
+              place name the person published about themselves is theirs to
+              publish, and the 120-character cap is what keeps it from being an
+              address. */}
+          {person.locationLabel ? (
+            <span className="text-[11px] font-bold text-slate-400">{person.locationLabel}</span>
+          ) : null}
           <span className="text-[11px] font-bold text-slate-400">
             Registered {new Date(person.registeredAt).toLocaleDateString(undefined, {
               month: 'long', year: 'numeric',

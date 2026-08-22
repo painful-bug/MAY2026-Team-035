@@ -222,6 +222,15 @@ _TAGS: tuple[tuple[str, str], ...] = (
         "and not a membership role; the department check is in the database.",
     ),
     (
+        "supervisor-triage",
+        "The supervisor's landing dashboard: the department's untouched, taken "
+        "up, offered-but-unanswered, assigned and being-worked-right-now work "
+        "in one read, and the verbs on the cards -- take up, resolve, raise the "
+        "priority, note it internally, open a chat with the resident. All of "
+        "them are triage and none is dispatch: who is actually going is a "
+        "work-order assignment, which is `work-orders`' route.",
+    ),
+    (
         "resident-scheduling",
         "The resident's answer to a proposed visit. Two routes, neither of "
         "which takes a work-order id -- the job is resolved from the complaint, "
@@ -241,6 +250,15 @@ _TAGS: tuple[tuple[str, str], ...] = (
         "screen and any signed-in person may call it; everything here is "
         "admin-or-manager only. The catalogue is global and a department's "
         "claim on it is not.",
+    ),
+    (
+        "geo",
+        "Address search and reverse geocoding for the location picker, proxied "
+        "to OpenStreetMap's Nominatim. Server-side rather than from the browser "
+        "because the upstream's usage policy asks for an identifying "
+        "User-Agent, one request per second per application, and caching -- and "
+        "a tab can honour none of the three. No API key, one fixed host, and "
+        "explicit search only: autocomplete against that service is forbidden.",
     ),
     ("system", "Liveness."),
 )

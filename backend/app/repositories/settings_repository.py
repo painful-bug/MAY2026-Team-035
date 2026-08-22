@@ -27,7 +27,8 @@ _MODULES = "community_module_overview"
 
 _SETTINGS_SELECT = (
     "community_id, community_name, community_type, community_status,"
-    "community_created_at, latitude, longitude, timezone, unit_label_singular, unit_label_is_derived,"
+    "community_created_at, latitude, longitude, location_label, timezone,"
+    "unit_label_singular, unit_label_is_derived,"
     "invite_ttl_hours, visitor_code_ttl_minutes, require_visitor_preapproval,"
     "notice_sms_broadcast_enabled, has_saved_settings, version,"
     "settings_updated_at, settings_updated_by_name, auto_billing_enabled,"
@@ -93,9 +94,18 @@ def save_settings(client: Client, community_id: str, payload: dict) -> None:
 
 
 def save_location(
-    client: Client, community_id: str, latitude: float, longitude: float
+    client: Client,
+    community_id: str,
+    latitude: float,
+    longitude: float,
+    location_label: str | None = None,
 ) -> None:
-    """Update the caller's administered community coordinates."""
+    """Update the caller's administered community coordinates and label.
+
+    ``location_label`` is optional and a ``None`` keeps whatever is stored --
+    the RPC coalesces -- so moving a pin without renaming the place is one call
+    with one argument omitted rather than a read-modify-write.
+    """
     try:
         client.rpc(
             "set_my_community_location",
@@ -103,6 +113,7 @@ def save_location(
                 "p_community_id": community_id,
                 "p_latitude": latitude,
                 "p_longitude": longitude,
+                "p_location_label": location_label,
             },
         ).execute()
     except Exception as exc:  # noqa: BLE001

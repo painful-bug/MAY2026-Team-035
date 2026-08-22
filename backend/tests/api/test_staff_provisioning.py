@@ -15,7 +15,12 @@ about what the *Python* does rather than what the RPC returns:
 
 * the email comes from `verified_identity`, never from the profile row or
   anything a client sent;
-* the claim is attempted only when there is no membership already;
+* the claim is attempted on **every** session read (`api_336`). It was attempted
+  only when the caller held no membership until 2026-08-21, and that guard was a
+  gap rather than an optimisation: a person who already belonged to a community
+  never reached the claim, so their pending invitation was neither applied nor
+  refused — it waited, invisibly, while the department that sent it saw
+  `pending` forever;
 * a failure inside it does not fail the session.
 
 The RPC itself is Postgres and is stubbed here, so none of these tests prove a
@@ -580,3 +585,99 @@ def test_api_261_the_provisioned_manager_is_admitted_by_the_session_read(
     assert context.onboarding_eligible is False
     # The re-read is the point: membership, claim, membership.
     assert service.tables.count("community_memberships") == 2
+
+
+def test_api_336_a_sitting_member_still_gets_their_invitation_processed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The claim-pass gap, closed. Product ruling 8, 2026-08-21.
+
+    `_claim_staff_invitations` sat inside `if not rows:` — the branch that had
+    already established the caller holds no membership. So the whole population
+    that *does* hold one never reached it: a resident invited to supervise a
+    department, a worker on one community's roster invited to manage another, a
+    supervisor being promoted. Their invitation was neither claimed nor refused.
+    It stayed `pending` and the department that sent it kept seeing `pending`,
+    with nothing anywhere reporting a problem.
+
+    Since `20260821140000`/`20260821170000` the refusal half matters as much as
+    the claim half: an invitation that *cannot* be applied is marked `blocked`
+    and both the department and the invitee are told — and that announcement was
+    reachable only by people with no membership.
+
+    What is asserted is the call, not the outcome, because the outcome is the
+    RPC's and the RPC is Postgres. The caller here holds a membership from the
+    first read and the claim is attempted anyway.
+    """
+
+    class _SittingMember:
+        MEMBERSHIP: dict[str, Any] = {
+            "id": "membership-id",
+            "community_id": "community-id",
+            "role": "resident",
+            "department_id": None,
+            "is_default_community": True,
+        }
+
+        def __init__(self) -> None:
+            self.claimed_with: dict[str, Any] | None = None
+
+        def table(self, name: str) -> _SessionQuery:
+            def rows() -> list[dict[str, Any]]:
+                if name == "community_memberships":
+                    return [self.MEMBERSHIP]
+                return []
+
+            return _SessionQuery(rows)
+
+        def rpc(self, name: str, params: dict[str, Any]) -> Any:
+            service = self
+
+            class _RPC:
+                def execute(self) -> _Rows:
+                    service.claimed_with = params
+                    # Nothing claimed: the ordinary case for somebody with no
+                    # invitation waiting, and the one that must not trigger a
+                    # second membership read.
+                    return _Rows([])
+
+            return _RPC()
+
+    service = _SittingMember()
+    monkeypatch.setattr(auth_service, "get_service_client", lambda: service)
+    monkeypatch.setattr(
+        auth_service,
+        "verified_identity",
+        lambda _token: Principal(
+            user_id="profile-id",
+            email="verified@example.com",
+            email_verified=True,
+            full_name="Priya Nair",
+        ),
+    )
+    profile = signed_in_profile()
+    monkeypatch.setattr(
+        auth_service.profiles_repository,
+        "get_profile",
+        lambda _client, _user_id: profile,
+    )
+
+    context = auth_service.get_session_context(
+        object(),  # type: ignore[arg-type]  # the repository read is stubbed
+        Principal(
+            user_id="profile-id",
+            email="verified@example.com",
+            email_verified=True,
+            full_name="Priya Nair",
+        ),
+        "access-token",
+    )
+
+    assert service.claimed_with == {
+        "p_profile_id": "profile-id",
+        "p_email": "verified@example.com",
+    }
+    # And the session they already had is untouched by the extra pass.
+    assert context.membership is not None
+    assert context.membership.id == "membership-id"
+    assert context.onboarding_eligible is False

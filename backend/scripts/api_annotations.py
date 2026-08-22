@@ -374,6 +374,19 @@ NO_STORY = {
         "Platform liveness for operators and orchestrators, deliberately outside"
         " /api/v1.",
     ),
+    "geocoding": (
+        "Functional",
+        "Turning typed address text into a coordinate, and a coordinate back"
+        " into a place name. It serves no story because it is not a feature"
+        " anybody asked for -- it is what makes three existing forms fillable."
+        " Live testing on 2026-08-21 found registration asking a serviceman for"
+        " a latitude, which is not a fact a person knows about their own house,"
+        " so the field was skipped and the provider became invisible to every"
+        " proximity search. The endpoints exist to honour the upstream's usage"
+        " policy from one place: a browser cannot set a User-Agent, cannot"
+        " coordinate a one-request-per-second ceiling across tabs, and cannot"
+        " share a cache.",
+    ),
     "service_provider": (
         "Feature",
         "A service person registering themselves, and keeping that registration"
@@ -595,6 +608,11 @@ PARAMETER_DESCRIPTIONS: dict[str, str] = {
         "absolute or off-site is rejected outright, so this cannot be used as "
         "an open redirect."
     ),
+    "remember": (
+        "The sign-in card's *Remember me* answer, carried across the provider "
+        "round trip in the signed transaction cookie. Default `false`, which "
+        "makes the refresh cookie last only for the browser session."
+    ),
     "code": (
         "Authorization code returned by the provider. Absent means the user declined."
     ),
@@ -671,7 +689,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "before it is stored -- an absolute or off-site value is rejected "
             "rather than sanitised, so this cannot be turned into an open "
             "redirect. A provider not in the enabled set is **422**, not 404: "
-            "the route exists, the configuration does not permit it."
+            "the route exists, the configuration does not permit it.\n\n"
+            "`remember` rides in that same cookie, because the provider round "
+            "trip has nowhere else to keep it; the callback reads it back to "
+            "decide whether the refresh cookie outlives the browser session."
         ),
     ),
     ("get", "/api/v1/auth/oauth/{provider}/callback"): op(
@@ -693,7 +714,8 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "Compatibility alias for `GET /auth/oauth/google/start`.\n\n"
             "Kept because it is registered as a redirect URI with Google and "
             "exists in shipped bookmarks; it delegates to the generic route and "
-            "behaves identically. Prefer the generic form in new clients."
+            "behaves identically, `remember` included. Prefer the generic form "
+            "in new clients."
         ),
     ),
     ("get", "/api/v1/auth/google/callback"): op(
@@ -732,7 +754,12 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "one code names the reason rather than hiding behind the generic "
             "message: reaching it requires the correct password, so it discloses "
             "nothing the caller did not already know. Recover with "
-            "`POST /auth/email/resend`."
+            "`POST /auth/email/resend`.\n\n"
+            "**`remember_me` decides how long the session lasts.** Omitted or "
+            "`false` -- the default -- the refresh cookie is written without a "
+            "`Max-Age`, so it dies with the browser session and the login page "
+            "is there again next time. `true` keeps it for "
+            "`AUTH_SESSION_IDLE_DAYS`."
         ),
     ),
     ("post", "/api/v1/auth/email/verify"): op(
@@ -810,7 +837,11 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "Rotate the session from the refresh cookie.\n\n"
             "Takes no body: the refresh token is read from its `HttpOnly` cookie "
             "and never travels through JavaScript. Absent or rejected, the answer "
-            "is **401** and the client must sign in again."
+            "is **401** and the client must sign in again.\n\n"
+            "Rotation re-issues the cookies with the persistence the sign-in "
+            "chose, read from the `remember` cookie. Without it a session the "
+            "user never asked to keep would be silently promoted to a "
+            "multi-day one by its first refresh."
         ),
     ),
     ("post", "/api/v1/auth/logout"): op(
@@ -825,7 +856,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "and its errors are swallowed, then the cookies are cleared "
             "regardless -- a logout that leaves the browser holding a session "
             "because Supabase timed out is worse than an unrevoked server-side "
-            "token. Only the CSRF guard can refuse this call."
+            "token. Only the CSRF guard can refuse this call.\n\n"
+            "The `remember` cookie is cleared with the rest, so signing out "
+            "ends the silent sign-in rather than leaving it armed for whoever "
+            "opens the browser next."
         ),
     ),
     # -- access requests ---------------------------------------------------
@@ -966,6 +1000,45 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             "or if the RPC returns a non-object result; **422** if the RPC rejects an "
             "argument; **503** if the registration path has not been provisioned, "
             "or failed in a way this API cannot attribute to the caller."
+        ),
+    ),
+    # -- geo (the location picker's proxy) ---------------------------------
+    ("get", "/api/v1/geo/search"): op(
+        errors=["401", "422", "500", "503"],
+        no_story=NO_STORY["geocoding"],
+        description=(
+            "Find up to five places matching typed address text, best match "
+            "first.\n\n"
+            "**This is a button, not a keystroke handler.** The upstream is "
+            "OpenStreetMap's Nominatim, whose usage policy forbids autocomplete "
+            "against it, so the picker submits on Enter or on Search and never "
+            "on input. A client that debounces this into a type-ahead is not "
+            "using it faster, it is using somebody else's free service against "
+            "their stated terms.\n\n"
+            "Answers are cached for 24 hours and the upstream is called at most "
+            "once per second process-wide, so a burst of registrations in one "
+            "suburb costs one lookup. **No match is a 200 with an empty list**, "
+            "not a 404: the pick-list renders that as \"nothing found -- drop "
+            "the pin instead\", which is a state, not a failure. **503** "
+            "(`geocoding_unavailable`) is the upstream timing out, refusing or "
+            "throttling us; the map and the manual fields still work, which is "
+            "why it is not a 500."
+        ),
+    ),
+    ("get", "/api/v1/geo/reverse"): op(
+        errors=["401", "404", "422", "500", "503"],
+        no_story=NO_STORY["geocoding"],
+        description=(
+            "Name the point a pin was dropped on.\n\n"
+            "Called when the map pin is dragged, to refresh the suggested "
+            "`locationLabel`. Deliberately answers at roughly suburb precision "
+            "rather than building precision: the label is stored and shown to "
+            "hiring managers, who are never given the coordinate, and a street "
+            "address would be a different disclosure under the same field "
+            "name.\n\n"
+            "**404** (`geo_place_not_found`) is a point with no address -- open "
+            "sea, mostly. The client keeps the coordinate and leaves the label "
+            "for the person to write; nothing about the pin is invalid."
         ),
     ),
     # -- dashboard ---------------------------------------------------------
@@ -1677,8 +1750,20 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         errors=["401", "403", "422", "500"],
         no_story=NO_STORY["skill_catalogue"],
     ),
+    # `409` was missing and is now load-bearing twice over. `register_service_
+    # provider` has always refused an account that already holds a resident,
+    # manager or administrator membership (`HB409`, "use a separate account"),
+    # and as of `20260821140000` it also refuses an account that currently
+    # manages or supervises a community (`HBMKT`) -- leadership is placed by an
+    # administrator and is never matched by distance and trade, so there is no
+    # marketplace profile for such a person to register.
+    # `503` is `service_provider_registration_not_deployed`, which
+    # `service_providers_repository.register_profile` has raised since the
+    # atomic registration RPC was introduced: a `PGRST202` naming
+    # `register_service_provider` means the migration is outstanding, and
+    # retrying on the old two-write path would permit a partial profile.
     ("post", "/api/v1/service-providers"): op(
-        errors=["401", "403", "422", "500"],
+        errors=["401", "403", "409", "422", "500", "503"],
         no_story=NO_STORY["service_provider"],
     ),
     ("get", "/api/v1/service-providers/me"): op(
@@ -1862,6 +1947,70 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
     ): op(
         errors=["401", "403", "404", "500"],
         no_story=NO_STORY["complaint_transfer"],
+    ),
+    # -- the supervisor's dashboard (2026-08-22) ----------------------------
+    # The snapshot takes `work_dispatch`'s verdict rather than the department
+    # queue's stories, and the distinction is the one that entry already draws:
+    # a screen only the department can open must not claim a story about what a
+    # resident sees. Take-up is the other side of it -- it moves the status the
+    # resident tracks and writes the history entry beside it, which is US-2.6
+    # exactly, and it is credited for that and for nothing else. It is
+    # deliberately **not** credited with US-2.8: the 2026-08-21 ruling keeps
+    # complaints department-pooled, so take-up records who is looking at one and
+    # not who owns it.
+    ("get", "/api/v1/departments/{department_id}/triage-snapshot"): op(
+        errors=["401", "403", "404", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/take-up"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "Moves the complaint out of Pending the moment a human picks it "
+                "up, and puts who and when on the timeline -- the status a "
+                "resident tracks stops meaning 'nobody has looked at this yet' "
+                "only when somebody has"
+            ),
+        ],
+    ),
+    # -- the supervisor's card actions (2026-08-22, amendment 2) -------------
+    # Resolve and priority both move something the resident is tracking and both
+    # write the timeline entry beside it, so both are US-2.6 for the same reason
+    # take-up is. The note and the chat are not: an internal note is deliberately
+    # invisible to the resident, and the chat is a channel rather than a
+    # lifecycle fact -- US-2.8 asks who is responsible and when to expect action,
+    # which a thread enables and does not answer.
+    ("post", "/api/v1/complaints/{complaint_id}/resolve"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "The department's own end of the lifecycle: the status a "
+                "resident tracks reaches Resolved from the screen where the "
+                "work is actually managed, and the confirm-or-reopen aftermath "
+                "starts from there"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/priority-raise"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-2.6",
+                "Escalation is visible history rather than a private "
+                "reclassification -- the timeline says the department raised it "
+                "and to what"
+            ),
+        ],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/notes"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=NO_STORY["work_dispatch"],
+    ),
+    ("post", "/api/v1/complaints/{complaint_id}/chat"): op(
+        errors=["401", "403", "404", "409", "500"],
+        no_story=NO_STORY["work_dispatch"],
     ),
     ("get", "/api/v1/departments/{department_id}/staff-invitations"): op(
         errors=["401", "403", "404", "500"],

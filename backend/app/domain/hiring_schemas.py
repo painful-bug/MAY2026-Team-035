@@ -146,6 +146,12 @@ class HireableProvider(CamelModel):
     is_available: bool = True
     service_radius_km: float | None = None
     distance_km: float | None = None
+    #: A coarse place name the provider wrote for themselves -- "Andheri West,
+    #: Mumbai". Optional and often empty; the search still returns no
+    #: coordinates, and ``distanceKm`` is still the measured fact. This exists
+    #: because "12.4 km away" does not tell a manager *which direction*, and a
+    #: candidate card had nothing else to say about where somebody is.
+    location_label: str | None = None
     #: The subset of their trades this department's categories actually need.
     #: Separate from ``skillNames`` because the reason a candidate is on this
     #: list is not the same as everything they can do.
@@ -397,6 +403,24 @@ class StaffInvitation(CamelModel):
     #: When they first signed in. Null until they do.
     claimed_at: datetime | None = None
     created_at: datetime
+    #: Why the invitee signed in and was **not** admitted, in one sentence
+    #: written for the administrator reading the pending list.
+    #:
+    #: Set by ``claim_staff_invitations`` when one of the two exclusivity
+    #: rulings of 2026-08-21 refuses the claim -- the address belongs to a
+    #: registered marketplace provider (ruling 1), or the person already leads
+    #: another community (ruling 2). The row stays ``pending``: the situation is
+    #: not terminal (they may leave the other community tomorrow) and both
+    #: existing verbs, correct and withdraw, still apply.
+    #:
+    #: Null on every ordinary invitation, and null again once one is corrected
+    #: onto a new address or finally claimed.
+    blocked_reason: str | None = None
+    #: When ``blockedReason`` was first written. The claim runs on every
+    #: membership-less session read, so a blocked person signing in repeatedly
+    #: does not move this -- which is what the one-off notification to the
+    #: department fires on.
+    blocked_at: datetime | None = None
 
 
 class InviteStaffRequest(CamelModel):
