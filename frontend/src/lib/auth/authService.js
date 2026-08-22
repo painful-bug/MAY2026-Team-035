@@ -5,7 +5,7 @@ const ROLE_LABELS = Object.freeze({
 });
 
 export async function getApplicationSession() {
-  return api('/auth/session');
+  return api('/auth/session', {}, { timeoutMs: API_TIMEOUTS.session });
 }
 
 export async function getAuthMethods(options = {}) {

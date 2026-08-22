@@ -15,11 +15,19 @@ from typing import TypeVar, cast
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
-from supabase import Client
 
-from app.api.deps import get_current_user, get_request_client, get_request_token, require_csrf
+from app.api.deps import (
+    get_current_user,
+    get_request_client,
+    get_request_token,
+    require_csrf,
+)
 from app.config import get_settings
-from app.core.exceptions import AuthenticationError, ServiceUnavailableError, ValidationError
+from app.core.exceptions import (
+    AuthenticationError,
+    ServiceUnavailableError,
+    ValidationError,
+)
 from app.core.web_session import (
     OAUTH_COOKIE,
     RECOVERY_ACCESS_COOKIE,
@@ -37,8 +45,8 @@ from app.core.web_session import (
 from app.domain.schemas import (
     AuthMethod,
     AuthMethodsResponse,
-    EmailTokenRequest,
     EmailConfirmationResendRequest,
+    EmailTokenRequest,
     MessageResponse,
     PasswordResetCompleteRequest,
     PasswordResetRequest,
@@ -48,6 +56,7 @@ from app.domain.schemas import (
     SessionContext,
 )
 from app.services import auth_service
+from supabase import Client
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _T = TypeVar("_T")
@@ -230,8 +239,27 @@ async def password_reset_complete(request: Request, body: PasswordResetCompleteR
 
 
 @router.get("/session", response_model=SessionContext)
-async def session(principal: Principal = Depends(get_current_user), client: Client = Depends(get_request_client), access_token: str = Depends(get_request_token)) -> SessionContext:
-    return await run_in_threadpool(auth_service.get_session_context, client, principal, access_token)
+async def session(
+    principal: Principal = Depends(get_current_user),
+    client: Client = Depends(get_request_client),
+    access_token: str = Depends(get_request_token),
+) -> SessionContext:
+    profile, memberships = await asyncio.gather(
+        run_in_threadpool(
+            auth_service.get_session_profile,
+            client,
+            principal,
+            access_token,
+        ),
+        run_in_threadpool(auth_service.get_session_memberships, principal.user_id),
+    )
+    return await run_in_threadpool(
+        auth_service.get_session_context,
+        client,
+        principal,
+        access_token,
+        (profile, memberships),
+    )
 
 
 @router.post("/refresh", response_model=MessageResponse, dependencies=[Depends(require_csrf)])

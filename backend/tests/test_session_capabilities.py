@@ -80,7 +80,7 @@ class _ServiceClient:
 def session(monkeypatch: pytest.MonkeyPatch):
     """Build a session for one membership, with or without a residency.
 
-    `_active_memberships` and the profile read are replaced rather than faked
+    `get_session_memberships` and the profile read are replaced rather than faked
     through the client: both are settled behaviour with tests of their own, and
     reproducing their query shapes here would make this module fail for reasons
     that have nothing to do with what it asks.
@@ -102,11 +102,7 @@ def session(monkeypatch: pytest.MonkeyPatch):
                     },
                 }
             ]
-        client = _ServiceClient(
-            {
-                "unit_residencies": residency_rows,
-            }
-        )
+        client = _ServiceClient({})
         monkeypatch.setattr(auth_service, "get_service_client", lambda: client)
         monkeypatch.setattr(
             auth_service.profiles_repository,
@@ -115,7 +111,7 @@ def session(monkeypatch: pytest.MonkeyPatch):
         )
         monkeypatch.setattr(
             auth_service,
-            "_active_memberships",
+            "get_session_memberships",
             lambda _profile_id: [
                 {
                     "id": MEMBERSHIP_ID,
@@ -123,6 +119,9 @@ def session(monkeypatch: pytest.MonkeyPatch):
                     "role": role,
                     "department_id": None,
                     "is_default_community": True,
+                    "unit_residencies": residency_rows,
+                    "departments": None,
+                    "staff_assignments": [],
                 }
             ],
         )
@@ -155,12 +154,11 @@ def test_an_admin_who_lives_nowhere_is_only_an_admin(session) -> None:
     assert context.membership.unit_id is None
 
 
-def test_the_answer_comes_from_the_residency_table(session) -> None:
-    """Same table `require_resident_capability` asks, which is the whole point:
-    one source, so the session and the per-request guard cannot drift."""
+def test_the_embedded_residency_needs_no_supplemental_query(session) -> None:
+    """The membership projection embeds the authoritative residency relation."""
     _, client = session("admin", residency=False)
 
-    assert "unit_residencies" in client.tables
+    assert "unit_residencies" not in client.tables
     assert "units" not in client.tables
 
 
