@@ -1,0 +1,44 @@
+-- Tombstone. This file is deliberately empty of SQL, and must stay that way.
+--
+-- The version is real. `20260818141040` is present in the hosted project's
+-- `supabase_migrations.schema_migrations` ledger -- read-only probe, 2026-08-23,
+-- which returned it alongside `20260817144725`. A ledgered version cannot be
+-- withdrawn: hosted will never replay it, and `supabase migration list` matches
+-- git filenames against ledger rows by version, so a version with no file in
+-- the directory reads as a missing migration forever. The version stays. The
+-- body is what goes.
+--
+-- What used to be at this version. 9,831 lines of `supabase db diff` output,
+-- committed to `origin/main` on 2026-08-18 as though it were a migration. It
+-- was not one. `db diff` renders the statements that would transform the local
+-- shadow database into the hosted one, so that file was a photograph of how far
+-- git and hosted had drifted apart -- a report about the past, committed as an
+-- instruction about the future. Nobody decided any of it.
+--
+-- Why it could not stay. Replayed from empty -- which is exactly what CI's
+-- `database-browser` job does to this directory on every push -- it stopped at
+-- its own line 1314, on an `ALTER` of a generated column, which Postgres
+-- refuses outright. Had it got past that, it would have fabricated the
+-- pre-baseline legacy schema on a brand-new database: it restored tables this
+-- project retired, among them the one that
+-- `dashboard_repository.schema_generation()` probes to decide which schema it
+-- is talking to, so a fresh database would have reported itself as the legacy
+-- one and the dashboard would have read projections built for a different
+-- shape. It also removed two realtime triggers without putting them back, and
+-- seven row-level rules that `0001_baseline.sql` declares.
+--
+-- Why a comment-only file is the remedy. With the filename kept and the SQL
+-- gone, three things agree that did not agree before: this directory, a fresh
+-- `supabase db reset` (nothing to apply here, so nothing to fail), and the
+-- hosted ledger (its row still has a file behind it). No write to the hosted
+-- database was needed to achieve that, and none was made.
+--
+-- The full record -- the read-only probe campaign of 2026-08-23 with its
+-- verbatim results, why hosted diverges from git at all, and which of the
+-- findings are being repaired forward-only -- is
+-- `docs/plans/MIGRATION_APPLY_RUNBOOK.md` section 22.
+--
+-- Do not put SQL here. Hosted-vs-git drift is reconciled forward-only, by a
+-- targeted timestamped migration carrying a derivation-pinned test; see
+-- `backend/supabase/migrations/README.md`, "How the hosted project gets
+-- written, and how drift is reconciled".

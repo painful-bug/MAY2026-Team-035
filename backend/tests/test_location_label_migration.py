@@ -141,13 +141,17 @@ def test_nothing_later_redeclares_what_this_file_owns() -> None:
             start = re.search(
                 r"^create (or replace )?(view|function) public\." + name + r"\b",
                 text,
-                re.M,
+                # Case-insensitive because this directory is swept, not read:
+                # every migration here is lowercase, but `supabase db diff`
+                # writes uppercase, and a redeclaration this pattern cannot see
+                # is exactly the shape issue #41's snapshot had.
+                re.M | re.I,
             )
             if not start:
                 continue
             # The declaration, bounded by the next top-level `create` so a view
             # (which has no `$$`) is measured the same way a function is.
-            following = re.search(r"^create ", text[start.end() :], re.M)
+            following = re.search(r"^create ", text[start.end() :], re.M | re.I)
             declaration = text[
                 start.start() : start.end()
                 + (following.start() if following else len(text))

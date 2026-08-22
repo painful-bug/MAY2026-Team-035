@@ -7,36 +7,39 @@ Supabase dashboard and/or a `supabase` CLI linked to the project
 (`project_id = "homebandhu"`, see `backend/supabase/config.toml`), and general
 competence with Postgres and Supabase, but no context on this branch's work.
 
-> ## Where this stands, 2026-08-22
+> ## Where this stands, 2026-08-22 (evening)
 >
 > **The title above and §0.2 below are the original seven-file document, and the
-> file has grown eleven sections past it.** They are left in place because §1–§12
-> are the record of how the hosted database reached its current state, and a
-> runbook that deletes its own history is one nobody can audit. What is *true
-> today* is this:
+> file has grown fifteen sections past it.** They are left in place because
+> §1–§12 are the record of how the hosted database reached its current state,
+> and a runbook that deletes its own history is one nobody can audit. What is
+> *true today* is this:
 >
 > | | |
 > |---|---|
-> | **Applied and ledgered** | everything through `20260821140000_leadership_exclusivity.sql` — that is §1–§7 (the original seven), §10–§11, §13 and §14 |
-> | **In the owner's hands, may or may not be applied** | `20260821170000_blocked_invitee_notice.sql` — §15 |
-> | **New, not applied** | `20260821200000_departure_continuity.sql` — §16 · `20260822090000_hosted_work_order_column_drift.sql` — §17 · `20260822120000_supervisor_triage.sql` — §18 |
+> | **Applied and ledgered** | **everything, through §20 `20260822170000_supervisor_actions.sql`** — confirmed by the owner on the evening of 2026-08-22 |
+> | **Not applied, and never to be** | §21 `20260817144725_repair_staff_assignment_employment_type.sql` is applied *already* — it arrived on this branch after the fact, from `origin/main`, and its section exists so the file is not mistaken for outstanding work |
+> | **Outstanding** | nothing |
 >
-> So **§0.2's "confirm the highest version present is `0047`" is fifteen
+> This is the first time since 2026-08-12 that the answer is "nothing". The
+> queue that §15–§20 describe is closed; those sections are now history in the
+> same sense §1–§7 are, and are kept for their post-checks.
+>
+> So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
 > it should be. Read it as a description of the boundary §1–§7 started from, not
-> as a precondition for §15 onward. The precondition for those is the row for
-> `20260821140000`.
+> as a precondition for anything you would run today.
 >
-> **Order among the four outstanding files.** §15, §16 and §17 are independent of
-> each other and may be applied in any order — §16 declares no
-> `claim_staff_invitations` and §15 declares nothing §16 touches, and §17 reasons
-> about nothing later than `20260813101000`. **§18 is the one with a hard
-> constraint: it must come after §16**, because it redeclares
-> `restamp_department_supervision` — applying §16 afterwards would silently
-> restore the version without the inheritance stamp. It should also come after
-> §17 in practice, because until §17 is applied nothing can insert a
-> `work_orders` row at all. **Filename order satisfies all of it**, and is the
-> safe default when you have all four in front of you.
+> **Order, for the record.** §15, §16 and §17 were independent of each other;
+> §18 had to follow §16 (it redeclares `restamp_department_supervision`), §19 had
+> to follow §18, and §20 had to follow §19 (both recreate
+> `complaint_events_type_check`, and running them backwards drops a word back
+> out of the vocabulary). **Filename order satisfied all of it**, as it always
+> does, and filename order is what was applied.
+>
+> **What is left is not an apply — it is a merge.** §22 records the issue #41
+> reconciliation: what is on this branch, what is on `origin/main`, and the one
+> read-only query the owner still needs to run before that merge lands.
 
 **Static verification of the original six files — parsing, statement-by-statement
 idempotence, and cross-file dependency order — was done before this runbook was
@@ -2371,3 +2374,336 @@ resident anything (the apply itself now refuses without it); whether the hosted
 rewrites the list (post-check (b) is that probe); and whether the five sections
 bucket a real department's work correctly, which needs rows and is post-check (f)
 plus the five button presses.
+
+---
+
+## 21. `20260817144725_repair_staff_assignment_employment_type.sql`
+
+> ### ALREADY APPLIED AND LEDGERED on hosted (2026-08-17, applied by the services-and-security workstream) — recorded for completeness; **do NOT run**.
+>
+> There is no apply step in this section and no ledger insert to paste. The row
+> for version `20260817144725` is already in
+> `supabase_migrations.schema_migrations`. Everything below is *what happened*,
+> written down because the file only reached this branch on 2026-08-22 and a
+> reader finding a new `.sql` in the directory with no section would reasonably
+> conclude it was outstanding work.
+
+**Where it sits.** By filename it sorts between the addendum files of §10–§12
+(`20260812…`) and §13 (`20260821113000`) — that is, before every section from
+§13 onward, and after every section before it. It was applied in that position
+on the hosted timeline too. Its section number is 21 because this document
+numbers sections in the order they were written, and renumbering would break
+every cross-reference in it and in `docs/CHANGE_LOG.md`.
+
+**What breaks without it:** hiring a worker. `decide_service_application` — the
+one RPC that creates a membership and a roster row in the same transaction
+(`0035`, rewritten by `20260811162409`) — inserts `employment_type = 'staff'`.
+On the hosted database that insert answered **23514**, `new row for relation
+"staff_assignments" violates check constraint
+"staff_assignments_employment_type_check"`, and every hire failed. This is the
+constraint half of issue #33; the other half was RLS on `staff_assignments`,
+which is §11 (`20260812200000`) and was already applied.
+
+**Why:** the hosted `staff_assignments` predates `0001_baseline.sql`. Its
+hand-built `employment_type` check allowed `internal` and `vendor` — the
+vendor-vs-in-house distinction the pre-baseline schema modelled — and knew
+nothing of `staff`, which is the value `0019_departments_on_baseline.sql:216`
+made the column's default and which every hiring path in the repository has
+written since. `0001_baseline.sql:63` declares the column as a bare
+`employment_type text not null` with no check at all, so on a database built
+from the baseline the constraint does not exist until this file makes it, and
+nothing in the repository ever noticed the hosted list was short.
+
+**What the file does:** two statements, and that is the whole file.
+
+```sql
+alter table public.staff_assignments
+  drop constraint if exists staff_assignments_employment_type_check;
+
+alter table public.staff_assignments
+  add constraint staff_assignments_employment_type_check
+  check (employment_type in ('internal', 'vendor', 'staff'));
+```
+
+Widening only: both legacy values are kept, one is added, so every row the old
+constraint accepted the new one accepts. Re-running drops and recreates the same
+constraint — idempotent.
+
+**Provenance, and why it is not rewritten.** The file was written on
+`origin/main` (commit `c0956a2`, Aishik Bandyopadhyay, 2026-08-17), applied to
+hosted that day, and ledgered. It never existed on `live-app-fixes` until
+2026-08-22, when it was copied over **byte for byte** (git blob `52d2f79`,
+unchanged) so that git and the ledger describe the same thing under the same
+version. A file with a ledger row can never be corrected in place: any edit
+makes version `20260817144725` mean one thing on hosted and another in git, and
+nothing downstream can tell which it has. That is the disease §22 is about, in
+miniature.
+
+**One residual defect, recorded for the record only — do not act on it.** The
+file adds the constraint without `not valid` and without a pre-flight scan for
+rows that would violate it. Compare §19's shape
+(`20260822150000_taken_up_event_word.sql:22-40`), which proves no stored row is
+outside the new list *before* it drops anything, so a failure leaves the old
+constraint standing and names what is in the way. Had the hosted
+`staff_assignments` held an `employment_type` outside the three words, this file
+would have failed the `add constraint` with a bare 23514 naming no row. It did
+not — the apply succeeded on 2026-08-17 — so the risk is retired and the file is
+immutable. It is written down here so the next constraint repair copies §19
+rather than this.
+
+**Post-check, if you want to confirm the state you already have:**
+
+```sql
+select pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conname = 'staff_assignments_employment_type_check';
+-- expect: CHECK ((employment_type = ANY (ARRAY['internal'::text,
+--         'vendor'::text, 'staff'::text])))
+```
+
+Functionally: hire a service professional into a department from the hiring tab.
+Before this file that press answered a 23514-shaped failure; it has worked since.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_employment_type_repair_migration.py` (6 tests) — the file
+parses (`pglast`); its only DDL is the drop-and-add pair, both naming this one
+constraint on this one table; the allowed list is *derived* from the file's own
+text and is exactly `{internal, vendor, staff}`; **every `employment_type`
+literal any migration in the directory writes is a member of that list**, the six
+inserts found by lining each `insert into public.staff_assignments` column list
+up with its `values` list positionally, because the column is never named beside
+its value; `0001_baseline.sql` still declares the column with no check of its
+own; and the file sorts after both *apply-time* writes of the column (the
+baseline's declaration and `0019`'s default). Two files that write `staff` —
+`20260821140000` and `20260821170000` — sort *after* this one, which is correct
+and is asserted as such: their write is a line of plpgsql inside
+`claim_staff_invitations` that runs when a manager claims an invitation, not
+when the migration is applied. Membership in the allowed list is what protects
+them; order cannot. **Not verifiable statically:** whether the hosted table held
+a row outside the three words at apply time — the apply itself was that probe,
+and it passed.
+
+---
+
+## 22. Reconciliation record — issue #41, hosted vs `origin/main`
+
+**This is not an apply section.** Nothing in it was run against the hosted
+database except read-only queries, and nothing in it asks you to run anything.
+It was written as the answer to "which of these files is real?", because that
+answer had stopped being obvious. Since 2026-08-23 it is also the answer to
+"what is the hosted schema, then?" — because the first answer turned out to be
+wrong, in the one way this section had pre-registered a stop rule for.
+
+### What is on this branch and on hosted
+
+All six cloud-side migrations named in issue #41, plus
+`20260822120000_supervisor_triage.sql` (§18) and
+`20260822170000_supervisor_actions.sql` (§20), are **committed and pushed on
+`origin/live-app-fixes`** — they arrived with commit `65f852c`. Every one of them
+has a numbered section above, a `docs/CHANGE_LOG.md` entry, and a ledger row.
+`origin/main`'s `20260817144725` is ledgered on hosted and is now mirrored into
+this branch byte for byte (§21). As of the evening of 2026-08-22 the hosted
+database and this branch agree, and **no migration is outstanding** — that
+remains true, and it is a statement about migration *files*. It is not a
+statement about the hosted schema, which the probe campaign below shows diverges
+from this directory in ways no migration will ever close.
+
+### Correction — the probe was run, and it came back the other way
+
+**The 2026-08-22 draft of this section was wrong on a point of fact.** It said
+the snapshot had "no runbook section, no CHANGE_LOG entry, **and no ledger
+row**", and reasoned from the third of those that the file had never been
+applied. The query printed below that claim existed to settle it from the ledger
+rather than from this document. The owner ran it on 2026-08-23 and it returned
+**two rows, not one**:
+
+```
+20260817144725|repair_staff_assignment_employment_type
+20260818141040|remote_schema
+```
+
+The pre-registered stop rule — *if `20260818141040` comes back present, stop and
+do not merge; the question changes from "delete the file" to "what is the hosted
+schema now"* — fired exactly as written, and the rest of this section is that
+investigation.
+
+The withdrawn claim is worth naming precisely, because the same mistake is easy
+to make again: **"no paper trail" was treated as evidence of "never applied".**
+It is not. It is evidence that nobody wrote the paper. Rule 1 in
+`backend/supabase/migrations/README.md` says a file with no runbook section and
+no CHANGE_LOG entry *has not been applied* — that rule describes what the team
+undertakes to do, not what the database will confirm, and this is the case where
+the two came apart. Two of the three legs of the claim stand: there is still no
+runbook section for the snapshot and still no CHANGE_LOG entry for it. Only the
+ledger leg is withdrawn, and everything that was inferred from it is re-derived
+below.
+
+### What the investigation found
+
+**Hosted is not a database this directory built.** `0001_baseline.sql` was never
+applied to the linked project — the project predates it — and everything since
+has been laid on top of a hand-built pre-baseline schema. That is not news and
+it is not damage: `backend/supabase/migrations/README.md` says it in as many
+words, and `dashboard_repository.schema_generation()` exists precisely to detect
+it, probing for one pre-baseline table and running legacy-mode projections when
+it finds one. Hosted is a **deliberate legacy hybrid**, and the repository has
+been written that way on purpose for weeks.
+
+**Which is what the snapshot was a picture of.** `supabase db diff` emits the
+statements that would transform the local shadow database — built by replaying
+this directory from empty — **into** the hosted one. The direction matters and
+explains the whole file: every statement in it describes something hosted really
+had on 2026-08-18 that a from-scratch replay of this directory does not produce.
+The 9,831 lines were not a proposal, an accident, or a plan; they were an
+accurate report of the legacy hybrid, rendered as DDL and committed in the one
+place where DDL is read as an instruction.
+
+**So the ledger row is not the alarm it first looked like.** Nobody applied
+9,831 lines of DDL to hosted. The row says version `20260818141040` was recorded
+against the hosted project; the probes below say the hosted schema is the
+legacy-hybrid it already was, not the schema those statements would have
+produced. The correct reading is a ledger entry written for a file that
+described hosted rather than changed it.
+
+### The probe result set, verbatim
+
+Read-only queries, run by the owner against the linked project on 2026-08-22 and
+2026-08-23. Nothing here writes.
+
+- **(a) The ledger.** `supabase_migrations.schema_migrations` contains **both**
+  `20260817144725|repair_staff_assignment_employment_type` and
+  `20260818141040|remote_schema`.
+- **(b) Issue #33's constraint.**
+  `staff_assignments_employment_type_check` on hosted is
+  `CHECK (employment_type = ANY (ARRAY['internal','vendor','staff']))` — §21's
+  repair is in place and confirmed.
+- **(c) The four "damage" claims, measured.**
+  `to_regclass('public.visitor_access_requests')` → **present**;
+  `dashboard_sse_amenity_bookings` and `dashboard_sse_visitor_requests` triggers
+  → **0**; the seven `0001_baseline.sql` policies (`profiles_self`,
+  `memberships_self`, `communities_member`, `units_member`, `invites_admin`,
+  `access_requests_admin_read`, `access_requests_applicant_read`) → **0**;
+  extension `pg_net` → **0**.
+- **(d) The generated columns.** `communities.location` and
+  `service_providers.location` both have `attgenerated = 's'` on hosted —
+  generated, exactly as this directory declares them. The snapshot's
+  `SET DEFAULT` lines against them are diff-rendering noise, and the theory that
+  hosted holds them as plain columns is **refuted**.
+- **(e) The invite-claim RPC.** Only
+  `claim_resident_invite(p_invite_id uuid, p_profile_id uuid)` exists on hosted.
+  `claim_email_invitation` **does not exist**, and the backend calls that name.
+- **(f) The access-request status type.** `access_requests.status` on hosted is
+  the enum `public.request_status` = `{pending, approved, rejected, cancelled}`.
+  There is no `withdrawn`.
+- **(g) Trigger inventory.** `amenity_bookings` → `amenity_bookings_sse`;
+  `visitor_access_requests` → `dashboard_sse_visitor_access_requests`;
+  `legacy_amenity_booking_series` → `dashboard_sse_amenity_booking_series`;
+  `visitor_requests` → **no trigger**.
+- **(h) Row counts.** `visitor_access_requests` = 0, `visitor_requests` = 3,
+  `legacy_amenity_booking_series` = 0, `amenity_bookings` = 0.
+
+### The fresh-apply analysis stands; the damage framing does not
+
+**Everything the 2026-08-22 draft said about a *fresh* apply is unchanged and
+still true.** Replayed into an empty database — which is what CI's
+`database-browser` job does to this directory on every push — the snapshot dies
+at its own line 1314 on an `ALTER` of a generated column: Postgres refuses
+`set default` on a generated column and refuses `set data type` on a column a
+generated expression reads, and the snapshot emits both for `communities.location`,
+`service_providers.location` and `invoice_line_items.total_amount`. While a file
+of that shape sits in this directory, no branch can go green. And if it *had*
+got past line 1314 on a fresh database it would have done every one of the harms
+listed: recreated the pre-baseline sentinel table that
+`dashboard_repository.schema_generation()` probes for, so a brand-new database
+would report itself as the legacy schema and the dashboard would read
+projections built for another shape; dropped two `dashboard_sse_*` triggers
+without recreating them; dropped seven `0001_baseline.sql` policies it never
+replaces; dropped extension `pg_net`; and brought back most of the twenty tables
+retired by `94556e5`/`76e1b15`.
+
+**What is corrected is the framing of those same lines as damage *to hosted*.**
+Probe (c) measures each of them on the live database and finds the state the
+snapshot describes, because the snapshot describes hosted. Taken one at a time:
+
+- The **sentinel table** is present on hosted, and that is the intended
+  arrangement, not a wound: it is what makes `schema_generation()` return
+  `legacy`, which is the mode the whole dashboard read path was written for.
+- The **two "missing" SSE triggers** fire on tables the legacy branch never
+  reads. Hosted covers realtime through differently-named triggers on the tables
+  it does read — probe (g) lists them. Nothing is silent.
+- The **seven "missing" policies** have renamed hosted equivalents for six of
+  them; the seventh guards a table only the service role reaches. The names
+  differ because hosted's RLS predates the baseline that chose those names.
+- **`pg_net`** has zero references anywhere in this repository. The shadow
+  database has it because the Supabase CLI's default local stack installs it.
+  Its absence on hosted costs nothing.
+
+So the harms are real, and they are real **for a fresh apply and for CI**, which
+is reason enough that the file cannot live in this directory. On hosted they are
+not harms at all: they are a description of a standing, deliberate arrangement
+that predates every file here.
+
+### The remedy — version `20260818141040` is tombstoned
+
+Deletion was the 2026-08-22 plan and it is no longer available: the ledger row
+exists, and a version in `supabase_migrations.schema_migrations` with no file
+behind it reads as a permanently missing migration to `supabase migration list`
+and to anyone auditing the two against each other. The version has to stay.
+What goes is the body.
+
+`backend/supabase/migrations/20260818141040_remote_schema.sql` exists on this
+branch as a **comment-only file** — a tombstone. It contains no SQL at all: what
+the version was, what the original file was, why it could not stay, and a
+pointer back to this section. That single move settles all three readers at once:
+
+- **git** — the directory has a file at that version again, with an explanation
+  a reader will find before they go looking for the 9,831 lines in history;
+- **a fresh `supabase db reset`** — there is nothing to apply, so there is
+  nothing to fail, and the CI replay goes green;
+- **the hosted ledger** — its row still has a file behind it, under the same
+  version, and neither the row nor the hosted schema had to be touched to get
+  there.
+
+**No hosted write is needed and none was made.** The reconciliation merge
+resolves `origin/main`'s snapshot path to this tombstone and proceeds.
+
+`backend/tests/test_migration_directory_is_fresh_appliable.py` is the standing
+guard against the next one: six directory-wide checks, every pattern
+case-insensitive because `db diff` writes uppercase SQL and every pin in this
+repository was lowercase-only until then. The tombstone passes all six for the
+plain reason that a file with no statements in it has nothing for them to catch.
+
+### What is being repaired forward, and where
+
+Three of the probe results are not tolerated divergence — they are live defects
+that the campaign confirmed, and each is being fixed **forward-only**, in the
+shape rule 2 of `backend/supabase/migrations/README.md` prescribes: a targeted
+timestamped migration or code change that names the one thing that is wrong,
+with a derivation-pinned test. They get their own numbered sections from §23
+onward; nothing about them belongs in this one.
+
+- **The invite-claim RPC name** — probe (e). The backend calls
+  `claim_email_invitation`; hosted has only `claim_resident_invite`. Every call
+  on that path fails.
+- **`request_status` has no `withdrawn`** — probe (f). The application believes
+  the value exists.
+- **The admin dashboard's split-brain reads** — probes (g) and (h). The rows
+  live in `visitor_requests` (3) while the legacy read path looks at
+  `visitor_access_requests` (0) and `legacy_amenity_booking_series` (0).
+
+### Version collision — one thing to fix before it is committed
+
+Issue #41's other half. Two different `20260822120000_supervisor_triage.sql`
+files existed at once: the one on this branch (§18, applied and ledgered) and an
+uncommitted one in the services-and-security workstream's tree. Both were written
+the same afternoon and each took "now" as its version; `now` is not unique across
+working trees.
+
+**The uncommitted file at version `20260822120000` must be renamed to a timestamp
+later than `20260822170000` before it is committed or applied anywhere.** Not
+after it is pushed, and certainly not after it is applied: once a version is in
+the ledger, a second file wearing it is invisible to `supabase migration list`
+and will never be replayed on a fresh database. The rule that prevents the next
+one is written down in `backend/supabase/migrations/README.md` — a new migration
+timestamps later than the latest file on **any** shared branch, not just your
+own.

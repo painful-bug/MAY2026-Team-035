@@ -155,7 +155,11 @@ def test_nothing_later_redeclares_what_this_file_owns() -> None:
             if not re.search(
                 r"^create (or replace )?(view|function) public\." + name + r"\b",
                 text,
-                re.M,
+                # Case-insensitive because this directory is swept, not read:
+                # every migration here is lowercase, but `supabase db diff`
+                # writes uppercase, and a redeclaration this pattern cannot see
+                # is exactly the shape issue #41's snapshot had.
+                re.M | re.I,
             ):
                 continue
             if name != "claim_staff_invitations":

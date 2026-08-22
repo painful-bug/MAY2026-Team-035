@@ -17,7 +17,190 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-22 (latest) — nobody could raise a work order, and the supervisor gets a real dashboard
+## 2026-08-23 (latest) — the snapshot had a ledger row after all
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §22, rewritten.** `AUDIT` (issue #41,
+2026-08-23). **Correction: §22's claim that `20260818141040_remote_schema.sql`
+had "no ledger row" is withdrawn.** That section, written the day before, listed
+three absences — no runbook section, no CHANGE_LOG entry, no ledger row — and
+reasoned from the third that the snapshot had never been applied. It also
+printed the query that would settle the point from the ledger rather than from
+the document, and pre-registered a stop rule for the answer coming back the
+other way. The owner ran it on 2026-08-23 and it returned **two rows**:
+`20260817144725|repair_staff_assignment_employment_type` **and**
+`20260818141040|remote_schema`. The stop rule fired. The mistake is worth naming
+because it is easy to repeat: *no paper trail* was treated as evidence of *never
+applied*, and it is only evidence that nobody wrote the paper. The other two
+absences stand — there is still no runbook section and still no CHANGE_LOG entry
+for that file.
+
+**`DERIVED`: what the ledger row turned out to mean.** A read-only probe
+campaign (2026-08-22/23, eight queries, nothing written) settled it. Hosted is
+the **deliberate legacy hybrid** the repository has always assumed:
+`0001_baseline.sql` was never applied there — the project predates it —
+`backend/supabase/migrations/README.md` says so, and
+`dashboard_repository.schema_generation()` exists to detect it and switch to
+legacy-mode projections. `supabase db diff` renders the statements that would
+transform the *local shadow* into *hosted*, so the 9,831 lines were an accurate
+**photograph of that hybrid**, committed in the one place where DDL reads as an
+instruction. Nobody applied them: the probes find hosted in the state the file
+*describes*, not the state those statements would have *produced*. Point by
+point — the retired sentinel table is present, and that is what puts the
+dashboard in the legacy mode it was written for; the two "dropped" `dashboard_sse_*`
+triggers fire on tables the legacy branch never reads, and hosted covers
+realtime through differently-named triggers on the tables it does; six of the
+seven "dropped" `0001` policies have renamed hosted equivalents and the seventh
+guards a service-role-only table; `pg_net` has zero references repository-wide
+and is a Supabase-CLI local-stack default. One theory was **refuted** outright:
+`communities.location` and `service_providers.location` are `attgenerated = 's'`
+on hosted, generated exactly as this directory declares them, so the snapshot's
+`SET DEFAULT` lines against them are diff-rendering noise. **The fresh-apply
+analysis is unchanged and still stands** — the file dies at its own line 1314 on
+a generated-column `ALTER`, and everything above that line would fabricate the
+legacy schema on a database that has no business being in it. The harms are real
+**for a fresh apply and for CI**; on hosted the same lines describe standing
+reality, not new damage. §22 now records the probe set verbatim, the corrected
+framing, and the remedy.
+
+**`backend/supabase/migrations/20260818141040_remote_schema.sql` — new here, and
+deliberately empty of SQL.** `DERIVED` (2026-08-23). Deletion was the 2026-08-22
+plan and the ledger row takes it off the table: a version in
+`supabase_migrations.schema_migrations` with no file behind it reads as a
+permanently missing migration to `supabase migration list` and to anyone
+auditing the two against each other. So the version stays and the body goes —
+the file on this branch is a **comment-only tombstone** recording what the
+version is, what used to be at it, why it could not stay, and a pointer to §22.
+That settles all three readers at once: git has a file at that version with its
+explanation attached; a fresh `supabase db reset` has nothing to apply and so
+nothing to fail; the hosted ledger row has a file behind it again. **No hosted
+write was needed and none was made.** The reconciliation merge resolves
+`origin/main`'s snapshot path to the tombstone. It passes all six checks in
+`backend/tests/test_migration_directory_is_fresh_appliable.py` for the plain
+reason that a file with no statements has nothing for them to catch — the suite
+strips whole-line `--` comments before every check, so the tombstone is
+invisible to it by construction rather than by wording. One line added to
+`backend/supabase/migrations/README.md`'s drift-reconciliation rule, so a reader
+of the directory learns what the file at that name is without leaving it. Test
+baseline unchanged: 1282 passed / 4 skipped (the tombstone adds no tests; there
+is nothing to pin).
+
+**Issue #33 is closed out.** `AUDIT` (2026-08-23). The close-out comment was
+posted on 2026-08-23, confirming both halves from the probes rather than from
+the repository: RLS on `staff_assignments` (§11, `20260812200000`) and the
+constraint repair (§21, `20260817144725`), the latter read straight off hosted as
+`CHECK (employment_type = ANY (ARRAY['internal','vendor','staff']))`. Nothing in
+`docs/` changed for it; the record is here because the confirmation came out of
+the same probe campaign.
+
+**`DERIVED`: three confirmed runtime defects queued for forward-only repair.**
+The campaign found three things that are *not* tolerated divergence, and each
+gets its own numbered runbook section from §23 onward in the next package, in
+the shape rule 2 of the migrations README prescribes — a targeted change naming
+the one thing that is wrong, with a derivation-pinned test. (1) **The
+invite-claim RPC name.** Hosted has only
+`claim_resident_invite(p_invite_id uuid, p_profile_id uuid)`; the backend calls
+`claim_email_invitation`, which does not exist there, so every call on that path
+fails. (2) **`request_status` has no `withdrawn`.** `access_requests.status` on
+hosted is the enum `public.request_status` = `{pending, approved, rejected,
+cancelled}`, and the application believes a fifth value exists. (3) **The admin
+dashboard reads the wrong half of a split brain.** The rows are in
+`visitor_requests` (3 of them); the legacy read path looks at
+`visitor_access_requests` (0) and `legacy_amenity_booking_series` (0), and
+`visitor_requests` carries no SSE trigger at all. All three are recorded in §22
+as forward pointers only — no fix is written yet.
+
+## 2026-08-22 (evening) — git and the hosted database are put back in step
+
+**`backend/supabase/migrations/20260817144725_repair_staff_assignment_employment_type.sql`
+(new here, not new) + `backend/tests/test_employment_type_repair_migration.py` +
+runbook §21.** `AUDIT` (issue #33, 2026-08-22). Worker hiring was blocked by two
+things and both turned out to be already fixed on the hosted project, which is
+the whole reason the issue stayed open: nobody could see it from git. The RLS
+half was `20260812200000`, applied and ledgered. The constraint half was this
+file — the hosted `staff_assignments` predates `0001_baseline.sql` and its
+hand-built `staff_assignments_employment_type_check` allowed `internal` and
+`vendor` only, while every hiring path in the directory has written `staff`
+since `0019` gave the column that default; the repair drops the constraint and
+re-adds it with the third word. It was written on `origin/main` (commit
+`c0956a2`, Aishik Bandyopadhyay, 2026-08-17), applied to hosted that day by the
+services-and-security workstream, and ledgered — but never existed on this
+branch. It is brought over **byte for byte** (blob `52d2f79`, unchanged), not
+rewritten, because a file that is already in `supabase_migrations.schema_migrations`
+under version `20260817144725` can never be corrected in place: editing it puts
+git and the ledger out of step under one version, which is the disease #41 is
+about. Runbook §21 records it in filename sequence and marks it **ALREADY
+APPLIED — do not run**. Pinned by a new derivation-pinned suite: the allowed list
+is read out of the file's own text, and every `employment_type` literal any
+migration writes is required to be a member of it — the six inserts are found by
+lining each `insert into public.staff_assignments` column list up with its
+`values` list positionally, because the column is never named beside its value.
+**Recorded as a residual defect, for the record only:** the file adds the
+constraint without `not valid` and without the pre-flight row scan
+`20260822150000_taken_up_event_word.sql:22-40` uses, so on a database holding an
+out-of-list row it would fail the apply rather than report what is in the way.
+The risk is retired on hosted — it succeeded there on 2026-08-17 — and the file
+is immutable now; it is written down so the next constraint repair copies §19's
+guarded shape instead of this one.
+
+**`backend/tests/test_migration_directory_is_fresh_appliable.py` +
+`backend/supabase/migrations/README.md` "Reconciling hosted drift" + runbook
+§22.** `AUDIT` (issue #41, 2026-08-22). `origin/main` carries
+`20260818141040_remote_schema.sql`, a 9,831-line `supabase db diff` snapshot
+committed as if it were a migration. It has no runbook section, no CHANGE_LOG
+entry and no ledger row — it was never applied to hosted, and it is a git→hosted
+*diff*, not a change anyone decided to make. Replayed into an empty database it
+dies at its own line 1314 on a generated-column `ALTER`, and on the way there it
+recreates the retired sentinel table `visitor_access_requests` (which makes
+every fresh database report itself to `dashboard_repository.schema_generation()`
+as the pre-baseline legacy schema), drops
+`dashboard_sse_amenity_bookings`/`dashboard_sse_visitor_requests` without
+recreating them, drops 60 policies — 7 of them ones this directory creates and
+the snapshot never puts back, including `0001`'s `profiles_self`,
+`memberships_self`, `communities_member` and `units_member` — and drops
+extension `pg_net`. CI's `database-browser` job replays this directory on
+every push, so one such file stops every branch. The remedy is the file's
+deletion in the reconciliation merge; what lands **here** is the guard-rail that
+would have caught it before the commit. **The first suite in this repository
+whose subject is the directory rather than one file** — six checks, all
+derivation-pinned: every migration parses; nothing alters a generated column or
+a column one is generated from (both sets derived from the
+`generated always as (…) stored` declarations and the identifiers inside their
+expressions); nothing creates the legacy sentinel (name read out of
+`dashboard_repository.py`, so the guard follows the code it protects); no
+trigger is dropped that the directory never recreates (the dynamic
+`dashboard_sse_%I` loops in `0007` and `0018` expanded from their own table
+arrays, and asked a second time in apply order); every unguarded
+`drop policy`/`drop constraint` of an object this directory creates puts it back
+in the same file; and none of the twenty tables retired by `94556e5`/`76e1b15`
+is recreated — `create table` only, because `0023`, `0030` and `0032`
+legitimately *rename* pre-baseline tables into the `legacy_` namespace. Checked
+against the offending file out of tree: five of the six fire on it. The sixth
+does not and cannot — the snapshot is valid SQL, it fails at execution, not at
+parse.
+
+**`DERIVED`: the three existing directory sweeps are now case-insensitive.**
+`test_work_order_notification_urls.py`, `test_location_label_migration.py` and
+`test_leadership_exclusivity_migration.py` each scan every `.sql` in the
+directory for a later redeclaration of a name they own, and each did it with a
+lowercase-only pattern. That is not a small oversight: the repository's
+migrations are hand-written and lowercase, `supabase db diff` output is
+uppercase, and a snapshot redeclaring `register_service_provider` in capitals
+was invisible to all three. Widened to `re.M | re.I`; strictly a widening — the
+same 48 tests pass before and after.
+
+**`backend/supabase/migrations/README.md`.** `PO`/`DERIVED` (2026-08-22). Three
+rules written down that had been practice: the hosted project is written **only**
+by the owner, by hand, from a numbered runbook section with a CHANGE_LOG entry
+per file; hosted-vs-git drift is reconciled **forward-only** in the shape of
+`20260820120000`/`20260822090000` — a targeted migration with a
+derivation-pinned test — and never by committing `db diff` output; and every
+timestamped migration gets a `backend/tests/test_*_migration.py`. Plus the
+version-collision rule the issue's own incident forced: a new migration
+timestamps later than the latest file on **any** shared branch (today
+`20260822170000`), because `20260822120000_supervisor_triage` was written twice
+under one version. Test baselines: backend 1270 → 1282 passed / 4 skipped.
+
+## 2026-08-22 — nobody could raise a work order, and the supervisor gets a real dashboard
 
 **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §17 + `backend/supabase/migrations/20260822090000_hosted_work_order_column_drift.sql`.**
 `AUDIT` (live testing, 2026-08-22). The supervisor's "Raise it" button answered

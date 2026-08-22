@@ -70,6 +70,14 @@ with.** This list grows at the end, never in the middle.
 | `20260812090300_complaint_department_routing.sql` | `complaints.department_id`, category-then-pick-then-triage resolution, the supervisor's change request, and the three `0031` complaint notifications that went to every manager because a complaint had no department to send them to |
 | `20260812113000_professional_membership_symmetry.sql` | the other direction of the separate-account rule (PO ruling 2026-08-12): `enforce_professional_membership_mode` now refuses a resident/manager/admin membership on a profile holding a `service_providers` row (`HBSEP` → 409). Whole trigger body from `20260811162409`, one predicate added. Also re-issues the stale `search_serviceable_communities` comment from `0034` |
 | `20260812120000_work_order_notification_urls.sql` | the seven work-order notifications that pointed at the department list, repointed at the triage screen that now exists; six whole bodies from `0037` and `0039`, seven url lines changed |
+| `20260817144725_repair_staff_assignment_employment_type.sql` | `staff_assignments_employment_type_check` recreated as `internal`\|`vendor`\|`staff`. The hosted table predates `0001_baseline.sql` and its hand-built constraint knew only the first two, so every hire through the atomic hiring RPC — which has written `staff` since `0019` gave the column that default — answered 23514 (issue #33). Written on `origin/main` (`c0956a2`, 2026-08-17), **applied and ledgered on hosted the same day**, and copied here byte for byte on 2026-08-22; see the boundary rule below for why it is not rewritten. Runbook §21 |
+
+**This table stops at `20260812120000` apart from the row above.** It was not
+kept up as the timestamped files multiplied, and the complete per-file record
+after that point is `docs/plans/MIGRATION_APPLY_RUNBOOK.md`, which has a
+numbered section for every one of them. The row above is here because that file
+arrived from another branch and its provenance needed somewhere to live that a
+reader of this directory would find.
 
 | File | Serves |
 |---|---|
@@ -151,6 +159,69 @@ PostgreSQL parser — confirms every
 file above parses, that every RPC the repositories call is created by one of
 them, and that every column they select exists on the table or view selected
 from.
+
+## How the hosted project gets written, and how drift is reconciled
+
+Written down 2026-08-22, after issue #41. All three rules were already practice;
+none of them was anywhere a person could read them, and the one file that broke
+all three got committed without anybody having to argue against a sentence.
+
+**1. Only the owner writes the hosted project, by hand, from a runbook section.**
+There is no automated deploy and no `db push` against the linked project. A new
+migration reaches hosted when it has a numbered section in
+[`docs/plans/MIGRATION_APPLY_RUNBOOK.md`](../../../docs/plans/MIGRATION_APPLY_RUNBOOK.md)
+saying what it does, what to expect, what to check afterwards, and the
+`insert into supabase_migrations.schema_migrations` line that ledgers it — and
+an entry in [`docs/CHANGE_LOG.md`](../../../docs/CHANGE_LOG.md) saying why it
+exists. A file with neither has not been applied, whatever else is true about it.
+That is not bureaucracy; it is the only paper trail there is, because the SQL
+Editor writes no ledger row by itself (runbook §12).
+
+**2. Hosted-vs-git drift is reconciled forward-only, and never by committing a
+`supabase db diff`.** The hosted database predates `0001_baseline.sql` and
+carries hand-built columns, defaults and constraints that no migration here
+declares. When one of them bites, the cure is a **targeted** timestamped
+migration that names the one thing that is wrong, verifies itself, and ships
+with a derivation-pinned `test_*_migration.py` — `20260820120000_hosted_complaint_column_drift.sql`
+and `20260822090000_hosted_work_order_column_drift.sql` are the worked examples,
+and `20260817144725` above is the smallest possible one.
+
+A `supabase db diff` snapshot is the opposite of that and must never be
+committed as a migration. It is a *difference*, not a decision: it restates
+every object it saw, so it recreates tables the project retired, drops triggers
+and policies it has no opinion about, and alters generated columns, which
+Postgres refuses outright. `20260818141040_remote_schema.sql` on `origin/main`
+is 9,831 lines of exactly that, and a fresh apply of this directory dies inside
+it. That version is ledgered on the hosted project, so it cannot simply be
+deleted; the file at that name here is a comment-only **tombstone** carrying
+the record and no SQL, which is what keeps this directory, a fresh
+`supabase db reset` and the hosted ledger in agreement (runbook §22).
+`backend/tests/test_migration_directory_is_fresh_appliable.py` now sweeps
+the whole directory for that file's shape — six checks, every pattern
+case-insensitive, because `db diff` writes uppercase SQL and every pin in this
+repository was lowercase-only until then.
+
+**3. Every timestamped migration gets a `backend/tests/test_*_migration.py`.**
+Nothing in this repository ever runs these files, so a test is the only reader
+they will have before the owner pastes them into a live database. The house
+style is *derivation-pinned*: whatever list the migration depends on — allowed
+values, protected columns, a function body it copies forward — is read out of
+the declaring file's own text and compared, never typed into the test from a
+review. A test that re-states the reviewer's belief passes for the same reason
+the migration is wrong.
+
+**Versions must sort after every shared branch, not just your own.** A new file
+timestamps later than the latest migration on **any** branch someone else might
+push — as of 2026-08-22 that is `20260822170000`. Timestamps were adopted
+precisely because they cannot collide (see the end of "Number ranges" above),
+and issue #41 is the incident that showed the argument had a hole in it: two
+different `20260822120000_supervisor_triage.sql` files existed at once, one on
+this branch and one uncommitted in another workstream, because both were written
+the same afternoon and each took "now" as its version. `now` is not unique
+across working trees. Check the directory on `origin/main` and on every live
+feature branch before you name a file, and if you are holding an uncommitted
+migration whose version has since been taken, rename it upward before it is
+committed or applied anywhere.
 
 ## The gap at 0009–0017
 
