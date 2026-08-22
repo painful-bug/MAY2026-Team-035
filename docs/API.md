@@ -687,7 +687,7 @@ One stream for every portal. It is how every write in §7–§12 reaches an open
 endpoint.
 
 > **`GET /dashboard/events` is a deprecated alias** for this endpoint — same handler, same behaviour, same
-> audience scoping. It stays because the admin frontend is already wired to it. New clients use `/events`.
+> audience scoping. It stays for compatibility with older deployed clients; current clients use `/events`.
 >
 > The stream was never dashboard-specific: its guard has always been *any active membership*, not an admin
 > role. What changed is that the rows now carry an audience (below), which is what makes one endpoint correct
@@ -3743,7 +3743,7 @@ nothing exports to an external accounting package.
 | Endpoint | Role |
 |---|---|
 | [`GET /events`](#51-live-updates--get-events) | SSE, audience-scoped; one stream serving every portal |
-| [`GET /dashboard/events`](#51-live-updates--get-events) | Deprecated alias for the above; the admin frontend is wired to this path |
+| [`GET /dashboard/events`](#51-live-updates--get-events) | Deprecated compatibility alias; current frontends use the canonical path above |
 | `GET /dashboard/snapshot` | The authoritative re-read every event asks for |
 
 **Shortfall:** the story names three consumers — resident app, admin portal, reports. The transport

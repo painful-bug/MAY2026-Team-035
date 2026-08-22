@@ -109,6 +109,19 @@ dashboard reads the wrong half of a split brain.** The rows are in
 `visitor_requests` carries no SSE trigger at all. All three are recorded in §22
 as forward pointers only — no fix is written yet.
 
+## 2026-08-23 — Complaint Engine v2 branch reconciled forward
+
+`AUDIT`: the useful database repairs from `complaint-engine-v2` were re-authored
+as `20260823120000_complaint_engine_v2_repairs.sql` instead of merging the
+branch's backdated migrations. The forward migration fixes the manual-window
+priority cast and assignment-trigger row shape, adds an internal declined-worker
+override to candidate ranking, and removes the supervisor-authorization failure
+from critical force assignment. It preserves `main`'s `/worker?job=` route,
+keeps all availability and scheduling filters, and reloads PostgREST's schema
+cache for the new overload. `DERIVED`: candidate results remain uncached because
+they are assignment decisions over mutable availability; existing React Query
+invalidation remains the client refresh mechanism.
+
 ## 2026-08-22 (evening) — git and the hosted database are put back in step
 
 **`backend/supabase/migrations/20260817144725_repair_staff_assignment_employment_type.sql`

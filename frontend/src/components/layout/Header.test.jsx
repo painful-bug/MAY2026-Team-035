@@ -2,11 +2,9 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Header from './Header';
 
-// The residency chip used to read `currentUser.flat`/`tower`, which the auth
-// session hard-codes to '—' — every member saw "Flat — • Tower —". It now
-// reads the signed-in member's own row from the snapshot's `users` projection
-// (real unit/building data) and hides entirely when there is no active
-// residency to show.
+// The residency chip reads the signed-in member's unit from GET /auth/session,
+// so it does not wait for the large dashboard snapshot. Missing residency data
+// hides the chip instead of rendering placeholder punctuation.
 
 const mocks = vi.hoisted(() => ({ state: {} }));
 
@@ -17,7 +15,6 @@ vi.mock('../notifications/NotificationBell', () => ({ default: () => null }));
 
 const baseState = () => ({
   currentUser: { id: 'p1', name: 'Asha Rao', role: 'Resident' },
-  users: [],
   notices: [],
   visitors: [],
   complaints: [],
@@ -27,10 +24,12 @@ const baseState = () => ({
 });
 
 describe('header residency chip', () => {
-  it('shows the real flat and tower from the snapshot users projection', () => {
+  it('shows the real flat and tower from the session user', () => {
     mocks.state = {
       ...baseState(),
-      users: [{ id: 'p1', flat: 'B-1204', tower: 'Emerald' }],
+      currentUser: {
+        id: 'p1', name: 'Asha Rao', role: 'Resident', flat: 'B-1204', tower: 'Emerald',
+      },
     };
     render(<Header onMenuClick={() => {}} />);
 
@@ -38,13 +37,11 @@ describe('header residency chip', () => {
   });
 
   it('hides the chip when the member has no unit residency', () => {
-    // The snapshot uses the same '—' placeholder for members without an
-    // active residency (a pure admin, typically); both that and a missing row
+    // The session maps a missing active residency to placeholders/null; those
     // must render no chip rather than an em-dash label.
     mocks.state = {
       ...baseState(),
-      currentUser: { id: 'p1', name: 'Asha Rao', role: 'Admin' },
-      users: [{ id: 'p1', flat: '—', tower: '—' }],
+      currentUser: { id: 'p1', name: 'Asha Rao', role: 'Admin', flat: '—', tower: null },
     };
     render(<Header onMenuClick={() => {}} />);
 
@@ -52,7 +49,20 @@ describe('header residency chip', () => {
     expect(screen.queryByText(/—/)).not.toBeInTheDocument();
   });
 
-  it('hides the chip while the snapshot has not loaded', () => {
+  it('shows the unit without a tower for a standalone home', () => {
+    mocks.state = {
+      ...baseState(),
+      currentUser: {
+        id: 'p1', name: 'Asha Rao', role: 'Resident', flat: 'Villa 7', tower: null,
+      },
+    };
+    render(<Header onMenuClick={() => {}} />);
+
+    expect(screen.getByText('Flat Villa 7')).toBeInTheDocument();
+    expect(screen.queryByText(/Tower/)).not.toBeInTheDocument();
+  });
+
+  it('hides the chip when the session has no residency labels', () => {
     mocks.state = baseState();
     render(<Header onMenuClick={() => {}} />);
 

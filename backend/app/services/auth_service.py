@@ -2,21 +2,45 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from time import perf_counter
 from urllib.parse import urlencode
 
 from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError
+from app.core.logging import get_logger
 from app.core.supabase_client import (
-    get_auth_client,
     get_anon_client,
+    get_auth_client,
     get_service_client,
-    get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
-from app.domain.schemas import MembershipContext, MembershipUnit, Principal, Profile, SessionContext
+from app.domain.schemas import (
+    MembershipContext,
+    MembershipUnit,
+    Principal,
+    Profile,
+    SessionContext,
+)
 from app.repositories import profiles_repository
 from supabase import Client
+
+_logger = get_logger(__name__)
+
+
+@contextmanager
+def _session_step(name: str) -> Iterator[None]:
+    """Log one privacy-safe session substep without identity or tenant data."""
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        _logger.info(
+            "auth_session_step step=%s duration_ms=%.2f",
+            name,
+            (perf_counter() - started) * 1000,
+        )
 
 
 @dataclass(frozen=True)
@@ -273,6 +297,13 @@ def _portal_for(membership: dict, role: str) -> str:
     One extra read, and only on the path that needs it.
     """
     if role == "manager" and membership.get("department_id"):
+        if "departments" in membership:
+            department = membership.get("departments")
+            if isinstance(department, list):
+                department = department[0] if department else None
+            if isinstance(department, dict) and department.get("kind") == "security":
+                return "security-manager"
+            return role
         kind = (
             get_service_client().table("departments")
             .select("kind")
@@ -285,6 +316,17 @@ def _portal_for(membership: dict, role: str) -> str:
             return "security-manager"
         return role
     if role == "security":
+        if "staff_assignments" in membership:
+            assignments = membership.get("staff_assignments") or []
+            if isinstance(assignments, dict):
+                assignments = [assignments]
+            senior = any(
+                row.get("status") == "active"
+                and row.get("rank") in {"manager", "supervisor"}
+                for row in assignments
+                if isinstance(row, dict)
+            )
+            return "security-manager" if senior else role
         senior = (
             get_service_client().table("staff_assignments")
             .select("id")
@@ -300,23 +342,52 @@ def _portal_for(membership: dict, role: str) -> str:
     return role
 
 
-def _active_memberships(profile_id: str) -> list[dict]:
+def get_session_memberships(profile_id: str) -> list[dict]:
     """The caller's default membership, or nothing.
 
     Extracted so the claim below can re-read after writing one, without the two
     reads drifting into asking slightly different questions.
     """
-    return (
-        get_service_client().table("community_memberships")
-        .select("id, community_id, role, department_id, is_default_community")
-        .eq("profile_id", profile_id)
-        .eq("status", "active")
-        .is_("ended_at", None)
-        .order("is_default_community", desc=True)
-        .limit(1)
-        .execute().data
-        or []
-    )
+    with _session_step("membership"):
+        return (
+            get_service_client().table("community_memberships")
+            .select(
+                "id,community_id,role,department_id,is_default_community,"
+                "unit_residencies!unit_residencies_membership_id_fkey("
+                "unit_id,ended_at,units(unit_code,unit_type,"
+                "buildings(name,building_type))),"
+                "departments!community_memberships_department_id_fkey(kind),"
+                "staff_assignments!staff_assignments_membership_id_fkey("
+                "id,rank,status)"
+            )
+            .eq("profile_id", profile_id)
+            .eq("status", "active")
+            .is_("ended_at", None)
+            .order("is_default_community", desc=True)
+            .limit(1)
+            .execute().data
+            or []
+        )
+
+
+def get_session_profile(
+    client: Client,
+    principal: Principal,
+    access_token: str,
+) -> Profile:
+    """Read or materialize the identity profile used by the session response."""
+    with _session_step("profile"):
+        try:
+            return profiles_repository.get_profile(client, principal.user_id)
+        except NotFoundError:
+            identity = verified_identity(access_token)
+            return profiles_repository.upsert_profile(
+                get_service_client(),
+                user_id=identity.user_id,
+                full_name=identity.full_name,
+                phone=None,
+                email=identity.email,
+            )
 
 
 def _claim_staff_invitations(
@@ -366,59 +437,57 @@ def _claim_staff_invitations(
     return bool(claimed)
 
 
-def _unit_context(unit_id: str | None) -> MembershipUnit | None:
-    """Human-readable labels for the resolved residency, or nothing.
+def _unit_from_residency(residency: dict | None) -> MembershipUnit | None:
+    """Map the unit embedded in the existing residency read.
 
-    The header chip renders these; the opaque ``unit_id`` alone left it saying
-    "Flat — • Tower —". Display data only, so a failed or empty lookup returns
-    None rather than failing a session that is otherwise valid.
-
-    Standalone homes have ``units.building_id = null``, so the embedded
-    ``buildings`` row is absent and both building fields stay null.
+    The residency is already authoritative for both ``unit_id`` and the admin's
+    resident capability. Embedding its unit avoids a second serial PostgREST
+    request just to render the header. Standalone homes have no building row.
     """
-    if not unit_id:
+    unit = (residency or {}).get("units")
+    if isinstance(unit, list):
+        unit = unit[0] if unit else None
+    if not isinstance(unit, dict) or not unit.get("unit_code"):
         return None
-    try:
-        rows = (
-            get_service_client().table("units")
-            .select("unit_code, unit_type, buildings(name, building_type)")
-            .eq("id", unit_id)
-            .limit(1)
-            .execute().data
-            or []
-        )
-        if not rows:
-            return None
-        row = rows[0]
-        building = row.get("buildings")
-        if isinstance(building, list):
-            building = building[0] if building else None
-        building = building or {}
-        return MembershipUnit(
-            unit_code=row["unit_code"],
-            unit_type=row.get("unit_type"),
-            building_name=building.get("name"),
-            building_type=building.get("building_type"),
-        )
-    except Exception:  # noqa: BLE001 - see the docstring: never fail the session
-        return None
+    building = unit.get("buildings")
+    if isinstance(building, list):
+        building = building[0] if building else None
+    building = building if isinstance(building, dict) else {}
+    return MembershipUnit(
+        unit_code=unit["unit_code"],
+        unit_type=unit.get("unit_type"),
+        building_name=building.get("name"),
+        building_type=building.get("building_type"),
+    )
+
+
+def _active_residency(membership: dict) -> dict | None:
+    """Return the active residency embedded in the membership projection."""
+    rows = membership.get("unit_residencies") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    return next(
+        (
+            row
+            for row in rows
+            if isinstance(row, dict) and row.get("ended_at") is None
+        ),
+        None,
+    )
 
 
 def get_session_context(
     client: Client,
     principal: Principal,
     access_token: str,
+    prefetched: tuple[Profile, list[dict]] | None = None,
 ) -> SessionContext:
     """Resolve context and materialize a harmless identity profile on first login."""
-    try:
-        profile = profiles_repository.get_profile(client, principal.user_id)
-    except NotFoundError:
-        identity = verified_identity(access_token)
-        profile = profiles_repository.upsert_profile(
-            get_service_client(), user_id=identity.user_id, full_name=identity.full_name,
-            phone=None, email=identity.email,
-        )
-    rows = _active_memberships(principal.user_id)
+    if prefetched is None:
+        profile = get_session_profile(client, principal, access_token)
+        rows = get_session_memberships(principal.user_id)
+    else:
+        profile, rows = prefetched
     # Leadership does not register (0049). An admin creating a manager has no
     # profile to attach a membership to -- that person has never signed in -- so
     # the provisioning waits on their email and is claimed here.
@@ -434,6 +503,8 @@ def get_session_context(
     # an invitation that *cannot* be applied is marked `blocked` and both sides
     # are told, and that announcement was reachable only by people with no
     # membership. Neither half is a thing to make conditional on the reader.
+    # (The 2026-08-23 merge with main's bounded session restoration kept this
+    # unconditional; main still had the `if not rows:` guard.)
     #
     # The email comes from `verified_identity`, never from anything a client
     # sent: the email IS the authorization, so a caller who could choose it
@@ -455,7 +526,7 @@ def get_session_context(
     # re-reading after it would run the membership query twice on every sign-in,
     # forever.
     if _claim_staff_invitations(profile, principal, access_token):
-        rows = _active_memberships(principal.user_id)
+        rows = get_session_memberships(principal.user_id)
     if not rows:
         # A member of nothing is usually somebody about to register a society --
         # but it is also a service person who has registered and not yet been
@@ -479,15 +550,7 @@ def get_session_context(
             )
         return SessionContext(identity=profile, onboarding_eligible=True)
     membership = rows[0]
-    residency = (
-        get_service_client().table("unit_residencies")
-        .select("unit_id")
-        .eq("membership_id", membership["id"])
-        .is_("ended_at", None)
-        .limit(1)
-        .execute().data
-        or []
-    )
+    residency_row = _active_residency(membership)
     role = str(membership["role"]).lower()
     portal = _portal_for(membership, role)
     capabilities = [role]
@@ -500,16 +563,16 @@ def get_session_context(
     # the resident affordances and then 403'd by the guard when they used one.
     # The residency read is already done, so agreeing with the guard costs
     # nothing but the predicate.
-    if role == "admin" and residency:
+    if role == "admin" and residency_row:
         capabilities.append("resident")
-    unit_id = residency[0].get("unit_id") if residency else None
+    unit_id = residency_row.get("unit_id") if residency_row else None
     return SessionContext(
         identity=profile,
         membership=MembershipContext(
             id=membership["id"], community_id=membership["community_id"], role=role,
             department_id=membership.get("department_id"),
             unit_id=unit_id,
-            unit=_unit_context(unit_id),
+            unit=_unit_from_residency(residency_row),
         ),
         portal=portal,
         capabilities=capabilities,

@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.exceptions import AuthorizationError
 from app.core.security import decode_token
+from app.core.supabase_client import get_service_client, get_user_client
 from app.core.web_session import (
     CSRF_HEADER,
     PREAUTH_CSRF_COOKIE,
@@ -23,7 +24,6 @@ from app.core.web_session import (
     cookie_name,
     csrf_token,
 )
-from app.core.supabase_client import get_service_client, get_user_client
 from app.domain.schemas import MembershipContext, MembershipSet, Principal
 from supabase import Client
 
@@ -36,11 +36,34 @@ def _extract_token(request: Request, credentials: HTTPAuthorizationCredentials |
 
     if credentials is not None and credentials.credentials:
         return credentials.credentials
-    if request.cookies.get(cookie_name("access")) or request.cookies.get("__Host-hb_access") or request.cookies.get("hb_access"):
-        return request.cookies.get(cookie_name("access")) or request.cookies.get("__Host-hb_access") or request.cookies.get("hb_access")
-    if credentials is None or not credentials.credentials:
-        raise AuthenticationError("Missing bearer token.")
-    return credentials.credentials
+    access = (
+        request.cookies.get(cookie_name("access"))
+        or request.cookies.get("__Host-hb_access")
+        or request.cookies.get("hb_access")
+    )
+    if access:
+        return access
+    # The access and CSRF cookies expire before the refresh cookie. Tell the
+    # browser this specific 401 is refreshable without exposing the HttpOnly
+    # refresh token itself. A genuinely signed-out request keeps the ordinary
+    # authentication_error code and must not trigger a pointless refresh.
+    if request.cookies.get(cookie_name("refresh")):
+        raise AuthenticationError("Session has expired.", code="token_expired")
+    raise AuthenticationError("Missing bearer token.")
+
+
+def _verified_request(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> tuple[str, Principal]:
+    """Decode one request token once across all authentication dependencies."""
+    cached = getattr(request.state, "homebandhu_auth", None)
+    if cached is not None:
+        return cached
+    token = _extract_token(request, credentials)
+    resolved = (token, decode_token(token))
+    request.state.homebandhu_auth = resolved
+    return resolved
 
 
 def get_current_user(
@@ -48,7 +71,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> Principal:
     """Resolve and verify the caller from the ``Authorization`` header."""
-    return decode_token(_extract_token(request, credentials))
+    return _verified_request(request, credentials)[1]
 
 
 def get_request_client(
@@ -60,10 +83,12 @@ def get_request_client(
     Use this for reading/writing domain data on behalf of the signed-in user so
     Postgres Row-Level Security authorizes each query against their role.
     """
-    token = _extract_token(request, credentials)
-    # Verify before trusting the token to scope a client.
-    decode_token(token)
-    return get_user_client(token)
+    token, _ = _verified_request(request, credentials)
+    cached = getattr(request.state, "homebandhu_user_client", None)
+    if cached is None:
+        cached = get_user_client(token)
+        request.state.homebandhu_user_client = cached
+    return cached
 
 
 def get_request_token(
@@ -71,9 +96,7 @@ def get_request_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
     """Return a verified caller token without exposing it to handlers' clients."""
-    token = _extract_token(request, credentials)
-    decode_token(token)
-    return token
+    return _verified_request(request, credentials)[0]
 
 
 def require_csrf(request: Request) -> None:
@@ -272,4 +295,3 @@ def require_resident_capability() -> Callable[[MembershipContext], MembershipCon
         )
 
     return _guard
-

@@ -50,16 +50,16 @@ class _Query:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
-    def select(self, *_: Any, **__: Any) -> "_Query":
+    def select(self, *_: Any, **__: Any) -> _Query:
         return self
 
-    def eq(self, *_: Any) -> "_Query":
+    def eq(self, *_: Any) -> _Query:
         return self
 
-    def is_(self, *_: Any) -> "_Query":
+    def is_(self, *_: Any) -> _Query:
         return self
 
-    def limit(self, *_: Any) -> "_Query":
+    def limit(self, *_: Any) -> _Query:
         return self
 
     def execute(self) -> Any:
@@ -80,19 +80,29 @@ class _ServiceClient:
 def session(monkeypatch: pytest.MonkeyPatch):
     """Build a session for one membership, with or without a residency.
 
-    `_active_memberships` and the profile read are replaced rather than faked
+    `get_session_memberships` and the profile read are replaced rather than faked
     through the client: both are settled behaviour with tests of their own, and
     reproducing their query shapes here would make this module fail for reasons
     that have nothing to do with what it asks.
     """
 
     def _build(role: str, *, residency: bool) -> tuple[Any, _ServiceClient]:
-        client = _ServiceClient(
-            {
-                "unit_residencies": [{"unit_id": UNIT_ID}] if residency else [],
-                "units": [{"unit_code": "4B", "unit_type": "flat", "buildings": None}],
-            }
-        )
+        residency_rows = []
+        if residency:
+            residency_rows = [
+                {
+                    "unit_id": UNIT_ID,
+                    "units": {
+                        "unit_code": "4B",
+                        "unit_type": "flat",
+                        "buildings": {
+                            "name": "Emerald",
+                            "building_type": "block",
+                        },
+                    },
+                }
+            ]
+        client = _ServiceClient({})
         monkeypatch.setattr(auth_service, "get_service_client", lambda: client)
         monkeypatch.setattr(
             auth_service.profiles_repository,
@@ -101,7 +111,7 @@ def session(monkeypatch: pytest.MonkeyPatch):
         )
         monkeypatch.setattr(
             auth_service,
-            "_active_memberships",
+            "get_session_memberships",
             lambda _profile_id: [
                 {
                     "id": MEMBERSHIP_ID,
@@ -109,6 +119,9 @@ def session(monkeypatch: pytest.MonkeyPatch):
                     "role": role,
                     "department_id": None,
                     "is_default_community": True,
+                    "unit_residencies": residency_rows,
+                    "departments": None,
+                    "staff_assignments": [],
                 }
             ],
         )
@@ -123,6 +136,8 @@ def test_an_admin_who_lives_here_is_also_a_resident(session) -> None:
 
     assert context.capabilities == ["admin", "resident"]
     assert context.membership.unit_id == UNIT_ID
+    assert context.membership.unit.unit_code == "4B"
+    assert context.membership.unit.building_name == "Emerald"
 
 
 def test_an_admin_who_lives_nowhere_is_only_an_admin(session) -> None:
@@ -139,12 +154,12 @@ def test_an_admin_who_lives_nowhere_is_only_an_admin(session) -> None:
     assert context.membership.unit_id is None
 
 
-def test_the_answer_comes_from_the_residency_table(session) -> None:
-    """Same table `require_resident_capability` asks, which is the whole point:
-    one source, so the session and the per-request guard cannot drift."""
+def test_the_embedded_residency_needs_no_supplemental_query(session) -> None:
+    """The membership projection embeds the authoritative residency relation."""
     _, client = session("admin", residency=False)
 
-    assert "unit_residencies" in client.tables
+    assert "unit_residencies" not in client.tables
+    assert "units" not in client.tables
 
 
 def test_a_resident_is_not_given_a_second_copy_of_their_own_capability(

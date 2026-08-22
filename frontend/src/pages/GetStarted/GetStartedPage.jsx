@@ -4,17 +4,19 @@ import JoinCommunityTab from '../../features/registration/components/JoinCommuni
 import {
   AUTH_ROUTES, destinationAfterAuth, homeRouteFor, SERVICE_PROVIDER_INTENT,
 } from '../../routes/authRoutes';
-import { useAuthStore } from '../../store/authStore';
+import SessionRestorationState from '../../components/auth/SessionRestorationState';
+import { SESSION_STATUS, useAuthStore } from '../../store/authStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
 
 export default function GetStartedPage() {
   const [params, setParams] = useSearchParams();
   const context = useAuthStore((state) => state.sessionContext);
   const ready = useAuthStore((state) => state.isAuthReady);
+  const sessionStatus = useAuthStore((state) => state.sessionStatus);
   const setAdminProfile = useOnboardingStore((state) => state.setAdminProfile);
   const tab = params.get('tab') === 'join' ? 'join' : 'create';
 
-  if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm font-semibold text-slate-500">Restoring your session…</div>;
+  if (!ready || sessionStatus === SESSION_STATUS.ERROR) return <SessionRestorationState />;
   if (!context?.identity) return <Navigate to={AUTH_ROUTES.REGISTER} replace />;
   if (context.membership || !context.onboarding_eligible) return <Navigate to={homeRouteFor(context)} replace />;
 

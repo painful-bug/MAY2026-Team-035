@@ -42,17 +42,17 @@ controls. The country code defaults to `+91` and can be changed before submit.
 
 ## Dashboard data flow
 
-`src/components/dashboard/DashboardDataBootstrap.jsx` is mounted once in
-`App.jsx`. After the authenticated session is ready it performs this sequence:
+`src/components/dashboard/DashboardDataBootstrap.jsx` is mounted inside
+`AdminLayout.jsx`. After the admin route guard resolves it performs this sequence:
 
 1. It calls `GET /api/v1/dashboard/snapshot`.
 2. It writes the returned projection into `useAppStore` with
    `hydrateDashboard`.
-3. It opens an `EventSource` to `GET /api/v1/dashboard/events`.
+3. It opens an `EventSource` to `GET /api/v1/events`.
 4. On `dashboard.refresh`, it debounces another snapshot request and dispatches
    `homebandhu:dashboard-refresh` so feature views can reload derived data.
-5. On logout, it calls `clearDashboard`; no tenant data survives in local
-   storage.
+5. On leaving the admin layout, including logout, it closes the stream and calls
+   `clearDashboard`; no tenant data survives in local storage.
 
 `src/lib/dashboard/dashboardApi.js` isolates the snapshot and SSE protocol,
 which keeps future transport changes out of dashboard views. `src/store/appStore.js`
@@ -61,8 +61,8 @@ the snapshot hydrator supplies records.
 
 The snapshot contains normalized UI records for users, complaints, visitors,
 amenities, bookings, invoices/payments, notices, departments, and activity.
-Resident visibility is additionally constrained by the backend so a resident
-only receives their own complaints, visitor requests, and invoices.
+Other portals use their own route-specific queries and snapshots; they never
+hydrate this admin projection.
 
 ## Amenity management
 

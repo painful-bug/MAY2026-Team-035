@@ -21,6 +21,39 @@ the consolidated worklist). This file is the argument behind each open question.
 
 ---
 
+## Reconciliation note — 2026-08-23
+
+The useful fixes from `complaint-engine-v2` are now represented by the single
+forward-only migration
+`backend/supabase/migrations/20260823120000_complaint_engine_v2_repairs.sql`.
+The branch's two `2026081714…` migrations are not part of the current chain:
+their timestamps precede a migration already recorded by the hosted project,
+and one copied an older notification route over the corrected `/worker?job=`
+route on `main`.
+
+The reconciliation fixes four concrete database defects without changing the
+HTTP API:
+
+1. `sync_dispatch_tasks` casts its manual-window queue priority to the
+   `smallint` accepted by `enqueue_dispatch_task`.
+2. `project_complaint_from_jobs` resolves `complaint_id` according to the
+   triggering table, instead of reading a field that does not exist on
+   `work_order_assignments`.
+3. Dispatch ranking has a private, explicit `include declined` mode. Normal
+   dispatch remains strict; the supervisor's `include excluded` view can now
+   actually show a declined worker and label that worker excluded.
+4. Critical force assignment calls the internal ranking directly, so a worker
+   decline transaction no longer fails the supervisor-only candidate check.
+   Availability, departure, overlap, and skill checks still apply.
+
+There is intentionally no server-side candidate cache. Eligibility changes
+with declines, unavailability, departures, and accepted assignments. The
+frontend's existing React Query mutation invalidation already refreshes the
+`work-orders` candidate queries, and the migration reloads PostgREST's schema
+cache because it adds a function overload.
+
+---
+
 ## 0. The one fact that frames all seven
 
 **The service-operations feature never writes `complaints.status`. Not once.**
