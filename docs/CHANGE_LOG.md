@@ -17,7 +17,131 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — the snapshot had a ledger row after all
+## 2026-08-23 (latest) — the three confirmed defects are repaired forward
+
+The session below queued three live defects and said "no fix is written yet".
+This is the fix, in the shape rule 2 of `backend/supabase/migrations/README.md`
+prescribes: three targeted timestamped migrations, each with a
+derivation-pinned static test and a numbered runbook section, plus one code
+change that needed no migration at all. **Nothing was applied to hosted by this
+work and nothing could be** — every file here is a paste for the owner.
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §21, new — the v2 reconciliation is
+accepted as-is.** `PO` (complaint-engine owner, ruled 2026-08-23). All four
+behaviour changes in `20260823120000_complaint_engine_v2_repairs.sql` are
+accepted without amendment: the `smallint` cast on the manual-window queue
+priority, the assignment trigger resolving its row shape, the explicit
+declined-worker override on candidate ranking, and critical force assignment
+picking through `dispatch_candidates` rather than the supervisor-facing
+`work_order_candidates`. **The ruling explicitly covers the part of the fourth
+that is not about authorization:** swapping the picker also drops the old
+`away_until is null or away_until <= now()` filter, and the drop is intended —
+`dispatch_candidates` already excludes a worker whose unavailability overlaps
+the slot being scheduled, so **only slot-overlapping unavailability blocks a
+critical force assignment**. A worker on leave today but free next Tuesday was
+being refused a next-Tuesday force-assign for no reason the schedule knows
+about. The consent-respecting offer flow is untouched; force stays an explicit
+flag. The section also carries the short version of the reconciliation itself,
+which had never been written into that document — it existed only in the
+session below and in git.
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §23, new.** `AUDIT` (2026-08-23).
+`20260823120000_complaint_engine_v2_repairs.sql` arrived from `origin/main` in
+the reconciliation merge (PR #46) and is **not applied to hosted** — the owner's
+ledger probe of 2026-08-23 finds no row for that version — so it needed an apply
+section, not a record-for-completeness one like §21. The audit behind it: the
+file replaces six bodies over five names (`sync_dispatch_tasks`,
+`project_complaint_from_jobs`, both `dispatch_candidates` overloads,
+`work_order_candidates`, `dispatch_force_assign`), and **its intersection with
+the functions §18 and §20 define is empty** — checked as a set comparison over
+the `create or replace function` statements of the three files, not by reading
+them, because §19 nearly reverted §20's vocabulary the same way. The two sets
+meet only through a call: §20's `force_assign_work_order` sits on top of
+`dispatch_force_assign`, and a call is the seam that survives one side being
+replaced. Section carries the apply step, the ledger insert, a read-only
+`pg_proc` post-check for both overloads, and the ruling above.
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §24–§26, new; three migrations added
+under `backend/supabase/migrations/`.** `DERIVED` (2026-08-23, from the probe
+campaign recorded as §22 (e), (f), (g) and (h)). Each is conditional and a no-op
+on a fresh database, because each repairs something only the hosted hybrid has:
+
+* **§24, `20260823150000_hosted_invite_claim_names.sql`** — the backend calls
+  the RPC `claim_email_invitation`; hosted has only `claim_resident_invite`,
+  with the identical signature and return shape. Rather than break every fresh
+  database by renaming the call, or fork the transaction by copying `0001`'s
+  body forward, the file creates the missing **name** on hosted as a thin
+  delegating wrapper, in `0001_baseline.sql`'s exact security posture
+  (`security definer`, pinned `search_path`, revoked from
+  `public, anon, authenticated`, granted to `service_role`), and reloads
+  PostgREST's schema cache. Guarded on the delegate existing *and* the wrapper
+  not; nothing in the directory creates the delegate, so a fresh database never
+  enters the branch.
+* **§25, `20260823153000_hosted_request_status_withdrawn.sql`** — hosted holds
+  `access_requests.status` as the enum `public.request_status`, which has no
+  `withdrawn`; the baseline holds the column as text with a check that has
+  allowed `withdrawn` since `0001`. The fifth label is added rather than the
+  column retyped: widening only, one catalogue row, no table rewrite, and no
+  enum type of that name exists anywhere in this directory so the guard is
+  false on a fresh database. The `do`-block idiom and its PostgreSQL 12
+  boundary are argued in the file's header and in §25, with the
+  outside-a-transaction fallback written out.
+* **§26, `20260823160000_visitor_requests_sse.sql`** — `visitor_requests`
+  carries no trigger at all on hosted, while holding the only three real visitor
+  requests in the project. `0007`'s loop already names that table; it was
+  skipped because `0032` had not yet created it when `0007` was applied there.
+  The file re-lays **`0007`'s own trigger**, derived from its loop template
+  rather than re-designed, as a `create or replace` so it is idempotent on a
+  fresh database too.
+
+**`DERIVED`: the dashboard split brain, fixed in code, response shape frozen.**
+`backend/app/repositories/dashboard_repository.py`'s legacy arms were reading
+the *empty* half of a pair: `visitor_access_requests` (0 rows on hosted) and
+`legacy_amenity_booking_series` (0) while residents wrote `visitor_requests` (3)
+and `amenity_bookings`. `0032` and `0023` did not merely rename the old tables,
+they moved the writes, and the read path never followed. Both arms now read the
+tables residents write, and **the schema-generation branch is deleted rather
+than repointed** — there was never a second source, only a second name for an
+empty one — so `list_visitors`, `list_bookings` and `weekly_new_counts` no
+longer take `legacy` at all. `dashboard_service._visitors` and `_bookings` lose
+theirs with them. `schema_generation()` is untouched, and every arm that is
+genuinely two shapes of *one* table (complaints, amenities, invoices, payments)
+keeps its branch. The wire contract does not move by one key: pinned by two new
+tests that assert the full key set of a visitor card and a booking row.
+`purpose` is added to the visitor projection — `0032` gave the table that column
+and the resident fills it in, and the projection that omitted it made every card
+on the dashboard read "Guest". `docs/API.md` and `docs/openapi.yaml` are
+unchanged **because no endpoint changed**: same paths, same status codes, same
+response shape; only the tables behind two projections moved.
+
+**`AUDIT`: the five-gate check on the dashboard change.** Run against `docs/`
+before the change was called done, not after. **Supabase — moved**: three
+migrations and three runbook sections, above. **Frontend — did not move**, and
+that is asserted rather than assumed: the response shape is frozen and
+`npm test` was run to prove it (271 passed, the baseline). **ERD
+(`docs/erd/homebandhu.dbml`) — did not move**: no table, column or relationship
+changed. The ERD already carries both halves of the split brain, including
+`visitor_access_requests` in `TableGroup purple_visitors`, and it models the
+schema rather than which reader talks to which table; the pre-baseline tables
+remain on hosted and remain documented. **Class diagram
+(`docs/diagrams/HomeBandhu-Architecture-Classes.puml`) — did not move**:
+`DashboardRepository` is drawn with `list_domain_records()`, one abstraction over
+the whole projection set, and lists neither the per-table reads nor their
+signatures, so a dropped keyword argument is below its resolution. **Component
+design (`docs/design-of-components.md`, `docs/design/ADMIN_DASHBOARD_DESIGN.md`)
+— did not move**: neither names the split-brain sources; the admin dashboard
+design's only mention of either table is the `exclude using gist` constraint on
+`amenity_bookings`, which is unaffected.
+
+**Test baseline: 1297 passed / 5 skipped → 1328 passed / 5 skipped.** Thirty of
+the thirty-one new tests are the three migrations' static batteries (11 + 10 +
+9); the thirty-first is net of `backend/tests/test_realtime.py`'s legacy-source
+pins being replaced — six tests that asserted the dashboard reads
+`visitor_access_requests` and `legacy_amenity_booking_series` are gone, and
+seven took their place, two of them the frozen-shape pins. Frontend unchanged at
+271.
+
+## 2026-08-23 — the snapshot had a ledger row after all
 
 **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §22, rewritten.** `AUDIT` (issue #41,
 2026-08-23). **Correction: §22's claim that `20260818141040_remote_schema.sql`

@@ -1319,3 +1319,53 @@ decided silently.
    priority to {level}." (timeline), "The department opened this chat about
    '{title}'." (chat seed), "Complaint resolved by the department."
    (job-cancel reason workers see).
+
+## 21. Ruled 2026-08-23 — the v2 reconciliation is accepted as-is, including the away-until drop
+
+Recorded here because the file it rules on is yours. The reconciliation itself
+was never written up in this document — it lives in `docs/CHANGE_LOG.md` under
+*Complaint Engine v2 branch reconciled forward* and, as of today, in runbook
+§23 — so the short version comes first and the ruling second.
+
+**What was reconciled.** The `complaint-engine-v2` branch carried its database
+repairs as two backdated migrations, at versions *below* one hosted had already
+applied. Those were dropped and their content re-authored forward as
+`20260823120000_complaint_engine_v2_repairs.sql`, which reached this branch in
+the 2026-08-23 merge (PR #46) and is **not yet applied to hosted**. It replaces
+six bodies over five names: `sync_dispatch_tasks`,
+`project_complaint_from_jobs`, both `dispatch_candidates` overloads,
+`work_order_candidates` and `dispatch_force_assign`. An overlap audit against
+§18's and §20's migrations found the intersection empty — nothing of the
+supervisor triage or actions work is redefined by it.
+
+**The ruling.** The complaint-engine owner reviewed all four behaviour changes
+on **2026-08-23** and **accepts them as-is**. Nothing was sent back:
+
+1. the manual-window queue priority is cast to `smallint`, which is the type
+   `enqueue_dispatch_task` has always taken;
+2. `project_complaint_from_jobs` resolves which of its two tables a row came
+   from before reading it;
+3. `dispatch_candidates` gains a three-argument overload that admits a worker
+   who declined *this* work order — the two-argument form every existing caller
+   uses stays strict;
+4. `dispatch_force_assign` picks through `dispatch_candidates` instead of
+   `work_order_candidates`, so a critical fallback running inside a *worker's*
+   decline transaction is not refused by a supervisor-facing authorization
+   check before it can select anybody.
+
+**Explicitly included in that acceptance: (4) also drops the old
+`away_until is null or away_until <= now()` filter, and that is intended.** The
+old picker removed anyone *currently* inside a leave block whatever the job's
+slot; `dispatch_candidates` already excludes a worker whose unavailability
+**overlaps the slot being scheduled**, which is the question that decides
+whether they can do the job. A worker on leave today but free next Tuesday was
+being refused a next-Tuesday critical force-assign for no reason the schedule
+knows about. **Only slot-overlapping unavailability blocks a critical force
+assignment.** The consent-respecting offer flow is untouched and remains the
+default; force stays an explicit flag, and §20's
+`force_assign_work_order` — the supervisor's hand on the lever — reaches this
+same mechanism through a call, which is why replacing one side left the other
+standing.
+
+Nothing here is a new judgement call being taken from you; it is the ruling on
+four you were asked for, in one place, dated.

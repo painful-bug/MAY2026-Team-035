@@ -601,13 +601,26 @@ def test_weekly_new_defaults_to_zeroes_never_to_absence():
 
 
 # ---------------------------------------------------------------------------
-# The legacy projections, pinned to the hosted schema
+# The projections, pinned to the tables residents actually write
 #
 # The hosted project is a legacy database with every repository migration
 # applied on top, so `0032` renamed its visitor event log to
 # `legacy_visitor_events` and `0023` renamed its booking series tables to
 # `legacy_amenity_booking_*`. Embedding or reading the old names is PGRST200 /
 # PGRST205 on every call -- the 500 that took down the whole snapshot.
+#
+# **Corrected 2026-08-23.** Renaming the legacy tables was only half the story.
+# `0032` and `0023` did not just free the names up, they moved the *writes*:
+# residents have created visitor requests in `visitor_requests` and bookings in
+# `amenity_bookings` ever since, on hosted as much as on a fresh database. The
+# legacy read arms kept asking the pre-baseline tables and got a correct answer
+# to the wrong question -- the owner's probe of 2026-08-23 counted
+# `visitor_access_requests` = 0 against `visitor_requests` = 3, and
+# `legacy_amenity_booking_series` = 0 (runbook §22, probes (g) and (h)). So
+# these two reads have no schema-generation branch any more, and the tests
+# below pin the single source instead of the pair. Every other legacy arm --
+# complaints, amenities, invoices, payments, memberships, notices, work orders
+# -- is genuinely two shapes of one table and is untouched.
 # ---------------------------------------------------------------------------
 
 
@@ -652,81 +665,152 @@ class _RecordingClient:
         return types.SimpleNamespace(data=[], count=0)
 
 
-def test_the_legacy_visitor_projection_embeds_the_renamed_event_log():
-    """`visitor_events` now names the baseline table, which has no FK to
-    `visitor_access_requests` -- embedding it is the PGRST200 this pins out."""
+def test_the_visitor_projection_reads_the_table_residents_write():
+    """One source, on every schema generation. Reading
+    `visitor_access_requests` was reading the empty half of a split brain: the
+    rows are in `visitor_requests` and have been since `0032`."""
     from app.repositories import dashboard_repository
 
     client = _RecordingClient()
-    dashboard_repository.list_visitors(client, ALPHA, legacy=True)
-
-    (query,) = client.queries
-    assert query["table"] == "visitor_access_requests"
-    assert "legacy_visitor_events(event_type,note,occurred_at)" in query["select"]
-    assert ",visitor_events(" not in query["select"]
-
-
-def test_the_baseline_visitor_projection_still_embeds_visitor_events():
-    from app.repositories import dashboard_repository
-
-    client = _RecordingClient()
-    dashboard_repository.list_visitors(client, ALPHA, legacy=False)
+    dashboard_repository.list_visitors(client, ALPHA)
 
     (query,) = client.queries
     assert query["table"] == "visitor_requests"
     assert "visitor_events(event_type,created_at)" in query["select"]
     assert "legacy_visitor_events" not in query["select"]
+    # `valid_from`/`valid_until` are this table's window columns; the legacy
+    # pair `expected_from`/`expected_until` belong to a table nothing writes.
+    assert "valid_from" in query["select"] and "valid_until" in query["select"]
+    assert "expected_from" not in query["select"]
+    # `0032` gave the table a `purpose`; the resident fills it in, and the card
+    # read "Guest" for everyone while the projection left it out.
+    assert "purpose" in query["select"]
 
 
-def test_the_legacy_booking_projection_reads_the_renamed_series_tables():
+def test_the_visitor_projection_takes_no_schema_generation_argument():
+    """The branch is gone, not defaulted. A `legacy=` keyword left in place
+    would let a caller reintroduce the pre-baseline read by passing True."""
+    import inspect
+
+    from app.repositories import dashboard_repository
+
+    assert "legacy" not in inspect.signature(
+        dashboard_repository.list_visitors
+    ).parameters
+    assert "legacy" not in inspect.signature(
+        dashboard_repository.list_bookings
+    ).parameters
+    assert "legacy" not in inspect.signature(
+        dashboard_repository.weekly_new_counts
+    ).parameters
+    # The arms that are still genuinely two shapes of one table keep theirs.
+    for still_branched in ("list_complaints", "list_amenities", "list_invoices",
+                           "list_payments"):
+        assert "legacy" in inspect.signature(
+            getattr(dashboard_repository, still_branched)
+        ).parameters, still_branched
+
+
+def test_the_booking_projection_reads_amenity_bookings_not_the_series_tables():
+    """`0023` moved the booking RPCs onto `amenity_bookings` and parked the old
+    tables under `legacy_` names. Nothing has written a series row since --
+    hosted holds none -- so the two-query series read answered 0 forever."""
     from app.repositories import dashboard_repository
 
     client = _RecordingClient()
-    dashboard_repository.list_bookings(client, ALPHA, legacy=True)
+    dashboard_repository.list_bookings(client, ALPHA)
 
-    assert [q["table"] for q in client.queries] == [
-        "legacy_amenity_booking_series", "legacy_amenity_booking_occurrences",
-    ]
+    assert [q["table"] for q in client.queries] == ["amenity_bookings"]
 
 
-def test_the_service_reads_events_from_the_key_each_schema_embeds():
+def test_the_service_reads_events_from_the_key_the_projection_embeds():
     """The repository's embed key and the service's `.get` must move together;
     this is the pair that drifted apart when `0032` took the old name."""
     from app.services.dashboard_service import _visitors
 
-    legacy_row = {
-        "id": "v1", "requested_by_membership_id": "m1",
-        "legacy_visitor_events": [{"event_type": "checked_in"}],
-    }
-    baseline_row = {
+    row = {
         "id": "v2", "requested_by_membership_id": "m1",
         "visitor_events": [{"event_type": "created"}],
     }
 
-    assert _visitors([legacy_row], {}, legacy=True)[0]["events"] == [
-        {"event_type": "checked_in"}
-    ]
-    assert _visitors([baseline_row], {}, legacy=False)[0]["events"] == [
-        {"event_type": "created"}
-    ]
+    assert _visitors([row], {})[0]["events"] == [{"event_type": "created"}]
 
 
-def test_weekly_new_counts_ask_the_tables_the_deployed_schema_has():
-    """Head-only counts, filtered to the window -- and pointed at the renamed
-    legacy tables, not the names the rename freed up."""
+def test_the_visitor_card_keeps_every_key_the_frozen_shape_promises():
+    """Collapsing the branch must not move the wire contract by one key. The
+    window comes from `valid_from`/`valid_until` now, and nothing else about
+    the card changes."""
+    from app.services.dashboard_service import _visitors
+
+    (card,) = _visitors(
+        [{
+            "id": "v1", "requested_by_membership_id": "m1",
+            "visitor_name": "Ravi", "visitor_phone_e164": "+919000000000",
+            "purpose": "Delivery", "status": "approved",
+            "valid_from": "2026-08-23T09:00:00+00:00",
+            "valid_until": "2026-08-23T11:00:00+00:00",
+            "created_at": "2026-08-22T09:00:00+00:00",
+            "visitor_events": [],
+        }],
+        {"m1": {"id": "p1", "name": "Asha", "flat": "A-101", "tower": "A"}},
+    )
+
+    assert set(card) == {
+        "id", "name", "phone", "purpose", "status", "userId", "requestedBy",
+        "flat", "tower", "date", "expectedDate", "expectedTime", "eta",
+        "validUntil", "checkedInAt", "checkedOutAt", "createdAt", "events",
+    }
+    assert card["purpose"] == "Delivery"
+    assert card["expectedDate"] == "2026-08-23"
+    assert card["validUntil"] == "2026-08-23T11:00:00+00:00"
+    assert card["requestedBy"] == "Asha"
+
+
+def test_the_booking_row_keeps_every_key_the_frozen_shape_promises():
+    """`bookingGroupId` was the series id on the legacy arm and is the row's own
+    id now, because `amenity_bookings` has no series above it.
+    `cancellationReason` stays in the payload as `None` -- the key is part of
+    the contract even where the column is not."""
+    from app.services.dashboard_service import _bookings
+
+    (row,) = _bookings(
+        [{
+            "id": "b1", "amenity_id": "a1", "booked_by_membership_id": "m1",
+            "starts_at": "2026-08-23T09:00:00+00:00",
+            "ends_at": "2026-08-23T10:00:00+00:00",
+            "status": "approved", "created_at": "2026-08-22T09:00:00+00:00",
+        }],
+        {"m1": {"id": "p1", "name": "Asha", "flat": "A-101"}},
+    )
+
+    assert set(row) == {
+        "id", "bookingGroupId", "amenityId", "residentId", "residentName",
+        "residentFlat", "date", "startTime", "endTime", "status", "state",
+        "cancellationReason", "createdAt", "updatedAt",
+    }
+    assert row["bookingGroupId"] == "b1"
+    assert row["residentName"] == "Asha"
+    assert row["cancellationReason"] is None
+
+
+def test_weekly_new_counts_ask_the_tables_residents_write():
+    """Head-only counts, filtered to the window -- and pointed at the tables the
+    rows are actually in. Counting `visitor_access_requests` and
+    `legacy_amenity_booking_series` made both chips read `+0 this week` on a
+    project where requests were arriving."""
     from app.repositories import dashboard_repository
 
     client = _RecordingClient()
     counts = dashboard_repository.weekly_new_counts(
-        client, ALPHA, legacy=True, since_iso="2026-08-05T00:00:00+00:00"
+        client, ALPHA, since_iso="2026-08-05T00:00:00+00:00"
     )
 
     assert counts == {
         "residents": 0, "complaints": 0, "visitorRequests": 0, "bookings": 0,
     }
     assert [q["table"] for q in client.queries] == [
-        "community_memberships", "complaints",
-        "visitor_access_requests", "legacy_amenity_booking_series",
+        "community_memberships", "complaints", "visitor_requests",
+        "amenity_bookings",
     ]
     for query in client.queries:
         assert query["select_kwargs"] == {"count": "exact", "head": True}
@@ -735,19 +819,6 @@ def test_weekly_new_counts_ask_the_tables_the_deployed_schema_has():
     memberships = client.queries[0]
     assert ("eq", "role", "resident") in memberships["filters"]
     assert ("eq", "status", "active") in memberships["filters"]
-
-
-def test_weekly_new_counts_on_the_baseline_schema():
-    from app.repositories import dashboard_repository
-
-    client = _RecordingClient()
-    dashboard_repository.weekly_new_counts(
-        client, ALPHA, legacy=False, since_iso="2026-08-05T00:00:00+00:00"
-    )
-
-    assert [q["table"] for q in client.queries] == [
-        "community_memberships", "complaints", "visitor_requests", "amenity_bookings",
-    ]
 
 
 def test_weekly_new_counts_on_an_executor_ask_the_same_four_tables():
@@ -761,7 +832,7 @@ def test_weekly_new_counts_on_an_executor_ask_the_same_four_tables():
     # One worker keeps the shared recorder's bookkeeping deterministic.
     with ThreadPoolExecutor(max_workers=1) as pool:
         counts = dashboard_repository.weekly_new_counts(
-            client, ALPHA, legacy=False,
+            client, ALPHA,
             since_iso="2026-08-05T00:00:00+00:00", executor=pool,
         )
 

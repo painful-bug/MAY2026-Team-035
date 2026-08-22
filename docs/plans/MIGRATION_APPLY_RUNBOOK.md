@@ -2707,3 +2707,430 @@ and will never be replayed on a fresh database. The rule that prevents the next
 one is written down in `backend/supabase/migrations/README.md` — a new migration
 timestamps later than the latest file on **any** shared branch, not just your
 own.
+
+## 23. `20260823120000_complaint_engine_v2_repairs.sql`
+
+Arrived on this branch from `origin/main` in the reconciliation merge (PR #46,
+2026-08-23) and is the only file in that merge carrying DDL. Unlike §21, this
+one **is** outstanding work: the owner's ledger probe of 2026-08-23 found no row
+for version `20260823120000`, so there is an apply step below and a ledger
+insert to paste.
+
+**What it is.** A forward-only re-authoring of the useful database repairs from
+the `complaint-engine-v2` branch. That branch carried its fixes as two backdated
+migrations, `20260817142354` and `20260817142820` — versions *below*
+`20260817144725`, which hosted has already applied and ledgered (§21). A version
+below the ledger's high-water mark is a version a fresh replay reaches before
+the files that were really applied first, and on hosted it is a file
+`supabase migration list` will never show as pending. Both were therefore
+dropped and their content re-stated here, at a version above everything.
+`backend/supabase/migrations/README.md` records the same decision in its
+after-the-boundary table.
+
+**What it touches.** Six `create or replace function` statements over five
+names, plus the ACL block on the internal dispatch functions and a
+`notify pgrst, 'reload schema'` for the new overload:
+
+| Function | Definition it replaces |
+|---|---|
+| `sync_dispatch_tasks()` | `20260813104000_timers_v2.sql` (originally `0037`, then `0045`) |
+| `project_complaint_from_jobs()` | `20260813102000_status_coupling.sql` |
+| `dispatch_candidates(uuid, integer, boolean)` | new overload — nothing before it |
+| `dispatch_candidates(uuid, integer)` | `0045_departure_scheduling.sql` (originally `0037`, then `0043`) |
+| `work_order_candidates(uuid, boolean)` | `20260813101000_offer_consent_and_force.sql` |
+| `dispatch_force_assign(uuid)` | `20260813101000_offer_consent_and_force.sql` |
+
+**Ordering, and the overlap audit.** By filename it sorts after every other file
+in the directory, which is where a file replacing this many bodies has to be.
+The question worth asking of it is not order but *overlap*: §18
+(`20260822120000_supervisor_triage.sql`) and §20
+(`20260822170000_supervisor_actions.sql`) also rewrote complaint-engine
+functions, and if this file redefined one of theirs it would silently revert a
+day's work the way §19 would have reverted §20's vocabulary. It does not. §18
+defines `take_up_complaint`, `supervisor_triage_snapshot`, `start_work_order`
+and `restamp_department_supervision`; §20 defines `supervisor_resolve_complaint`,
+`raise_complaint_priority`, `add_complaint_note_internal`,
+`force_assign_work_order`, `can_supervise_complaint`, `open_complaint_thread`,
+`post_dm_message` and `lock_complaint_threads`. **The intersection with the six
+above is empty.** The two sets meet only through calls — §20's
+`force_assign_work_order` is the supervisor's hand on the lever and calls
+`dispatch_force_assign` underneath it — and a call is exactly the seam that
+survives one side being replaced.
+
+**The four behaviour changes, and the ruling on them.** All four were put to the
+complaint-engine owner on 2026-08-23 and **accepted as-is**; the ruling is
+recorded in `docs/COMPLAINT_ENGINE_HANDOFF.md` §21 and in `docs/CHANGE_LOG.md`.
+
+1. **The manual-window queue priority is cast.** `sync_dispatch_tasks` passes
+   `case when new.priority = 'high' then 2 else 0 end` to
+   `enqueue_dispatch_task`, which takes a `smallint`; PostgreSQL resolves that
+   `case` as `integer` unless it is told otherwise, and the call did not
+   resolve. Now `::smallint`.
+2. **The assignment trigger resolves its row shape.**
+   `project_complaint_from_jobs` serves two tables, and a
+   `work_order_assignments` row has a `work_order_id` where a `work_orders` row
+   has a `complaint_id`. It now works out which row it has before reading it.
+3. **Declined-worker override becomes explicit.** `dispatch_candidates` gains a
+   three-argument overload whose third argument admits a worker who declined
+   *this* work order. The two-argument form every existing caller uses is
+   unchanged and still strict — one eligibility implementation, two doors.
+4. **Critical force assignment stops failing on authorization.**
+   `dispatch_force_assign` can run inside a *worker's* decline transaction. It
+   used to pick through `work_order_candidates`, the supervisor-facing picker,
+   which re-checks the caller's authorization — under a worker's JWT that check
+   fails before the critical fallback can select anybody. It now picks through
+   `dispatch_candidates(p_work_order_id, 100, true)` instead.
+
+**The one behaviour change inside (4) that is not about authorization, and the
+owner's ruling on it.** The old picker also carried
+`where away_until is null or away_until <= now()`
+(`20260813101000_offer_consent_and_force.sql` 109) — a filter that removed
+anyone *currently* inside a leave block, whatever the job's slot. Swapping the
+picker drops that filter, and the drop is deliberate rather than incidental:
+`dispatch_candidates` already excludes a worker whose unavailability **overlaps
+the slot being scheduled**, which is the question that actually decides whether
+somebody can do the job. A worker on leave today who is free next Tuesday was
+being refused a next-Tuesday critical force-assign for no reason the schedule
+knows about. The complaint-engine owner ruled on 2026-08-23 that this is
+correct: **only slot-overlapping unavailability blocks a critical force
+assignment.** The consent-respecting offer flow is untouched and remains the
+default; force stays an explicit flag.
+
+**Apply:** paste the whole file into the SQL editor and run it. It ends with its
+own verification block, which raises if the new
+`dispatch_candidates(uuid,integer,boolean)` overload is not there afterwards, so
+a half-success reports itself. No other output is expected.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823120000', 'complaint_engine_v2_repairs')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select p.oid::regprocedure as signature
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('dispatch_candidates', 'dispatch_force_assign',
+                     'work_order_candidates', 'sync_dispatch_tasks',
+                     'project_complaint_from_jobs')
+ order by 1;
+-- expect both dispatch_candidates overloads: (uuid,integer) and
+-- (uuid,integer,boolean).
+```
+
+**Post-check, functional:** as a supervisor, raise a complaint's priority to
+high and let every offered worker decline it. Before this file the critical
+fallback selected nobody and the work order sat in `failed`; after it, the last
+decline force-assigns a worker and the complaint timeline gains
+`job_force_assigned`.
+
+**What was checked before this section was written:** the six-check directory
+battery in `backend/tests/test_migration_directory_is_fresh_appliable.py` (the
+file parses, drops no trigger it does not recreate, creates no retired table, no
+unguarded policy or constraint drop), plus the overlap audit above, run as a set
+comparison over the `create or replace function` statements of §18, §20 and this
+file rather than by reading them. **Not verifiable statically:** that hosted's
+current bodies for the five replaced functions are the ones this directory
+declares — every one of them is a `create or replace`, so the apply overwrites
+whatever is there, which is the intent.
+
+## 24. `20260823150000_hosted_invite_claim_names.sql`
+
+**What breaks without it:** claiming a resident email invitation. Every attempt
+on the hosted project answers "This invite could not be claimed." and there is
+nothing wrong with the invitation. Confirmed by probe (e) of §22 on 2026-08-23.
+
+**Why:** `memberships_repository.claim_resident_invite`
+(`backend/app/repositories/memberships_repository.py` 61) calls the RPC named
+`claim_email_invitation`. Hosted has only
+`claim_resident_invite(p_invite_id uuid, p_profile_id uuid)`. PostgREST answers
+PGRST202 for a function it cannot find, and
+`invitation_service.redeem_pending_invitation` (~111) translates every failure on
+that path into the one generic message. The divergence is old: hosted predates
+`0001_baseline.sql`, and `0001_baseline.sql` 98 is where a fresh database gets
+`claim_email_invitation`. The two functions carry the **identical** signature and
+return shape `TABLE(membership_id uuid, community_id uuid, unit_id uuid)`, so
+this is a naming difference and nothing more.
+
+**What the file does on hosted:** creates `claim_email_invitation(uuid, uuid)`
+as a thin wrapper that returns `claim_resident_invite`'s rows unchanged. One
+implementation stays; only the entry point is added. The wrapper is
+`security definer` with `set search_path = public`, revoked from
+`public, anon, authenticated` and granted to `service_role` — `0001`'s exact
+posture, so the new door is the same door. The file ends with
+`notify pgrst, 'reload schema'`, without which PostgREST would keep answering
+PGRST202 from its cache and the fix would look like no fix.
+
+**Why it is a no-op on a fresh database:** the create is guarded on
+`claim_resident_invite` existing **and** `claim_email_invitation` not existing.
+Nothing in this directory creates `claim_resident_invite` — asserted across every
+file in `backend/tests/test_hosted_invite_claim_names_migration.py` — so on a
+fresh database the first half is false, and `0001` has already made the second
+half false too. Re-running on hosted is a no-op for the same reason: the second
+run finds the wrapper the first one made.
+
+**Ordering:** after `20260823120000` (§23), which it sorts after by name.
+Independent of it and of everything else; it touches nothing any other file
+touches.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823150000', 'hosted_invite_claim_names')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select p.oid::regprocedure as signature,
+       p.prosecdef        as security_definer,
+       p.proconfig        as settings
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('claim_email_invitation', 'claim_resident_invite')
+ order by 1;
+-- expect two rows, both (uuid,uuid), both security_definer = t, both
+-- settings = {search_path=public}.
+```
+
+**Post-check, functional:** issue a resident invitation from the admin portal,
+open its link as the invitee, sign in, and redeem. Before this file that press
+answered "This invite could not be claimed."; after it the invitee lands in the
+community with a membership and, where the invite named a unit, a residency.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hosted_invite_claim_names_migration.py` (11 tests) — the file
+parses (`pglast`); it sorts after every file that already existed; the name it
+creates is *derived* from the `.rpc(...)` call in `memberships_repository.py`
+rather than typed in, so the pin follows the code; the signature, return shape,
+`security definer`, `search_path` and both ACL statements are *derived* from
+`0001_baseline.sql`'s own declaration of the function; no later migration
+re-grants execute on it; the create is guarded on both halves of the divergence;
+nothing in the directory creates `claim_resident_invite`; the wrapper body only
+delegates (no insert, update, delete or raise of its own); the file creates
+nothing else and drops nothing; and `notify pgrst, 'reload schema'` is its last
+statement. **Not verifiable statically:** that hosted's `claim_resident_invite`
+does what `0001`'s `claim_email_invitation` does. The probe established the
+identical signature and return shape; the bodies are two databases' business and
+no test in this repository can see either.
+
+## 25. `20260823153000_hosted_request_status_withdrawn.sql`
+
+**What breaks without it:** an applicant withdrawing their own join request.
+`POST /access-requests/{id}/withdraw`
+(`backend/app/api/v1/routers/access_requests.py` 43-51) answers a 22P02-shaped
+failure on hosted: `invalid input value for enum request_status: "withdrawn"`.
+Confirmed by probe (f) of §22 on 2026-08-23.
+
+**Why:** `access_requests_repository.withdraw` (~75-87) writes
+`status = 'withdrawn'`, the service reaches it at `access_request_service` ~251,
+and the list filter already accepts the word (`routers/access_requests.py` 56).
+On hosted `access_requests.status` is not text at all — it is the enum
+`public.request_status`, whose labels are
+`{pending, approved, rejected, cancelled}`. On a fresh database
+`0001_baseline.sql` 57 declares the column as text with
+`check (status in ('pending','approved','rejected','withdrawn'))` and **no enum
+type of that name exists anywhere in this directory**. So `withdrawn` is a value
+the application has always been entitled to write, and the hosted enum is a
+pre-baseline artefact that never learned it.
+
+**What the file does on hosted:** adds the fifth label to the enum. Widening
+only — every value the type accepted before, it accepts after — and one
+catalogue row rather than a table rewrite. Retyping a live
+`access_requests.status` from the enum to text was the alternative and was not
+taken: it rewrites the table, throws away the guarantee the enum is providing,
+and leaves the column's type depending on which database it was built on.
+
+**Why it is a no-op on a fresh database:** the `alter type` runs only where a
+`public.request_status` enum exists, and nothing in this directory creates one —
+asserted across every file in
+`backend/tests/test_hosted_request_status_withdrawn_migration.py`. On hosted the
+`if not exists` makes a second run a no-op as well.
+
+**On the idiom, because it has a version boundary in it.**
+`alter type ... add value` was refused inside a transaction block — and therefore
+inside any `do` body — before PostgreSQL 12. Since 12 it is allowed there, with
+the single remaining rule that the new label may not be *used* until the
+transaction commits. Reading `pg_enum`, which this file's verification block
+does, is a catalogue read and not a use of the value; nothing in the file
+compares, casts or stores the new label. Every Supabase project runs well past
+that boundary, so the guarded `do` block is safe as a single SQL-editor paste,
+and being conditional at all is what keeps the file a no-op on a fresh database.
+**If it ever fails on the `alter type` with "cannot run inside a transaction
+block"** — a pre-12 server, which the linked project is not — the fallback is to
+run this one statement on its own, outside any transaction, and skip the file:
+
+```sql
+alter type public.request_status add value if not exists 'withdrawn';
+```
+
+**Ordering:** after `20260823150000` (§24), which it sorts after by name.
+Independent of it.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success; the verification block at the end raises if the type is
+present and the label still is not.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823153000', 'hosted_request_status_withdrawn')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select e.enumlabel, e.enumsortorder
+  from pg_enum e
+  join pg_type t on t.oid = e.enumtypid
+  join pg_namespace n on n.oid = t.typnamespace
+ where n.nspname = 'public' and t.typname = 'request_status'
+ order by e.enumsortorder;
+-- expect five labels: pending, approved, rejected, cancelled, withdrawn.
+```
+
+**Post-check, functional:** as a resident with a pending join request, press
+**Withdraw**. Before this file that press answered a 22P02-shaped failure; after
+it the request leaves the admin's pending list.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hosted_request_status_withdrawn_migration.py` (10 tests) —
+the file parses (`pglast`); it sorts after every file that already existed; the
+label it adds is *derived* from the literal `access_requests_repository.withdraw`
+actually writes, so a file that added some other word would fail here rather
+than at the next press; that label is one `0001_baseline.sql`'s own check already
+allows, which is what makes this hosted catching up rather than a fifth request
+state being invented; the baseline column is text with a check and names no enum;
+nothing in the directory creates the type; the `alter` is guarded on the type
+existing *as an enum* (`typtype = 'e'`); the file adds and never removes or
+retypes; the new label is never used as a value anywhere in the file, which is
+the PostgreSQL 12 rule stated as an assertion; and the verification block is
+itself conditional so it cannot raise on a fresh database. **Not verifiable
+statically:** hosted's actual current label list — `add value if not exists` is
+correct for any superset of the four the probe reported, and the verification
+block is the only thing that can see the real answer.
+
+## 26. `20260823160000_visitor_requests_sse.sql`
+
+**What breaks without it:** an open admin dashboard never hears that a visitor
+request has arrived. It is half of the split brain probes (g) and (h) of §22
+found on 2026-08-23; the other half is a code change and is described at the end
+of this section.
+
+**Why:** `public.visitor_requests` carries **no trigger at all** on hosted. The
+inventory probe walked the tables: `amenity_bookings` has
+`amenity_bookings_sse`, `visitor_access_requests` has
+`dashboard_sse_visitor_access_requests`, `legacy_amenity_booking_series` has
+`dashboard_sse_amenity_booking_series` — and the one table residents actually
+write has none. It holds the only three real visitor requests in the project,
+and not one of them has ever produced an `sse_events` row.
+
+`0007_dashboard_realtime_outbox.sql` is the file that lays these triggers. Its
+loop names twelve tables, `visitor_requests` among them, and builds
+`dashboard_sse_%I` on each one **that exists**. A fresh database has had the
+trigger since `0007` for that reason, and hosted has not: when `0007` was applied
+there, `visitor_requests` did not yet exist — `0032_visitor_passes.sql` created
+it twenty-five files later — the `to_regclass` guard skipped it, and nothing
+revisited the question.
+
+**What the file does on hosted:** one statement, and it is `0007`'s own statement
+for this table — the same `after insert or update or delete`, the same
+`for each row`, the same `public.emit_dashboard_sse_event()`, under the name
+`0007`'s loop would have produced. This is not a second design; it is the first
+one arriving late. The function itself is untouched: `0028_event_audience.sql` 93
+rewrote it once, to publish `dashboard.refresh` to the `{admin, manager}`
+audience rather than the whole community, and that is the definition both
+databases already carry.
+
+**Why it is idempotent on a fresh database:** `create or replace trigger` rather
+than a drop-and-create pair. On a fresh database it replaces `0007`'s trigger
+with a definition identical to it; on hosted a second run replaces its own.
+Nothing is ever dropped, so there is no window in which the table has no trigger
+— and nothing for `test_migration_directory_is_fresh_appliable.py`'s
+orphaned-trigger check to catch, because the file drops nothing at all.
+
+**Ordering:** after `20260823153000` (§25) by name, and — the ones that matter —
+after `0007` (whose trigger function it names) and after `0032` (which creates
+the table it fires on). Both are long applied on hosted and both sort earlier in
+a fresh replay.
+
+**The other half, which needs no migration.**
+`backend/app/repositories/dashboard_repository.py` was reading the *empty* side
+of the same split: its legacy arms asked `visitor_access_requests` (0 rows) and
+`legacy_amenity_booking_series` (0 rows) while residents wrote `visitor_requests`
+(3) and `amenity_bookings`. Those two arms no longer branch on schema generation
+at all — there was never a second source, only a second name for an empty one —
+and `weekly_new_counts` follows them. The HTTP response shape of
+`GET /dashboard/snapshot` is unchanged, `schema_generation()` is unchanged, and
+every other legacy arm (complaints, amenities, invoices, payments) is untouched,
+because those are genuinely two shapes of one table. **Without this migration the
+dashboard would show the rows but only after a manual reload; without the code
+change the trigger would fire about rows nothing projects.** They ship together.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success; the verification block at the end raises if the trigger is
+not on the table afterwards.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823160000', 'visitor_requests_sse')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select c.relname as table_name,
+       t.tgname  as trigger_name,
+       pg_get_triggerdef(t.oid) as definition
+  from pg_trigger t
+  join pg_class c on c.oid = t.tgrelid
+ where not t.tgisinternal
+   and c.relname in ('visitor_requests', 'amenity_bookings')
+ order by 1, 2;
+-- expect dashboard_sse_visitor_requests on visitor_requests, defined as
+-- AFTER INSERT OR DELETE OR UPDATE ... FOR EACH ROW EXECUTE FUNCTION
+-- public.emit_dashboard_sse_event().
+```
+
+**Post-check, functional:** open the admin dashboard in one browser and, in
+another, create a visitor pass as a resident. The admin's visitor list gains the
+row without a reload. Both halves are being tested at once by that press — the
+trigger for the refresh, the repository change for the row being in the list at
+all.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_visitor_requests_sse_migration.py` (9 tests) — the file
+parses (`pglast`); it sorts after every file that already existed, after `0007`,
+and after every file that creates `public.visitor_requests`; the trigger's name,
+events, row level and function are *derived from `0007`'s own loop template* and
+compared against this file's statement, so the two definitions cannot drift and
+the `delete` arm cannot be quietly dropped; `visitor_requests` is one of the
+tables `0007`'s array already names, so this is `0007` finishing its own job
+rather than a thirteenth table entering the outbox by a side door; every
+definition of `emit_dashboard_sse_event` in the directory sorts before this file;
+the file drops nothing and holds exactly one `create or replace trigger`; and the
+verification names the trigger it made rather than asking whether the table has
+any trigger at all — which would have passed against nothing useful, since the
+table had none. The repository half is pinned by
+`backend/tests/test_realtime.py`, including a cross-check that the table this
+trigger fires on is the table `list_visitors` reads. **Not verifiable
+statically:** whether hosted's `emit_dashboard_sse_event` is the one this
+directory declares. It is a `create or replace` in `0007` and again in `0028`,
+and the apply is the only thing that can settle it.
