@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useApp } from './store/useApp';
 import ToastContainer from './components/common/ToastContainer';
 import ChatDock from './components/chat/ChatDock';
-import DashboardDataBootstrap from './components/dashboard/DashboardDataBootstrap';
 import SessionRestorationState from './components/auth/SessionRestorationState';
 
 // Layouts
@@ -226,7 +225,6 @@ export default function App() {
   return (
       <BrowserRouter>
         <AuthSessionBootstrap />
-        <DashboardDataBootstrap />
         <Routes>
           {/* Public Routes */}
           <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
