@@ -17,6 +17,21 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-23 — Complaint Engine v2 branch reconciled forward
+
+`AUDIT`: the useful database repairs from `complaint-engine-v2` were re-authored
+as `20260823120000_complaint_engine_v2_repairs.sql` instead of merging the
+branch's backdated migrations. The forward migration fixes the manual-window
+priority cast and assignment-trigger row shape, adds an internal declined-worker
+override to candidate ranking, and removes the supervisor-authorization failure
+from critical force assignment. It preserves `main`'s `/worker?job=` route,
+keeps all availability and scheduling filters, and reloads PostgREST's schema
+cache for the new overload. `DERIVED`: candidate results remain uncached because
+they are assignment decisions over mutable availability; existing React Query
+invalidation remains the client refresh mechanism.
+
+---
+
 ## 2026-08-20 (merge) — live-app-fixes reconciled with main
 
 `AUDIT`: merging `origin/main` (the services-and-security merge, PR #35) into
