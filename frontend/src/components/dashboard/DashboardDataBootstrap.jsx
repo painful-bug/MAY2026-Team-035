@@ -40,6 +40,7 @@ export default function DashboardDataBootstrap() {
       active = false;
       window.clearTimeout(refreshTimer);
       unsubscribe();
+      clearDashboard();
     };
   }, [clearDashboard, currentUser, hydrateDashboard, isAuthReady]);
 

@@ -11,6 +11,7 @@ import { destinationAfterAuth, SERVICE_PROVIDER_INTENT } from '../../routes/auth
 const CONTEXT = { identity: { full_name: 'Ravi Kumar', email: 'ravi@example.test' }, onboarding_eligible: true };
 
 vi.mock('../../store/authStore', () => ({
+  SESSION_STATUS: { ERROR: 'error' },
   useAuthStore: (selector) => selector({ sessionContext: CONTEXT, isAuthReady: true }),
 }));
 

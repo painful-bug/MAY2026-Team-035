@@ -10,7 +10,10 @@ globalThis.fetch = async (url, options = {}) => {
     return Response.json({ message: 'CSRF protection ready.' });
   }
   if (url.endsWith('/auth/session') && sessionAttempts++ === 0) {
-    return Response.json({ error: { code: 'session_expired' } }, { status: 401 });
+    return Response.json({ error: { code: 'token_expired' } }, { status: 401 });
+  }
+  if (url.endsWith('/signed-out')) {
+    return Response.json({ error: { code: 'authentication_error' } }, { status: 401 });
   }
   return Response.json({ ok: true });
 };
@@ -36,3 +39,9 @@ assert.deepEqual(calls.slice(3).map(({ url }) => url), [
   '/api/v1/auth/session',
 ]);
 assert.equal(calls[5].options.headers['X-CSRF-Token'], 'preauth-token');
+
+const beforeSignedOut = calls.length;
+await assert.rejects(api('/signed-out'), ({ code }) => code === 'authentication_error');
+assert.deepEqual(calls.slice(beforeSignedOut).map(({ url }) => url), [
+  '/api/v1/signed-out',
+]);

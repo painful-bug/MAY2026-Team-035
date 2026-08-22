@@ -30,9 +30,9 @@ async function refresh() {
       // token when no access cookie exists, so bootstrap one here — otherwise
       // the refresh is 403'd before the server ever reads the refresh cookie.
       if (!csrfToken()) await prepareAnonymousCsrf().catch(() => {});
-      return fetch(`${API_BASE}/auth/refresh`, {
+      return fetchWithTimeout(`${API_BASE}/auth/refresh`, {
         method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrfToken() },
-      });
+      }, AUTH_REQUEST_TIMEOUT_MS);
     })().finally(() => { refreshPromise = undefined; });
   }
   return refreshPromise;
@@ -76,11 +76,16 @@ export async function api(path, options = {}, { retry = true, timeoutMs } = {}) 
   const response = await fetchWithTimeout(`${API_BASE}${path}`, {
     ...options, headers, credentials: 'include',
   }, timeoutMs);
-  if (response.status === 401 && retry && path !== '/auth/refresh') {
+  const payload = await response.json().catch(() => ({}));
+  if (
+    response.status === 401
+    && payload?.error?.code === 'token_expired'
+    && retry
+    && path !== '/auth/refresh'
+  ) {
     const refreshed = await refresh();
     if (refreshed.ok) return api(path, options, { retry: false, timeoutMs });
   }
-  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = payload?.error;
     throw new ApiError({
@@ -140,4 +145,5 @@ export async function prepareAnonymousCsrf() {
 export const API_TIMEOUTS = Object.freeze({
   authMethods: AUTH_REQUEST_TIMEOUT_MS,
   logout: AUTH_REQUEST_TIMEOUT_MS,
+  session: AUTH_REQUEST_TIMEOUT_MS,
 });

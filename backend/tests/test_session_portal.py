@@ -137,3 +137,22 @@ def test_manager_without_a_department_reads_nothing(service_client) -> None:
     client = service_client()
     assert auth_service._portal_for(membership("manager"), "manager") == "manager"
     assert client.tables == []
+
+
+def test_embedded_rank_and_department_kind_need_no_portal_query(service_client) -> None:
+    client = service_client()
+    security = membership(
+        "security",
+        staff_assignments=[
+            {"id": "roster-row", "rank": "supervisor", "status": "active"}
+        ],
+    )
+    manager = membership(
+        "manager",
+        department_id=DEPARTMENT_ID,
+        departments={"kind": "security"},
+    )
+
+    assert auth_service._portal_for(security, "security") == "security-manager"
+    assert auth_service._portal_for(manager, "manager") == "security-manager"
+    assert client.tables == []

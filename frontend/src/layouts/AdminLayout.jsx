@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useApp } from '../store/useApp';
 import Header from '../components/layout/Header';
 import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import DashboardDataBootstrap from '../components/dashboard/DashboardDataBootstrap';
 import { 
   LayoutDashboard, 
   UserPlus, 
@@ -54,6 +55,7 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
+      <DashboardDataBootstrap />
       {/* Sidebar overlay */}
       {sidebarOpen && (
         <div 

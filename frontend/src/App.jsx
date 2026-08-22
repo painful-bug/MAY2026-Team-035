@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useApp } from './store/useApp';
 import ToastContainer from './components/common/ToastContainer';
 import ChatDock from './components/chat/ChatDock';
-import DashboardDataBootstrap from './components/dashboard/DashboardDataBootstrap';
+import SessionRestorationState from './components/auth/SessionRestorationState';
 
 // Layouts
 import ResidentLayout from './layouts/ResidentLayout';
@@ -40,7 +40,7 @@ import JoinPage from './pages/Join/JoinPage';
 import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
 import { AUTH_ROUTES, homeRouteFor } from './routes/authRoutes';
-import { useAuthStore } from './store/authStore';
+import { SESSION_STATUS, useAuthStore } from './store/authStore';
 import { ONBOARDING_STEPS } from './data/onboarding';
 
 // Resident Pages
@@ -167,15 +167,9 @@ function ProtectedRoute({
   requiredRole,
   loginPath = AUTH_ROUTES.LOGIN,
 }) {
-  const { currentUser, isAuthReady } = useApp();
+  const { currentUser, isAuthReady, sessionStatus } = useApp();
 
-  if (!isAuthReady) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
-        Restoring your session…
-      </div>
-    );
-  }
+  if (!isAuthReady || sessionStatus === SESSION_STATUS.ERROR) return <SessionRestorationState />;
   
   if (!currentUser) {
     // If not logged in, redirect to login page
@@ -209,15 +203,10 @@ function ProtectedRoute({
 // `provider` and empty `communities` are the two empty states.
 function SignedInRoute({ children }) {
   const isAuthReady = useAuthStore((state) => state.isAuthReady);
+  const sessionStatus = useAuthStore((state) => state.sessionStatus);
   const sessionContext = useAuthStore((state) => state.sessionContext);
 
-  if (!isAuthReady) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
-        Restoring your session…
-      </div>
-    );
-  }
+  if (!isAuthReady || sessionStatus === SESSION_STATUS.ERROR) return <SessionRestorationState />;
   if (!sessionContext?.identity) return <Navigate to={AUTH_ROUTES.LOGIN} replace />;
   return children;
 }
@@ -236,7 +225,6 @@ export default function App() {
   return (
       <BrowserRouter>
         <AuthSessionBootstrap />
-        <DashboardDataBootstrap />
         <Routes>
           {/* Public Routes */}
           <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
