@@ -13,7 +13,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 // stood between /admin/departments and a ReferenceError that unmounted the
 // whole app (the tile was added with the category-picker rework, the import
 // was not).
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   BriefcaseBusiness,
@@ -81,6 +81,13 @@ const emptyDepartment = () => ({
 const getDepartmentForm = (department) => ({
   ...emptyDepartment(),
   ...department,
+  // The API's optional fields are null when unset, but this form (and the
+  // update slice, which trims them unconditionally) is string-typed throughout.
+  description: department.description ?? '',
+  head: department.head ?? '',
+  email: department.email ?? '',
+  phone: department.phone ?? '',
+  slaHours: department.slaHours ?? 24,
   categories: pairsFrom(department.categories, department.categoryIds),
   skills: pairsFrom(department.skills, department.skillIds),
   operatingHours: {
@@ -91,6 +98,11 @@ const getDepartmentForm = (department) => ({
   // leadership is whoever has already been invited, shown by the pending list
   // rather than re-entered here.
   leaders: [],
+  // The real payload carries the roster, and the spread above would put it in
+  // the form — from where `handleSubmit` spreads the form into the PATCH, whose
+  // "replace the whole roster" semantics the `staff` note there describes.
+  // Stripped here so key absence is guaranteed rather than assumed.
+  staff: undefined,
 });
 
 const getDepartmentComplaints = (department, complaints) =>
@@ -105,7 +117,6 @@ const getDepartmentComplaints = (department, complaints) =>
 
 export default function Departments() {
   const {
-    departments,
     complaints,
     createDepartment,
     updateDepartment,
@@ -113,6 +124,7 @@ export default function Departments() {
     deleteDepartment,
   } = useApp();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -122,6 +134,24 @@ export default function Departments() {
   const [form, setForm] = useState(emptyDepartment);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+
+  // **The list is `GET /departments`, not the snapshot copy in the store.** The
+  // snapshot builds every department as `{staff: [], categories: []}` with only
+  // name, description and status (dashboard_service.py:203, hardcoded and
+  // intentional — see the router docstring), so rendering the store copy meant
+  // no category chips and an edit form that blanked categories, skills, SLA,
+  // head, contacts and hours however much was saved. The slice actions below
+  // still write through the API (and keep their toasts, activity log and
+  // guards); after each one resolves the page invalidates this key, so what is
+  // rendered is always the server's answer rather than the optimistic copy.
+  const departmentsQuery = useQuery({
+    queryKey: ['departments'],
+    queryFn: departmentsApi.list,
+  });
+  const departments = useMemo(
+    () => departmentsQuery.data ?? [],
+    [departmentsQuery.data]
+  );
 
   const selectedDepartment = departments.find(
     (department) => department.id === selectedDepartmentId
@@ -219,6 +249,30 @@ export default function Departments() {
   const unassignedCategoryCount = (categories.data || []).filter(
     (category) => (category.departmentCount ?? 0) === 0
   ).length;
+
+  // **Who has already been created for the department being edited.**
+  // Re-entering one of them is not a harmless repeat: `staff_invitations_one_open_email`
+  // is a unique index, so the second create answers 409 and the modal's banner
+  // reported the whole save as failed even though the department and its skills
+  // had gone through. The edit form lists these rows so nobody re-types a
+  // person, and `handleSubmit` skips any that are typed anyway.
+  //
+  // Same key and same filter as the department page's own pending panel, so the
+  // two share one cache entry instead of fetching the same list twice — and the
+  // `['departments']` invalidation in `handleSubmit` refreshes both.
+  const pendingInvitationsQuery = useQuery({
+    queryKey: ['departments', selectedDepartmentId, 'staff-invitations'],
+    queryFn: () =>
+      departmentsApi.staffInvitations(selectedDepartmentId, { status: 'pending' }),
+    // `isLoading` rather than `isPending` is what the form is handed below: a
+    // disabled query stays `pending` for as long as it is off, so the create
+    // modal would otherwise render a spinner that never resolves.
+    enabled: Boolean(selectedDepartmentId),
+  });
+  const pendingInvitations = useMemo(
+    () => pendingInvitationsQuery.data ?? [],
+    [pendingInvitationsQuery.data]
+  );
 
   const openCreate = () => {
     setSelectedDepartmentId(null);
@@ -332,13 +386,48 @@ export default function Departments() {
       const leaders = form.leaders.filter(
         (leader) => leader.name.trim() && leader.email.trim()
       );
+      // Addresses that already have an open invitation, which the API will
+      // refuse a second one for. Lower-cased because `staff_invitations.invitee_email`
+      // is `citext` and the RPC lower-cases what it stores, so the collision the
+      // unique index sees ignores capitalisation and a case-sensitive check here
+      // would let `P_Manager@…` through to a 409.
+      //
+      // The same set absorbs each address as it is sent, which is also what
+      // collapses two rows typed with the same email in one save — the second
+      // would otherwise fail against the row the first just created.
+      const sentEmails = new Set(
+        pendingInvitations.map((invitation) =>
+          (invitation.email || '').trim().toLowerCase()
+        )
+      );
       for (const leader of leaders) {
-        await departmentsApi.inviteStaffMember(departmentId, {
-          email: leader.email.trim(),
-          name: leader.name.trim(),
-          rank: leader.rank,
-          phone: leader.phone.trim() || null,
-        });
+        const email = leader.email.trim();
+        // Already invited is not an error: the person is provisioned, which is
+        // what the operator asked for.
+        if (sentEmails.has(email.toLowerCase())) continue;
+        sentEmails.add(email.toLowerCase());
+        try {
+          await departmentsApi.inviteStaffMember(departmentId, {
+            email,
+            name: leader.name.trim(),
+            rank: leader.rank,
+            phone: leader.phone.trim() || null,
+          });
+        } catch (error) {
+          // Whatever went wrong here, the department and its skills are already
+          // saved — say so, and say which address it was, because the banner is
+          // the only thing the operator has to act on. `unique_violation` is
+          // still reachable past the skip above (uniqueness is per *community*,
+          // so the address may be pending in another department, or somebody
+          // else may have created it since this list was fetched).
+          throw new Error(
+            error?.code === 'unique_violation'
+              ? `${email} already has a pending invitation.`
+              : `The department was saved, but ${email} could not be added: ${
+                  error?.message || 'the request failed.'
+                }`
+          );
+        }
       }
 
       closeModal();
@@ -347,6 +436,10 @@ export default function Departments() {
         error?.message || 'The department was saved but something after it failed.'
       );
     } finally {
+      // Even a half-failed save changed the server (the department exists
+      // before its skills are attached), so refetch regardless of outcome. The
+      // prefix match also refreshes the detail page's roster and invitations.
+      queryClient.invalidateQueries({ queryKey: ['departments'] });
       setSaving(false);
     }
   };
@@ -363,9 +456,20 @@ export default function Departments() {
       ).length
     : 0;
 
-  const confirmDelete = () => {
+  // The slice owns the toast; this owns what the page shows afterwards.
+  const changeStatus = async (departmentId, status) => {
+    await setDepartmentStatus(departmentId, status);
+    queryClient.invalidateQueries({ queryKey: ['departments'] });
+  };
+
+  const confirmDelete = async () => {
     if (!deleteDepartmentId) return;
-    const result = deleteDepartment(deleteDepartmentId);
+    // `deleteDepartment` is async, so the unawaited `result?.ok` this used to
+    // test was a property of a Promise — always undefined, so a successful
+    // delete never closed this dialog (the same bug `handleSubmit`'s comment
+    // records for the save path).
+    const result = await deleteDepartment(deleteDepartmentId);
+    queryClient.invalidateQueries({ queryKey: ['departments'] });
     if (result?.ok) setDeleteDepartmentId(null);
   };
 
@@ -455,7 +559,15 @@ export default function Departments() {
         </div>
       </div>
 
-      {filteredDepartments.length === 0 ? (
+      {departmentsQuery.isPending ? (
+        <p className="text-sm font-semibold text-slate-500">
+          Loading the departments…
+        </p>
+      ) : departmentsQuery.error ? (
+        <p role="alert" className="text-xs font-semibold text-rose-600">
+          {departmentsQuery.error.message}
+        </p>
+      ) : filteredDepartments.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
           <Building2 className="mx-auto h-9 w-9 text-slate-300" />
           <h2 className="mt-3 text-sm font-extrabold text-slate-700">
@@ -544,7 +656,7 @@ export default function Departments() {
                   <button
                     type="button"
                     onClick={() =>
-                      setDepartmentStatus(
+                      changeStatus(
                         department.id,
                         department.status === 'Inactive' ? 'Active' : 'Inactive'
                       )
@@ -630,6 +742,8 @@ export default function Departments() {
                 form={form}
                 setForm={setForm}
                 departmentId={modalMode === 'edit' ? selectedDepartmentId : null}
+                pendingInvitations={pendingInvitations}
+                pendingInvitationsLoading={pendingInvitationsQuery.isLoading}
                 setLeaderField={setLeaderField}
                 removeLeader={removeLeader}
                 onAddLeader={(rank) =>
@@ -692,7 +806,7 @@ export default function Departments() {
                 <button
                   type="button"
                   onClick={() => {
-                    setDepartmentStatus(departmentToDelete.id, 'Inactive');
+                    changeStatus(departmentToDelete.id, 'Inactive');
                     setDeleteDepartmentId(null);
                   }}
                   className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-white hover:bg-slate-900"
@@ -772,6 +886,8 @@ function DepartmentForm({
   form,
   setForm,
   departmentId,
+  pendingInvitations = [],
+  pendingInvitationsLoading = false,
   setLeaderField,
   removeLeader,
   onAddLeader,
@@ -999,10 +1115,63 @@ function DepartmentForm({
           </p>
         </div>
 
-        {form.leaders.length === 0 && (
+        {/* **Who has already been created, above the empty rows.** The email is
+            not a delivery address, it is the key a sign-in is matched against,
+            and one open invitation per address is a unique index — so re-typing
+            somebody already listed here used to answer 409 and report the whole
+            save as failed. This list existed only on the department's own page,
+            which is not the screen anybody is looking at while they type.
+
+            Read-only on purpose. Correcting or withdrawing one is
+            `PendingInvitations` on that page, and duplicating those mutations
+            inside a form that has not been submitted yet would mean an edit that
+            lands while the surrounding form is still a draft. */}
+        {isEditing && pendingInvitationsLoading && (
+          <p className="text-[10px] font-semibold text-slate-400">
+            Checking who has already been invited…
+          </p>
+        )}
+
+        {isEditing && pendingInvitations.length > 0 && (
+          <div className="space-y-2">
+            {pendingInvitations.map((invitation) => (
+              <div
+                key={invitation.id}
+                className="flex items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-bold text-amber-900">
+                    {invitation.name || invitation.email}
+                    {invitation.rank && (
+                      <>
+                        {' · '}
+                        <span className="font-semibold">
+                          {invitation.rank === 'manager' ? 'Manager' : 'Supervisor'}
+                        </span>
+                      </>
+                    )}
+                  </p>
+                  <p className="truncate text-[10px] font-semibold text-amber-700">
+                    {invitation.email}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-amber-700">
+                  Pending
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Held back while the list above is still loading: "nobody has been
+            invited yet" is a claim, and it would be made before the answer
+            arrives. */}
+        {form.leaders.length === 0 && !pendingInvitationsLoading && (
           <p className="rounded-xl border border-dashed border-slate-300 px-3 py-4 text-center text-[10px] font-semibold text-slate-400">
             {isEditing
-              ? 'Leadership already invited is listed on the department card.'
+              ? pendingInvitations.length > 0
+                ? 'Everyone invited so far is listed above. Add a row for somebody new.'
+                : 'Nobody has been invited yet. A department can run without leadership and be given some later.'
               : 'No manager yet. A department can be created without one and given one later.'}
           </p>
         )}

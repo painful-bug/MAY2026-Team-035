@@ -26,8 +26,10 @@ vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
 
 vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
 
+// No `departments` in the store state: the page reads the real
+// `GET /departments` envelope now, and a store copy here would only let a
+// test pass against a data path the page no longer has.
 const baseState = () => ({
-  departments: [],
   complaints: [],
   createDepartment: vi.fn().mockResolvedValue({ id: 'dept-1' }),
   updateDepartment: vi.fn().mockResolvedValue({ id: 'dept-1' }),
@@ -88,13 +90,17 @@ const addCategory = async (user, name) => {
 };
 
 describe('admin departments page', () => {
-  it('renders the list view without crashing', () => {
+  it('renders the list view without crashing', async () => {
     renderAt('/admin/departments');
 
     expect(
       screen.getByRole('heading', { name: 'Departments' })
     ).toBeInTheDocument();
-    expect(screen.getByText('Create your first department')).toBeInTheDocument();
+    // The list is fetched, so first paint says "Loading the departments…" and
+    // the empty state arrives with the (empty) response.
+    expect(
+      await screen.findByText('Create your first department')
+    ).toBeInTheDocument();
   });
 
   it('opens the create form when arriving with ?create=1', async () => {
@@ -149,10 +155,19 @@ describe('manager entry (single generation)', () => {
 
   it('preserves the existing head when editing without re-entering a manager', async () => {
     const user = userEvent.setup();
-    mocks.state = { ...baseState(), departments: [existingDepartment()] };
+    // The department arrives through the real `GET /departments` envelope —
+    // the repointing away from the store copy IS the persistence fix this
+    // test exercises, so the fixture must feed the same door the page uses.
+    mocks.api.mockImplementation((path) =>
+      path.startsWith('/departments?')
+        ? Promise.resolve({ items: [existingDepartment()] })
+        : Promise.resolve([])
+    );
     renderAt('/admin/departments');
 
-    await user.click(screen.getByRole('button', { name: 'Edit Maintenance' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Edit Maintenance' })
+    );
     await screen.findByRole('heading', { name: 'Edit Department' });
     // Edit mode starts with no leader rows — leadership already invited is
     // not re-entered — and that absence must not blank the stored head.

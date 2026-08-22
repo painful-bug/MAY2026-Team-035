@@ -11,10 +11,9 @@ from app.core.supabase_client import (
     get_auth_client,
     get_anon_client,
     get_service_client,
-    get_user_client,
 )
 from app.core.web_session import pkce_challenge, random_urlsafe
-from app.domain.schemas import MembershipContext, Principal, Profile, SessionContext
+from app.domain.schemas import MembershipContext, MembershipUnit, Principal, Profile, SessionContext
 from app.repositories import profiles_repository
 from supabase import Client
 
@@ -366,6 +365,30 @@ def _claim_staff_invitations(
     return bool(claimed)
 
 
+def _unit_from_residency(residency: dict | None) -> MembershipUnit | None:
+    """Map the unit embedded in the existing residency read.
+
+    The residency is already authoritative for both ``unit_id`` and the admin's
+    resident capability. Embedding its unit avoids a second serial PostgREST
+    request just to render the header. Standalone homes have no building row.
+    """
+    unit = (residency or {}).get("units")
+    if isinstance(unit, list):
+        unit = unit[0] if unit else None
+    if not isinstance(unit, dict) or not unit.get("unit_code"):
+        return None
+    building = unit.get("buildings")
+    if isinstance(building, list):
+        building = building[0] if building else None
+    building = building if isinstance(building, dict) else {}
+    return MembershipUnit(
+        unit_code=unit["unit_code"],
+        unit_type=unit.get("unit_type"),
+        building_name=building.get("name"),
+        building_type=building.get("building_type"),
+    )
+
+
 def get_session_context(
     client: Client,
     principal: Principal,
@@ -424,7 +447,9 @@ def get_session_context(
     membership = rows[0]
     residency = (
         get_service_client().table("unit_residencies")
-        .select("unit_id")
+        .select(
+            "unit_id,units(unit_code,unit_type,buildings(name,building_type))"
+        )
         .eq("membership_id", membership["id"])
         .is_("ended_at", None)
         .limit(1)
@@ -434,14 +459,26 @@ def get_session_context(
     role = str(membership["role"]).lower()
     portal = _portal_for(membership, role)
     capabilities = [role]
-    if role == "admin":
+    # An admin is also a resident -- **when they actually live here.** One
+    # membership row per person per community, and resident-ness is the active
+    # `unit_residencies` row above, never a role implication (product ruling,
+    # 2026-08-20). Granting the capability unconditionally made the session
+    # disagree with `require_resident_capability`, which asks the same question
+    # per request and answers it from the same table: a flat-less admin was shown
+    # the resident affordances and then 403'd by the guard when they used one.
+    # The residency read is already done, so agreeing with the guard costs
+    # nothing but the predicate.
+    if role == "admin" and residency:
         capabilities.append("resident")
+    residency_row = residency[0] if residency else None
+    unit_id = residency_row.get("unit_id") if residency_row else None
     return SessionContext(
         identity=profile,
         membership=MembershipContext(
             id=membership["id"], community_id=membership["community_id"], role=role,
             department_id=membership.get("department_id"),
-            unit_id=residency[0].get("unit_id") if residency else None,
+            unit_id=unit_id,
+            unit=_unit_from_residency(residency_row),
         ),
         portal=portal,
         capabilities=capabilities,

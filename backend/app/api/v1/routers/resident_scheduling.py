@@ -2,14 +2,20 @@
 
 *"Somebody wants to come on Tuesday at ten. Does that suit you?"*
 
-**Resident-only, both of them**, matching the precedent
+**For whoever lives there, both of them**, matching the precedent
 ``resident_complaints.py`` set for reopening and confirming a resolution: not
-because an admin could not press the button, but because this is the resident's
-verdict about their own home, and an admin answering on their behalf is a record
+because staff could not press the button, but because this is the resident's
+verdict about their own home, and somebody answering on their behalf is a record
 that says something untrue. The database refuses it too --
 ``respond_to_work_order_schedule`` checks ``is_own_membership`` against whoever
-raised the complaint -- so the role guard here is the early, clear error rather
+raised the complaint -- so the guard here is the early, clear error rather
 than the boundary.
+
+The guard is ``require_resident_capability``, not ``require_membership_role(
+"resident")``: an admin with a flat is the resident of that flat, and there is
+only one membership row per person per community to say so. What is being
+checked is an active ``unit_residencies`` row, which is the fact these routes
+actually depend on; the role column never recorded it.
 
 **Neither route takes a work-order id.** A resident should not have to have read
 one to answer a question that was put to them, and an endpoint that accepted one
@@ -28,16 +34,18 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path
 
 from app.api.admin_deps import require_csrf_unsafe
-from app.api.deps import get_request_client, require_membership_role
+from app.api.deps import get_request_client, require_resident_capability
 from app.domain.work_order_schemas import ScheduleRequest, ScheduleResponseRequest
 from app.services import work_orders_service as service
 from supabase import Client
 
-_resident_only = require_membership_role("resident")
+#: Built once at import time because the factory returns a new closure per call
+#: and FastAPI caches dependencies by identity.
+_resident_capability = require_resident_capability()
 
 router = APIRouter(
     tags=["resident-scheduling"],
-    dependencies=[Depends(require_csrf_unsafe), Depends(_resident_only)],
+    dependencies=[Depends(require_csrf_unsafe), Depends(_resident_capability)],
 )
 
 

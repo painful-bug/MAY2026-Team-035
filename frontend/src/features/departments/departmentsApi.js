@@ -5,13 +5,14 @@ import { api } from '../../lib/api/client';
 // Same shape as `features/hiring/hiringApi.js`: no state, no caching, no error
 // translation. react-query is already mounted and owns all three.
 //
-// **Departments themselves are deliberately not here.** Creating, editing and
+// **Department writes are deliberately not here.** Creating, editing and
 // deleting one still goes through `store/slices/createDepartmentsSlice.js`,
-// which already calls the API and which the whole admin list screen reads from.
-// `docs/potential issues/09` is explicit that the slices should not be rewritten
-// to call the API from inside zustand, and rewriting the department CRUD onto
-// react-query would be that same move wearing a different hat. New surface goes
-// through react-query; working surface is left working.
+// which already calls the API. `docs/potential issues/09` is explicit that the
+// slices should not be rewritten to call the API from inside zustand, and
+// rewriting the department CRUD onto react-query would be that same move
+// wearing a different hat. New surface goes through react-query; working
+// surface is left working. The *read* is here (`list` below), because the
+// store's copy comes from the dashboard snapshot and is a skeleton.
 //
 // The department id is a path segment on every call rather than an implicit
 // "your department", for the reason `hiringApi.js` gives: an admin manages
@@ -31,6 +32,23 @@ const query = (params) => {
 };
 
 export const departmentsApi = {
+  // --- the departments themselves ---------------------------------------------
+  /**
+   * Every department, in full — categories, skills, head, contacts, hours, SLA,
+   * roster, the lot.
+   *
+   * The admin list screen used to render the dashboard snapshot's copy of this
+   * list, and the snapshot builds each department as `{staff: [], categories: []}`
+   * (dashboard_service.py:203, hardcoded) — so the cards showed no category chips
+   * and the edit form prefilled name, description and status while silently
+   * blanking everything else that was saved. The router docstring names this
+   * read as the only real source. Same envelope unwrap as `hiringApi.department`.
+   */
+  list: async () => {
+    const page = await api('/departments?pageSize=100');
+    return page.items || [];
+  },
+
   // --- the skill catalogue ---------------------------------------------------
   /**
    * Closest matches for what somebody is typing.

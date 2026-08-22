@@ -6,14 +6,27 @@ holds the two writes the admin screens perform (``PATCH /complaints/{id}`` and
 has no complaint *read* at all, because the admin queue arrives inside
 ``GET /dashboard/snapshot``.
 
-**Two guards, and the difference matters.** Reading, raising and marking read are
-open to any active member. Reopening and confirming a resolution are
-``resident``-only -- not because an admin could not press the button, but because
-those two writes are the resident's verdict on the association's work, and an
-admin confirming their own team's resolution on someone else's behalf is a record
-that says something untrue. The database refuses it as well: both RPCs check
-``is_own_membership`` against the person who raised the complaint, so the role
-guard here is the early, clear error rather than the boundary.
+**Two guards, and the difference matters.** Reading and marking read are open to
+any active member. Raising, cancelling work, reopening and confirming a
+resolution require the *resident capability* -- an active ``unit_residencies``
+row on the caller's membership, or the role ``resident`` -- because each of them
+is a claim about a home. Confirming somebody else's team's resolution on their
+behalf is a record that says something untrue, and a complaint raised by a
+membership that lives nowhere has no flat to send anybody to. The database
+refuses the writes as well: the RPCs check ``is_own_membership`` against the
+person who raised the complaint, so the guard here is the early, clear error
+rather than the boundary.
+
+**The capability is not the role.** One ``community_memberships`` row exists per
+person per community, so an admin who owns a flat is that flat's resident with
+``role = 'admin'``; ``require_membership_role("resident")`` refused them the
+verbs on their own home. ``require_resident_capability`` asks
+``unit_residencies`` instead, which is where the fact lives, and agrees with the
+capability the session layer has been handing the portal all along
+(``app/services/auth_service.py:474-476``). An admin raising a complaint that is
+*not* about a home -- an amenity, a common area -- has a different endpoint,
+``POST /complaints/admin-raise``, and it is the one that keeps such a complaint
+off the raiser's resident portal.
 
 **Every response is the complaint.** The three writes return the same
 ``ComplaintDetail`` a read returns, rather than an acknowledgement, because each
@@ -29,7 +42,7 @@ from app.api.admin_deps import require_csrf_unsafe
 from app.api.deps import (
     get_active_membership,
     get_request_client,
-    require_membership_role,
+    require_resident_capability,
 )
 from app.domain.common_schemas import MessageResult, Page
 from app.domain.resident_complaint_schemas import (
@@ -46,7 +59,9 @@ from supabase import Client
 
 router = APIRouter(tags=["complaints"], dependencies=[Depends(require_csrf_unsafe)])
 
-_resident_only = require_membership_role("resident")
+#: Built once at import time because the factory returns a new closure per call
+#: and FastAPI caches dependencies by identity -- four routes share this one.
+_resident_capability = require_resident_capability()
 
 
 @router.get(
@@ -98,6 +113,7 @@ async def list_my_complaints(
     "/complaints",
     response_model=ComplaintDetail,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_resident_capability)],
     summary="Raise a complaint",
 )
 async def raise_complaint(
@@ -106,6 +122,14 @@ async def raise_complaint(
     client: Client = Depends(get_request_client),
 ) -> ComplaintDetail:
     """File a complaint against the caller's own membership.
+
+    **The caller must live somewhere.** This route owns the complaint by the
+    raiser's own membership and shows it on their resident portal, which only
+    means anything for a membership with an active `unit_residencies` row. Staff
+    reporting a broken lift in a block they do not live in use
+    `POST /complaints/admin-raise`, which owns the complaint on the admin portal
+    instead of putting it in the raiser's personal list. Until 2026-08-20 this
+    route had no guard at all and was the only way for either of them.
 
     **The expected resolution time is computed here, not sent.** High → 24h,
     Medium → 48h, Low → 72h, applied by the database on insert. The rule used to
@@ -160,7 +184,7 @@ async def get_complaint(
 @router.post(
     "/complaints/{complaint_id}/cancel",
     response_model=ComplaintDetail,
-    dependencies=[Depends(_resident_only)],
+    dependencies=[Depends(_resident_capability)],
     summary="Cancel or return scheduled work to the re-evaluation pool",
 )
 async def cancel_complaint_work(
@@ -177,7 +201,7 @@ async def cancel_complaint_work(
 @router.post(
     "/complaints/{complaint_id}/reopen",
     response_model=ComplaintDetail,
-    dependencies=[Depends(_resident_only)],
+    dependencies=[Depends(_resident_capability)],
     summary="Reopen a resolved complaint",
 )
 async def reopen_complaint(
@@ -208,7 +232,7 @@ async def reopen_complaint(
 @router.post(
     "/complaints/{complaint_id}/resolution",
     response_model=ComplaintDetail,
-    dependencies=[Depends(_resident_only)],
+    dependencies=[Depends(_resident_capability)],
     summary="Confirm a resolution",
 )
 async def confirm_resolution(

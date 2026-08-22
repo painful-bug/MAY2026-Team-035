@@ -21,9 +21,18 @@ dependency graph computed a moment earlier.
 from __future__ import annotations
 
 from app.core.exceptions import ValidationError
-from app.domain.complaint_schemas import AddCommentRequest, StaffComplaintDetail, UpdateComplaintRequest
+from app.domain.complaint_schemas import (
+    AddCommentRequest,
+    AdminRaiseComplaintRequest,
+    StaffComplaintDetail,
+    UpdateComplaintRequest,
+)
 from app.services.resident_complaints_service import _event_message
-from app.domain.vocabularies import comment_visibility_to_storage, status_to_storage
+from app.domain.vocabularies import (
+    comment_visibility_to_storage,
+    complaint_priority_to_storage,
+    status_to_storage,
+)
 from app.repositories import complaints_repository as repo
 from supabase import Client
 
@@ -100,6 +109,56 @@ def add_comment(
         visibility=stored_visibility,
         author_membership=membership_id,
         author_label=_actor_label(client, user_id),
+    )
+
+
+def admin_raise_complaint(
+    client: Client,
+    *,
+    membership_id: str,
+    body: AdminRaiseComplaintRequest,
+) -> str:
+    """File a complaint from the admin portal. Returns its id.
+
+    Everything that decides anything is in ``admin_raise_complaint`` -- that the
+    caller is an active admin, that a ``forMembershipId`` names somebody in the
+    same community, which membership ends up owning the row, which portal shows
+    it, the department routing, the SLA and the notification, all in one
+    transaction. What is left here is the same job this layer does for the
+    resident's raise: translate a vocabulary before the database has to reject
+    it.
+
+    ``priority`` is that translation. It is the frontend's word (``High``) and
+    the column's values are ``low``/``medium``/``high``; an unrecognised one is a
+    422 naming the field rather than a ``22P02`` surfacing as an opaque failure
+    from three layers down. ``complaint_priority_to_storage`` returns ``None``
+    for a word it has not heard rather than defaulting, so "they sent nothing"
+    and "they sent something we do not understand" stay distinguishable -- the
+    schema's ``Low`` default already covers the first.
+
+    **The membership is the caller's, resolved by the dependency graph.** It is
+    not read from the body, and ``forMembershipId`` is a separate field for that
+    reason: an endpoint that let a caller name the membership they are acting
+    *as* is one where ``require_admin`` proves something about a person other
+    than the one the write is attributed to.
+    """
+    priority = complaint_priority_to_storage(body.priority)
+    if priority is None:
+        raise ValidationError(
+            f"Unknown priority: {body.priority}", code="unknown_priority"
+        )
+
+    return repo.admin_raise_complaint(
+        client,
+        actor_membership_id=membership_id,
+        title=body.title.strip(),
+        description=body.description.strip(),
+        category=body.category.strip(),
+        priority=priority,
+        location=body.location.strip(),
+        department_id=body.department_id,
+        skill_id=body.skill_id,
+        for_membership_id=body.for_membership_id,
     )
 
 

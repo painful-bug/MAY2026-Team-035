@@ -1,11 +1,37 @@
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
-import { Edit2, CheckCircle2, User, Home, Clock, Check } from 'lucide-react';
+import { Edit2, CheckCircle2, User, Home, Clock, Check, Plus } from 'lucide-react';
+import { getDashboardSnapshot } from '../../lib/dashboard/dashboardApi';
+import AdminRaiseComplaintModal from '../../features/complaints/components/AdminRaiseComplaintModal';
 
 export default function Complaints() {
-  const { complaints, updateComplaint, addComplaintComment } = useApp();
+  const { complaints, updateComplaint, addComplaintComment, hydrateDashboard, showToast } = useApp();
+  const queryClient = useQueryClient();
   const [filterStatus, setFilterStatus] = useState('All');
-  
+  const [isRaiseOpen, setIsRaiseOpen] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+
+  // This list is the dashboard snapshot's `complaints` projection, held in the
+  // store — not a react-query cache — so "refresh after the write" is a re-read
+  // of the snapshot rather than an invalidation. The triage queue *is* a query,
+  // and a complaint nothing could route lands there, so it is invalidated too.
+  const afterRaise = async () => {
+    setIsRaiseOpen(false);
+    showToast('Complaint raised', 'success');
+    queryClient.invalidateQueries({ queryKey: ['unassigned-complaints'] });
+    try {
+      hydrateDashboard(await getDashboardSnapshot());
+      setRefreshError('');
+    } catch (error) {
+      // The complaint was created; only this screen's copy is stale. Say so
+      // rather than leaving a list that quietly omits what was just filed.
+      setRefreshError(
+        error?.message || 'The complaint was raised, but this list could not be refreshed.'
+      );
+    }
+  };
+
   // Edit state
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({
@@ -60,23 +86,40 @@ export default function Complaints() {
           <p className="text-xs font-semibold text-slate-400 mt-1">Review resident complaints, dispatch technicians, track repair progress, and close resolved tickets.</p>
         </div>
 
-        {/* Filter buttons */}
-        <div className="flex gap-2 self-start sm:self-auto bg-white border border-slate-100 p-1 rounded-xl shadow-sm text-xs font-bold">
-          {['All', 'Pending', 'In Progress', 'Resolved'].map((status) => (
-            <button
-              key={status}
-              onClick={() => setFilterStatus(status)}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                filterStatus === status 
-                  ? 'bg-indigo-600 text-white shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              {status}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* Filter buttons */}
+          <div className="flex gap-2 bg-white border border-slate-100 p-1 rounded-xl shadow-sm text-xs font-bold">
+            {['All', 'Pending', 'In Progress', 'Resolved'].map((status) => (
+              <button
+                key={status}
+                onClick={() => setFilterStatus(status)}
+                className={`px-3 py-1.5 rounded-lg transition-colors ${
+                  filterStatus === status
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsRaiseOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 transition-colors hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4" />
+            Raise Complaint
+          </button>
         </div>
       </div>
+
+      {refreshError && (
+        <p role="alert" className="text-xs font-semibold text-rose-600">
+          {refreshError}
+        </p>
+      )}
 
       {/* Complaints Grid */}
       <div className="space-y-4">
@@ -297,6 +340,13 @@ export default function Complaints() {
           })
         )}
       </div>
+
+      {isRaiseOpen && (
+        <AdminRaiseComplaintModal
+          onClose={() => setIsRaiseOpen(false)}
+          onCreated={afterRaise}
+        />
+      )}
     </div>
   );
 }

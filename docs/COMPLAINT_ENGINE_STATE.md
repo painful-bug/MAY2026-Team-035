@@ -15,6 +15,13 @@ The handoff's old caveat ("no migration has ever been applied to any database")
 is no longer true. What is described below is what the hosted database is
 actually doing.
 
+**Updated 2026-08-20**, for the admin-raised complaints work: §2 (a complaint now
+has two origins), §8 (the new endpoint, and "resident role" is now "resident
+capability"), §9 (the admin raise modal) and §10 item 6. The rulings behind all
+of it are `COMPLAINT_ENGINE_HANDOFF.md` §12, and the migration is
+`20260820150000_admin_raised_complaints.sql` — applied by hand by the repository
+owner, like the rest of the chain.
+
 ---
 
 ## 1. The big picture in four sentences
@@ -58,19 +65,38 @@ human act today (handoff §1 lists the three ways you could change that).
 
 ## 2. Where a complaint can come from
 
-**Today there is exactly one origin: the resident.** `POST /complaints` is
-guarded `resident` role only. The form (resident portal → Complaints → new)
-collects title, description, **category** (from the community's
-`complaint_categories` catalogue), priority (`low | medium | high`), optional
-location, and an optional **department pick** with a "Not sure" option that
-sends `null`.
+**There are two origins since 2026-08-20: the resident, and an admin.**
 
-Nothing else creates complaints:
+**The resident.** `POST /complaints`, guarded by the **resident capability** —
+the `resident` role, *or* an active `unit_residencies` row on any membership, so
+an admin who owns a flat is the resident of that flat. The form (resident portal
+→ Complaints → new) collects title, description, **category** (from the
+community's `complaint_categories` catalogue) or a `skillId`, priority
+(`low | medium | high`), optional location, and an optional **department pick**
+with a "Not sure" option that sends `null`.
 
-- Admins and managers can *edit*, *comment on*, *route* and *raise work
-  against* complaints — but no staff-facing create endpoint exists. A guard
-  taking a phone complaint at the gate, or an admin logging a walk-in, has no
-  path. If that is wanted, it is new work and it is yours to shape.
+**An admin, from the admin portal.** `POST /complaints/admin-raise`
+(`require_admin` + CSRF) → `admin_raise_complaint`
+(`20260820150000_admin_raised_complaints.sql`), in two modes decided by one
+optional `forMembershipId`:
+
+| | Owner | `complaints.raised_via` | Seen on |
+|---|---|---|---|
+| **on a resident's behalf** — they telephoned the office | that resident's membership | `resident` | their resident portal, with every resident verb, **and** the admin queue |
+| **attached to no flat** — a lobby light, a treadmill, a gate | the admin's own membership | `admin` | the admin queue only |
+
+The `raised` event's actor is **always the admin** in both modes, with
+`"on_behalf": true` in the payload when filing for somebody. That is where *who
+typed it* lives; `raised_via` answers only *which portal owns the raiser-side
+view*, and the resident list and detail filter on it. Routing, SLA, notifications
+and the work-order pipeline are the same code paths as the resident raise —
+**an admin-raised complaint is a complaint.**
+
+Still nothing else creates complaints:
+
+- **A guard taking a phone complaint at the gate still has no path.** The new
+  endpoint is admin-only; `security` is not an admin. If the gate should be able
+  to log one, that is new work and it is the engine owner's to shape.
 - Work orders never create complaints; the dependency runs the other way
   (`create_work_order` requires a complaint, and refuses one with no
   department — `HB409`).
@@ -188,7 +214,12 @@ complaints and the link led to a screen their portal could not open. Now:
 
 - `notify_complaint_staff(complaint_id, …)` = the community's admins **plus the
   owning department's manager** (null department → admins only). Used by
-  `raise`, `reopen`, `resolution_confirmed`, and resident comments.
+  `raise`, `reopen`, `resolution_confirmed`, resident comments, and — since
+  2026-08-20 — `admin_raise_complaint`.
+- **Nobody notifies the raiser, and that is now visible.** It was harmless while
+  the raiser was always the person who pressed the button; a complaint filed
+  **on a resident's behalf** gives them an SLA clock and three verbs with no
+  in-app signal that any of it exists. Open question, handoff §12 Q12.1.
 - Department moves notify the **receiving** manager; change requests notify the
   **holding** manager; decisions notify the requesting supervisor either way.
 - Work-order events notify the assigned worker, the supervisor who raised the
@@ -206,13 +237,18 @@ All complaint state changes go through SECURITY DEFINER RPCs with the
 authorization *inside the function* — router guards are coarse pre-filters,
 never the boundary. CSRF required on all unsafe methods.
 
-### Resident (`resident_complaints.py`, `resident_scheduling.py` — resident role only)
+### Resident (`resident_complaints.py`, `resident_scheduling.py` — the resident **capability**)
+
+Since 2026-08-20 the guard is `require_resident_capability`, not the role: the
+`resident` role **or** one active `unit_residencies` row on the membership. Reads
+and `…/read` need only an active membership. The refusal is unchanged — `403`
+`community_role_required`.
 
 | Method + path | Does |
 |---|---|
-| `GET /complaints` | my complaints, with unread flags |
-| `POST /complaints` | raise (title, description, category, priority, location?, **departmentId?**) → routed per §3 |
-| `GET /complaints/{id}` | detail + full rendered timeline |
+| `GET /complaints` | my complaints, with unread flags. **Filters `raised_via = 'resident'`** |
+| `POST /complaints` | raise (title, description, category or `skillId`, priority, location?, **departmentId?**) → routed per §3. **Resident capability required since 2026-08-20** — previously any active membership |
+| `GET /complaints/{id}` | detail + full rendered timeline. Same `raised_via` filter as the list |
 | `POST /complaints/{id}/reopen` | reason required; only my own resolved/closed |
 | `POST /complaints/{id}/resolution` | 1–5 rating required; `resolved` → `closed` |
 | `POST /complaints/{id}/read` | clear the unread flag |
@@ -223,8 +259,10 @@ never the boundary. CSRF required on all unsafe methods.
 
 | Method + path | Does |
 |---|---|
+| `POST /complaints/admin-raise` | raise from the admin portal, on a resident's behalf (`forMembershipId`) or attached to no flat — see §2. `201 {id, message}` |
 | `PATCH /complaints/{id}` | edit status (wire words), progress, assignee label, `assignedToMembershipId`, expected resolution, resident-visible update note |
 | `POST /complaints/{id}/comments` | comment, `resident` or `internal` visibility |
+| `GET /complaints/staff/complaints/{id}` | staff detail with the full timeline. The odd path avoids the resident router's `GET /complaints/{id}` |
 
 ### Department staff (`complaint_routing.py` — admin/manager/worker/security roles; real check in the RPC)
 
@@ -259,7 +297,7 @@ guarantees a second wasted visit).
 | Resident | `ResidentDashboard/Complaints.jsx` | `residentApi.js` + react-query | **fully wired**: list, create (CategoryPicker + department pick), timeline, reopen, rating, read, schedule respond |
 | Admin | `AdminDashboard/ComplaintTriage.jsx` | `features/complaints/routingApi.js` + react-query | **fully wired**: unassigned queue, allot to department |
 | Admin | `AdminDashboard/WorkOrderTriage.jsx` (also mounted `/manager` and `/security-manager` at `departments/:id/work-orders`) | `features/workOrders/workOrdersApi.js` | **fully wired**: all eight work-order ops, `?job=` deep link |
-| Admin | `AdminDashboard/Complaints.jsx` | reads zustand `complaints` (hydrated from `GET /dashboard/snapshot` — real DB data); writes `PATCH` + comments through `createComplaintsSlice.js` | **half-modern**: server-backed, but the timeline events it shows after an edit are *invented client-side* and the slice is optimistic-first. Candidate for a react-query rewrite; see §10 |
+| Admin | `AdminDashboard/Complaints.jsx` | reads zustand `complaints` (hydrated from `GET /dashboard/snapshot` — real DB data); writes `PATCH` + comments through `createComplaintsSlice.js`; **raises through `features/complaints/AdminRaiseComplaintModal.jsx` → `adminComplaintsApi.raise` → `POST /complaints/admin-raise`** (react-query, with an optional on-behalf resident picker) | **half-modern**: server-backed, but the timeline events it shows after an edit are *invented client-side* and the slice is optimistic-first. The raise modal is the one part of this screen on the newer pattern. Candidate for a react-query rewrite; see §10 |
 | Admin | `AdminDashboard/DepartmentDetail.jsx` | roster from `GET /departments` | "Assign to staff" dropdown is **optimistic local only** — the §8 fork |
 | Manager | `ManagerDashboard/Complaints.jsx` | `routingApi.js` | **fully wired**: department queue (`DepartmentComplaintList`) + supervisors' change requests (`ChangeRequests`) with accept/reject |
 | Worker (supervisor rank) | `WorkerDashboard/Complaints.jsx` | `workerApi` snapshot for the rank gate, then `routingApi.js` | **fully wired**: department queue + "this isn't ours" request; offered for the first department where the caller ranks supervisor/manager |
@@ -289,8 +327,13 @@ full in the handoff; read that section before deciding.
    imitation of it after every edit. `GET /complaints/{id}` exists for
    residents only, so this needs either an admin read endpoint or a shared one
    — an API-shape decision, hence yours.
-6. **A staff-side origin for complaints** (§2 above). Walk-ins and phone
-   complaints have no path in. New endpoint + screen if wanted.
+6. ~~**A staff-side origin for complaints**~~ **Half-closed 2026-08-20** (§2,
+   H§12). An **admin** now has a path in — `POST /complaints/admin-raise` and
+   the raise modal on `AdminDashboard/Complaints.jsx` — covering the phoned-in
+   complaint and the amenity fault that belongs to no flat. What is still open
+   is the **gate**: `security` is not an admin, so a guard logging a walk-in
+   still has no endpoint. Also open, and new: nothing notifies the resident that
+   a complaint was filed for them (H§12, Q12.1).
 7. **Reopened complaints should go to a different supervisor** (H§4) — product
    doc says so, nothing implements it; it is a routing rule about complaints.
 8. **Priority escalation does not re-prioritise live jobs** (H§5). The lever
@@ -312,6 +355,7 @@ full in the handoff; read that section before deciding.
 | [`COMPLAINT_ENGINE_HANDOFF.md`](COMPLAINT_ENGINE_HANDOFF.md) | every open judgement call, argued in full |
 | `backend/supabase/migrations/0031_resident_complaints.sql` | the resident lifecycle RPCs — but note four of its functions are superseded: **read the routing file's definitions, not 0031's**, for `raise_complaint`, `reopen_complaint`, `confirm_complaint_resolution`, `add_complaint_comment` |
 | `backend/supabase/migrations/20260812090300_complaint_department_routing.sql` | routing, transfer requests, the four rebuilt functions, the queue reads |
+| `backend/supabase/migrations/20260820150000_admin_raised_complaints.sql` | `complaints.raised_via`, `admin_raise_complaint`, and `complaint_overview` recreated to carry the column. **Read handoff §12 first** — the two modes are a product ruling, not a shape choice |
 | `backend/supabase/migrations/0036/0037/0039` | work orders, the dispatch timers, the worker verbs |
 | `backend/app/domain/vocabularies.py` | the wire-word seam — extend here, nowhere else |
 | `docs/API.md` §complaints / §work-orders | request/response shapes with status codes |

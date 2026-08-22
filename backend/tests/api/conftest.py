@@ -12,6 +12,7 @@ from collections.abc import Generator
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api import deps
 from app.api.deps import (
     get_active_membership,
     get_current_user,
@@ -22,6 +23,25 @@ from app.domain.schemas import MembershipContext, Principal
 from app.main import create_app
 
 FRONTEND_ORIGIN = "http://localhost:5173"
+
+
+@pytest.fixture(autouse=True)
+def no_unit_residency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nobody in this suite holds a flat unless their test says so.
+
+    ``require_resident_capability`` asks ``unit_residencies`` whether a
+    non-``resident`` caller lives here. That is a service-role read, and the
+    fixtures below authenticate by overriding dependencies rather than by
+    standing up a database -- so without this the first admin to touch a
+    resident route would open a real connection to the placeholder Supabase URL
+    and turn a 403 assertion into a timeout.
+
+    Default **False**, which is what the fixture memberships describe: only
+    ``resident_api_client`` carries a ``unit_id``. A test about the admin who
+    does own a flat re-patches this to ``True``; because that happens after this
+    autouse fixture has run, the later ``setattr`` is the one that stands.
+    """
+    monkeypatch.setattr(deps, "_has_active_residency", lambda membership_id: False)
 
 
 @pytest.fixture

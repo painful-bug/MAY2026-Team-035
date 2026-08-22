@@ -199,3 +199,77 @@ def require_membership_role(*roles: str) -> Callable[[MembershipContext], Member
 
     return _guard
 
+
+def _has_active_residency(membership_id: str) -> bool:
+    """Does this membership currently live in a unit?
+
+    One row is the whole question, so the read stops at one. ``ended_at is
+    null`` rather than a date comparison because that is the predicate the
+    partial unique index ``residencies_active_member_unit`` is built on
+    (``0001_baseline.sql:53``) and the one the session layer already uses
+    (``app/services/auth_service.py:463-471``) -- two places asking "is this
+    person resident here" must not be able to disagree.
+
+    Service-role, deliberately. The caller is asking a question *about
+    themselves* and the answer decides whether their own request proceeds; an
+    RLS-scoped read that returned nothing because a policy hid the row would
+    read here as "you do not live anywhere", which is the wrong 403 for the
+    wrong reason.
+    """
+    rows = (
+        get_service_client().table("unit_residencies")
+        .select("id")
+        .eq("membership_id", membership_id)
+        .is_("ended_at", None)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return bool(rows)
+
+
+def require_resident_capability() -> Callable[[MembershipContext], MembershipContext]:
+    """Admit anyone who actually lives here, whatever their role says.
+
+    **Resident-ness is a ``unit_residencies`` lookup, never a role implication.**
+    One ``community_memberships`` row exists per person per community
+    (``memberships_active_person_community``, ``0001_baseline.sql:45``), so the
+    admin who owns flat B-402 has exactly one membership and its role is
+    ``admin``. ``require_membership_role("resident")`` refused them the resident
+    verbs on their own home -- cancelling work in their own flat, confirming a
+    resolution they are the only witness to, answering a visit proposed to
+    them -- which is not a policy anybody chose; it is the role column standing
+    in for a fact it never recorded.
+
+    The session layer has agreed with this since Google sign-in landed: it grants
+    an admin the ``resident`` capability outright
+    (``app/services/auth_service.py:474-476``), so the portal has been offering
+    these buttons to a caller the per-request layer then refused. This guard is
+    that agreement moved down one layer -- and made stricter, because it asks
+    about the residency rather than assuming it from the role.
+
+    Cost is one indexed read, and only for callers who are not already
+    ``resident`` -- the overwhelmingly common case does no query at all.
+
+    The refusal is byte-identical to ``require_membership_role``'s: same message,
+    same ``community_role_required`` code. Widening who passes is not a wire
+    change, and a client that special-cases the resident 403 must keep working.
+
+    Build the closure once at import time; FastAPI caches dependencies by
+    identity, and a fresh closure per route would resolve the same guard twice on
+    a router that declares it in both places.
+    """
+
+    def _guard(
+        membership: MembershipContext = Depends(get_active_membership),
+    ) -> MembershipContext:
+        if membership.role == "resident" or _has_active_residency(membership.id):
+            return membership
+        raise AuthorizationError(
+            "You do not have permission for this community action.",
+            code="community_role_required",
+        )
+
+    return _guard
+

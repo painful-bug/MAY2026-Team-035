@@ -1143,6 +1143,28 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    ("post", "/api/v1/complaints/admin-raise"): op(
+        # `403` twice over: the caller must be an active admin, and a
+        # `forMembershipId` naming a membership in another community is refused
+        # rather than quietly filed into the caller's own. `404` is a `skillId`
+        # that names no active trade.
+        errors=["401", "403", "404", "422", "500"],
+        stories=[
+            (
+                "US-2.5",
+                "The same create the resident has, from the admin portal -- for a "
+                "resident who called the office instead of using the app, and for "
+                "the amenity and common-area faults that belong to no flat"
+            ),
+            (
+                "US-2.6",
+                "An on-behalf complaint is owned by the resident's membership, so "
+                "the tracking, the timeline and the resident's own verbs are the "
+                "ones they already have; the admin is recorded as the raised "
+                "event's actor rather than as its owner"
+            ),
+        ],
+    ),
     ("get", "/api/v1/complaints/{complaint_id}"): op(
         errors=["401", "403", "404", "500"],
         stories=[

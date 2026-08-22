@@ -466,9 +466,237 @@ reopened complaint carry a second job), but it was never decided. Should
 raising work against a terminal complaint be refused — and if so, refused in
 the RPC with an `HB409`, or merely hidden by the screen?
 
+## 11. Added 2026-08-20 — may a complaint have no description?
+
+**Why this is here and not simply fixed.** `POST /api/v1/complaints` was
+failing 400 on the hosted project. Diagnosing it turned up three hosted-schema
+gaps, and two of them are pure drift with nothing to decide: the hosted
+`complaint_events` has no `payload` and the hosted `complaints` has no
+`aggregate_version`, both of which `0001_baseline.sql` declares and every
+writer since has assumed. Adding them back is bookkeeping, and it is done —
+`backend/supabase/migrations/20260820120000_hosted_complaint_column_drift.sql`,
+with the evidence in
+[`HOSTED_SCHEMA_DRIFT_COMPLAINTS.md`](HOSTED_SCHEMA_DRIFT_COMPLAINTS.md).
+
+**The third gap is not bookkeeping.** The hosted `complaints.description` is
+`not null`; the baseline declares it nullable. Two things currently disagree
+about whether a complaint needs a description at all:
+
+* the wire says no — `ComplaintCreate.description` is
+  `_optional_text(4000) = ""` (`resident_complaint_schemas.py`:168), and
+  `raise_complaint` turns the empty string into a real null;
+* the hosted column says yes, and would raise `23502` for that null.
+
+Nobody has seen this because the missing `payload` fails the same transaction
+one statement later, for everyone.
+
+**The default taken.** The patch drops the hosted `not null`, because the
+repository's own declaration is the authority for reconciling drift and this
+moves the column towards it rather than away. So today: **a resident may file a
+complaint with a title, a category and nothing else.**
+
+**What is yours.** Whether that is right. A complaint with no description is a
+row a supervisor has to chase by phone, and the form could reasonably insist on
+one — but that is a decision about what a complaint *is*, and it belongs to you.
+If you want it mandatory, the change is on the wire (`_optional_text` →
+required, plus the form), **not** by restoring the hosted constraint: a database
+that rejects what the API accepts produces a 500 rather than a validation
+message. The `not null` can come back afterwards as a second step, once nothing
+can send an empty one.
+
+**Also unasked, and cheap to answer now:** the hosted `complaint_events` still
+carries the pre-baseline `previous_status`, `new_status` and `note` columns.
+Nothing in the repository writes them, `dashboard_repository.py`:67 still reads
+them in the legacy branch this project takes, and there were 0 rows in the table
+on 2026-08-20 — so there is no history to migrate into `payload` and nothing was
+backfilled. If the dashboard's legacy branch is ever retired, those three
+columns go with it.
+
 ---
 
-## 11. Added 2026-08-12 — the rulings: every question above now has an answer
+## 12. Added 2026-08-20 — the admin portal raises complaints, and an admin with a flat is a resident
+
+**Read this section differently from §§1–5 and §§8–11.** Those record defaults we
+took because nobody had ruled. This one records **rulings that were made**, by the
+product owner, on 2026-08-20, and implemented the same day. They change how a
+complaint is owned and who may act on one, which is your surface. Nothing here is
+asking you a question; the two questions this work *did* raise are at the end and
+are marked as such.
+
+A complaint of ours now touches your engine in one new place, and the migration
+is `backend/supabase/migrations/20260820150000_admin_raised_complaints.sql`
+(applied by hand by the repository owner in the Supabase SQL editor, per the rule
+in `backend/supabase/migrations/README.md`).
+
+### The four decisions
+
+**D1 — An admin with a flat is the resident of that flat.** There is one
+`community_memberships` row per person per community
+(`memberships_active_person_community`, `0001`:45), so the administrator who owns
+B-402 has one membership and its role says `admin`. Guarding the resident verbs
+with `require_membership_role("resident")` refused that person the verbs on their
+own home — cancel a visit, confirm a resolution, answer a proposed slot. The guard
+is now `require_resident_capability` (`app/api/deps.py`): the `resident` role, or
+one active `unit_residencies` row on the membership. **Resident-ness is that row
+and never a role implication.** The refusal is byte-identical to the old one —
+`403`, `community_role_required` — so nothing on the wire moved.
+
+`GET /auth/session` was corrected in the same direction: it granted every admin
+the `resident` capability outright, which made the session disagree with a guard
+asking the same question of the same table, so a flat-less admin was shown the
+resident affordances and then refused when they used one. It now grants it only
+with an active residency.
+
+**D2 — Admins raise complaints from the admin portal, in two modes.**
+`POST /api/v1/complaints/admin-raise` (`require_admin` + CSRF, `201
+{id, message}`), backed by `public.admin_raise_complaint(...)`. One optional field,
+`forMembershipId`, decides which mode:
+
+| | Owner (`raised_by_membership_id`) | `raised_via` | Visible on |
+|---|---|---|---|
+| **On behalf of a resident** | that resident's membership | `resident` | their resident portal, with every resident verb — plus the admin queue |
+| **Attached to no flat** (amenity, lobby, gate) | the admin's own membership | `admin` | the admin queue only |
+
+The first is a resident who telephoned the office. It is **their** complaint: they
+confirm, reopen and cancel, because the alternative is a complaint about their
+home that they cannot act on. The second is a lobby light — somebody has to own
+the row, the person who noticed is the honest answer, and it is kept off that
+admin's own "My Complaints", which means *what happened to me at home*.
+
+**D3 — Provenance lives in the `raised` event, not in the complaint row.** The
+event's `actor_membership_id` is **always the admin**, in both modes, and the
+payload carries `"on_behalf": true` when filing for somebody. Writing the resident
+into the actor would forge a history entry, which is the one thing an append-only
+timeline exists to prevent. And keeping "an admin typed this" out of the complaint
+row is what stops it from ever being a reason to move the complaint off the
+raiser's list.
+
+`complaints.raised_via` (`text not null default 'resident'`, CHECK in
+`('resident','admin')`) is therefore **not** provenance. It answers one narrower
+question — *which portal owns the raiser-side view* — and it is derived by the
+RPC from `p_for_membership_id`, never accepted from the client.
+`complaint_overview` was recreated to expose it, and `list_mine`/`get_mine` in
+`resident_complaints_repository` filter `raised_via = 'resident'`.
+
+**D4 — The resident raise now requires the resident capability.**
+`POST /complaints` previously required only an active membership. **This is a
+narrowing and it is the one thing in this section that can break somebody**: a
+`worker`, `security` or `manager` membership with no residency could file onto a
+resident complaint list and now gets `403 community_role_required`. Their path is
+`/admin-raise` if they are an admin. No screen outside the resident portal calls
+`POST /complaints` (checked across `frontend/src/**` on 2026-08-20).
+
+### What did not change, deliberately
+
+`raise_complaint` is untouched — not replaced, not re-created, no new overload.
+The routing (`resolve_complaint_department`), the priority-derived SLA, the
+`notify_complaint_staff` audience and the supervisor → work order pipeline are
+the same code paths for both raises. **An admin-raised complaint is a complaint**,
+and §§1–5 apply to it unchanged.
+
+### Addendum, later on 2026-08-20 — both hands on an on-behalf complaint
+
+**DECISION (product owner):** when a complaint is raised on behalf of a resident,
+**both** the resident and the admin should hold the lifecycle verbs — cancel,
+reschedule, and the like. An action from either is valid, and whoever acts first
+gets that action; the other side simply finds it already done.
+
+What exists today falls short of that on the admin side, and the gap is yours to
+design:
+
+* The **resident's** half already works: the on-behalf complaint is owned by the
+  resident (`raised_by_membership_id`), so every ownership-keyed resident verb —
+  cancel, reopen, confirm-resolution, and the schedule-slot pick — accepts them.
+* The **admin's** half does not: `PATCH /complaints/{id}` accepts only
+  `Pending | In Progress | Resolved` (`UpdateComplaintRequest`), so an admin has
+  **no cancel and no reschedule verb at all** — not on on-behalf complaints, not
+  on their own unit-less ones. Whether to widen the PATCH's status set, expose
+  the resident verbs to admins, or add admin-specific endpoints is a shape only
+  you should choose; whichever you pick, the timeline entry should carry the
+  true actor, as the raised event already does.
+* **First-wins needs no new machinery** if the write goes through the same
+  status-transition validation the resident verbs use — the second actor's
+  now-invalid transition is refused, which is exactly the ruling.
+
+### Two questions that were yours — both now have answers
+
+**Q12.1 — nobody tells the resident a complaint was filed for them.**
+**ANSWERED (product owner, 2026-08-20): yes, notify the resident.** The
+question below is kept for its context; the *mechanism* — whether it's the
+general rule (*notify the raiser when the actor is not the raiser*) or a special
+case in `admin_raise_complaint` — is still your design choice, and nothing has
+been implemented. The original question:
+
+`admin_raise_complaint` calls `notify_complaint_staff`, exactly as
+`raise_complaint` does, which reaches the community's admins and the complaint's
+department manager. Neither function notifies the **raiser** — correct when the
+raiser is the person who just pressed the button, and arguably wrong here: a
+resident who telephoned the office now has a complaint with an SLA clock, a
+timeline and three verbs they can use, and no in-app signal that any of it
+exists. The default was taken by inheritance rather than chosen, and the shape is
+yours: should the on-behalf mode notify the owner, and if so is that a general
+rule (*notify the raiser when the actor is not the raiser*, which would also
+cover any future admin action on somebody's row) or a special case in this one
+function?
+
+**Q12.2 — has `raise_complaint` left an orphaned overload on the hosted
+database? Nothing here can answer that, and it is worth one query of yours.**
+**CLOSED (2026-08-20): no orphan.** The product owner ran the `pg_proc` query
+below against the hosted database right after applying
+`20260820150000_admin_raised_complaints.sql`, and it returned exactly two rows —
+`raise_complaint(uuid,text,text,text,text,text,uuid,uuid)` (the eight-argument
+current version) and `admin_raise_complaint(uuid,text,text,text,text,text,uuid,uuid,uuid)`
+(the new nine-argument function). No surviving six- or seven-argument overload.
+The paper trail and the live database agree; nothing to drop. The original
+write-up is kept below for the method, since the same PostgREST blind spot
+applies to any future function replacement:
+
+This was raised to us as a probable defect — *"`20260812090300` replaced
+`raise_complaint` at a different arity without dropping it"* — and **reading the
+files says otherwise**, so the claim is recorded here as checked and not upheld
+rather than passed on:
+
+* `0031`:318 creates `raise_complaint(uuid, text, text, text, text, text)` — six
+  arguments.
+* `20260812090300_complaint_department_routing.sql`:271 **drops exactly that
+  signature** before creating the seven-argument version.
+* `20260813100000_skill_sourced_complaints.sql`:75 **drops exactly the
+  seven-argument signature** before creating today's eight.
+
+Both hand-offs are clean on paper, and the eight-argument function is the one the
+hosted probe found (`HOSTED_SCHEMA_DRIFT_COMPLAINTS.md`, "functions — all present,
+all at the right arity").
+
+**What is still unverified is narrow and real.** That probe reads PostgREST's
+schema description, which lists **one entry per RPC name**, so it cannot show an
+overload if one existed — a surviving `raise_complaint(6)` would be invisible to
+every check this project has run, and `0031`:410 granted `execute` on it to
+`authenticated`, so it would be reachable rather than merely present. The only
+thing that answers it is `pg_proc`:
+
+```sql
+select oid::regprocedure from pg_proc where proname = 'raise_complaint';
+```
+
+One row is the expected answer. If there are two, the extra one is the `0031`
+body — older routing with no `department_id`, and the pre-routing notification
+audience — and it should be dropped by its exact signature in a migration of
+yours. **We did not attempt it either way**: `raise_complaint` is your function,
+and dropping one on a live database on the strength of a claim we could not
+reproduce is precisely the kind of decision this file exists to hand over instead
+of taking. The failure mode is written up in `20260813100000`:12, and
+`admin_raise_complaint` opens with the same exact-signature drop for the same
+reason — today it is a no-op, and it is there so that re-running the file cannot
+become the next overload.
+
+---
+
+## 13. Added 2026-08-12 — the rulings: every question in §§0–10 now has an answer
+
+*(Merged from the `services-and-security` line on 2026-08-20. This section
+predates §§11–12, which were written 2026-08-20 and are **not** covered by
+these rulings — their open questions, and the §12 addendum's dual-actor
+design work, stand.)*
 
 A structured decision session with the product owner settled all of this
 file's open questions plus the new operational model. The full specification

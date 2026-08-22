@@ -272,10 +272,16 @@ def test_api_182_answering_somebody_else_s_proposal_is_the_rpc_s_403(
 def test_api_183_staff_cannot_answer_on_the_resident_s_behalf(
     admin_api_client: TestClient, scheduling: dict, csrf_headers: dict[str, str]
 ) -> None:
-    """Resident-only, matching the precedent `resident_complaints.py` set for
-    reopening and confirming a resolution: not because an admin could not press
-    the button, but because this is the resident's verdict about their own home,
-    and an admin answering for them is a record that says something untrue."""
+    """Matching the precedent `resident_complaints.py` set for reopening and
+    confirming a resolution: not because an admin could not press the button,
+    but because this is the resident's verdict about their own home, and an
+    admin answering for them is a record that says something untrue.
+
+    The guard is `require_resident_capability` since 2026-08-20, so what is
+    refused here is an admin with **no flat of their own** -- which is what this
+    fixture describes, and what `tests/api/conftest.py` stubs the residency
+    lookup to say. The admin who does live in the building may answer, and
+    `tests/api/test_resident_capability_guard.py` is where that is pinned."""
     endpoint = "POST /api/v1/complaints/complaint-id/schedule"
     expected_output = {"status_code": 403, "reached_repository": False}
 

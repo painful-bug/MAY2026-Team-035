@@ -1,7 +1,7 @@
-"""Complaint routes: the two writes the admin screens perform.
+"""Complaint routes: the writes the admin screens perform.
 
 Commenting is open to any member of the community -- a resident must be able to
-discuss their own complaint. Editing is admin-only.
+discuss their own complaint. Editing and raising are admin-only.
 
 The complaint *reads* were removed after the frontend wiring audit
 (``docs/FRONTEND_WIRING_AUDIT.md``): ``GET /dashboard/snapshot`` projects
@@ -16,7 +16,13 @@ from fastapi import APIRouter, Depends, Path, status
 from app.api.admin_deps import require_admin, require_csrf_unsafe
 from app.api.deps import get_active_membership, get_current_user, get_request_client
 from app.domain.common_schemas import MessageResult
-from app.domain.complaint_schemas import AddCommentRequest, StaffComplaintDetail, UpdateComplaintRequest
+from app.domain.complaint_schemas import (
+    AddCommentRequest,
+    AdminComplaintRaised,
+    AdminRaiseComplaintRequest,
+    StaffComplaintDetail,
+    UpdateComplaintRequest,
+)
 from app.domain.schemas import MembershipContext
 from app.services import complaints_service
 from supabase import Client
@@ -39,6 +45,64 @@ async def staff_complaint_detail(
     client: Client = Depends(get_request_client),
 ) -> StaffComplaintDetail:
     return complaints_service.staff_detail(client, complaint_id=complaint_id)
+
+
+@router.post(
+    "/admin-raise",
+    response_model=AdminComplaintRaised,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+    summary="Raise a complaint from the admin portal",
+)
+async def admin_raise_complaint(
+    body: AdminRaiseComplaintRequest,
+    membership: MembershipContext = Depends(get_active_membership),
+    client: Client = Depends(get_request_client),
+) -> AdminComplaintRaised:
+    """File a complaint from the admin portal, in one of two modes.
+
+    Related user stories: Resident 2.6 - complaint status tracking with history;
+    Resident 2.8 - complaint accountability.
+
+    **On behalf of a resident** (`forMembershipId` present). The complaint is
+    owned by that resident's membership: it appears on their portal with the
+    chat, the status and the timeline, and they keep the resident verbs --
+    confirm the resolution, reopen it, cancel scheduled work. The admin is
+    recorded as the *actor* of the `raised` event, which is where the fact that
+    somebody else filed it belongs. It is history, not a property of the
+    complaint, and it must not be able to move the complaint off the list of the
+    person whose home the problem is in.
+
+    **Not attached to a unit** (`forMembershipId` absent). A burnt-out lobby
+    light, a broken gym treadmill, a gate that will not close. It is owned by the
+    admin's own membership -- somebody has to own it, and the person who noticed
+    is the honest answer -- and it is marked admin-portal-only, so it does not
+    appear in that admin's own resident-portal "My Complaints". That list is what
+    happened to them at home; a complaint about the lobby is not that.
+
+    **This route exists because an admin is also a resident.** There is one
+    membership row per person per community, and admins already hold the
+    `resident` capability, so `POST /complaints` would have accepted both of
+    these calls -- and filed both onto the admin's resident list, where the
+    second one does not belong and the first one is filed against the wrong
+    person entirely.
+
+    Everything downstream is unchanged: the same category-then-skill department
+    routing, the same priority-derived SLA, the same notification to the
+    community's admins and the complaint's department manager, and the same
+    supervisor -> work order pipeline. An admin-raised complaint is a complaint.
+
+    `403` when the caller is not an active admin of their community, and when
+    `forMembershipId` names a membership in a different community -- refused
+    rather than ignored, since filing it into the caller's own community would
+    hand a complaint to a management team that has never heard of the person it
+    names. `404` for a `skillId` that names no active trade; `422` for an
+    unrecognised `priority` or a complaint with neither a category nor a skill.
+    """
+    complaint_id = complaints_service.admin_raise_complaint(
+        client, membership_id=membership.id, body=body
+    )
+    return AdminComplaintRaised(id=complaint_id, message="Complaint raised.")
 
 
 @router.patch(

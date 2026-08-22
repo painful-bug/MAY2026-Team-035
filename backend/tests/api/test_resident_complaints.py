@@ -809,8 +809,39 @@ def test_the_list_filters_on_the_callers_membership() -> None:
         limit=20,
     )
 
-    assert client.call["filters"] == {"raised_by_membership_id": "membership-id"}
+    assert client.call["filters"] == {
+        "raised_by_membership_id": "membership-id",
+        "raised_via": "resident",
+    }
     assert client.call["order"] == ("created_at", True)
+
+
+def test_the_list_leaves_out_the_admins_own_community_complaints() -> None:
+    """`raised_by_membership_id` alone stopped being enough on 2026-08-20.
+
+    An admin is also a resident -- one membership row per person -- so a
+    complaint they raised about the lobby is *owned by the membership reading
+    this list*. Without the second predicate every amenity and common-area
+    complaint an admin has ever filed would appear in their personal "My
+    Complaints", a list of things that happened to them at home.
+
+    The complement is the half worth stating: a complaint an admin filed **on a
+    resident's behalf** is `raised_via = 'resident'` and does appear, on that
+    resident's list, with their verbs intact.
+    """
+    client = _RecordingClient()
+
+    resident_complaints_repository.list_mine(
+        client,
+        membership_id="admin-membership-id",
+        statuses=None,
+        category=None,
+        unread_only=False,
+        offset=0,
+        limit=20,
+    )
+
+    assert client.call["filters"]["raised_via"] == "resident"
 
 
 def test_one_complaint_is_looked_up_by_id_and_owner_together() -> None:
@@ -823,7 +854,23 @@ def test_one_complaint_is_looked_up_by_id_and_owner_together() -> None:
     assert client.call["filters"] == {
         "id": "complaint-id",
         "raised_by_membership_id": "membership-id",
+        "raised_via": "resident",
     }
+
+
+def test_an_admin_portal_complaint_is_a_404_on_the_resident_detail_route() -> None:
+    """The predicate is part of the lookup, not a check afterwards -- so an
+    admin opening their own lobby complaint through the resident route gets the
+    same answer as for a complaint that does not exist. Same reasoning as the
+    ownership predicate beside it: a caller must not be able to tell "not on this
+    portal" from "not there"."""
+    client = _RecordingClient()
+
+    resident_complaints_repository.get_mine(
+        client, membership_id="admin-membership-id", complaint_id="complaint-id"
+    )
+
+    assert client.call["filters"]["raised_via"] == "resident"
 
 
 def test_the_comment_thread_asks_for_public_comments_only() -> None:

@@ -246,6 +246,184 @@ def test_api_134_an_unknown_visibility_is_a_422_before_the_database_sees_it(
     assert actual_output == expected_output, endpoint
 
 
+@pytest.fixture
+def admin_raise(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Replace the RPC beneath `admin_raise_complaint`, recording its arguments.
+
+    The repository rather than the service, for the reason this module's header
+    gives: the service is where the priority vocabulary is translated and where
+    the caller's own membership is chosen over anything in the body, and a test
+    that replaced it could not see either.
+    """
+    from app.services import complaints_service
+
+    captured: dict[str, Any] = {"reached": False, "kwargs": {}}
+
+    def fake_admin_raise(_: object, **kwargs: Any) -> str:
+        captured["reached"] = True
+        captured["kwargs"] = kwargs
+        return "new-complaint-id"
+
+    monkeypatch.setattr(
+        complaints_service.repo, "admin_raise_complaint", fake_admin_raise
+    )
+    return captured
+
+
+def test_a_resident_may_not_raise_from_the_admin_portal(
+    resident_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+) -> None:
+    """`require_admin`, and it must refuse before the RPC is called.
+
+    The RPC refuses a non-admin too -- it re-checks the role where the row is,
+    because an endpoint guard is not a database guard. This case is about the
+    other direction: that the guard is actually declared on the route, which is
+    the failure nothing else in the stack would notice.
+    """
+    response = resident_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={"title": "Lobby light out", "category": "Electrical"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 403
+    assert admin_raise["reached"] is False
+
+
+def test_an_unattached_complaint_carries_no_for_membership(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+) -> None:
+    """The amenity/common-area mode. `forMembershipId` absent is what makes the
+    complaint admin-portal-only, and it is absent by being absent -- there is no
+    `raisedVia` on the wire for a client to contradict it with."""
+    response = admin_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={
+            "title": "Treadmill belt slipping",
+            "description": "Gym, second machine.",
+            "category": "Equipment",
+            "priority": "high",
+            "location": "Clubhouse gym",
+        },
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"id": "new-complaint-id", "message": "Complaint raised."}
+    assert admin_raise["kwargs"]["for_membership_id"] is None
+    assert admin_raise["kwargs"]["actor_membership_id"] == "admin-membership-id"
+
+
+def test_an_on_behalf_complaint_forwards_the_residents_membership(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+) -> None:
+    """The other mode, and the one field that selects it.
+
+    Which membership ends up owning the row is the database's derivation, not
+    this layer's -- so what is asserted here is that the id survives the trip,
+    unmodified and distinct from the caller's own.
+    """
+    admin_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={
+            "title": "Tap leaking in 4B",
+            "category": "Plumbing",
+            "forMembershipId": "resident-membership-id",
+        },
+        headers=csrf_headers,
+    )
+
+    assert admin_raise["kwargs"]["for_membership_id"] == "resident-membership-id"
+    assert admin_raise["kwargs"]["actor_membership_id"] == "admin-membership-id"
+
+
+@pytest.mark.parametrize("sent,stored", [("High", "high"), ("low", "low")])
+def test_the_priority_reaches_the_database_in_the_columns_vocabulary(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+    sent: str,
+    stored: str,
+) -> None:
+    """`complaints_priority_check` allows `low`/`medium`/`high`; the admin screen
+    renders `High`. Both spellings are accepted and only one is stored -- the
+    same translation the resident's `urgency` goes through, so the two portals
+    cannot mean different things by the same word."""
+    admin_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={"title": "Gate motor", "category": "Security", "priority": sent},
+        headers=csrf_headers,
+    )
+
+    assert admin_raise["kwargs"]["priority"] == stored
+
+
+def test_an_unknown_priority_is_a_422_before_the_database_sees_it(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+) -> None:
+    """Raised in the service so the error can name the field. Reaching the RPC
+    with it would produce a `22P02` -- a 422 either way, with a message written
+    for Postgres rather than for the person who typed it."""
+    response = admin_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={"title": "Gate motor", "category": "Security", "priority": "urgent"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unknown_priority"
+    assert admin_raise["reached"] is False
+
+
+def test_a_trade_alone_is_a_valid_body(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+) -> None:
+    """`category` is optional exactly as it is on the resident's form.
+
+    A caller submitting `skillId` has an id, not a display string, and the RPC
+    snapshots that trade's current name into `category` itself. Requiring the
+    field here would make the admin's trade picker invent one -- and the string
+    it invented would be the one stored, which is the mutable-display-name
+    problem `20260813100000` removed.
+    """
+    response = admin_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={"title": "Lift stuck", "skillId": "skill-id"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 201
+    assert admin_raise["kwargs"]["skill_id"] == "skill-id"
+    assert admin_raise["kwargs"]["category"] == ""
+
+
+def test_a_blank_title_is_refused_by_the_model_not_by_the_database(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    admin_raise: dict[str, Any],
+) -> None:
+    """Three spaces satisfy `min_length=1` without `strip_whitespace`, and would
+    arrive at the RPC as the empty string it raises `23514` for."""
+    response = admin_api_client.post(
+        "/api/v1/complaints/admin-raise",
+        json={"title": "   ", "category": "Plumbing"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 422
+    assert admin_raise["reached"] is False
+
+
 def test_api_135_the_edit_carries_the_membership_the_request_already_resolved(
     live_service_client: TestClient,
     csrf_headers: dict[str, str],
