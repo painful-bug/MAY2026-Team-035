@@ -17,7 +17,22 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — the three confirmed defects are repaired forward
+## 2026-08-23 (latest) — the services-and-security collision is closed
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §22, "Version collision" — dated
+resolution appended.** `AUDIT` (git recon, 2026-08-23). The git manager closed
+and deleted the `services-and-security` branch; the user asked for it to be
+merged into `live-app-fixes` with precautions, and the recon found the merge
+already complete: all three of its PRs (#29, #35, #36) merged to `main`, and
+after the 2026-08-23 reconciliation merge `live-app-fixes` is zero commits
+behind `origin/main`, so everything the branch ever committed is contained.
+The colliding uncommitted `20260822120000` this section warned about never
+reached git — PR #36's two commits shipped the local fix as the
+already-ledgered `20260817144725` instead, which is precisely the rename the
+section demanded. The imperative paragraph is kept as history; the resolution
+paragraph under it retires the outstanding item.
+
+## 2026-08-23 — the three confirmed defects are repaired forward
 
 The session below queued three live defects and said "no fix is written yet".
 This is the fix, in the shape rule 2 of `backend/supabase/migrations/README.md`

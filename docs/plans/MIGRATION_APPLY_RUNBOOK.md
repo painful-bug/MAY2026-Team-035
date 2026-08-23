@@ -2708,6 +2708,21 @@ one is written down in `backend/supabase/migrations/README.md` — a new migrati
 timestamps later than the latest file on **any** shared branch, not just your
 own.
 
+**Resolved 2026-08-23.** The `services-and-security` branch was merged to `main`
+(PR #36, 2026-08-22 17:10 UTC) and deleted by the git manager. The collision
+never reached git: PR #36 carried exactly two commits, and the one holding the
+local fix committed it as `20260817144725_repair_staff_assignment_employment_type.sql`
+— the version the hosted ledger already carried for that repair (§21) — not as
+`20260822120000`. No file wearing the colliding version exists in any commit on
+any ref (`git log --all --full-history` finds only this branch's
+`supervisor_triage`), so the rename this section demanded effectively happened
+before commit, exactly as prescribed. Everything the branch ever merged is
+contained in `live-app-fixes`: after the 2026-08-23 reconciliation merge the
+branch is ahead of `origin/main` and zero behind, and PR #36's surviving files
+are byte-identical here (the third, the db-diff snapshot, is deliberately the
+§22 tombstone). Nothing remains to merge; only work that never left the
+teammate's working tree — none is known — could be outside git.
+
 ## 23. `20260823120000_complaint_engine_v2_repairs.sql`
 
 Arrived on this branch from `origin/main` in the reconciliation merge (PR #46,
