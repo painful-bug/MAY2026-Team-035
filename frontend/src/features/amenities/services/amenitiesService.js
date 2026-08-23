@@ -129,19 +129,6 @@ export const updateAmenitySettings = async (amenityId, settings) => {
   return updateAmenity(amenityId, updatedAmenity);
 };
 
-// The COMPLETE write vocabulary of `POST/PUT /dashboard/amenities` — the only
-// amenity write endpoints that exist. Their `AmenityWrite` model is
-// `extra="forbid"`, so adding any other key (opening/closing times, a
-// `settings` group) makes every save 422; and the repository behind them
-// writes no hours columns on either schema generation. The Add Amenity form
-// COLLECTS opening/closing times and this function is where they fall on the
-// floor — knowingly, because there is nowhere to send them: the backend's
-// hours-capable save (`SaveAmenityRequest.settings` →
-// `amenities_service.save_amenity`) lost its routes when the catalogue
-// endpoints were removed as duplicates. Until the backend accepts hours on
-// this wire (backend follow-up, reported 2026-08-12), amenity hours CANNOT be
-// persisted from the frontend — which is why the cards no longer display
-// invented ones.
 const toAmenityWrite = (amenity) => ({
   name: amenity.name,
   description: amenity.description ?? '',
@@ -152,4 +139,11 @@ const toAmenityWrite = (amenity) => ({
   approval_required: Boolean(amenity.requireApproval),
   hourly_rate: Number(amenity.hourlyRate ?? 0),
   is_active: amenity.isActive ?? true,
+  ...(amenity.image ? { image: amenity.image } : {}),
+  ...(amenity.openingHours === ''
+    ? {}
+    : {
+        opening_time: amenity.openingTime,
+        closing_time: amenity.closingTime,
+      }),
 });

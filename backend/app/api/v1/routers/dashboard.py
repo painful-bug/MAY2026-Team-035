@@ -60,7 +60,7 @@ async def create_amenity(
 ) -> dict:
     return await run_in_threadpool(
         dashboard_service.save_amenity,
-        membership, amenity_id=None, payload=body.model_dump()
+        membership, amenity_id=None, payload=body.model_dump(exclude_none=True)
     )
 
 
@@ -74,7 +74,7 @@ async def update_amenity(
 ) -> dict:
     return await run_in_threadpool(
         dashboard_service.save_amenity,
-        membership, amenity_id=amenity_id, payload=body.model_dump()
+        membership, amenity_id=amenity_id, payload=body.model_dump(exclude_none=True)
     )
 
 

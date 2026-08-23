@@ -110,9 +110,9 @@ def list_visitors(client: Client, community_id: str) -> list[dict[str, Any]]:
 
 def list_amenities(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
     columns = (
-        "id,name,category,location,capacity,booking_mode,approval_required,hourly_rate,status,created_at,updated_at"
+        "id,name,description,category,location,image_url,capacity,booking_mode,approval_required,hourly_rate,status,is_active,opening_time,closing_time,created_at,updated_at"
         if legacy
-        else "id,name,description,booking_rules,is_active,created_at,updated_at,amenity_operating_hours(weekday,opens_at,closes_at)"
+        else "id,name,description,category,location,image_url,capacity,booking_mode,approval_required,status,opening_time,closing_time,booking_rules,is_active,created_at,updated_at,amenity_operating_hours(weekday,opens_at,closes_at)"
     )
     return (
         client.table("amenities").select(columns).eq("community_id", community_id)
@@ -270,6 +270,11 @@ def create_amenity(
             "community_id": community_id,
             "name": payload["name"],
             "description": payload["description"],
+            "category": payload["category"],
+            "location": payload["location"] or None,
+            "capacity": payload["capacity"],
+            "booking_mode": payload["booking_mode"].lower(),
+            "approval_required": payload["approval_required"],
             "is_active": payload["is_active"],
             "booking_rules": {
                 "category": payload["category"],
@@ -280,6 +285,12 @@ def create_amenity(
                 "hourlyRate": payload["hourly_rate"],
             },
         }
+    if "image" in payload:
+        row["image_url"] = payload["image"] or None
+    if "opening_time" in payload:
+        row["opening_time"] = payload["opening_time"]
+    if "closing_time" in payload:
+        row["closing_time"] = payload["closing_time"]
     return client.table("amenities").insert(row).execute().data[0]
 
 
@@ -297,6 +308,9 @@ def update_amenity(
     else:
         row = {
             "name": payload["name"], "description": payload["description"],
+            "category": payload["category"], "location": payload["location"] or None,
+            "capacity": payload["capacity"], "booking_mode": payload["booking_mode"].lower(),
+            "approval_required": payload["approval_required"],
             "is_active": payload["is_active"],
             "booking_rules": {
                 "category": payload["category"], "location": payload["location"],
@@ -304,6 +318,12 @@ def update_amenity(
                 "requireApproval": payload["approval_required"], "hourlyRate": payload["hourly_rate"],
             },
         }
+    if "image" in payload:
+        row["image_url"] = payload["image"] or None
+    if "opening_time" in payload:
+        row["opening_time"] = payload["opening_time"]
+    if "closing_time" in payload:
+        row["closing_time"] = payload["closing_time"]
     rows = (
         client.table("amenities").update(row).eq("id", amenity_id)
         .eq("community_id", community_id).select("id").execute().data

@@ -161,6 +161,9 @@ class AmenityWrite(StrictModel):
     approval_required: bool = False
     hourly_rate: float = Field(default=0, ge=0)
     is_active: bool = True
+    image: str | None = Field(default=None, max_length=2_800_000)
+    opening_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    closing_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class AuthMethod(BaseModel):

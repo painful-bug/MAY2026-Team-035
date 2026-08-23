@@ -150,11 +150,13 @@ def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, An
     for row in rows:
         if legacy:
             result.append({
-                "id": row["id"], "name": row["name"], "description": row.get("category") or "",
+                "id": row["id"], "name": row["name"], "description": row.get("description") or row.get("category") or "",
                 "category": row.get("category") or "Utility", "location": row.get("location") or "",
+                "image": row.get("image_url") or "",
                 "capacity": row.get("capacity"), "bookingMode": str(row.get("booking_mode") or "Exclusive").title(),
                 "requireApproval": bool(row.get("approval_required")), "hourlyRate": row.get("hourly_rate") or 0,
-                "status": str(row.get("status") or "Active").title(), "isActive": str(row.get("status", "active")).lower() == "active",
+                "openingTime": str(row.get("opening_time") or ""), "closingTime": str(row.get("closing_time") or ""),
+                "status": str(row.get("status") or "Active").title(), "isActive": bool(row.get("is_active", str(row.get("status", "active")).lower() == "active")),
                 "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             })
         else:
@@ -163,9 +165,9 @@ def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, An
             first_hours = hours[0] if hours else {}
             result.append({
                 "id": row["id"], "name": row["name"], "description": row.get("description") or "",
-                "category": rules.get("category", "Utility"), "capacity": rules.get("capacity"),
-                "bookingMode": rules.get("bookingMode", "Exclusive"), "requireApproval": bool(rules.get("requireApproval")),
-                "openingTime": str(first_hours.get("opens_at") or ""), "closingTime": str(first_hours.get("closes_at") or ""),
+                "category": row.get("category") or rules.get("category", "Utility"), "location": row.get("location") or rules.get("location", ""), "image": row.get("image_url") or "", "capacity": row.get("capacity", rules.get("capacity")),
+                "bookingMode": str(row.get("booking_mode") or rules.get("bookingMode", "Exclusive")).title(), "requireApproval": bool(row.get("approval_required", rules.get("requireApproval"))),
+                "openingTime": str(row.get("opening_time") or first_hours.get("opens_at") or ""), "closingTime": str(row.get("closing_time") or first_hours.get("closes_at") or ""),
                 "status": "Active" if row.get("is_active") else "Inactive", "isActive": bool(row.get("is_active")),
                 "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             })

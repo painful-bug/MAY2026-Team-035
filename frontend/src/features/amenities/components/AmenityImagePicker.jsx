@@ -32,7 +32,7 @@ export default function AmenityImagePicker({ image, onSelect, onRemove }) {
 
       <div className="space-y-2">
         <p className="text-xs font-medium text-slate-400">
-          Preview an image locally. Nothing will be uploaded yet.
+          This image will be shown with the amenity after it is saved.
         </p>
         <div className="flex flex-wrap gap-2">
           <input

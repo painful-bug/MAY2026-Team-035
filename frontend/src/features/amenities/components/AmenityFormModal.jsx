@@ -1,4 +1,5 @@
 import React, { useEffect, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { AMENITY_CATEGORIES } from '../constants/amenityCategories.js';
 import { useAmenityForm } from '../hooks/useAmenityForm.js';
 import AmenityFormField, {
@@ -49,16 +50,16 @@ export default function AmenityFormModal({
     }
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-[999] flex items-start justify-center overflow-y-auto bg-slate-900/60 p-8 backdrop-blur-sm animate-fade-in"
       onMouseDown={handleBackdropClick}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-100 animate-slide-up"
+        className="max-h-[calc(100vh-4rem)] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-100 animate-slide-up"
       >
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -230,6 +231,7 @@ export default function AmenityFormModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
