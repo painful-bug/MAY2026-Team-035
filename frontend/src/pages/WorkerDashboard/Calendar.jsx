@@ -6,6 +6,7 @@ import { useCalendarRange } from '../../features/calendar/useCalendarRange';
 import CalendarMonth from '../../features/calendar/CalendarMonth';
 import CalendarWeek from '../../features/calendar/CalendarWeek';
 import { communityColor } from '../../lib/communityColor';
+import { holdsLeadershipEngagement } from '../../lib/staffVocabulary';
 import JobDetailModal from './JobDetailModal';
 
 // The colour-coded calendar across every society that employs this person.
@@ -15,15 +16,44 @@ import JobDetailModal from './JobDetailModal';
 // second request is still in flight. Nothing in the response carries a colour:
 // D15 derives it from a hash of the community id, so the same society is the
 // same colour here, on the manager's screen, and on the worker's other device.
+//
+// Department leadership is refused here in words rather than hidden from the
+// nav alone (amendment 3, ruling B1). This page used to be the gap: both
+// queries fired unconditionally, and `GET /worker/communities` 404s at anybody
+// with no provider row — the exact defect handoff §18 ruled against on the
+// landing page, never propagated here. Both queries now wait for the snapshot
+// the layout already fetched (react-query deduplicates the key) and stay off
+// for leadership.
 
 export default function WorkerCalendar() {
   const range = useCalendarRange('month');
   const [openJob, setOpenJob] = useState(null);
+  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const leadership = holdsLeadershipEngagement(snapshot.data?.communities);
   const entries = useQuery({
     queryKey: ['worker-calendar', range.from, range.to],
     queryFn: () => workerApi.calendar(range.from, range.to),
+    enabled: snapshot.isSuccess && !leadership,
   });
-  const communities = useQuery({ queryKey: ['worker-communities'], queryFn: workerApi.myCommunities });
+  const communities = useQuery({
+    queryKey: ['worker-communities'],
+    queryFn: workerApi.myCommunities,
+    enabled: snapshot.isSuccess && !leadership,
+  });
+
+  if (snapshot.isLoading) {
+    return <p className="text-xs font-semibold text-slate-400">Loading…</p>;
+  }
+
+  if (leadership) {
+    return (
+      <p className="rounded-2xl border border-slate-100 bg-white p-6 text-xs font-semibold text-slate-500">
+        This calendar draws a technician&apos;s booked jobs and leave, and you
+        hold neither — your day is your department&apos;s queue, which is what
+        the dashboard shows.
+      </p>
+    );
+  }
 
   const data = entries.data ?? [];
   const legend = [...new Map((communities.data ?? []).map((c) => [c.communityId, c])).values()];

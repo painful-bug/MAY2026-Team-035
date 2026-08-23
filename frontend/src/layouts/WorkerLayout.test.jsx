@@ -306,6 +306,131 @@ describe('WorkerLayout registration gate', () => {
     expect(screen.queryByRole('link', { name: 'Work orders' })).not.toBeInTheDocument();
   });
 
+  // Amendment 3, ruling B1: the marketplace chrome and the supervisor's are
+  // mutually exclusive halves of one sidebar. Leadership is hired from outside
+  // the marketplace, so the five marketplace entries have nothing to show them;
+  // a technician is the marketplace, so the two supervisor entries have nothing
+  // to show *them*. The pages behind all seven still refuse the wrong reader in
+  // words — these tests pin the advertising, not the guard.
+  it('shows leadership the supervisor rail and none of the marketplace chrome', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: null,
+      communities: [
+        {
+          staffAssignmentId: 'staff-1',
+          communityId: 'community-1',
+          departmentId: 'department-1',
+          departmentName: 'Plumbing',
+          rank: 'supervisor',
+          status: 'active',
+        },
+      ],
+      pendingOffers: [],
+      today: [],
+    });
+    renderLayout();
+
+    await screen.findByRole('navigation');
+    expect(screen.getByRole('link', { name: 'Work orders' })).toBeVisible();
+    const completed = screen.getByRole('link', { name: 'Completed work' });
+    expect(completed).toBeVisible();
+    expect(completed).toHaveAttribute('href', '/worker/completed');
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Complaints' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeVisible();
+    for (const name of ['Calendar', 'Availability', 'Communities', 'Messages', 'Profile']) {
+      expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it('shows a technician the marketplace chrome and neither supervisor entry', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: completeProvider,
+      communities: [
+        {
+          staffAssignmentId: 'staff-2',
+          communityId: 'community-1',
+          departmentId: 'department-1',
+          departmentName: 'Plumbing',
+          rank: 'member',
+          status: 'active',
+        },
+      ],
+      pendingOffers: [],
+      today: [],
+    });
+    renderLayout();
+
+    await screen.findByRole('navigation');
+    for (const name of ['Calendar', 'Availability', 'Communities', 'Messages', 'Profile']) {
+      expect(screen.getByRole('link', { name })).toBeVisible();
+    }
+    expect(screen.queryByRole('link', { name: 'Work orders' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Completed work' })).not.toBeInTheDocument();
+  });
+
+  // Amendment 3, ruling B3: the chrome names the roster rank for leadership.
+  // Both places at once — the sidebar eyebrow and the header title — because a
+  // brand that disagrees with itself across one screen reads as a bug.
+  it('brands the chrome with the roster rank for a supervisor', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: null,
+      communities: [
+        {
+          staffAssignmentId: 'staff-1',
+          communityId: 'community-1',
+          departmentId: 'department-1',
+          departmentName: 'Plumbing',
+          rank: 'supervisor',
+          status: 'active',
+        },
+      ],
+      pendingOffers: [],
+      today: [],
+    });
+    renderLayout();
+
+    await screen.findByRole('navigation');
+    expect(screen.getAllByText('Supervisor')).toHaveLength(2);
+    expect(screen.queryByText('Service Partner')).not.toBeInTheDocument();
+  });
+
+  it('brands the chrome with Manager for a manager', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: null,
+      communities: [
+        {
+          staffAssignmentId: 'staff-1',
+          communityId: 'community-1',
+          departmentId: 'department-1',
+          departmentName: 'Plumbing',
+          rank: 'manager',
+          status: 'active',
+        },
+      ],
+      pendingOffers: [],
+      today: [],
+    });
+    renderLayout();
+
+    await screen.findByRole('navigation');
+    expect(screen.getAllByText('Manager')).toHaveLength(2);
+    expect(screen.queryByText('Service Partner')).not.toBeInTheDocument();
+  });
+
+  it('keeps Service Partner branding for everyone else', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: completeProvider,
+      communities: [],
+      pendingOffers: [],
+      today: [],
+    });
+    renderLayout();
+
+    await screen.findByRole('navigation');
+    expect(screen.getAllByText('Service Partner')).toHaveLength(2);
+  });
+
   it('offers a retry when the snapshot fails, and recovers into the portal', async () => {
     const user = userEvent.setup();
     // The recovery value is persistent, not `Once`: once the gate passes,

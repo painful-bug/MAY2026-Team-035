@@ -528,7 +528,7 @@ export default function SupervisorDashboard({ engagement }) {
           {engagement?.departmentName || 'Your department'}
         </h1>
         <p className="mt-1 text-sm font-medium text-slate-500">
-          {engagement?.communityName || 'Your community'} ·{' '}
+          {engagement?.communityName || 'The community'} ·{' '}
           {newComplaints.length} waiting · {openRequests.length} unclaimed ·{' '}
           {inProgress.length} under way
         </p>

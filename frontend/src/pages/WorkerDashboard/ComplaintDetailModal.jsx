@@ -35,11 +35,22 @@ import { Chip, Failure, ModalShell, whenText } from './triageParts';
 // notes (`note_added` with `internal: true`) are dropped from the resident
 // projection and shown here under a lock, which is the entire point of them.
 
+// `readOnly` (amendment 3, ruling B2) unmounts the note composer for the
+// archive, where nothing on the screen writes. It defaults false so every
+// existing mount — the dashboard's — is byte-identical.
+//
+// `statusLabel` exists for the same caller: the archive labels the three end
+// conditions distinctly, and a popup opened from it is part of that screen —
+// its chip saying "Resolved" over a card saying "Closed — confirmed" would be
+// the two-vocabularies bug in miniature. When absent, the chip reads via
+// `complaintStatusLabel` exactly as before.
 export default function ComplaintDetailModal({
   complaintId,
   fallback = {},
   stage,
   actions,
+  readOnly = false,
+  statusLabel,
   onClose,
 }) {
   const detail = useQuery({
@@ -69,7 +80,9 @@ export default function ComplaintDetailModal({
       <div className="flex flex-wrap items-center gap-1.5">
         <Chip className={priorityChipClass(priority)}>{priorityLabel(priority)}</Chip>
         {category ? <Chip className={categoryChipClass(category)}>{category}</Chip> : null}
-        <Chip className={complaintStatusChipClass(status)}>{complaintStatusLabel(status)}</Chip>
+        <Chip className={complaintStatusChipClass(status)}>
+          {statusLabel || complaintStatusLabel(status)}
+        </Chip>
         {badges.map((badge) => (
           <Chip key={badge} className="bg-amber-50 text-amber-700 ring-amber-200">{badge}</Chip>
         ))}
@@ -129,9 +142,11 @@ export default function ComplaintDetailModal({
         </div>
       ) : null}
 
-      <div className="border-t border-slate-100 pt-4">
-        <NoteComposer complaintId={complaintId} />
-      </div>
+      {readOnly ? null : (
+        <div className="border-t border-slate-100 pt-4">
+          <NoteComposer complaintId={complaintId} />
+        </div>
+      )}
 
       <div className="border-t border-slate-100 pt-4">
         <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Timeline</p>

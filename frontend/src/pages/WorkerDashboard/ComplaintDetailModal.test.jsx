@@ -182,6 +182,46 @@ describe('the complaint detail popup', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Not Found');
   });
 
+  // Amendment 3, ruling B2: the archive opens this popup with `readOnly`, and
+  // the one thing that changes is that the note composer is not mounted. The
+  // timeline — internal notes included — still renders, because the look-back
+  // is what the archive is for.
+  it('unmounts the note composer when readOnly, timeline intact', async () => {
+    serve();
+    renderModal({ readOnly: true });
+
+    expect(await screen.findByText(/come up through the basement drain/)).toBeVisible();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save note' })).not.toBeInTheDocument();
+    const note = screen.getByText('Riser is the real problem.').closest('li');
+    expect(within(note).getByText('Internal')).toBeVisible();
+  });
+
+  it('mounts the composer by default, so every existing use is unchanged', async () => {
+    serve();
+    renderModal();
+
+    await screen.findByText(/come up through the basement drain/);
+    expect(screen.getByRole('textbox')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save note' })).toBeVisible();
+  });
+
+  // `statusLabel` is the archive's override; without it the chip keeps the
+  // wire's own folding, closed→Resolved included.
+  it('keeps the wire status label by default, and takes the archive override', async () => {
+    serve({ detail: { ...DETAIL, complaint: { ...DETAIL.complaint, status: 'closed' } } });
+    renderModal();
+    expect(await screen.findByText('Resolved')).toBeVisible();
+    expect(screen.queryByText('Closed — confirmed')).not.toBeInTheDocument();
+  });
+
+  it('renders the caller’s statusLabel when one is passed', async () => {
+    serve({ detail: { ...DETAIL, complaint: { ...DETAIL.complaint, status: 'closed' } } });
+    renderModal({ statusLabel: 'Closed — confirmed' });
+    expect(await screen.findByText('Closed — confirmed')).toBeVisible();
+    expect(screen.queryByText('Resolved')).not.toBeInTheDocument();
+  });
+
   it('has a close control a keyboard and a screen reader can both find', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

@@ -19,11 +19,22 @@ import { Empty, Pill } from '../../security/components/Primitives';
 // manager about *every* complaint and sent them to `/admin/complaints`, which
 // their portal has no route for.
 
+// All six words the check constraint admits, so no status renders an untinted
+// pill. `acknowledged` shares `in_progress`'s tone because the resident already
+// reads both as "In Progress".
 const STATUS_TONES = {
   open: 'bg-amber-50 text-amber-700',
+  acknowledged: 'bg-blue-50 text-blue-700',
   in_progress: 'bg-blue-50 text-blue-700',
   resolved: 'bg-emerald-50 text-emerald-700',
+  closed: 'bg-teal-50 text-teal-700',
+  cancelled: 'bg-slate-100 text-slate-500',
 };
+
+// A complaint that ended is not moved between departments any more — offering
+// the transfer controls on it would let somebody file a request nobody can act
+// on (amendment 3, rider R1).
+const ENDED_STATUSES = ['resolved', 'closed', 'cancelled'];
 
 const PRIORITY_TONES = {
   high: 'bg-rose-50 text-rose-700',
@@ -176,8 +187,10 @@ export default function DepartmentComplaintList({
 
                 {/* A transfer is already waiting on somebody. Offering the
                     button again would let a supervisor file a second request
-                    and learn about it from a unique-index violation. */}
-                {complaint.openRequestId ? (
+                    and learn about it from a unique-index violation. And an
+                    ended row offers nothing at all: there is no department
+                    question left to ask about it. */}
+                {ENDED_STATUSES.includes(complaint.status) ? null : complaint.openRequestId ? (
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700">
                     <AlertTriangle className="h-3 w-3" />
                     A move has been requested
@@ -199,7 +212,7 @@ export default function DepartmentComplaintList({
                 )}
               </div>
 
-              {movingId === complaint.id && (
+              {movingId === complaint.id && !ENDED_STATUSES.includes(complaint.status) && (
                 <form
                   className="mt-3 space-y-2 rounded-xl bg-slate-50 p-3"
                   onSubmit={(event) => {

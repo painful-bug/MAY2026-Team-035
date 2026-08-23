@@ -395,3 +395,134 @@ Deviations the backend specialist flagged, ruled after both builds landed:
   complaint (`dm_thread_overview` lacks `complaint_id`), and a
   third-supervisor participant may see the other supervisor's name as
   `counterpartName`.
+
+---
+
+## Amendment 3 — the supervisor's chrome, and the archive (2026-08-23, phase 3)
+
+Live testing moved past the dashboard to the portal around it. Two product
+observations from the owner: the chrome a supervisor sees is a marketplace
+serviceman's chrome ("Where I work", Find work, a provider Profile, a hiring
+inbox, "Service Partner" in two places), and there is nowhere to look back at
+work that ended. Three rulings were taken with the product owner
+(AskUserQuestion, 2026-08-23), and this amendment freezes them plus the
+orchestrator's riders. **Everything in this amendment is frontend-only** — the
+data layer it reads exists already and nothing here writes.
+
+### Ruling B1 — leadership loses the marketplace chrome, and the model is simplified
+
+The owner's words: hide all five marketplace nav items, "but also let's assume
+we are not implementing the worker promotion model right now. Let's assume that
+we directly hire supervisors and managers from outside the marketplace."
+
+Consequences, frozen:
+
+- **The discriminator is the leadership rank alone**: `holdsLeadershipEngagement`
+  of the worker snapshot's `communities[]`. No provider-profile test, because by
+  assumption leadership never has one. (This retires, for now, the hybrid
+  "registered provider promoted to supervisor" population; if the promotion
+  model ever ships, this amendment is the place that recorded the assumption.)
+- Five nav items are hidden from leadership via a new `marketplaceOnly: true`
+  flag on the NAV entries in `WorkerLayout.jsx`, filtered symmetrically to the
+  existing `supervisorOnly` flag: **Calendar, Availability, Communities,
+  Messages, Profile**. The leadership rail becomes: Dashboard, Complaints,
+  Work orders, Completed work (new, below), Settings.
+- Hiding the nav item is never the guard (portal convention). Each of the five
+  pages answers a leadership deep-link with a short plain-English refusal in
+  the page's own voice, the way `Complaints.jsx` refuses technicians.
+  `Availability`, `Profile` and `Settings` already discriminate; **`Calendar`
+  is the gap** — it fires `GET /worker/communities` unconditionally and 404s on
+  every leadership mount (the exact defect handoff §18 ruled against on the
+  landing page, never propagated). Its queries gain `enabled:` gating and the
+  page gains the refusal.
+- The sidebar `AvailabilityToggle` already returns null without a provider row;
+  untouched.
+
+### Ruling B3 — the branding names the rank
+
+The two hard-coded "Service Partner" strings (`WorkerLayout.jsx` sidebar
+eyebrow and header title) render the caller's actual roster rank for
+leadership — "Supervisor" or "Manager", read from the first active leadership
+engagement on the snapshot the layout already fetches. Non-leadership keeps
+"Service Partner".
+
+### Ruling B2 — Completed work, the read-only archive
+
+A new nav item **Completed work** (`supervisorOnly`), route
+`/worker/completed`. The owner's definition: **all ended complaints** —
+resolved, closed, and cancelled — "but keep a filtering mechanism on the front
+end so that it can be sorted across each kind of end condition."
+
+Frozen shape:
+
+- **Data**: `GET /api/v1/departments/{id}/complaints` (existing; RPC
+  `department_complaints`, supervisors pass `can_supervise_department`). Called
+  with no `?status=`; the page keeps rows with status ∈
+  `{resolved, closed, cancelled}` client-side. The endpoint is unpaginated —
+  accepted for now and recorded as backlog (W1 below), not worked around.
+- **Filter chips**: Everything · Resolved · Closed · Cancelled. In this one
+  screen the three end conditions are **labelled distinctly** — "Resolved —
+  awaiting the resident", "Closed — confirmed", "Cancelled" — a deliberate,
+  display-only departure from the wire's closed→Resolved asymmetry, confined to
+  the archive because distinguishing end conditions is this screen's entire
+  point. Nothing else adopts these labels.
+- **Order**: `resolvedAt` descending, `createdAt` as the fallback key.
+- **Interaction**: a card opens the existing `ComplaintDetailModal` fed by the
+  staff detail endpoint (which already fetches ended complaints — no status
+  predicate). **Read-only**: no `actions` node is passed, and the modal gains a
+  `readOnly` prop that unmounts the `NoteComposer` (today mounted
+  unconditionally). The full timeline, internal notes included, renders as the
+  look-back the owner asked for; nothing on the screen writes.
+- The read-only boundary is **UI-level**. `add_complaint_note_internal` has no
+  status guard in the database; a note on an ended complaint would succeed if
+  posted by hand. Recorded (W2), not changed — refusing it server-side is an
+  engine-lifecycle call the owner can take separately.
+
+### Orchestrator riders (logged, not separately ruled)
+
+- **R1** — `DepartmentComplaintList` (the supervisor Complaints page) today
+  offers "Not our department" / move-request buttons on every row including
+  ended ones, and its `STATUS_TONES` map is missing `acknowledged`, `closed`
+  and `cancelled` (they render an untinted pill). Both fixed in passing: ended
+  rows lose the move controls, the tone map learns the missing words.
+- **R2** — the possessive marketplace fallbacks a supervisor can still see
+  (`'your community'` in `Complaints.jsx`, `'Your community'` in
+  `SupervisorDashboard.jsx`) prefer the actual community name the snapshot
+  carries, with a neutral "the community" as the last resort.
+
+### Backlog opened by this amendment
+
+- **W1** — `department_complaints` has no pagination or multi-status filter; a
+  department with years of history returns everything in one array. Fine at
+  current scale; the archive is where it will pinch first.
+- **W2** — no server-side write-freeze on ended complaints (notes RPC).
+
+### Adjudications on Amendment 3 (orchestrator, post-build 2026-08-23)
+
+The build specialist flagged six deviations rather than deciding them. Rulings:
+
+- **B-A1 (accepted)** — the layout reads `supervisedEngagement(...)` instead of
+  `holdsLeadershipEngagement(...)`: one call yields both the boolean gate and
+  the rank that ruling B3 renders. Same predicate, same first-row rule.
+- **B-A2 (accepted)** — on ended rows, `DepartmentComplaintList` drops the
+  whole transfer block including the informational "a move has been requested"
+  notice, not just the buttons. A stale transfer notice on a resolved
+  complaint is noise; R1's word "controls" is read broadly.
+- **B-A3 (accepted)** — the filter chips carry the short words (Everything ·
+  Resolved · Closed · Cancelled); the distinct long labels live on each card's
+  status chip. Matches the intent: the chip row filters, the card explains.
+- **B-A4 (ruled, follow-up implemented)** — the detail popup opened from the
+  archive is part of the archive screen, so it speaks the archive's labels: a
+  `closed` complaint's popup chip must read "Closed — confirmed", not the
+  wire's "Resolved". `ComplaintDetailModal` gains an optional `statusLabel`
+  override; absent, behavior is unchanged, and the dashboard passes nothing.
+  This narrows Amendment 3's "nothing else adopts these labels" to: no screen
+  *outside* the archive.
+- **B-A5 (accepted)** — sentence-position capitalization of the "the
+  community" fallback.
+- **B-A6 (fixed in follow-up)** — the FRONTEND_CHANGES.md section is moved to
+  sit with its sibling feature sections rather than after the legacy tail.
+
+Also recorded: the archive shares the `['departments', {id}, 'complaints']`
+query key with the supervisor Complaints page — one cached read serves both,
+deliberately.
