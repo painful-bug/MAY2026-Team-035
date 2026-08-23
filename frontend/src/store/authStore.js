@@ -73,15 +73,19 @@ export const useAuthStore = create((set, get) => ({
   beginGoogleSignIn: (next, options) => get().beginOAuth('google', next, options),
 
   completeExternalLogin: async () => {
-    const generation = get().authGeneration;
+    // A session bootstrap that began before credentials were accepted must not
+    // replace this new session when its anonymous response arrives late.
+    const generation = get().authGeneration + 1;
+    set({ authGeneration: generation });
     try {
       const context = await getApplicationSession();
       if (get().authGeneration !== generation) return { success: false, message: 'Sign-in was superseded.' };
       set(sessionState(context));
       return { success: true, user: applicationUser(context), context, onboardingEligible: context.onboarding_eligible };
     } catch (error) {
+      if (get().authGeneration !== generation) return { success: false, message: 'Sign-in was superseded.' };
       const message = error instanceof Error ? error.message : 'Unable to complete Google sign-in.';
-      set({ ...initialState, sessionStatus: SESSION_STATUS.ERROR, authFlowState: AUTH_FLOW_STATE.ERROR, authError: message, isAuthReady: true });
+      set({ ...initialState, authGeneration: generation, sessionStatus: SESSION_STATUS.ERROR, authFlowState: AUTH_FLOW_STATE.ERROR, authError: message, isAuthReady: true });
       return { success: false, message };
     }
   },
