@@ -41,11 +41,14 @@ ACCESS_REQUESTS_REPOSITORY = (
     BACKEND / "app" / "repositories" / "access_requests_repository.py"
 )
 
-NEW_FILES = {
+PREVIOUS_SHARED_MIGRATION = (
+    MIGRATIONS / "20260823120000_complaint_engine_v2_repairs.sql"
+)
+MIGRATIONS_ADDED_TOGETHER = (
     "20260823150000_hosted_invite_claim_names.sql",
     "20260823153000_hosted_request_status_withdrawn.sql",
     "20260823160000_visitor_requests_sse.sql",
-}
+)
 
 ENUM = "request_status"
 
@@ -100,11 +103,18 @@ def test_the_migration_parses_as_postgresql() -> None:
 
 
 def test_it_sorts_after_every_file_that_already_existed() -> None:
-    existing = sorted(
-        path.name for path in MIGRATIONS.glob("*.sql") if path.name not in NEW_FILES
+    """Pin the parent tree's tip; later migrations are not predecessors."""
+    earlier = sorted(
+        path.name
+        for path in MIGRATIONS.glob("*.sql")
+        if path.name < MIGRATIONS_ADDED_TOGETHER[0]
     )
-    assert existing, "no pre-existing migrations found -- the glob is wrong"
-    assert MIGRATION.name > existing[-1], existing[-1]
+    assert earlier, "no pre-existing migrations found -- the glob is wrong"
+    assert PREVIOUS_SHARED_MIGRATION.exists()
+    assert MIGRATIONS_ADDED_TOGETHER == tuple(sorted(MIGRATIONS_ADDED_TOGETHER))
+    assert MIGRATION.name in MIGRATIONS_ADDED_TOGETHER
+    assert earlier[-1] == PREVIOUS_SHARED_MIGRATION.name, earlier[-1]
+    assert MIGRATIONS_ADDED_TOGETHER[0] > earlier[-1], earlier[-1]
 
 
 def test_the_label_added_is_the_one_the_application_writes() -> None:

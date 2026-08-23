@@ -612,6 +612,12 @@ components:
           maxLength: 120
           title: Category
           type: string
+        closing_time:
+          anyOf:
+          - pattern: ^([01]\d|2[0-3]):[0-5]\d$
+            type: string
+          - type: 'null'
+          title: Closing Time
         description:
           default: ''
           maxLength: 2000
@@ -622,6 +628,12 @@ components:
           minimum: 0.0
           title: Hourly Rate
           type: number
+        image:
+          anyOf:
+          - maxLength: 2800000
+            type: string
+          - type: 'null'
+          title: Image
         is_active:
           default: true
           title: Is Active
@@ -636,6 +648,12 @@ components:
           minLength: 2
           title: Name
           type: string
+        opening_time:
+          anyOf:
+          - pattern: ^([01]\d|2[0-3]):[0-5]\d$
+            type: string
+          - type: 'null'
+          title: Opening Time
       required:
       - name
       title: AmenityWrite

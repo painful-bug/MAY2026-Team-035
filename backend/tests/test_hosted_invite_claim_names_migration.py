@@ -40,13 +40,17 @@ MIGRATION = MIGRATIONS / "20260823150000_hosted_invite_claim_names.sql"
 BASELINE = MIGRATIONS / "0001_baseline.sql"
 MEMBERSHIPS_REPOSITORY = BACKEND / "app" / "repositories" / "memberships_repository.py"
 
-#: The three files this package adds, so "sorts after everything that existed"
-#: can be asked without naming the file that happened to be last.
-NEW_FILES = {
+#: These three migrations landed together.  Pin the last migration from their
+#: parent tree as well: migrations added later must not retroactively become
+#: part of the historical "already existed" set.
+PREVIOUS_SHARED_MIGRATION = (
+    MIGRATIONS / "20260823120000_complaint_engine_v2_repairs.sql"
+)
+MIGRATIONS_ADDED_TOGETHER = (
     "20260823150000_hosted_invite_claim_names.sql",
     "20260823153000_hosted_request_status_withdrawn.sql",
     "20260823160000_visitor_requests_sse.sql",
-}
+)
 
 WRAPPER = "claim_email_invitation"
 DELEGATE = "claim_resident_invite"
@@ -92,13 +96,18 @@ def test_the_migration_parses_as_postgresql() -> None:
 
 
 def test_it_sorts_after_every_file_that_already_existed() -> None:
-    """Forward-only. A version below the latest on a shared branch is invisible
-    to a fresh replay that has already passed it."""
-    existing = sorted(
-        path.name for path in MIGRATIONS.glob("*.sql") if path.name not in NEW_FILES
+    """Forward-only, without treating later migrations as historical inputs."""
+    earlier = sorted(
+        path.name
+        for path in MIGRATIONS.glob("*.sql")
+        if path.name < MIGRATIONS_ADDED_TOGETHER[0]
     )
-    assert existing, "no pre-existing migrations found -- the glob is wrong"
-    assert MIGRATION.name > existing[-1], existing[-1]
+    assert earlier, "no pre-existing migrations found -- the glob is wrong"
+    assert PREVIOUS_SHARED_MIGRATION.exists()
+    assert MIGRATIONS_ADDED_TOGETHER == tuple(sorted(MIGRATIONS_ADDED_TOGETHER))
+    assert MIGRATION.name in MIGRATIONS_ADDED_TOGETHER
+    assert earlier[-1] == PREVIOUS_SHARED_MIGRATION.name, earlier[-1]
+    assert MIGRATIONS_ADDED_TOGETHER[0] > earlier[-1], earlier[-1]
 
 
 def test_the_name_it_creates_is_the_name_the_backend_calls() -> None:
