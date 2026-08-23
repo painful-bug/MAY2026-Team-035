@@ -36,8 +36,16 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import httpx
+
 from app.config import get_settings
 from supabase import Client, ClientOptions, create_client
+
+
+@lru_cache
+def _http_client() -> httpx.Client:
+    """One shared HTTP/1.1 transport for the synchronous Supabase clients."""
+    return httpx.Client(http2=False)
 
 
 def _build_client(key: str) -> Client:
@@ -50,6 +58,7 @@ def _build_client(key: str) -> Client:
     options = ClientOptions(
         auto_refresh_token=False,
         persist_session=False,
+        httpx_client=_http_client(),
     )
     return create_client(settings.supabase_url, key, options)
 
