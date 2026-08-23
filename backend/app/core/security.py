@@ -46,7 +46,7 @@ def decode_token(token: str) -> Principal:
             key = settings.supabase_jwt_secret
         else:
             key = _jwks_client().get_signing_key_from_jwt(token).key
-        claims = jwt.decode(token, key, algorithms=[algorithm], audience=_AUDIENCE)
+        claims = jwt.decode(token, key, algorithms=[algorithm], audience=_AUDIENCE, leeway=10)
     except jwt.ExpiredSignatureError as exc:
         raise AuthenticationError("Session has expired.", code="token_expired") from exc
     except jwt.InvalidTokenError as exc:
