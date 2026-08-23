@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, MessageSquare, Send } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
+import { holdsLeadershipEngagement } from '../../lib/staffVocabulary';
 
 const stamp = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 
@@ -28,6 +29,12 @@ const stamp = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short
 // No unread badge. `0038` shipped with no read receipts on purpose, and
 // `WorkerSnapshot` says so in print rather than inventing a count. A badge here
 // would mean inventing the receipts underneath it.
+//
+// And no supervisors (amendment 3, ruling B1). This is the marketplace HIRING
+// inbox — a department courting a provider — and leadership was hired by an
+// administrator typing their email, so no department ever opens a thread at
+// them. A deep link gets the refusal in words; their conversations are the
+// complaint chats in the floating Messages dock.
 
 export default function WorkerMessages() {
   const queryClient = useQueryClient();
@@ -36,11 +43,17 @@ export default function WorkerMessages() {
   const [draft, setDraft] = useState('');
   const bottom = useRef(null);
 
-  const threads = useQuery({ queryKey: ['worker-conversations'], queryFn: workerApi.conversations });
+  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const leadership = holdsLeadershipEngagement(snapshot.data?.communities);
+  const threads = useQuery({
+    queryKey: ['worker-conversations'],
+    queryFn: workerApi.conversations,
+    enabled: snapshot.isSuccess && !leadership,
+  });
   const thread = useQuery({
     queryKey: ['worker-conversation', openId],
     queryFn: () => workerApi.conversation(openId),
-    enabled: Boolean(openId),
+    enabled: Boolean(openId) && snapshot.isSuccess && !leadership,
   });
 
   const send = useMutation({
@@ -57,6 +70,21 @@ export default function WorkerMessages() {
   }, [thread.data]);
 
   const rows = threads.data ?? [];
+
+  if (snapshot.isLoading) {
+    return <p className="text-xs font-semibold text-slate-400">Loading…</p>;
+  }
+
+  if (leadership) {
+    return (
+      <p className="rounded-2xl border border-slate-100 bg-white p-6 text-xs font-semibold text-slate-500">
+        These are hiring conversations — a department talking terms with a
+        marketplace professional, and nobody courts somebody already on the
+        payroll. Your conversations live in the floating Messages dock at the
+        corner of the screen.
+      </p>
+    );
+  }
 
   if (openId) {
     const conversation = thread.data?.conversation;

@@ -71,7 +71,7 @@ export default function WorkerComplaints() {
         title="Complaints"
         description={
           engagement.departmentName
-            ? `${engagement.departmentName} — ${engagement.communityName ?? 'your community'}`
+            ? `${engagement.departmentName} — ${engagement.communityName ?? 'the community'}`
             : 'Your department'
         }
       />

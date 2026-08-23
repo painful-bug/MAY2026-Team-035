@@ -483,6 +483,74 @@ resolve confirm and its verbatim 409, the priority button at High, the honest
 force-assign, monitor-only sections), `ComplaintDetailModal.test.jsx`,
 `AssignPickerModal.test.jsx`, `ChatDock.test.jsx` and `triageDisplay.test.js`.
 
+## The supervisor's chrome, and the archive of ended work
+
+Amendment 3 of `docs/plans/SUPERVISOR_TRIAGE_SPEC.md` (2026-08-23), frontend
+only: the data layer it reads existed already and nothing in it writes.
+
+- **Leadership loses the marketplace chrome** (ruling B1). Five NAV entries in
+  `WorkerLayout.jsx` — Calendar, Availability, Communities, Messages, Profile —
+  gain `marketplaceOnly: true`, the mirror of the existing `supervisorOnly`
+  flag, and the filter is symmetric: leadership never sees the marketplace
+  items, nobody else sees the supervisor's. The discriminator is the leadership
+  rank alone (`supervisedEngagement` of the snapshot the layout already
+  fetches), because the model is simplified for now: supervisors and managers
+  are hired from outside the marketplace and hold no provider row. The
+  leadership rail reads Dashboard, Complaints, Work orders, Completed work,
+  Settings.
+- **Hiding the nav item is never the guard** (portal convention). `Calendar.jsx`
+  was the gap — it fired `GET /worker/calendar` *and* `GET /worker/communities`
+  unconditionally, and the second 404s at anybody with no provider row, the
+  exact defect handoff §18 ruled against on the landing page. Both queries now
+  wait on the deduplicated `['worker-snapshot']` read and stay `enabled: false`
+  for leadership, who get a refusal in the page's own words. `Messages.jsx` —
+  the marketplace hiring inbox, where no department ever opens a thread at
+  somebody already on the payroll — gains the same refusal and points at the
+  floating Messages dock, where a supervisor's conversations actually live.
+  Availability, Profile, Settings and Communities already discriminated and are
+  untouched.
+- **The branding names the rank** (ruling B3). The two hard-coded "Service
+  Partner" strings — sidebar eyebrow and header title — render the caller's
+  roster rank for leadership, "Supervisor" or "Manager" via the same
+  `rankLabel` every roster screen uses, read from the first active leadership
+  engagement. Everybody else keeps "Service Partner".
+- **Completed work, the read-only archive** (ruling B2). New page
+  `src/pages/WorkerDashboard/CompletedWork.jsx` on `/worker/completed`: every
+  complaint of the supervised department that ended. The read is
+  `GET /departments/{id}/complaints` with **no** status parameter — it takes
+  one at most and the archive wants three — and the rows with status
+  `resolved`, `closed` or `cancelled` are kept client-side, ordered by
+  `resolvedAt` descending with `createdAt` as the fallback key. Filter chips:
+  Everything · Resolved · Closed · Cancelled. **On this screen only** the three
+  end conditions are labelled distinctly — "Resolved — awaiting the resident",
+  "Closed — confirmed", "Cancelled" — a deliberate, display-only departure from
+  `complaintStatusLabel`'s closed→Resolved folding, kept local to the page
+  because distinguishing end conditions is this screen's entire point. The one
+  interaction is the eye, which opens the existing `ComplaintDetailModal` with
+  a new `readOnly` prop (default false, so the dashboard's mount is
+  byte-identical) that unmounts the `NoteComposer`; no `actions` node is
+  passed. The full timeline, internal notes included, still renders — the
+  look-back is what the screen is for. The endpoint is unpaginated and the
+  notes RPC has no server-side write-freeze on ended complaints; both recorded
+  as backlog in the amendment (W1, W2), not worked around.
+- **Two riders in passing.** `DepartmentComplaintList.jsx`'s `STATUS_TONES`
+  learns `acknowledged`, `closed` and `cancelled` (they rendered an untinted
+  pill), and ended rows lose the "Not our department"/move controls — nobody
+  can act on a transfer of work that is over. And the possessive marketplace
+  fallbacks a supervisor could still meet (`'your community'` in
+  `Complaints.jsx`, `'Your community'` in `SupervisorDashboard.jsx`) become the
+  neutral "the community"; the actual community name the snapshot carries was
+  already preferred.
+
+15 new tests: `WorkerLayout.test.jsx` (the symmetric nav split in both
+directions, the rank branding in both places, Service Partner kept for the
+marketplace), `CompletedWork.test.jsx` (ended-only filtering with no status
+parameter, the distinct labels, the end-stamp ordering, the chips, the
+read-only popup with nothing writable in it, the technician refusal),
+`ComplaintDetailModal.test.jsx` (`readOnly` unmounts the composer, the default
+keeps it), `LeadershipScreens.test.jsx` (the Calendar and Messages refusals,
+with neither marketplace read attempted).
+
 ## Retired client code
 
 The following categories were removed after an import-graph audit:

@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ClipboardList,
   Clock,
+  History,
   LogOut,
   MapPinned,
   Menu,
@@ -21,7 +22,7 @@ import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useAuthStore } from '../store/authStore';
 import { workerApi } from '../features/worker/workerApi';
 import { isProviderProfileComplete } from '../features/worker/providerProfile';
-import { holdsLeadershipEngagement } from '../lib/staffVocabulary';
+import { rankLabel, supervisedEngagement } from '../lib/staffVocabulary';
 import NotificationBell from '../components/notifications/NotificationBell';
 import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
 
@@ -38,11 +39,18 @@ import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
 // Identity comes from `sessionContext`, and what the portal shows is decided by
 // `GET /worker/snapshot`, whose `provider: null` is the whole empty state.
 
+// `marketplaceOnly` is `supervisorOnly`'s mirror (amendment 3, ruling B1).
+// The five entries carrying it are the marketplace serviceman's chrome — a
+// calendar of jobs, hours the dispatcher matches on, societies that hired you,
+// the hiring inbox, the profile a manager searches for. Department leadership
+// is hired from outside the marketplace by assumption, so none of the five has
+// anything to show them, and each page refuses a deep link in its own words —
+// hiding the nav item is never the guard.
 const NAV = [
   { name: 'Dashboard', path: AUTH_ROUTES.WORKER_DASHBOARD, icon: Briefcase, end: true },
-  { name: 'Calendar', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/calendar`, icon: CalendarDays },
-  { name: 'Availability', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/availability`, icon: Clock },
-  { name: 'Communities', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/communities`, icon: MapPinned },
+  { name: 'Calendar', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/calendar`, icon: CalendarDays, marketplaceOnly: true },
+  { name: 'Availability', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/availability`, icon: Clock, marketplaceOnly: true },
+  { name: 'Communities', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/communities`, icon: MapPinned, marketplaceOnly: true },
   // Supervisors only in practice — the page itself checks the roster rank the
   // worker snapshot already carries, and tells a technician plainly that their
   // work arrives as jobs instead. It is in the nav for everyone because the
@@ -54,7 +62,7 @@ const NAV = [
   //
   // The item above says why it is not: when Complaints was added the layout had
   // no rank to filter on. It does now — the registration gate below already
-  // asks `holdsLeadershipEngagement` of the snapshot this component fetches, so
+  // asks `supervisedEngagement` of the snapshot this component fetches, so
   // the answer costs nothing and needs no change to the session. A technician
   // shown "Work orders" would open a dispatcher's console for a department they
   // are dispatched *by*; the page still refuses them in the Complaints screen's
@@ -66,8 +74,16 @@ const NAV = [
     icon: ClipboardList,
     supervisorOnly: true,
   },
-  { name: 'Messages', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/messages`, icon: MessageSquare },
-  { name: 'Profile', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/profile`, icon: UserRound },
+  // The archive (amendment 3, ruling B2): every complaint that ended —
+  // resolved, closed, cancelled — read-only, for looking back.
+  {
+    name: 'Completed work',
+    path: `${AUTH_ROUTES.WORKER_DASHBOARD}/completed`,
+    icon: History,
+    supervisorOnly: true,
+  },
+  { name: 'Messages', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/messages`, icon: MessageSquare, marketplaceOnly: true },
+  { name: 'Profile', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/profile`, icon: UserRound, marketplaceOnly: true },
   { name: 'Settings', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/settings`, icon: Settings },
 ];
 
@@ -172,7 +188,17 @@ export default function WorkerLayout() {
   //
   // Technicians (`member`) and marketplace professionals keep the gate. They
   // genuinely need the coordinates and the trades; that is how they are found.
-  const leadership = holdsLeadershipEngagement(snapshot.data?.communities);
+  //
+  // The first active leadership row, not just the yes/no: amendment 3's chrome
+  // reads the rank off it. Same first-row rule as every leadership screen.
+  const engagement = supervisedEngagement(snapshot.data?.communities);
+  const leadership = Boolean(engagement);
+
+  // What the chrome calls the person (ruling B3). "Service Partner" is the
+  // marketplace's word and leadership never joined the marketplace — their
+  // roster rank is the honest title, capitalized by the same `rankLabel` every
+  // roster screen uses.
+  const brand = leadership ? rankLabel(engagement.rank) : 'Service Partner';
 
   if (!profileComplete && !leadership) {
     // Deep links like /worker/settings redirect to /worker rather than
@@ -212,7 +238,7 @@ export default function WorkerLayout() {
             <div>
               <p className="text-sm font-extrabold">HomeBandhu</p>
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                Service Partner
+                {brand}
               </p>
             </div>
           </div>
@@ -242,7 +268,12 @@ export default function WorkerLayout() {
           </div>
 
           <nav className="space-y-1">
-            {NAV.filter((item) => !item.supervisorOnly || leadership).map((item) => (
+            {/* Symmetric: leadership never sees the marketplace chrome, and
+                nobody else sees the supervisor's. An entry with neither flag is
+                everybody's. */}
+            {NAV.filter((item) =>
+              leadership ? !item.marketplaceOnly : !item.supervisorOnly,
+            ).map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
@@ -288,7 +319,7 @@ export default function WorkerLayout() {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <p className="text-sm font-extrabold text-slate-800">Service Partner</p>
+          <p className="text-sm font-extrabold text-slate-800">{brand}</p>
           <div className="ml-auto">
             <NotificationBell />
           </div>

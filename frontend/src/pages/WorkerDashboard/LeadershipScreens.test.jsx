@@ -33,6 +33,10 @@ const mocks = vi.hoisted(() => ({
   setSkills: vi.fn(),
   requestDeparture: vi.fn(),
   cancelDeparture: vi.fn(),
+  calendar: vi.fn(),
+  conversations: vi.fn(),
+  conversation: vi.fn(),
+  sendMessage: vi.fn(),
 }));
 
 vi.mock('../../features/worker/workerApi', () => ({ workerApi: mocks }));
@@ -119,4 +123,22 @@ it('Communities', async () => {
   expect(screen.queryByText(/No society employs you yet/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Ask to leave/)).not.toBeInTheDocument();
   expect(mocks.myCommunities).not.toHaveBeenCalled();
+});
+
+// The two amendment-3 refusals. Calendar was the gap this file's preamble
+// describes — it fired both reads unconditionally and `GET /worker/communities`
+// 404ed at leadership on every mount. Messages was never gated at all.
+it('Calendar', async () => {
+  const { default: C } = await import('./Calendar');
+  await renderScreen(C, '/worker/calendar');
+  expect(await screen.findByText(/your day is your department/)).toBeVisible();
+  expect(mocks.calendar).not.toHaveBeenCalled();
+  expect(mocks.myCommunities).not.toHaveBeenCalled();
+});
+
+it('Messages', async () => {
+  const { default: C } = await import('./Messages');
+  await renderScreen(C, '/worker/messages');
+  expect(await screen.findByText(/floating Messages dock/)).toBeVisible();
+  expect(mocks.conversations).not.toHaveBeenCalled();
 });

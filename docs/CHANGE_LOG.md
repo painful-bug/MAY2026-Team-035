@@ -17,7 +17,61 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — the services-and-security collision is closed
+## 2026-08-23 (latest) — hosted catches up: runbook §23–§26 applied and ledgered
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §23–§26 — executed on the hosted
+project.** `PO` (owner hand-apply via SQL editor, 2026-08-23). The owner applied
+the four outstanding migrations in section order — `20260823120000`
+(complaint-engine v2 repairs), `20260823150000` (invite-claim wrapper),
+`20260823153000` (`withdrawn` request-status label), `20260823160000`
+(visitor-requests SSE trigger) — each followed by its ledger insert. Every
+read-only post-check returned exactly what its section predicted: all six
+dispatch signatures including both `dispatch_candidates` overloads; both claim
+functions `(uuid,uuid)`, security definer, `search_path=public`; five enum
+labels with `withdrawn` at sort order 5; `dashboard_sse_visitor_requests` on
+`visitor_requests` under `0007`'s exact template. With this, the hosted ledger's
+high-water mark is `20260823160000` and nothing in the migrations directory is
+outstanding; the drift issue #41 triaged is repaired on both databases, not just
+in git. The functional post-checks (critical force-assign fallback, invite
+redeem, withdraw press, live visitor-row refresh) remain available as live
+smoke tests but are not prerequisites.
+
+## 2026-08-23 — the supervisor's chrome sheds the marketplace, and ended work gets an archive
+
+**`docs/plans/SUPERVISOR_TRIAGE_SPEC.md` — Amendment 3 appended, with post-build
+adjudications.** `PO` (AskUserQuestion, 2026-08-23). Live testing moved from the
+dashboard to the portal around it, and the owner ruled three things. First, the
+five marketplace nav items (Calendar, Availability, Communities, Messages,
+Profile) are hidden from leadership — and the model is deliberately simplified:
+"let's assume we directly hire supervisors and managers from outside the
+marketplace", retiring the hybrid promoted-provider population for now, so the
+discriminator is the leadership rank alone. Second, the new read-only
+**Completed work** screen holds *all ended complaints* — resolved, closed AND
+cancelled — with frontend filter chips per end condition (the owner chose the
+full-history option over the recommended resolved+closed). Third, the two
+hard-coded "Service Partner" strings render the caller's actual roster rank for
+leadership. Orchestrator riders logged in the amendment: read-only is UI-level
+only (the notes RPC has no status guard — backlog W2), the archive labels the
+three end conditions distinctly as a display-only departure from the wire's
+closed→Resolved folding, confined to the archive screen and (adjudication B-A4)
+its own popup, and the unpaginated `department_complaints` read is accepted and
+recorded as backlog W1 rather than worked around.
+
+**`docs/FRONTEND_CHANGES.md` — new section.** `DERIVED` (build, 2026-08-23).
+All frontend, no backend and no migration: the data layer existed already
+(`department_complaints` returns every status; the staff detail endpoint has no
+status predicate; supervisors pass both guards). The build also closed the
+Calendar page's 404-on-every-mount for leadership (the handoff-§18 defect never
+propagated there), gated the marketplace hiring inbox with a refusal pointing
+at the floating dock, fixed the ended-row move controls and missing status
+tones on `DepartmentComplaintList`, and gave `ComplaintDetailModal` `readOnly`
+and `statusLabel` props that leave the dashboard's use byte-identical. Six
+specialist deviations were adjudicated in the spec (B-A1..B-A6), none silently.
+Verification re-run by the orchestrator, not taken from agent reports: frontend
+42 files / 289 tests passing (baseline 41/271 after the branch's own commits),
+oxlint clean. Live browser walk-through pending the owner's sign-in.
+
+## 2026-08-23 — the services-and-security collision is closed
 
 **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §22, "Version collision" — dated
 resolution appended.** `AUDIT` (git recon, 2026-08-23). The git manager closed

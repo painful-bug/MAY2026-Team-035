@@ -84,6 +84,7 @@ import WorkerAvailability from './pages/WorkerDashboard/Availability';
 import WorkerCommunities from './pages/WorkerDashboard/Communities';
 import WorkerMessages from './pages/WorkerDashboard/Messages';
 import WorkerComplaints from './pages/WorkerDashboard/Complaints';
+import WorkerCompletedWork from './pages/WorkerDashboard/CompletedWork';
 import WorkerWorkOrders from './pages/WorkerDashboard/WorkOrders';
 import WorkerProfile from './pages/WorkerDashboard/Profile';
 import WorkerSettings from './pages/WorkerDashboard/Settings';
@@ -476,6 +477,10 @@ export default function App() {
                 not on the session and putting it there would mean editing the
                 auth owner's file for a nav entry. */}
             <Route path="complaints" element={<WorkerComplaints />} />
+            {/* The read-only archive of ended complaints (amendment 3, ruling
+                B2). Gated inside the page on the same roster rank as the two
+                routes around it. */}
+            <Route path="completed" element={<WorkerCompletedWork />} />
             {/* Work-order triage, and this portal is the one it was always
                 missing from.
                 `WORK_ORDER_ROUTES` is mounted under `/admin`, `/manager` and
