@@ -34,7 +34,8 @@ export default function RegisterProvider({ provider = null }) {
 
   const byCategory = useMemo(() => {
     const groups = new Map();
-    for (const skill of skills.data ?? []) {
+    const skillsList = Array.isArray(skills.data) ? skills.data : [];
+    for (const skill of skillsList) {
       const bucket = groups.get(skill.category);
       if (bucket) bucket.push(skill);
       else groups.set(skill.category, [skill]);

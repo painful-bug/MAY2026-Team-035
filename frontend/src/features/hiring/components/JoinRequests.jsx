@@ -174,9 +174,9 @@ export default function JoinRequests({ departmentId, basePath }) {
     enabled: Boolean(departmentId),
   });
 
-  const requests = (applications.data || []).filter(
-    (entry) => entry.direction === 'applied'
-  );
+  const requests = Array.isArray(applications.data)
+    ? applications.data.filter((entry) => entry.direction === 'applied')
+    : [];
 
   // Nothing waiting is not a state worth a panel. A dashboard that always
   // carries an empty "Join requests" box teaches people to stop looking at it,
