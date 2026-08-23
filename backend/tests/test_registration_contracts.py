@@ -43,10 +43,14 @@ def test_google_and_email_password_are_supported_configured_methods() -> None:
 
 
 @pytest.mark.parametrize(
-    "establisher", ["establish_session", "establish_recovery_session"]
+    ("establisher", "extra"),
+    [
+        ("establish_session", {"persist": True}),
+        ("establish_recovery_session", {}),
+    ],
 )
 def test_establishing_a_session_clears_the_preauth_csrf_cookie(
-    monkeypatch: pytest.MonkeyPatch, establisher: str
+    monkeypatch: pytest.MonkeyPatch, establisher: str, extra: dict[str, object]
 ) -> None:
     from app.core import web_session
 
@@ -57,6 +61,7 @@ def test_establishing_a_session_clears_the_preauth_csrf_cookie(
         access_token="access-token",
         refresh_token="refresh-token",
         expires_in=60,
+        **extra,
     )
 
     assert any(

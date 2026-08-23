@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Building2, House, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import CommunityUnitInput from '../../components/onboarding/CommunityUnitInput';
-import LocationCoordinatesInput from '../../components/common/LocationCoordinatesInput';
+import LocationPicker from '../../components/common/LocationPicker';
 import OnboardingLayout from '../../components/onboarding/OnboardingLayout';
 import SectionCard from '../../components/onboarding/SectionCard';
 import SegmentedToggle from '../../components/onboarding/SegmentedToggle';
@@ -32,6 +32,7 @@ export default function AssociationRegistrationPage() {
   const countryCode = useOnboardingStore((state) => state.countryCode);
   const latitude = useOnboardingStore((state) => state.latitude);
   const longitude = useOnboardingStore((state) => state.longitude);
+  const locationLabel = useOnboardingStore((state) => state.locationLabel);
   const setCommunityCoordinates = useOnboardingStore((state) => state.setCommunityCoordinates);
   const blocks = useOnboardingStore((state) => state.blocks);
   const villas = useOnboardingStore((state) => state.villas);
@@ -210,14 +211,17 @@ export default function AssociationRegistrationPage() {
           </div>
         </SectionCard>
 
-        <LocationCoordinatesInput
-          value={{ latitude, longitude }}
+        <LocationPicker
+          value={{ latitude, longitude, locationLabel }}
           onChange={(coordinates) => {
             setCommunityCoordinates(coordinates);
             clearError('location');
           }}
           idPrefix="community-onboarding"
           required
+          legend="Where this community is"
+          hint="Search for the address, or drop the pin. Servicemen are matched to this community by distance from this point."
+          labelHint="A short name for the area, shown wherever this community is listed."
         />
         {errors.location ? <p role="alert" className="text-xs font-semibold text-rose-600">{errors.location}</p> : null}
 

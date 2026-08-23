@@ -23,6 +23,15 @@ _APPLICATIONS = "service_application_overview"
 _ENGAGEMENTS = "service_engagement_overview"
 _DEPARTURES = "staff_departure_overview"
 
+#: The four tables the membership-keyed engagement read below walks by hand.
+#: ``service_engagement_overview`` cannot answer that question -- it joins
+#: ``service_providers`` and filters ``service_provider_id is not null`` (0035
+#: 418-444) -- and there is no view keyed on the membership instead.
+_STAFF = "staff_assignments"
+_MEMBERSHIPS = "community_memberships"
+_DEPARTMENTS = "departments"
+_COMMUNITIES = "communities"
+
 #: Listed rather than ``*`` so a column added to the view later does not
 #: silently widen the response.
 _APPLICATION_SELECT = (
@@ -104,6 +113,143 @@ def list_engagements(
     if active_only:
         query = query.eq("status", "active")
     return query.order("community_name").execute().data or []
+
+
+def list_engagements_for_profile(
+    client: Client, *, profile_id: str, active_only: bool = True
+) -> list[dict[str, Any]]:
+    """Where this **person** works, resolved through their memberships.
+
+    The membership-keyed twin of ``list_engagements``, and the only read that
+    can see an invited manager or supervisor. ``claim_staff_invitations``
+    (``20260812090200`` 4) writes a membership and a roster row and **no**
+    ``service_providers`` row, so every provider-keyed path -- the overview
+    view, ``list_engagements``, ``_my_provider_id`` -- is blind to leadership.
+
+    **Takes the service client**, and the reason is availability rather than
+    convenience: ``auth_service`` already reads ``community_memberships`` and
+    ``staff_assignments`` this way on every session read, so this path is known
+    to work on the hosted project whatever the state of the two privilege
+    migrations. It is safe because the only identity it accepts is
+    ``profile_id``, which the router takes from the verified principal and no
+    client can choose.
+
+    Four plain reads rather than one embedded select. ``staff_assignments``
+    has no foreign key to ``communities`` at all (``0019`` 206 adds the column
+    and no constraint) and two to ``departments`` (the column's own, plus the
+    composite tenant key at ``0019`` 270), so a PostgREST embed would be
+    ambiguous in one direction and impossible in the other. This runs only on
+    the no-provider path.
+
+    Rows come back in ``service_engagement_overview``'s shape so
+    ``hiring_service._to_engagement`` maps them without knowing which read
+    produced them.
+    """
+    memberships = (
+        client.table(_MEMBERSHIPS)
+        .select("id, community_id, role")
+        .eq("profile_id", profile_id)
+        .eq("status", "active")
+        .is_("ended_at", None)
+        .execute()
+        .data
+        or []
+    )
+    if not memberships:
+        return []
+
+    role_by_membership = {
+        str(row["id"]): row.get("role") for row in memberships
+    }
+
+    query = (
+        client.table(_STAFF)
+        .select(
+            "id, community_id, department_id, membership_id, rank, job_title, "
+            "shift, status, started_at, ended_at"
+        )
+        .in_("membership_id", list(role_by_membership))
+        # Leadership only. A roster row that also names a provider is already
+        # returned by `list_engagements`, and returning it twice would make the
+        # two reads disagree about how many communities employ somebody.
+        .is_("service_provider_id", None)
+    )
+    if active_only:
+        query = query.eq("status", "active")
+    rosters = query.execute().data or []
+    if not rosters:
+        return []
+
+    department_ids = sorted(
+        {str(row["department_id"]) for row in rosters if row.get("department_id")}
+    )
+    community_ids = sorted(
+        {str(row["community_id"]) for row in rosters if row.get("community_id")}
+    )
+    departments = (
+        {
+            str(row["id"]): row
+            for row in (
+                client.table(_DEPARTMENTS)
+                .select("id, name, kind")
+                .in_("id", department_ids)
+                .execute()
+                .data
+                or []
+            )
+        }
+        if department_ids
+        else {}
+    )
+    communities = (
+        {
+            str(row["id"]): row
+            for row in (
+                client.table(_COMMUNITIES)
+                .select("id, name, city")
+                .in_("id", community_ids)
+                .execute()
+                .data
+                or []
+            )
+        }
+        if community_ids
+        else {}
+    )
+
+    rows: list[dict[str, Any]] = []
+    for roster in rosters:
+        # An engagement names a department in a community -- `ServiceEngagement`
+        # makes both mandatory. `staff_assignments.department_id` is nullable
+        # and `community_id` was left nullable for legacy rows (`0019` 226-231),
+        # so a row missing either is skipped rather than half-rendered.
+        if not roster.get("department_id") or not roster.get("community_id"):
+            continue
+        department = departments.get(str(roster.get("department_id"))) or {}
+        community = communities.get(str(roster.get("community_id"))) or {}
+        rows.append(
+            {
+                "staff_assignment_id": roster["id"],
+                "community_id": roster["community_id"],
+                "community_name": community.get("name"),
+                "community_city": community.get("city"),
+                "department_id": roster["department_id"],
+                "department_name": department.get("name"),
+                "department_kind": department.get("kind"),
+                "membership_id": roster.get("membership_id"),
+                "membership_role": role_by_membership.get(
+                    str(roster.get("membership_id"))
+                ),
+                "rank": roster.get("rank"),
+                "job_title": roster.get("job_title"),
+                "shift": roster.get("shift"),
+                "status": roster.get("status"),
+                "started_at": roster.get("started_at"),
+                "ended_at": roster.get("ended_at"),
+            }
+        )
+    rows.sort(key=lambda row: str(row.get("community_name") or ""))
+    return rows
 
 
 def search_communities(
@@ -255,7 +401,7 @@ _STAFF_OVERVIEW = "department_staff_overview"
 # screen), this one by department (the hiring router's path scope).
 _STAFF_MEMBER_SELECT = (
     "id, department_id, membership_id, service_provider_id, display_name,"
-    "phone_e164, job_title, rank, shift, status, active_assignment_count,"
+    "phone_e164, job_title, rank, shift, status, supervised_work_order_count,"
     "open_commitment_count, departure_status, departure_effective_at"
 )
 

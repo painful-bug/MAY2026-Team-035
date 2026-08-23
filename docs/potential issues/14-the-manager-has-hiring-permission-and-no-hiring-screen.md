@@ -123,8 +123,85 @@ Nav items stay coarse on purpose: a supervisor can still open the hiring screen 
 not theirs. That costs one click. Hiding it from somebody who *does* hold the permission costs them
 the permission, which is what this file is about.
 
+## It came back a third time on 2026-08-21, one portal over
+
+`portalUrl.js` closed the manager half of this file on 2026-08-11 and its `PORTAL_BASES` knew two
+portals: `manager` and `security-manager`. A **service department's supervisor is neither**.
+`_portal_for` upgrades only a `security`-role membership by roster rank, so a `worker`-role
+supervisor stays `worker` — and every `/admin/…` link they were sent came back from the rewriter
+unchanged, hit `ProtectedRoute requiredRole="Admin"`, and redirected home. The same silent click,
+the same reason, a different reader.
+
+Two families of notification reach them, and both arrived recently enough that nobody had asked the
+question again:
+
+| Notification | Url in SQL | Now lands on |
+|---|---|---|
+| Five work-order kinds keyed to `work_orders.supervisor_membership_id` (`no_candidates` ×2, `.accepted`, `.completed`, `.failed`) | `/admin/departments/{id}/work-orders?job=…` | `/worker/departments/{id}/work-orders?job=…`, mounted the same day by the supervisor-dispatch work |
+| `notify_complaint_staff`, widened to supervisor-rank roster holders on complaint raise/reopen/cancel/forced-complete | `/admin/complaints?complaint=…` | `/worker/complaints?complaint=…` |
+
+The rule table became **per-portal** rather than gaining a third row of the same shape, because the
+worker portal does not mount the same screens. `/worker` has `work-orders`, `complaints` and
+`messages`; it has no hiring, staff or candidates screen. Those three paths are left bouncing on
+purpose — the doctrine in `portalUrl.js`'s own header is that a rewrite to a route that does not
+exist fails more confusingly than one that visibly bounces, and extending the mechanism must not cost
+the doctrine.
+
+**The department root was the fourth, for one day.** It was left alone on the grounds that a
+worker's base is a jobs dashboard rather than a department overview, so the substitution that is
+exact for a manager would be a non-sequitur. The product owner overturned that the same day, and the
+reason is worth keeping: `/admin/departments/{id}` is Admin-guarded, so a worker-portal reader who
+follows it is redirected to `/worker` by `ProtectedRoute` **whatever the rewriter does**. There were
+never two destinations to choose between — only two ways to reach the same one, deliberately or via
+a click that appeared to fail. `worker` joined `DEPARTMENT_ROOT_PORTALS`; the doctrine is untouched,
+because it forbids rewriting to a route that does not exist and every portal's base exists.
+
+They are a live audience for that url rather than a hypothetical one: `notify_department_leadership`
+(`0043_staff_departures.sql` §419–436) includes supervisor-rank roster holders, who hold portal
+`worker`, and `staff_invitation.blocked` (`20260821170000`) carries `/admin/departments/{id}`. No
+migration was written for it — redeclaring `claim_staff_invitations` again to change the url it
+emits was considered and rejected, because the url is right for the reader it was written for and
+the reader's portal is only known in the browser.
+
+A rank-`member` technician shares the `worker` portal, and a rewritten work-order link puts them on
+the triage wrapper's in-page refusal panel instead of silently home. Visible and self-explaining, so
+an improvement rather than a regression; the wrapper issues no work-order requests for a
+non-supervisor. Rank is not on the session and this module keys on portal only, deliberately.
+
+## Closed later on 2026-08-21 — the deep link lands on the row
+
+This section listed `/worker/complaints` not reading `?complaint=` as the honest remainder of the
+day's work: a supervisor reached their own department queue instead of being bounced home, and then
+had to find the row themselves. It was recorded rather than fixed because the screen borders the
+complaint-engine owner's turf, and highlighting a row there was their call to make.
+
+The product owner made it, the same day: **a `?complaint=` link highlights on the worker screen and
+the admin screen; the resident screen waits for its portal to stop being a demo.**
+
+| Screen | Then | Now |
+|---|---|---|
+| `WorkerDashboard/Complaints.jsx` | renders `DepartmentComplaintList`, never passes `highlightId` | reads `?complaint=`, passes it; the shared list has ringed that card since the manager's screen was built |
+| `AdminDashboard/Complaints.jsx` | reads no query parameter at all | reads `?complaint=` and rings the card in its own idiom — the zustand snapshot projection, not the shared list |
+| `ResidentDashboard/Complaints.jsx` | dummy data | deliberately unchanged; `("/resident/complaints", "complaint")` stays on record |
+
+The admin half is the one `IGNORED_QUERY_PARAMETERS` could see, and
+`("/admin/complaints", "complaint")` has left that set — which is the mechanism working as designed:
+the assertion is equality *specifically* so a screen that starts honouring its parameter is a test
+change rather than a silent improvement. Both halves closed in one sitting because the emitted url
+and the rewrite target are the same screen under two names. Recorded for the owner in
+`docs/COMPLAINT_ENGINE_HANDOFF.md` §16.
+
 ## What is still not fixed
 
+- **Hiring, staff and candidate links still bounce a supervisor.** `/worker` mounts none of those
+  three screens, so `portalUrl.js` leaves the paths alone on purpose and the reader is redirected
+  home. That is the doctrine held rather than a gap left: a rewrite to a route that does not exist
+  fails more confusingly than one that visibly bounces. It is also mostly an *audience* question
+  rather than a routing one — `0043` and `0045` address those notifications to `['admin',
+  'manager']`, so a supervisor is not in the audience and the blind every-portal check in
+  `backend/tests/test_notification_links.py` is what surfaces them at all. Whether a supervisor
+  should ever be sent a hiring link is a product-feature question, not a routing defect, and it is
+  recorded here rather than decided.
 - **A supervisor's complaint screen shows one department.** `WorkerDashboard/Complaints.jsx` picks
   the first roster row where the caller ranks supervisor or manager. Supervising two departments in
   two societies is legal and rare; a portal-wide department switcher wants `communities[]` in a

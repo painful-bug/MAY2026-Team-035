@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, Info, MapPin, MessageSquare,
-  Search, Shuffle, UserMinus, UserPlus, X,
+  AlertTriangle, ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, Info, MapPin,
+  MessageSquare, Search, Shuffle, UserMinus, UserPlus, X,
 } from 'lucide-react';
 import { hiringApi } from '../../features/hiring/hiringApi';
 import { usePortalScope } from '../../features/hiring/usePortalScope';
@@ -74,6 +74,147 @@ function Empty({ children }) {
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-12 text-center">
       <p className="text-sm font-bold text-slate-500">{children}</p>
+    </div>
+  );
+}
+
+// Is this person the last supervisor this department has?
+//
+// The roster read already carries every row's `rank` and `status`, so this is
+// the answer the screen holds rather than a second call. It is the same
+// predicate `carry_department_supervision` (`20260821200000` §4) asks after the
+// removal lands, one moment earlier — which is exactly what makes it a warning
+// rather than a report.
+function isLastSupervisor(member, roster) {
+  if (member.rank !== 'supervisor') return false;
+  return (roster || []).filter(
+    (entry) => entry.rank === 'supervisor' && entry.status !== 'inactive'
+  ).length <= 1;
+}
+
+// Removal, confirmed out loud.
+//
+// **This replaced two `window.prompt` calls on 2026-08-21** (product ruling 4).
+// A prompt asked for a reason and, by being the only thing in the way, doubled
+// as the confirmation — so pressing Remove and then Enter took somebody off a
+// roster having been told nothing at all about what they were holding. The
+// reason was the optional half; the counts and the last-supervisor warning are
+// the half that was missing.
+//
+// The three-state button logic outside is unchanged: this is the confirm layer,
+// not a redesign of when each verb is offered.
+//
+// Styled after `EmployeeDetail.jsx`'s ApproveModal — same centred sheet, same
+// Escape handling, same scroll lock — because the two are the same act at two
+// moments and a manager should not have to learn both.
+function RemovalModal({ member, mode, lastSupervisor, busy, onConfirm, onClose }) {
+  const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
+
+  const handover = mode === 'handover';
+  const supervised = member.supervisedWorkOrderCount || 0;
+  const booked = member.openCommitmentCount || 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div role="dialog" aria-modal="true" aria-label={handover ? 'Start a handover' : 'Remove from the roster'} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-extrabold text-slate-900">
+              {handover ? 'Start a handover' : 'Remove from the roster'}
+            </h2>
+            <p className="mt-1 text-xs font-semibold text-slate-400">
+              {member.name} · {rankLabel(member.rank)}
+              {member.role ? ` · ${member.role}` : ''}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded-full bg-slate-100 p-2">
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
+        </div>
+
+        {/* Real numbers, from the roster read. Zero is stated rather than
+            hidden: "nothing is booked in their name" is the fact that makes
+            Remove the safe button, and a manager should see it said. */}
+        <ul className="mt-5 space-y-2 rounded-2xl bg-slate-50 p-4 text-xs font-semibold text-slate-600">
+          <li>
+            {booked === 0
+              ? 'Nothing is booked in their name.'
+              : `${booked} job${booked === 1 ? '' : 's'} or shift${booked === 1 ? '' : 's'} still booked in their name.`}
+          </li>
+          <li>
+            {supervised === 0
+              ? 'They supervise no live work orders.'
+              : `${supervised} live work order${supervised === 1 ? '' : 's'} they supervise — ${
+                handover
+                  ? 'these move when the departure is approved.'
+                  : 'these move to a remaining supervisor, or to this department’s manager.'
+              }`}
+          </li>
+        </ul>
+
+        {lastSupervisor ? (
+          <div
+            role="status"
+            className="mt-3 flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3.5"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="text-[11px] font-semibold leading-relaxed text-amber-900">
+              They are this department’s last supervisor. The manager will cover
+              its complaint queue until a new supervisor is invited.
+            </p>
+          </div>
+        ) : null}
+
+        <label className="mt-4 block space-y-1.5">
+          <span className="text-[11px] font-bold text-slate-500">
+            Reason <span className="font-semibold text-slate-400">(optional)</span>
+          </span>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={2}
+            placeholder={handover ? 'Why are they leaving?' : 'Why are they being removed?'}
+            className={inputClass}
+          />
+        </label>
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onConfirm(reason.trim() || null)}
+            className={`rounded-xl py-2.5 text-xs font-bold text-white disabled:opacity-60 ${
+              handover ? 'bg-amber-600 hover:bg-amber-700' : 'bg-rose-600 hover:bg-rose-700'
+            }`}
+          >
+            {busy ? 'Working…' : handover ? 'Start handover' : 'Remove'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -309,6 +450,13 @@ function CandidateCard({ candidate, departmentId, basePath, onInvited }) {
 
       <div className="flex flex-wrap items-center gap-3 border-t border-slate-50 pt-3">
         <Distance km={candidate.distanceKm} />
+        {/* The coarse place name they wrote for themselves. `distanceKm` beside
+            it is the measured fact and answers "how far"; this answers "where",
+            which the card previously did not answer at all. The endpoint still
+            returns no coordinates and this is not one. */}
+        {candidate.locationLabel ? (
+          <span className="truncate text-[11px] font-bold text-slate-400">{candidate.locationLabel}</span>
+        ) : null}
         <span className="text-[11px] font-bold text-slate-400">
           Works in {candidate.communityCount} {candidate.communityCount === 1 ? 'society' : 'societies'}
         </span>
@@ -610,6 +758,8 @@ export default function DepartmentHiring() {
     }, { replace: true });
   };
   const [search, setSearch] = useState('');
+  // `{ member, mode }` while the confirmation sheet is open, null otherwise.
+  const [removal, setRemoval] = useState(null);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['hiring', departmentId] });
@@ -653,7 +803,7 @@ export default function DepartmentHiring() {
   });
   const removeMember = useMutation({
     mutationFn: ({ staffId, reason }) => hiringApi.removeMember(departmentId, staffId, reason),
-    onSuccess: invalidate,
+    onSuccess: () => { setRemoval(null); invalidate(); },
   });
   const blacklist = useMutation({
     mutationFn: (payload) => hiringApi.blacklist(departmentId, payload),
@@ -662,7 +812,7 @@ export default function DepartmentHiring() {
   const startHandover = useMutation({
     mutationFn: ({ staffId, reason }) =>
       hiringApi.openDeparture(departmentId, { staffId, reason }),
-    onSuccess: () => { invalidate(); setTab('departures'); },
+    onSuccess: () => { setRemoval(null); invalidate(); setTab('departures'); },
   });
 
   const items = applications.data || [];
@@ -850,14 +1000,20 @@ export default function DepartmentHiring() {
                 {member.phone ? (
                   <span className="text-[11px] font-bold text-slate-400">{member.phone}</span>
                 ) : null}
-                <span className="text-[11px] font-bold text-slate-400">
-                  {member.activeAssignmentCount} open{' '}
-                  {member.activeAssignmentCount === 1 ? 'complaint' : 'complaints'}
-                </span>
-                {/* A different number from the one beside it: that counts open
-                    complaints, this counts jobs and shifts actually booked. A
-                    complaint can sit with nobody scheduled, and a job can
-                    outlive the complaint that caused it. */}
+                {/* Leadership only, because it is leadership's number: the
+                    live work orders this person is accountable for. It used to
+                    be "N open complaints" from `activeAssignmentCount`, which
+                    counted two columns nothing writes and was therefore zero on
+                    every row of every roster ever rendered (ruling 5). */}
+                {member.supervisedWorkOrderCount > 0 ? (
+                  <span className="text-[11px] font-bold text-slate-400">
+                    {member.supervisedWorkOrderCount} supervised{' '}
+                    {member.supervisedWorkOrderCount === 1 ? 'job' : 'jobs'}
+                  </span>
+                ) : null}
+                {/* A different number from the one beside it: that counts work
+                    they answer for, this counts jobs and shifts booked in their
+                    own name. A supervisor holds none of the second. */}
                 {member.openCommitmentCount > 0 ? (
                   <span className="text-[11px] font-bold text-amber-600">
                     {member.openCommitmentCount} booked{' '}
@@ -879,7 +1035,10 @@ export default function DepartmentHiring() {
                   booked in their name, so the button that would 409 is not
                   offered — a handover is started instead. Somebody already on
                   their way out gets neither: their card is in the Departures
-                  tab, and two places to press approve is one too many. */}
+                  tab, and two places to press approve is one too many.
+
+                  Both verbs now open the confirmation sheet rather than a
+                  `window.prompt`: same three states, one honest confirm step. */}
               <div className="grid grid-cols-2 gap-2">
                 {member.departureStatus === 'pending' ? (
                   <button
@@ -893,14 +1052,7 @@ export default function DepartmentHiring() {
                   <button
                     type="button"
                     disabled={startHandover.isPending}
-                    onClick={() => {
-                      const reason = window.prompt('Why are they leaving? (optional)');
-                      if (reason === null) return;
-                      startHandover.mutate({
-                        staffId: member.id,
-                        reason: reason.trim() || null,
-                      });
-                    }}
+                    onClick={() => setRemoval({ member, mode: 'handover' })}
                     className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-60"
                   >
                     <DoorOpen className="h-4 w-4" />Start handover
@@ -909,11 +1061,7 @@ export default function DepartmentHiring() {
                   <button
                     type="button"
                     disabled={removeMember.isPending}
-                    onClick={() => {
-                      const reason = window.prompt('Reason for removing them (optional):');
-                      if (reason === null) return;
-                      removeMember.mutate({ staffId: member.id, reason: reason.trim() || null });
-                    }}
+                    onClick={() => setRemoval({ member, mode: 'remove' })}
                     className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-60"
                   >
                     <UserMinus className="h-4 w-4" />Remove
@@ -943,6 +1091,23 @@ export default function DepartmentHiring() {
           ))}
         </div>
       )}
+
+      {removal ? (
+        <RemovalModal
+          member={removal.member}
+          mode={removal.mode}
+          lastSupervisor={isLastSupervisor(removal.member, roster)}
+          busy={removeMember.isPending || startHandover.isPending}
+          onClose={() => setRemoval(null)}
+          onConfirm={(reason) => {
+            if (removal.mode === 'handover') {
+              startHandover.mutate({ staffId: removal.member.id, reason });
+            } else {
+              removeMember.mutate({ staffId: removal.member.id, reason });
+            }
+          }}
+        />
+      ) : null}
 
       {decide.error || removeMember.error || blacklist.error || startHandover.error ? (
         <p role="alert" className="text-sm font-semibold text-rose-600">

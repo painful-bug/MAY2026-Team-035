@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
 import { Edit2, CheckCircle2, User, Home, Clock, Check, Plus } from 'lucide-react';
@@ -11,6 +12,36 @@ export default function Complaints() {
   const [filterStatus, setFilterStatus] = useState('All');
   const [isRaiseOpen, setIsRaiseOpen] = useState(false);
   const [refreshError, setRefreshError] = useState('');
+
+  // The complaint a notification was about.
+  //
+  // Eight notification call sites across three surviving migrations write
+  // `/admin/complaints?complaint={id}` and this screen read none of them, so an
+  // admin followed a link and arrived at up to two hundred cards with nothing
+  // saying which. Right screen, wrong row —
+  // `docs/potential issues/12` counts that as its own defect, and this closes
+  // the admin half of it. (Product owner, 2026-08-21: highlight on the admin
+  // and worker screens; the resident screen waits for its portal to stop being
+  // a demo.)
+  //
+  // **Marked, never filtered.** A queue narrowed to one card hides the nine
+  // behind it, and the reader still has an inbox to work. Same reasoning and
+  // same treatment as `DepartmentComplaintList` and `WorkOrderTriage`'s
+  // `?job=`: an indigo ring on the card, the rest of the list untouched. The
+  // status filter is left alone too — it mounts at `All`, so a linked complaint
+  // is on screen whatever its status.
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get('complaint');
+  const highlighted = useRef(null);
+
+  // A deep link can land far down a long queue, and the snapshot arrives after
+  // the first paint, so this waits for the card to exist rather than for the
+  // mount. `scrollIntoView` is optional-called because jsdom does not implement
+  // it and a test rendering this screen is not a reason to crash it.
+  useEffect(() => {
+    if (!highlightId) return;
+    highlighted.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [highlightId, complaints.length, filterStatus]);
 
   // This list is the dashboard snapshot's `complaints` projection, held in the
   // store — not a react-query cache — so "refresh after the write" is a re-read
@@ -130,9 +161,23 @@ export default function Complaints() {
         ) : (
           filteredComplaints.map((c) => {
             const isEditing = editingId === c.id;
+            const isHighlighted = Boolean(highlightId) && c.id === highlightId;
 
             return (
-              <div key={c.id} className="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm space-y-4 hover:border-slate-200 transition-colors">
+              <div
+                key={c.id}
+                ref={isHighlighted ? highlighted : null}
+                // `aria-current` rather than colour alone: the ring says "this
+                // one" to a sighted reader and nothing at all to a screen
+                // reader, and the whole point of the mark is to answer "which
+                // row was I told about".
+                aria-current={isHighlighted ? 'true' : undefined}
+                className={`rounded-2xl p-6 shadow-sm space-y-4 transition-colors ${
+                  isHighlighted
+                    ? 'border-2 border-indigo-400 bg-indigo-50/40'
+                    : 'border border-slate-100 bg-white hover:border-slate-200'
+                }`}
+              >
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">

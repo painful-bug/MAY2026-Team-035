@@ -5,6 +5,7 @@ import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
 import {
   Briefcase,
   CalendarDays,
+  ClipboardList,
   Clock,
   LogOut,
   MapPinned,
@@ -20,6 +21,7 @@ import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useAuthStore } from '../store/authStore';
 import { workerApi } from '../features/worker/workerApi';
 import { isProviderProfileComplete } from '../features/worker/providerProfile';
+import { holdsLeadershipEngagement } from '../lib/staffVocabulary';
 import NotificationBell from '../components/notifications/NotificationBell';
 import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
 
@@ -47,6 +49,23 @@ const NAV = [
   // session carries no rank, and putting one there would mean editing the auth
   // owner's file so a menu item could be hidden.
   { name: 'Complaints', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/complaints`, icon: MessageSquareWarning },
+  // The dispatch queue, and the one entry here that is *hidden* rather than
+  // self-explaining.
+  //
+  // The item above says why it is not: when Complaints was added the layout had
+  // no rank to filter on. It does now — the registration gate below already
+  // asks `holdsLeadershipEngagement` of the snapshot this component fetches, so
+  // the answer costs nothing and needs no change to the session. A technician
+  // shown "Work orders" would open a dispatcher's console for a department they
+  // are dispatched *by*; the page still refuses them in the Complaints screen's
+  // own words for anybody who deep-links it, which is the guard, but there is
+  // no reason to advertise it.
+  {
+    name: 'Work orders',
+    path: `${AUTH_ROUTES.WORKER_DASHBOARD}/work-orders`,
+    icon: ClipboardList,
+    supervisorOnly: true,
+  },
   { name: 'Messages', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/messages`, icon: MessageSquare },
   { name: 'Profile', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/profile`, icon: UserRound },
   { name: 'Settings', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/settings`, icon: Settings },
@@ -139,7 +158,23 @@ export default function WorkerLayout() {
   const provider = snapshot.data?.provider;
   const profileComplete = isProviderProfileComplete(provider);
 
-  if (!profileComplete) {
+  // ...and the second half of the gate, added 2026-08-21 after live testing.
+  //
+  // Registration is a MARKETPLACE process. It asks for coordinates and trades
+  // because `search_hireable_service_providers` matches on distance and skill,
+  // and that question only exists for somebody looking for work. A manager or a
+  // supervisor was hired into a department by an administrator typing their
+  // email (`20260812090200`): they have a membership and a roster row, no
+  // `service_providers` row, and nobody will ever match them by distance. Sent
+  // to this form they had nothing to do but fill in a marketplace profile they
+  // do not need — and until they did, their own Complaints screen was
+  // unreachable behind the same gate.
+  //
+  // Technicians (`member`) and marketplace professionals keep the gate. They
+  // genuinely need the coordinates and the trades; that is how they are found.
+  const leadership = holdsLeadershipEngagement(snapshot.data?.communities);
+
+  if (!profileComplete && !leadership) {
     // Deep links like /worker/settings redirect to /worker rather than
     // rendering the form under a sub-path, so the URL always matches what is
     // on screen.
@@ -207,7 +242,7 @@ export default function WorkerLayout() {
           </div>
 
           <nav className="space-y-1">
-            {NAV.map((item) => (
+            {NAV.filter((item) => !item.supervisorOnly || leadership).map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}

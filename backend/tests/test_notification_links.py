@@ -63,10 +63,9 @@ _LITERAL = re.compile(r"^'([^']*)'$")
 #: `docs/potential issues/12-notification-parameters-no-screen-reads.md`; none of
 #: the four is this workstream's code to change:
 #:
-#: * `/resident/complaints` and `/admin/complaints` -- the resident portal is
-#:   still a zustand demo and the admin complaint surface belongs to the
-#:   complaint-engine owner (`docs/potential issues/09-…`,
-#:   `docs/COMPLAINT_ENGINE_HANDOFF.md`).
+#: * `/resident/complaints` -- the resident portal is still a zustand demo
+#:   (`docs/potential issues/09-…`), so the row a link points at may not be one
+#:   the reader can see at all.
 #: * `/admin/amenities?booking=` -- the admin amenity screen predates the
 #:   notification.
 #:
@@ -91,9 +90,28 @@ _LITERAL = re.compile(r"^'([^']*)'$")
 #: `0043:534` carries the same parameter to the hiring screen and is *not* on
 #: this list, because `0045` re-declared that function: only the surviving
 #: definition of a function is read. See `emitted_urls`.
+#:
+#: **This set is keyed on the url the migration emits, not on the per-reader
+#: rewrite**, which is worth saying out loud because for one day it mattered.
+#: On 2026-08-21 `portalUrl.js` started sending a supervisor's
+#: `/admin/complaints?complaint=` to `/worker/complaints`, and
+#: `WorkerDashboard/Complaints.jsx` read no query parameter -- so that reader
+#: landed on the right screen and the wrong row, the same defect this set
+#: exists to count, invisibly, because `matching_route` resolves the emitted
+#: `/admin/complaints` and never looks at the rewrite. It was not papered over
+#: with a second entry (the assertion below is equality, and an entry the check
+#: cannot produce would fail it) but recorded in `docs/potential issues/14-…`.
+#:
+#: **`("/admin/complaints", "complaint")` left this set later the same day**,
+#: and it is the reason the mechanism is worth its keep. The product owner
+#: ruled that the deep link must highlight on the admin *and* worker screens;
+#: `AdminDashboard/Complaints.jsx` now reads `?complaint=` and rings the card,
+#: which is what this check detects, and both halves of the defect above closed
+#: in one change because the emitted url and the rewrite target are the same
+#: screen's two names. `/resident/complaints` stays: that portal is still a
+#: zustand demo and highlighting a row in dummy data is not a fix.
 IGNORED_QUERY_PARAMETERS = {
     ("/admin/amenities", "booking"),
-    ("/admin/complaints", "complaint"),
     ("/admin/departments/:departmentId/staff/:staffId", "departure"),
     ("/resident/complaints", "complaint"),
 }
@@ -261,6 +279,20 @@ def route_table() -> set[str]:
     return set(route_elements())
 
 
+def _resolve_module(from_dir: Path, target: str) -> Path | None:
+    """A relative import specifier -> the file it names, if there is one."""
+    base = (from_dir / target).resolve()
+    for candidate in (
+        base,
+        base.with_suffix(".jsx"),
+        base.with_suffix(".js"),
+        base / "index.jsx",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def component_sources() -> dict[str, Path]:
     """Component name -> the file `App.jsx` imports it from."""
     src = _ROOT / "frontend" / "src"
@@ -268,17 +300,50 @@ def component_sources() -> dict[str, Path]:
     for name, target in _IMPORT.findall(_APP_JSX.read_text(encoding="utf-8")):
         if not target.startswith("."):
             continue
-        base = (src / target.lstrip("./")).resolve()
-        for candidate in (
-            base,
-            base.with_suffix(".jsx"),
-            base.with_suffix(".js"),
-            base / "index.jsx",
-        ):
-            if candidate.is_file():
-                out[name] = candidate
-                break
+        resolved = _resolve_module(src, target.lstrip("./"))
+        if resolved is not None:
+            out[name] = resolved
     return out
+
+
+#: ``return <Name`` -- a component whose whole body is *choosing which page this
+#: route is*, rather than being the page.
+_DELEGATE = re.compile(r"return\s*\(?\s*<([A-Z][A-Za-z0-9_]*)")
+
+
+def screen_source(component: Path) -> str:
+    """A route's source, following one hop through a page-picking component.
+
+    **Why the hop exists.** `/worker` stopped being a page on 2026-08-22 and
+    became a fork: `WorkerLanding` is four lines that return `<WorkerHome />` for
+    a technician and `<SupervisorDashboard />` for a supervisor. The parameter
+    check below reads the route's component file for `.get('job')`, so a
+    dispatcher of that shape reports every parameter as ignored -- and
+    `?job=` is in fact read, one file down, by exactly the page it lands a
+    technician on.
+
+    **Why it is one hop and only through a `return <Name`.** Following every
+    component a page renders would fold half the component tree into the search
+    and let an unrelated child's `searchParams.get('job')` vouch for a screen
+    that ignores it -- which would turn this check into one that cannot fail.
+    A capitalised component returned *directly* is a delegation and not a child:
+    real pages return a `<div>` or a fragment.
+    """
+    text = component.read_text(encoding="utf-8")
+    delegates = set(_DELEGATE.findall(text))
+    if not delegates:
+        return text
+
+    imports = dict(_IMPORT.findall(text))
+    parts = [text]
+    for name in sorted(delegates):
+        target = imports.get(name)
+        if not target or not target.startswith("."):
+            continue
+        resolved = _resolve_module(component.parent, target)
+        if resolved is not None:
+            parts.append(resolved.read_text(encoding="utf-8"))
+    return "\n".join(parts)
 
 
 #: ``create [or replace] function public.name(`` -- the start of a definition.
@@ -490,7 +555,7 @@ def test_the_ignored_query_parameters_are_the_ones_on_record() -> None:
         source = sources.get(routes[path])
         if source is None:
             continue
-        text = source.read_text(encoding="utf-8")
+        text = screen_source(source)
         for name in parameters:
             if f".get('{name}')" not in text and f'.get("{name}")' not in text:
                 ignored.add((path, name))
@@ -536,9 +601,20 @@ def test_every_notification_url_resolves_to_a_mounted_route() -> None:
 # and only the route tree can answer that.
 # ---------------------------------------------------------------------------
 
-_PORTAL_BASES = {"manager": "/manager", "security-manager": "/security-manager"}
+_PORTAL_BASES = {
+    "manager": "/manager",
+    "security-manager": "/security-manager",
+    # 2026-08-21. A service department's supervisor holds a `worker` membership
+    # -- `_portal_for` upgrades only a `security`-role membership by roster rank
+    # -- so every `/admin/…` link they were sent came back unrewritten and
+    # bounced them home, silently, exactly as it did for a manager before
+    # 2026-08-11. Two families reach them: the five work-order kinds keyed to
+    # `work_orders.supervisor_membership_id`, and the complaint staff notices
+    # `notify_complaint_staff` widened to supervisor-rank roster holders.
+    "worker": "/worker",
+}
 
-#: `/admin/…` prefixes that a manager's notification is left pointing at,
+#: `/admin/…` paths that a manager's notification is left pointing at,
 #: because their portal has no equivalent screen. **Not acceptable defects** --
 #: each one is a manager receiving a link that redirects them home. Rewriting
 #: them would be worse: a route that does not exist fails more confusingly than
@@ -551,11 +627,20 @@ _PORTAL_BASES = {"manager": "/manager", "security-manager": "/security-manager"}
 #: one, and it is the honest remainder of issue 14.
 #:
 #: **This test does not know a notification's audience** and deliberately checks
-#: every `/admin/…` url against every manager portal. That over-reaches -- some
-#: of these are addressed to somebody who is not a manager at all -- and the
-#: over-reach is cheap, because the answer for each is a line here saying which
-#: it is. A test that tried to infer the recipient would be re-implementing
-#: `notify_community_roles` in a regex.
+#: every `/admin/…` url against every portal in `_PORTAL_BASES`. That
+#: over-reaches -- some of these are addressed to somebody who is not a manager
+#: at all -- and the over-reach is cheap, because the answer for each is a line
+#: here saying which it is. A test that tried to infer the recipient would be
+#: re-implementing `notify_community_roles` in a regex.
+#:
+#: **Entries are whole paths, matched exactly after the query string is
+#: dropped** (2026-08-21). They were prefixes, matched with `startswith`, which
+#: was harmless while every entry was a single flat path -- and stopped being
+#: harmless the moment `UNREWRITTEN_FOR_A_WORKER` below needed to name a
+#: department root *and* two sub-screens beneath it: under `startswith` the root
+#: entry silently excuses both, so deleting either sub-screen line would have
+#: left the test green with nothing on record. Exact paths make every line here
+#: load-bearing, which is the property the rest of this file is built on.
 UNREWRITTEN_FOR_A_MANAGER = {
     # No manager equivalent exists, and should not: no department owns an
     # amenity. `0033` was corrected on 2026-08-12 to notify admins only, so a
@@ -569,10 +654,12 @@ UNREWRITTEN_FOR_A_MANAGER = {
     # Rewritten for `manager` — `/manager/complaints` exists as of 2026-08-12 —
     # and deliberately *not* for `security-manager`, which has no complaints
     # screen: a gate department's work arrives as incidents and shift entries,
-    # not as resident complaints. This set is shared by both parametrisations,
-    # so the entry that excuses the security manager also blunts the check for
-    # the plain manager. Accepted: the rewrite is asserted positively by
-    # `test_the_python_mirror_matches_the_javascript_rule_table`.
+    # not as resident complaints. This set is shared by the two manager
+    # parametrisations, so the entry that excuses the security manager also
+    # blunts the check for the plain manager. Accepted: the rewrite is asserted
+    # positively by `test_the_python_mirror_matches_the_javascript_rule_table`.
+    # (`worker` reads its own record below, where this line does not appear:
+    # `/worker/complaints` exists and the rewrite is checked, not excused.)
     "/admin/complaints",
     # `/admin/security/incidents` is rewritten for `security-manager` and not
     # for a plain `manager` -- correctly, since `0040` was corrected on
@@ -582,20 +669,106 @@ UNREWRITTEN_FOR_A_MANAGER = {
     "/admin/security/incidents",
     # `/admin/departments?job=` used to be here, for the strongest reason on the
     # list: the destination existed for nobody. The triage screen exists now,
-    # mounted under all three portals, `portalUrl.js` rewrites the path, and
+    # mounted under all four portals (`/worker` joined on 2026-08-21, which is
+    # the only one of them a supervisor ever reaches), `portalUrl.js` rewrites the path, and
     # `20260812120000_work_order_notification_urls` points the seven emissions
     # at it — so the entry is gone rather than excused.
 }
 
 
-#: The alternatives inside `portalUrl.js`'s `DEPARTMENT_SUBSCREEN` -- the
-#: department sub-screens mounted at the same shape under every portal. Held as
-#: data rather than inlined in the pattern below so the mirror test can compare
-#: it with the JavaScript instead of merely checking that a name still appears.
-_SUBSCREENS = ("hiring", "staff/", "candidates/", "work-orders")
+#: The same record for a `worker` -- a service department's supervisor, or the
+#: technician on the roster beside them. **Not acceptable defects either**: each
+#: is a link that bounces its reader home. Where the manager list is mostly
+#: "no such screen exists anywhere", this one is mostly "this reader is not in
+#: that notification's audience", because the blind check above asks every
+#: portal about every url.
+#:
+#: `candidates/` is the fourth department sub-screen `/worker` does not mount
+#: and has no line here, for the reason an unused entry is worse than a missing
+#: one under exact matching: no migration emits a `/candidates/` url today, so a
+#: line for it would be a claim nothing tests. If one is ever emitted, this test
+#: fails with "no rule, not on record" and the line gets written then.
+UNREWRITTEN_FOR_A_WORKER = {
+    # No worker equivalent, and no worker in the audience: `0033` was corrected
+    # on 2026-08-12 to notify admins only.
+    "/admin/amenities",
+    # Admin-only audience, and by definition: the triage queue is the complaints
+    # no department holds, so there is nothing in it a supervisor could act on.
+    "/admin/complaint-triage",
+    # `0040` notifies admins and security-department managers. A security
+    # department's people reach `/security` or `/security-manager`, never
+    # `/worker`, so no reader of this notification is on this parametrisation.
+    "/admin/security/incidents",
+    # `/admin/departments/{param}` -- the department root, from
+    # `20260821170000_blocked_invitee_notice` -- **left this set later on
+    # 2026-08-21**, and it was the one line here that named a live audience:
+    # `notify_department_leadership` (`0043` §419-436) includes supervisor-rank
+    # roster holders, who hold portal `worker`. It was on record on the grounds
+    # that a worker's base is a jobs dashboard rather than a department
+    # overview, so the substitution exact for a manager would be a non-sequitur.
+    # The product owner's ruling is that the guard sends that reader to
+    # `/worker` whatever this table says, so the substitution is not the
+    # question: `worker` joined `_DEPARTMENT_ROOT_PORTALS` and the rewrite is
+    # now asserted positively rather than excused here. The three lines that
+    # remain are all "no such screen in this portal", which is what the rest of
+    # this record is made of.
+    #
+    # `/worker` mounts no hiring screen. Addressed to `['admin', 'manager']`
+    # (`0043`), so no worker-portal reader either.
+    "/admin/departments/{param}/hiring",
+    # Nor a staff screen. `0045` sends this to a manager deciding a departure.
+    "/admin/departments/{param}/staff/{param}",
+}
 
-#: `const DEPARTMENT_SUBSCREEN = /…/;` in `portalUrl.js`, spanning a line break.
-_JS_SUBSCREEN = re.compile(r"DEPARTMENT_SUBSCREEN\s*=\s*(/.+?/);")
+#: Which record answers for which portal. The two manager portals share one, as
+#: they always have; `worker` has its own because the two lists differ in every
+#: line but three.
+_UNREWRITTEN = {
+    "manager": UNREWRITTEN_FOR_A_MANAGER,
+    "security-manager": UNREWRITTEN_FOR_A_MANAGER,
+    "worker": UNREWRITTEN_FOR_A_WORKER,
+}
+
+
+#: The alternatives inside `portalUrl.js`'s `DEPARTMENT_SUBSCREEN` -- the
+#: department sub-screens each portal mounts at the same shape `/admin` does.
+#: Held as data rather than inlined in the pattern below so the mirror test can
+#: compare it with the JavaScript instead of merely checking that a name still
+#: appears.
+#:
+#: **Per-portal since 2026-08-21**, in lockstep with the JavaScript. One shared
+#: tuple was true while the only readers were the two manager portals, which
+#: mount the whole hiring sub-tree; `/worker` mounts `work-orders` and nothing
+#: else from this list, and rewriting a supervisor's hiring link into a portal
+#: with no hiring screen would be this module's own failure mode.
+_SUBSCREENS = {
+    "manager": ("hiring", "staff/", "candidates/", "work-orders"),
+    "security-manager": ("hiring", "staff/", "candidates/", "work-orders"),
+    "worker": ("work-orders",),
+}
+
+#: Portals whose base stands in for the admin's department screen -- both
+#: managers, and `worker` since the product owner's ruling later on 2026-08-21.
+#: The first reading of that day left `worker` out because its base is a jobs
+#: dashboard rather than a department overview; the ruling is that
+#: `/admin/departments/{id}` is Admin-guarded, so a worker-portal reader is
+#: redirected to `/worker` either way, and the real choice is between arriving
+#: there deliberately and arriving there via a click that appeared to do
+#: nothing. The department-root line in `UNREWRITTEN_FOR_A_WORKER` left with it.
+_DEPARTMENT_ROOT_PORTALS = ("manager", "security-manager", "worker")
+
+#: Portals with a complaints screen. `worker` joined on 2026-08-21 with the
+#: widened `notify_complaint_staff`; `security-manager` still has none, because
+#: a gate department's work arrives as incidents and shift entries.
+_COMPLAINTS_PORTALS = ("manager", "worker")
+
+#: `const DEPARTMENT_SUBSCREEN = { … };` in `portalUrl.js` -- an object literal
+#: since it became per-portal, so the whole body is captured and its entries
+#: read out one at a time.
+_JS_SUBSCREEN_TABLE = re.compile(r"DEPARTMENT_SUBSCREEN\s*=\s*\{(.*?)\n\};", re.S)
+#: One `portal: /regex/,` line inside that body. The key is quoted when it
+#: contains a hyphen (`'security-manager'`) and bare when it does not.
+_JS_SUBSCREEN_ENTRY = re.compile(r"^\s*'?([a-z-]+)'?:\s*(/.+?/),\s*$", re.M)
 
 
 def _portal_url(url: str, portal: str) -> str:
@@ -606,17 +779,20 @@ def _portal_url(url: str, portal: str) -> str:
     if base is None:
         return url
     rest = url[len("/admin"):]
-    if re.match(
-        r"^/departments/[^/?#]+/(" + "|".join(_SUBSCREENS) + ")", rest
+    subscreens = _SUBSCREENS.get(portal)
+    if subscreens and re.match(
+        r"^/departments/[^/?#]+/(" + "|".join(subscreens) + ")", rest
     ):
         return base + rest
     if rest == "/messages" or rest.startswith("/messages?"):
         return base + rest
-    if re.match(r"^/departments/[^/?#]+(?:[?#].*)?$", rest):
+    if portal in _DEPARTMENT_ROOT_PORTALS and re.match(
+        r"^/departments/[^/?#]+(?:[?#].*)?$", rest
+    ):
         return base
     if rest == "/security/incidents" and portal == "security-manager":
         return f"{base}/incidents"
-    if portal == "manager" and (
+    if portal in _COMPLAINTS_PORTALS and (
         rest == "/complaints" or rest.startswith("/complaints?")
     ):
         return f"{base}{rest}"
@@ -635,6 +811,14 @@ def test_the_python_mirror_matches_the_javascript_rule_table() -> None:
     would have passed just as happily with the JavaScript half of that change
     reverted -- leaving every one of the seven links bouncing a department
     manager home while this file asserted they were fine.
+
+    **And per portal, since 2026-08-21.** The comparison is now dictionary
+    against dictionary rather than tuple against tuple, which keeps that
+    property under the restructure: reverting the JavaScript to one shared list,
+    or quietly handing `worker` the manager's four sub-screens, changes the
+    parsed table and fails here. A comparison that had flattened both sides back
+    into one set of names would have lost exactly the teeth the paragraph above
+    is about.
     """
     source = (
         _ROOT / "frontend" / "src" / "features" / "notifications" / "portalUrl.js"
@@ -648,34 +832,66 @@ def test_the_python_mirror_matches_the_javascript_rule_table() -> None:
     missing = sorted(token for token in expected if token not in source)
     assert not missing, f"portalUrl.js no longer mentions: {missing}"
 
-    pattern = _JS_SUBSCREEN.search(source)
-    assert pattern, "DEPARTMENT_SUBSCREEN is no longer a regular-expression literal"
-    alternation = re.search(r"\(([^)]*)\)", pattern.group(1))
-    assert alternation, f"no alternation in {pattern.group(1)}"
-    # `staff\/` there, `staff/` here: the escape is JavaScript's, not a rule.
-    javascript = tuple(
-        part.replace("\\", "") for part in alternation.group(1).split("|")
-    )
+    table = _JS_SUBSCREEN_TABLE.search(source)
+    assert table, "DEPARTMENT_SUBSCREEN is no longer a per-portal object literal"
+    entries = _JS_SUBSCREEN_ENTRY.findall(table.group(1))
+    assert entries, f"no portal entries in {table.group(1)!r}"
+
+    javascript = {}
+    for portal, literal in entries:
+        alternation = re.search(r"\(([^)]*)\)", literal)
+        assert alternation, f"no alternation in {literal}"
+        # `staff\/` there, `staff/` here: the escape is JavaScript's, not a rule.
+        javascript[portal] = tuple(
+            part.replace("\\", "") for part in alternation.group(1).split("|")
+        )
+
     assert javascript == _SUBSCREENS, (
         "portalUrl.js and this file disagree about which department sub-screens "
-        f"are mounted under every portal:\n  portalUrl.js: {javascript}\n"
+        "each portal mounts:\n"
+        f"  portalUrl.js: {javascript}\n"
         f"  this file:    {_SUBSCREENS}"
     )
 
+    # The two portal lists that are not regular-expression literals, read the
+    # same way: by content, for the same reason. `security-manager` being handed
+    # a complaints screen it does not have is precisely the mistake this module
+    # was written to stop, and only a content check sees it.
+    for name, mirror in (
+        ("DEPARTMENT_ROOT_PORTALS", _DEPARTMENT_ROOT_PORTALS),
+        ("COMPLAINTS_PORTALS", _COMPLAINTS_PORTALS),
+    ):
+        found = re.search(rf"{name}\s*=\s*new Set\(\[([^\]]*)\]\)", source)
+        assert found, f"{name} is no longer a `new Set([…])` literal"
+        javascript_portals = tuple(
+            part.strip().strip("'") for part in found.group(1).split(",") if part.strip()
+        )
+        assert javascript_portals == mirror, (
+            f"portalUrl.js and this file disagree about {name}:\n"
+            f"  portalUrl.js: {javascript_portals}\n"
+            f"  this file:    {mirror}"
+        )
+
 
 @pytest.mark.parametrize("portal", sorted(_PORTAL_BASES))
-def test_a_managers_notification_lands_somewhere_they_may_go(portal: str) -> None:
+def test_a_notification_lands_somewhere_its_reader_may_go(portal: str) -> None:
+    """Renamed on 2026-08-21: it said `a_managers_` and `worker` is not one.
+
+    A supervisor is the reader this parametrisation was extended for, and the
+    name would have been a small lie of exactly the kind the rest of this file
+    spends its comments correcting.
+    """
     routes = route_table()
+    record = _UNREWRITTEN[portal]
     stranded = []
     for name, line, url in emitted_urls():
         if not url.startswith("/admin/"):
             continue
         rewritten = _portal_url(url, portal)
         if rewritten.startswith("/admin/"):
-            prefix = next(
-                (p for p in UNREWRITTEN_FOR_A_MANAGER if rewritten.startswith(p)), None
-            )
-            if prefix is None:
+            # Whole path, query dropped: see the note on
+            # `UNREWRITTEN_FOR_A_MANAGER` for why this is not `startswith`.
+            if rewritten.split("?")[0].split("#")[0] not in record:
                 stranded.append(f"{name}:{line} — {url} (no rule, not on record)")
             continue
         if not resolves(rewritten, routes):

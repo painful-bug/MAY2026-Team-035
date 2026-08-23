@@ -230,36 +230,20 @@ export default function DepartmentDetail() {
     setMessage('');
   };
 
-  // The assignment is an id. `assignee` stays beside it as a display label, and
-  // the difference between the two is the whole of DECISIONS_NEEDED B2.
+  // **The "Assign to staff" control is gone.** (Ruling R13, executed 2026-08-21.)
   //
-  // What used to happen: the only thing stored was `${name} - ${role}`, read
-  // back by splitting on ' - '. So a staff member renamed after an assignment
-  // orphaned it, two people with the same first name were indistinguishable, and
-  // "complaints assigned to me" could not be asked at all.
+  // It wrote `assigneeStaffId` into zustand and nowhere else. Nothing on the
+  // server ever saw it, no worker was ever told, and the roster panel below then
+  // counted those local writes back as "N active" — a number invented by the
+  // browser that only survived until a reload. A control that assigns nobody,
+  // beside a count that measures nothing, is worse than an absent control: it
+  // reads as the feature being present.
   //
-  // The backend answers this properly -- `work_order_assignments` holds a
-  // `staff_assignment_id` foreign key and `GET /worker/jobs` is a real query.
-  // This screen is the demo half, over zustand, and is not wired to it; what
-  // changes here is that the demo stops contradicting the schema. Every *lookup*
-  // now uses the id and no code parses the label. The label is still stored
-  // because five other demo screens render `complaint.assignee` directly, and
-  // renaming a field across all of them buys a demo nothing.
-  const assignTechnician = (complaint, staffId) => {
-    const staffMember = roster.find((member) => member.id === staffId);
-    if (!staffMember) {
-      updateComplaint(complaint.id, {
-        assigneeStaffId: '',
-        assignee: 'Unassigned',
-      });
-      return;
-    }
-    updateComplaint(complaint.id, {
-      assigneeStaffId: staffMember.id,
-      assignee: [staffMember.name, staffMember.role].filter(Boolean).join(' - '),
-    });
-  };
-
+  // What replaces it is the link R13 named — the work-order triage screen, where
+  // assignment is a real record with a real recipient. Complaints themselves stay
+  // department-pooled (product ruling 1, 2026-08-21); there is no per-person
+  // complaint ownership to offer here, and `complaints.assigned_to_membership_id`
+  // stays the dead column it has always been.
   const updateStatus = (complaint, status) => {
     updateComplaint(complaint.id, {
       status,
@@ -278,10 +262,6 @@ export default function DepartmentDetail() {
     addComplaintComment(selectedComplaint.id, message);
     setMessage('');
   };
-
-  // Was: split the label on ' - ' and match the first part against every staff
-  // name. Now it is the field.
-  const getAssignedStaffId = (complaint) => complaint.assigneeStaffId ?? '';
 
   return (
     <div className="space-y-6">
@@ -457,26 +437,21 @@ export default function DepartmentDetail() {
                   </div>
 
                   <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-[1.2fr_0.8fr_auto]">
-                    <label className="space-y-1">
+                    {/* Where the "Assign to staff" select used to be. Raising
+                        work is the assignment that exists: it books a real
+                        person, tells them, and survives a reload. */}
+                    <div className="space-y-1">
                       <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                        Assign to staff
+                        Work
                       </span>
-                      <select
-                        value={getAssignedStaffId(complaint)}
-                        onChange={(event) =>
-                          assignTechnician(complaint, event.target.value)
-                        }
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-600 focus:border-indigo-500 focus:outline-none"
+                      <Link
+                        to={`/admin/departments/${departmentId}/work-orders?complaint=${complaint.id}`}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50"
                       >
-                        <option value="">Unassigned</option>
-                        {roster.map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {member.name}
-                            {member.role ? ` · ${member.role}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        <ClipboardList className="h-3.5 w-3.5" />
+                        Raise work order
+                      </Link>
+                    </div>
                     <label className="space-y-1">
                       <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
                         Status
@@ -559,40 +534,32 @@ export default function DepartmentDetail() {
             </div>
           ) : (
             <div className="space-y-2">
-              {roster.map((member) => {
-                // The second of the two string comparisons B2 named. A prefix
-                // match credits "Ravi Kumar" with "Ravi Kumaran"'s complaints.
-                const assignmentCount = departmentComplaints.filter(
-                  (complaint) =>
-                    complaint.status !== 'Resolved' &&
-                    complaint.assigneeStaffId === member.id
-                ).length;
-                return (
-                  <div
-                    key={member.id}
-                    className="rounded-xl border border-slate-100 p-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                          <Wrench className="h-3.5 w-3.5" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-slate-700">
-                            {member.name}
-                          </p>
-                          <p className="text-[9px] font-semibold text-slate-400">
-                            {member.role}
-                          </p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-500">
-                        {assignmentCount} active
-                      </span>
+              {/* The "N active" pill left with the control that produced it: it
+                  counted local `assigneeStaffId` writes, so it was zero on
+                  every row until somebody used the dropdown and zero again
+                  after the next reload. The real number a roster row carries
+                  lives on the hiring screen (`supervisedWorkOrderCount` /
+                  `openCommitmentCount`), which reads it from the database. */}
+              {roster.map((member) => (
+                <div
+                  key={member.id}
+                  className="rounded-xl border border-slate-100 p-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                      <Wrench className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-700">
+                        {member.name}
+                      </p>
+                      <p className="text-[9px] font-semibold text-slate-400">
+                        {member.role}
+                      </p>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           )}
           <div className="border-t border-slate-100 pt-4">

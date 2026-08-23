@@ -7,10 +7,17 @@ import SettingsPage from './Settings';
 const mocks = vi.hoisted(() => ({ api: vi.fn(), showToast: vi.fn() }));
 
 vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
+
+// The map is a lazy chunk of real Leaflet, which wants a laid-out element jsdom
+// never provides. Stubbed so this file keeps testing the settings screen;
+// `LocationPicker.test.jsx` covers the picker itself.
+vi.mock('../../components/common/LocationMap', () => ({
+  default: () => <div data-testid="map" />,
+}));
 vi.mock('../../store/useApp', () => ({ useApp: () => ({ showToast: mocks.showToast }) }));
 
 const LOADED = {
-  community: { latitude: 22.572645, longitude: 88.363892 },
+  community: { latitude: 22.572645, longitude: 88.363892, locationLabel: 'Salt Lake, Kolkata' },
   preferences: { requireVisitorPreapproval: true },
   billing: { autoBillingEnabled: false, lateFeeEnabled: false },
 };
@@ -104,5 +111,20 @@ describe('admin settings coordinates', () => {
     await waitFor(() => expect(mocks.api).toHaveBeenCalledWith('/settings', expect.anything()));
     const [, options] = mocks.api.mock.calls.find(([path]) => path === '/settings');
     expect(JSON.parse(options.body)).toMatchObject({ latitude: 22.572645, longitude: 88.363892 });
+  });
+
+  it('round-trips the community location label', async () => {
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const label = screen.getByLabelText(/Location label/);
+    expect(label).toHaveValue('Salt Lake, Kolkata');
+    await user.clear(label);
+    await user.type(label, 'Sector V, Kolkata');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith('/settings', expect.anything()));
+    const [, options] = mocks.api.mock.calls.find(([path]) => path === '/settings');
+    expect(JSON.parse(options.body)).toMatchObject({ locationLabel: 'Sector V, Kolkata' });
   });
 });

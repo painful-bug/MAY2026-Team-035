@@ -82,6 +82,22 @@ _EVENT_LABELS = {
     "auto_close_warning": "Reminder sent",
     "auto_closed": "Closed automatically",
     "job_force_assigned": "Assigned without offer (critical)",
+    # Written by `20260822120000`'s `take_up_complaint`. It is here rather than
+    # nowhere because an unknown type renders as its own raw word (see above),
+    # and `taken_up` on a resident's timeline is the ugly row that comment
+    # promises will become a bug report. The phrasing is `job_created`'s
+    # deliberately: from the resident's side the fact is the same fact --
+    # somebody in the department is now looking at this -- and naming the
+    # supervisor would be the first resident-facing read in this codebase that
+    # returns one.
+    "taken_up": "Taken up by the department",
+    # Written by `20260822170000`'s `raise_complaint_priority`, and the one new
+    # event word amendment 2 cost -- `complaint_events_type_check` enumerates
+    # them, so a word is a migration (the 2026-08-22 lesson, runbook 19). The
+    # resident sees it because the *effect* is theirs: their complaint is being
+    # treated as more urgent, which is the opposite of the kind of internal
+    # bookkeeping the timeline hides.
+    "priority_changed": "Priority raised",
 }
 
 
@@ -104,6 +120,14 @@ def _event_message(event_type: str, payload: dict[str, Any]) -> str:
         return f"Status changed from {moved_from} to {moved_to}."
     if event_type == "note_added":
         return _text(payload.get("note"))
+    if event_type == "priority_changed":
+        # The wire word, through the one table that maps them. The payload
+        # carries the stored `medium`/`high`, because the RPC that writes it does
+        # not translate vocabularies and nothing in SQL should.
+        return (
+            "The department raised the priority to "
+            f"{complaint_priority_to_wire(_text(payload.get('to')))}."
+        )
     if event_type == "reopened":
         return _text(payload.get("reason"))
     if event_type == "assigned":
@@ -119,6 +143,11 @@ def _event_message(event_type: str, payload: dict[str, Any]) -> str:
     if event_type == "raised":
         return "The complaint was submitted to the management team."
     if event_type == "job_created":
+        return "The department has taken this up."
+    if event_type == "taken_up":
+        # The payload names the department and the status it moved from, and
+        # neither is said here. A resident asking "what is happening" is not
+        # asking which internal status word changed.
         return "The department has taken this up."
     if event_type == "job_scheduled":
         when = _text(payload.get("startsAt"))
@@ -160,10 +189,12 @@ def _event_message(event_type: str, payload: dict[str, Any]) -> str:
     return ""
 
 
-def _is_internal_comment_event(row: dict[str, Any]) -> bool:
-    """Whether this timeline row records a comment the resident may not read.
+def _is_hidden_from_resident(row: dict[str, Any]) -> bool:
+    """Whether this timeline row is one the resident may not read.
 
-    ``0020`` writes a ``comment_added`` event for *every* comment, internal ones
+    Three kinds, and they are hidden for three different reasons.
+
+    ``comment_added``: ``0020`` writes one for *every* comment, internal ones
     included, because the timeline it was written for is admin-facing. The RLS
     policy on ``complaint_events`` scopes rows to the complaint, not to the
     comment's visibility, so those events do reach this surface.
@@ -174,13 +205,26 @@ def _is_internal_comment_event(row: dict[str, Any]) -> bool:
     said about their complaint and refuses to say what. The comment itself is
     already removed by the policy on ``complaint_comments``; this removes its
     shadow.
+
+    ``job_force_assigned``: internal dispatch mechanics. The resident already has
+    the fact that matters -- somebody is coming, and this is their name -- from
+    the ``job_assigned`` row beside it.
+
+    ``note_added`` **carrying ``internal: true``**: the supervisor's own notes
+    (2026-08-22, ruling A5). The product owner's scoping named staff and workers
+    and not the resident. The flag is on the payload rather than in a second
+    event word, so the admin's resident-visible *Update from management* notes --
+    which carry no flag -- are untouched by this and still render.
     """
-    if _text(row.get("event_type")) == "job_force_assigned":
+    event_type = _text(row.get("event_type"))
+    if event_type == "job_force_assigned":
         return True
-    if _text(row.get("event_type")) != "comment_added":
-        return False
     payload = row.get("payload")
     data = payload if isinstance(payload, dict) else {}
+    if event_type == "note_added":
+        return data.get("internal") is True
+    if event_type != "comment_added":
+        return False
     return _text(data.get("visibility")) == "internal"
 
 
@@ -263,7 +307,7 @@ def _to_detail(
         timeline=[
             _to_event(event)
             for event in reversed(events)
-            if not _is_internal_comment_event(event)
+            if not _is_hidden_from_resident(event)
         ],
         comments=[_to_comment(comment) for comment in reversed(thread)],
         has_older_events=events_truncated,

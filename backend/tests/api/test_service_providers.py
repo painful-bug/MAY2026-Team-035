@@ -51,6 +51,7 @@ def overview_row(**overrides: Any) -> dict[str, Any]:
         "phone_e164": "+919876543210",
         "latitude": 12.9716,
         "longitude": 77.5946,
+        "location_label": "Indiranagar, Bengaluru, Karnataka",
         "service_radius_km": 15,
         "status": "active",
         "is_available": True,
@@ -386,6 +387,80 @@ def test_api_132_the_router_calls_the_service_it_imported(
 # ---------------------------------------------------------------------------
 
 
+def test_api_333_registering_carries_the_location_label_to_the_rpc_and_back(
+    provider_client: TestClient, providers: dict, csrf_headers: dict[str, str]
+) -> None:
+    """The picker's whole output, end to end: a coordinate pair and a name for
+    it.
+
+    The label reaches the RPC as its own argument rather than being derived
+    server-side from the coordinates -- it is editable, so a person who drops a
+    pin outside their own gate and types "Indiranagar" has said something the
+    reverse geocode did not.
+    """
+    endpoint = "POST /api/v1/service-providers"
+    input_data = {
+        "displayName": "Ravi Kumar",
+        "latitude": 12.9716,
+        "longitude": 77.5946,
+        "locationLabel": "  Indiranagar, Bengaluru, Karnataka  ",
+        "skillIds": ["skill-plumbing"],
+    }
+    expected_output = {
+        "status_code": 201,
+        "sent_to_rpc": "Indiranagar, Bengaluru, Karnataka",
+        "read_back": "Indiranagar, Bengaluru, Karnataka",
+    }
+
+    response = provider_client.post(PROVIDERS, json=input_data, headers=csrf_headers)
+    actual_output = {
+        "status_code": response.status_code,
+        "sent_to_rpc": providers["registered"]["location_label"],
+        "read_back": response.json()["locationLabel"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_334_a_blank_label_reaches_the_rpc_as_null_so_the_stored_one_survives(
+    provider_client: TestClient, providers: dict, csrf_headers: dict[str, str]
+) -> None:
+    """The RPC coalesces null onto the stored value, and the column check
+    refuses an empty string. Both are why "I cleared the box and saved" has to
+    arrive as `None`: the alternative is a 422 for a gesture that meant nothing.
+    """
+    endpoint = "PATCH /api/v1/service-providers/me"
+    input_data = {"locationLabel": "   "}
+    expected_output = {"status_code": 200, "sent_to_rpc": None}
+
+    response = provider_client.patch(ME, json=input_data, headers=csrf_headers)
+    actual_output = {
+        "status_code": response.status_code,
+        "sent_to_rpc": providers["saved"]["location_label"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_335_a_label_longer_than_the_column_allows_is_a_422(
+    provider_client: TestClient, providers: dict, csrf_headers: dict[str, str]
+) -> None:
+    """120 characters is the database check, and it is a privacy boundary rather
+    than a storage decision: a field that holds "suburb, city, state" and not a
+    street address is what keeps this publishable on a hiring card."""
+    endpoint = "PATCH /api/v1/service-providers/me"
+    input_data = {"locationLabel": "x" * 121}
+    expected_output = {"status_code": 422, "code": "request_validation_error"}
+
+    response = provider_client.patch(ME, json=input_data, headers=csrf_headers)
+    actual_output = {
+        "status_code": response.status_code,
+        "code": response.json()["error"]["code"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
 def test_api_237_a_hiring_manager_reads_a_candidate_without_their_coordinates(
     manager_api_client: TestClient, providers: dict
 ) -> None:
@@ -404,6 +479,10 @@ def test_api_237_a_hiring_manager_reads_a_candidate_without_their_coordinates(
         "skill_names": ["Plumbing"],
         "has_coordinates": False,
         "has_profile_id": False,
+        # Added 2026-08-21, and the pairing with `has_coordinates` above is the
+        # assertion: a coarse name the person typed is publishable here, the
+        # point it was derived from is not, and both facts have to hold at once.
+        "location_label": "Indiranagar, Bengaluru, Karnataka",
         "requested_id": "provider-id",
     }
 
@@ -415,6 +494,7 @@ def test_api_237_a_hiring_manager_reads_a_candidate_without_their_coordinates(
         "skill_names": body["skillNames"],
         "has_coordinates": "latitude" in body or "longitude" in body,
         "has_profile_id": "profileId" in body,
+        "location_label": body["locationLabel"],
         "requested_id": providers["requested_provider_id"],
     }
 

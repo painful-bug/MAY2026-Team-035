@@ -78,12 +78,13 @@ import SecurityExports from './pages/SecurityManagerDashboard/Exports';
 import AdminSecurityIncidents from './pages/AdminDashboard/SecurityIncidents';
 
 // Service Partner Pages
-import WorkerHome from './pages/WorkerDashboard/Dashboard';
+import WorkerLanding from './pages/WorkerDashboard/WorkerLanding';
 import WorkerCalendar from './pages/WorkerDashboard/Calendar';
 import WorkerAvailability from './pages/WorkerDashboard/Availability';
 import WorkerCommunities from './pages/WorkerDashboard/Communities';
 import WorkerMessages from './pages/WorkerDashboard/Messages';
 import WorkerComplaints from './pages/WorkerDashboard/Complaints';
+import WorkerWorkOrders from './pages/WorkerDashboard/WorkOrders';
 import WorkerProfile from './pages/WorkerDashboard/Profile';
 import WorkerSettings from './pages/WorkerDashboard/Settings';
 
@@ -456,7 +457,16 @@ export default function App() {
               </SignedInRoute>
             }
           >
-            <Route index element={<WorkerHome />} />
+            {/* Two landing pages behind one index, picked on the roster rank
+                the worker snapshot already carries. A technician gets
+                `WorkerHome` unchanged — their day, their offers, their
+                calendar. Department leadership gets the triage dashboard,
+                because a supervisor holds no jobs and the technician's landing
+                page was showing them an empty calendar (product rulings,
+                `docs/COMPLAINT_ENGINE_HANDOFF.md` §18). The fork itself is
+                `WorkerLanding` and is four lines long; neither page knows
+                about the other. */}
+            <Route index element={<WorkerLanding />} />
             <Route path="calendar" element={<WorkerCalendar />} />
             <Route path="availability" element={<WorkerAvailability />} />
             <Route path="communities" element={<WorkerCommunities />} />
@@ -466,6 +476,31 @@ export default function App() {
                 not on the session and putting it there would mean editing the
                 auth owner's file for a nav entry. */}
             <Route path="complaints" element={<WorkerComplaints />} />
+            {/* Work-order triage, and this portal is the one it was always
+                missing from.
+                `WORK_ORDER_ROUTES` is mounted under `/admin`, `/manager` and
+                `/security-manager`, and the comment at that last mount says why
+                a supervisor belongs on this surface — "a supervisor satisfies
+                `can_supervise_department`, so this surface is theirs to use
+                rather than merely to look at" — while `/worker`, where every
+                supervisor of a service department actually lands, had no route
+                for it at all. That is `docs/potential issues/14` a fourth time,
+                and the product ruling of 2026-08-21 closes it: the supervisor
+                is the channel through whom the worker gets the job.
+                Not the fragment itself, because the fragment mounts the screen
+                bare and this portal has two things to resolve first — the rank,
+                which is on the roster and not the session, and the department,
+                which for a supervisor is the roster row's rather than the
+                membership's. `WorkerWorkOrders` answers both and then renders
+                the very same `WorkOrderTriage`. Two paths and one element: the
+                bare one is what a nav item can link to before any snapshot has
+                loaded, and it redirects onto the `:departmentId` shape every
+                other portal uses. */}
+            <Route path="work-orders" element={<WorkerWorkOrders />} />
+            <Route
+              path="departments/:departmentId/work-orders"
+              element={<WorkerWorkOrders />}
+            />
             <Route path="profile" element={<WorkerProfile />} />
             <Route path="settings" element={<WorkerSettings />} />
           </Route>

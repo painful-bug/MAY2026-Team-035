@@ -291,9 +291,16 @@ export default function EmployeeDetail() {
               <Clock className="h-4 w-4 text-slate-400" />
               {person.openCommitmentCount} booked {person.openCommitmentCount === 1 ? 'item' : 'items'}
             </p>
-            <p className="text-xs font-semibold text-slate-600">
-              {person.activeAssignmentCount} open {person.activeAssignmentCount === 1 ? 'complaint' : 'complaints'}
-            </p>
+            {/* Was "N open complaints" from `activeAssignmentCount`, which read
+                two columns nothing writes and so said 0 for everybody, always
+                (product ruling 5, 2026-08-21). The replacement is leadership's
+                real number and is therefore only rendered for leadership — a
+                technician's number is the booked-items line above. */}
+            {person.supervisedWorkOrderCount > 0 ? (
+              <p className="text-xs font-semibold text-slate-600">
+                {person.supervisedWorkOrderCount} supervised {person.supervisedWorkOrderCount === 1 ? 'job' : 'jobs'}
+              </p>
+            ) : null}
             {person.membershipId ? (
               // Opens the chat dock's New-message view for this community —
               // the employee card's chat box. A roster name with no account

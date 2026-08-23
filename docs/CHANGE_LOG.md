@@ -17,6 +17,237 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-23 (latest) — the services-and-security collision is closed
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §22, "Version collision" — dated
+resolution appended.** `AUDIT` (git recon, 2026-08-23). The git manager closed
+and deleted the `services-and-security` branch; the user asked for it to be
+merged into `live-app-fixes` with precautions, and the recon found the merge
+already complete: all three of its PRs (#29, #35, #36) merged to `main`, and
+after the 2026-08-23 reconciliation merge `live-app-fixes` is zero commits
+behind `origin/main`, so everything the branch ever committed is contained.
+The colliding uncommitted `20260822120000` this section warned about never
+reached git — PR #36's two commits shipped the local fix as the
+already-ledgered `20260817144725` instead, which is precisely the rename the
+section demanded. The imperative paragraph is kept as history; the resolution
+paragraph under it retires the outstanding item.
+
+## 2026-08-23 — the three confirmed defects are repaired forward
+
+The session below queued three live defects and said "no fix is written yet".
+This is the fix, in the shape rule 2 of `backend/supabase/migrations/README.md`
+prescribes: three targeted timestamped migrations, each with a
+derivation-pinned static test and a numbered runbook section, plus one code
+change that needed no migration at all. **Nothing was applied to hosted by this
+work and nothing could be** — every file here is a paste for the owner.
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §21, new — the v2 reconciliation is
+accepted as-is.** `PO` (complaint-engine owner, ruled 2026-08-23). All four
+behaviour changes in `20260823120000_complaint_engine_v2_repairs.sql` are
+accepted without amendment: the `smallint` cast on the manual-window queue
+priority, the assignment trigger resolving its row shape, the explicit
+declined-worker override on candidate ranking, and critical force assignment
+picking through `dispatch_candidates` rather than the supervisor-facing
+`work_order_candidates`. **The ruling explicitly covers the part of the fourth
+that is not about authorization:** swapping the picker also drops the old
+`away_until is null or away_until <= now()` filter, and the drop is intended —
+`dispatch_candidates` already excludes a worker whose unavailability overlaps
+the slot being scheduled, so **only slot-overlapping unavailability blocks a
+critical force assignment**. A worker on leave today but free next Tuesday was
+being refused a next-Tuesday force-assign for no reason the schedule knows
+about. The consent-respecting offer flow is untouched; force stays an explicit
+flag. The section also carries the short version of the reconciliation itself,
+which had never been written into that document — it existed only in the
+session below and in git.
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §23, new.** `AUDIT` (2026-08-23).
+`20260823120000_complaint_engine_v2_repairs.sql` arrived from `origin/main` in
+the reconciliation merge (PR #46) and is **not applied to hosted** — the owner's
+ledger probe of 2026-08-23 finds no row for that version — so it needed an apply
+section, not a record-for-completeness one like §21. The audit behind it: the
+file replaces six bodies over five names (`sync_dispatch_tasks`,
+`project_complaint_from_jobs`, both `dispatch_candidates` overloads,
+`work_order_candidates`, `dispatch_force_assign`), and **its intersection with
+the functions §18 and §20 define is empty** — checked as a set comparison over
+the `create or replace function` statements of the three files, not by reading
+them, because §19 nearly reverted §20's vocabulary the same way. The two sets
+meet only through a call: §20's `force_assign_work_order` sits on top of
+`dispatch_force_assign`, and a call is the seam that survives one side being
+replaced. Section carries the apply step, the ledger insert, a read-only
+`pg_proc` post-check for both overloads, and the ruling above.
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §24–§26, new; three migrations added
+under `backend/supabase/migrations/`.** `DERIVED` (2026-08-23, from the probe
+campaign recorded as §22 (e), (f), (g) and (h)). Each is conditional and a no-op
+on a fresh database, because each repairs something only the hosted hybrid has:
+
+* **§24, `20260823150000_hosted_invite_claim_names.sql`** — the backend calls
+  the RPC `claim_email_invitation`; hosted has only `claim_resident_invite`,
+  with the identical signature and return shape. Rather than break every fresh
+  database by renaming the call, or fork the transaction by copying `0001`'s
+  body forward, the file creates the missing **name** on hosted as a thin
+  delegating wrapper, in `0001_baseline.sql`'s exact security posture
+  (`security definer`, pinned `search_path`, revoked from
+  `public, anon, authenticated`, granted to `service_role`), and reloads
+  PostgREST's schema cache. Guarded on the delegate existing *and* the wrapper
+  not; nothing in the directory creates the delegate, so a fresh database never
+  enters the branch.
+* **§25, `20260823153000_hosted_request_status_withdrawn.sql`** — hosted holds
+  `access_requests.status` as the enum `public.request_status`, which has no
+  `withdrawn`; the baseline holds the column as text with a check that has
+  allowed `withdrawn` since `0001`. The fifth label is added rather than the
+  column retyped: widening only, one catalogue row, no table rewrite, and no
+  enum type of that name exists anywhere in this directory so the guard is
+  false on a fresh database. The `do`-block idiom and its PostgreSQL 12
+  boundary are argued in the file's header and in §25, with the
+  outside-a-transaction fallback written out.
+* **§26, `20260823160000_visitor_requests_sse.sql`** — `visitor_requests`
+  carries no trigger at all on hosted, while holding the only three real visitor
+  requests in the project. `0007`'s loop already names that table; it was
+  skipped because `0032` had not yet created it when `0007` was applied there.
+  The file re-lays **`0007`'s own trigger**, derived from its loop template
+  rather than re-designed, as a `create or replace` so it is idempotent on a
+  fresh database too.
+
+**`DERIVED`: the dashboard split brain, fixed in code, response shape frozen.**
+`backend/app/repositories/dashboard_repository.py`'s legacy arms were reading
+the *empty* half of a pair: `visitor_access_requests` (0 rows on hosted) and
+`legacy_amenity_booking_series` (0) while residents wrote `visitor_requests` (3)
+and `amenity_bookings`. `0032` and `0023` did not merely rename the old tables,
+they moved the writes, and the read path never followed. Both arms now read the
+tables residents write, and **the schema-generation branch is deleted rather
+than repointed** — there was never a second source, only a second name for an
+empty one — so `list_visitors`, `list_bookings` and `weekly_new_counts` no
+longer take `legacy` at all. `dashboard_service._visitors` and `_bookings` lose
+theirs with them. `schema_generation()` is untouched, and every arm that is
+genuinely two shapes of *one* table (complaints, amenities, invoices, payments)
+keeps its branch. The wire contract does not move by one key: pinned by two new
+tests that assert the full key set of a visitor card and a booking row.
+`purpose` is added to the visitor projection — `0032` gave the table that column
+and the resident fills it in, and the projection that omitted it made every card
+on the dashboard read "Guest". `docs/API.md` and `docs/openapi.yaml` are
+unchanged **because no endpoint changed**: same paths, same status codes, same
+response shape; only the tables behind two projections moved.
+
+**`AUDIT`: the five-gate check on the dashboard change.** Run against `docs/`
+before the change was called done, not after. **Supabase — moved**: three
+migrations and three runbook sections, above. **Frontend — did not move**, and
+that is asserted rather than assumed: the response shape is frozen and
+`npm test` was run to prove it (271 passed, the baseline). **ERD
+(`docs/erd/homebandhu.dbml`) — did not move**: no table, column or relationship
+changed. The ERD already carries both halves of the split brain, including
+`visitor_access_requests` in `TableGroup purple_visitors`, and it models the
+schema rather than which reader talks to which table; the pre-baseline tables
+remain on hosted and remain documented. **Class diagram
+(`docs/diagrams/HomeBandhu-Architecture-Classes.puml`) — did not move**:
+`DashboardRepository` is drawn with `list_domain_records()`, one abstraction over
+the whole projection set, and lists neither the per-table reads nor their
+signatures, so a dropped keyword argument is below its resolution. **Component
+design (`docs/design-of-components.md`, `docs/design/ADMIN_DASHBOARD_DESIGN.md`)
+— did not move**: neither names the split-brain sources; the admin dashboard
+design's only mention of either table is the `exclude using gist` constraint on
+`amenity_bookings`, which is unaffected.
+
+**Test baseline: 1297 passed / 5 skipped → 1328 passed / 5 skipped.** Thirty of
+the thirty-one new tests are the three migrations' static batteries (11 + 10 +
+9); the thirty-first is net of `backend/tests/test_realtime.py`'s legacy-source
+pins being replaced — six tests that asserted the dashboard reads
+`visitor_access_requests` and `legacy_amenity_booking_series` are gone, and
+seven took their place, two of them the frozen-shape pins. Frontend unchanged at
+271.
+
+## 2026-08-23 — the snapshot had a ledger row after all
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §22, rewritten.** `AUDIT` (issue #41,
+2026-08-23). **Correction: §22's claim that `20260818141040_remote_schema.sql`
+had "no ledger row" is withdrawn.** That section, written the day before, listed
+three absences — no runbook section, no CHANGE_LOG entry, no ledger row — and
+reasoned from the third that the snapshot had never been applied. It also
+printed the query that would settle the point from the ledger rather than from
+the document, and pre-registered a stop rule for the answer coming back the
+other way. The owner ran it on 2026-08-23 and it returned **two rows**:
+`20260817144725|repair_staff_assignment_employment_type` **and**
+`20260818141040|remote_schema`. The stop rule fired. The mistake is worth naming
+because it is easy to repeat: *no paper trail* was treated as evidence of *never
+applied*, and it is only evidence that nobody wrote the paper. The other two
+absences stand — there is still no runbook section and still no CHANGE_LOG entry
+for that file.
+
+**`DERIVED`: what the ledger row turned out to mean.** A read-only probe
+campaign (2026-08-22/23, eight queries, nothing written) settled it. Hosted is
+the **deliberate legacy hybrid** the repository has always assumed:
+`0001_baseline.sql` was never applied there — the project predates it —
+`backend/supabase/migrations/README.md` says so, and
+`dashboard_repository.schema_generation()` exists to detect it and switch to
+legacy-mode projections. `supabase db diff` renders the statements that would
+transform the *local shadow* into *hosted*, so the 9,831 lines were an accurate
+**photograph of that hybrid**, committed in the one place where DDL reads as an
+instruction. Nobody applied them: the probes find hosted in the state the file
+*describes*, not the state those statements would have *produced*. Point by
+point — the retired sentinel table is present, and that is what puts the
+dashboard in the legacy mode it was written for; the two "dropped" `dashboard_sse_*`
+triggers fire on tables the legacy branch never reads, and hosted covers
+realtime through differently-named triggers on the tables it does; six of the
+seven "dropped" `0001` policies have renamed hosted equivalents and the seventh
+guards a service-role-only table; `pg_net` has zero references repository-wide
+and is a Supabase-CLI local-stack default. One theory was **refuted** outright:
+`communities.location` and `service_providers.location` are `attgenerated = 's'`
+on hosted, generated exactly as this directory declares them, so the snapshot's
+`SET DEFAULT` lines against them are diff-rendering noise. **The fresh-apply
+analysis is unchanged and still stands** — the file dies at its own line 1314 on
+a generated-column `ALTER`, and everything above that line would fabricate the
+legacy schema on a database that has no business being in it. The harms are real
+**for a fresh apply and for CI**; on hosted the same lines describe standing
+reality, not new damage. §22 now records the probe set verbatim, the corrected
+framing, and the remedy.
+
+**`backend/supabase/migrations/20260818141040_remote_schema.sql` — new here, and
+deliberately empty of SQL.** `DERIVED` (2026-08-23). Deletion was the 2026-08-22
+plan and the ledger row takes it off the table: a version in
+`supabase_migrations.schema_migrations` with no file behind it reads as a
+permanently missing migration to `supabase migration list` and to anyone
+auditing the two against each other. So the version stays and the body goes —
+the file on this branch is a **comment-only tombstone** recording what the
+version is, what used to be at it, why it could not stay, and a pointer to §22.
+That settles all three readers at once: git has a file at that version with its
+explanation attached; a fresh `supabase db reset` has nothing to apply and so
+nothing to fail; the hosted ledger row has a file behind it again. **No hosted
+write was needed and none was made.** The reconciliation merge resolves
+`origin/main`'s snapshot path to the tombstone. It passes all six checks in
+`backend/tests/test_migration_directory_is_fresh_appliable.py` for the plain
+reason that a file with no statements has nothing for them to catch — the suite
+strips whole-line `--` comments before every check, so the tombstone is
+invisible to it by construction rather than by wording. One line added to
+`backend/supabase/migrations/README.md`'s drift-reconciliation rule, so a reader
+of the directory learns what the file at that name is without leaving it. Test
+baseline unchanged: 1282 passed / 4 skipped (the tombstone adds no tests; there
+is nothing to pin).
+
+**Issue #33 is closed out.** `AUDIT` (2026-08-23). The close-out comment was
+posted on 2026-08-23, confirming both halves from the probes rather than from
+the repository: RLS on `staff_assignments` (§11, `20260812200000`) and the
+constraint repair (§21, `20260817144725`), the latter read straight off hosted as
+`CHECK (employment_type = ANY (ARRAY['internal','vendor','staff']))`. Nothing in
+`docs/` changed for it; the record is here because the confirmation came out of
+the same probe campaign.
+
+**`DERIVED`: three confirmed runtime defects queued for forward-only repair.**
+The campaign found three things that are *not* tolerated divergence, and each
+gets its own numbered runbook section from §23 onward in the next package, in
+the shape rule 2 of the migrations README prescribes — a targeted change naming
+the one thing that is wrong, with a derivation-pinned test. (1) **The
+invite-claim RPC name.** Hosted has only
+`claim_resident_invite(p_invite_id uuid, p_profile_id uuid)`; the backend calls
+`claim_email_invitation`, which does not exist there, so every call on that path
+fails. (2) **`request_status` has no `withdrawn`.** `access_requests.status` on
+hosted is the enum `public.request_status` = `{pending, approved, rejected,
+cancelled}`, and the application believes a fifth value exists. (3) **The admin
+dashboard reads the wrong half of a split brain.** The rows are in
+`visitor_requests` (3 of them); the legacy read path looks at
+`visitor_access_requests` (0) and `legacy_amenity_booking_series` (0), and
+`visitor_requests` carries no SSE trigger at all. All three are recorded in §22
+as forward pointers only — no fix is written yet.
+
 ## 2026-08-23 — Complaint Engine v2 branch reconciled forward
 
 `AUDIT`: the useful database repairs from `complaint-engine-v2` were re-authored
@@ -30,7 +261,1068 @@ cache for the new overload. `DERIVED`: candidate results remain uncached because
 they are assignment decisions over mutable availability; existing React Query
 invalidation remains the client refresh mechanism.
 
+## 2026-08-22 (evening) — git and the hosted database are put back in step
+
+**`backend/supabase/migrations/20260817144725_repair_staff_assignment_employment_type.sql`
+(new here, not new) + `backend/tests/test_employment_type_repair_migration.py` +
+runbook §21.** `AUDIT` (issue #33, 2026-08-22). Worker hiring was blocked by two
+things and both turned out to be already fixed on the hosted project, which is
+the whole reason the issue stayed open: nobody could see it from git. The RLS
+half was `20260812200000`, applied and ledgered. The constraint half was this
+file — the hosted `staff_assignments` predates `0001_baseline.sql` and its
+hand-built `staff_assignments_employment_type_check` allowed `internal` and
+`vendor` only, while every hiring path in the directory has written `staff`
+since `0019` gave the column that default; the repair drops the constraint and
+re-adds it with the third word. It was written on `origin/main` (commit
+`c0956a2`, Aishik Bandyopadhyay, 2026-08-17), applied to hosted that day by the
+services-and-security workstream, and ledgered — but never existed on this
+branch. It is brought over **byte for byte** (blob `52d2f79`, unchanged), not
+rewritten, because a file that is already in `supabase_migrations.schema_migrations`
+under version `20260817144725` can never be corrected in place: editing it puts
+git and the ledger out of step under one version, which is the disease #41 is
+about. Runbook §21 records it in filename sequence and marks it **ALREADY
+APPLIED — do not run**. Pinned by a new derivation-pinned suite: the allowed list
+is read out of the file's own text, and every `employment_type` literal any
+migration writes is required to be a member of it — the six inserts are found by
+lining each `insert into public.staff_assignments` column list up with its
+`values` list positionally, because the column is never named beside its value.
+**Recorded as a residual defect, for the record only:** the file adds the
+constraint without `not valid` and without the pre-flight row scan
+`20260822150000_taken_up_event_word.sql:22-40` uses, so on a database holding an
+out-of-list row it would fail the apply rather than report what is in the way.
+The risk is retired on hosted — it succeeded there on 2026-08-17 — and the file
+is immutable now; it is written down so the next constraint repair copies §19's
+guarded shape instead of this one.
+
+**`backend/tests/test_migration_directory_is_fresh_appliable.py` +
+`backend/supabase/migrations/README.md` "Reconciling hosted drift" + runbook
+§22.** `AUDIT` (issue #41, 2026-08-22). `origin/main` carries
+`20260818141040_remote_schema.sql`, a 9,831-line `supabase db diff` snapshot
+committed as if it were a migration. It has no runbook section, no CHANGE_LOG
+entry and no ledger row — it was never applied to hosted, and it is a git→hosted
+*diff*, not a change anyone decided to make. Replayed into an empty database it
+dies at its own line 1314 on a generated-column `ALTER`, and on the way there it
+recreates the retired sentinel table `visitor_access_requests` (which makes
+every fresh database report itself to `dashboard_repository.schema_generation()`
+as the pre-baseline legacy schema), drops
+`dashboard_sse_amenity_bookings`/`dashboard_sse_visitor_requests` without
+recreating them, drops 60 policies — 7 of them ones this directory creates and
+the snapshot never puts back, including `0001`'s `profiles_self`,
+`memberships_self`, `communities_member` and `units_member` — and drops
+extension `pg_net`. CI's `database-browser` job replays this directory on
+every push, so one such file stops every branch. The remedy is the file's
+deletion in the reconciliation merge; what lands **here** is the guard-rail that
+would have caught it before the commit. **The first suite in this repository
+whose subject is the directory rather than one file** — six checks, all
+derivation-pinned: every migration parses; nothing alters a generated column or
+a column one is generated from (both sets derived from the
+`generated always as (…) stored` declarations and the identifiers inside their
+expressions); nothing creates the legacy sentinel (name read out of
+`dashboard_repository.py`, so the guard follows the code it protects); no
+trigger is dropped that the directory never recreates (the dynamic
+`dashboard_sse_%I` loops in `0007` and `0018` expanded from their own table
+arrays, and asked a second time in apply order); every unguarded
+`drop policy`/`drop constraint` of an object this directory creates puts it back
+in the same file; and none of the twenty tables retired by `94556e5`/`76e1b15`
+is recreated — `create table` only, because `0023`, `0030` and `0032`
+legitimately *rename* pre-baseline tables into the `legacy_` namespace. Checked
+against the offending file out of tree: five of the six fire on it. The sixth
+does not and cannot — the snapshot is valid SQL, it fails at execution, not at
+parse.
+
+**`DERIVED`: the three existing directory sweeps are now case-insensitive.**
+`test_work_order_notification_urls.py`, `test_location_label_migration.py` and
+`test_leadership_exclusivity_migration.py` each scan every `.sql` in the
+directory for a later redeclaration of a name they own, and each did it with a
+lowercase-only pattern. That is not a small oversight: the repository's
+migrations are hand-written and lowercase, `supabase db diff` output is
+uppercase, and a snapshot redeclaring `register_service_provider` in capitals
+was invisible to all three. Widened to `re.M | re.I`; strictly a widening — the
+same 48 tests pass before and after.
+
+**`backend/supabase/migrations/README.md`.** `PO`/`DERIVED` (2026-08-22). Three
+rules written down that had been practice: the hosted project is written **only**
+by the owner, by hand, from a numbered runbook section with a CHANGE_LOG entry
+per file; hosted-vs-git drift is reconciled **forward-only** in the shape of
+`20260820120000`/`20260822090000` — a targeted migration with a
+derivation-pinned test — and never by committing `db diff` output; and every
+timestamped migration gets a `backend/tests/test_*_migration.py`. Plus the
+version-collision rule the issue's own incident forced: a new migration
+timestamps later than the latest file on **any** shared branch (today
+`20260822170000`), because `20260822120000_supervisor_triage` was written twice
+under one version. Test baselines: backend 1270 → 1282 passed / 4 skipped.
+
+## 2026-08-22 — nobody could raise a work order, and the supervisor gets a real dashboard
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §17 + `backend/supabase/migrations/20260822090000_hosted_work_order_column_drift.sql`.**
+`AUDIT` (live testing, 2026-08-22). The supervisor's "Raise it" button answered
+422 "Could not raise that job." — as would the admin's, for every caller. Traced
+to hosted schema drift, not to any code: the hosted `work_orders` table is the
+pre-baseline hand-built one, and a legacy `title` column (NOT NULL, no default,
+declared by no repository migration) rejected every `create_work_order` insert.
+Same disease `20260820120000` reconciled on `complaints`; same cure — a
+hand-applied widening sweep that drops the insert-blocking legacy NOT NULLs,
+self-verifies, and is pinned by
+`backend/tests/test_hosted_work_order_drift_migration.py` (protected column
+list *derived* from `0001`+`0036`+`20260813101000`'s own text, so a repository
+column can never be loosened by mistake). Diagnosis was only possible after
+`app/core/pg_errors.py` started logging the real Postgres text server-side for
+mapped standard SQLSTATEs — that log line stays.
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §18.** `PO` (2026-08-22). The supervisor's
+landing surface is redesigned into four sections — new (urgent stack, category
+and priority chips, reassigned badges), taken-up-but-unassigned,
+assigned-but-pending, being-worked-now. Four rulings recorded for the
+complaint-engine owner: an explicit *Take up* action stamps
+`taken_up_by_membership_id`/`taken_up_at` (triage ownership, **not** dispatch —
+§15 ruling 1's dead column stays dead); take-up moves `open → acknowledged`, so
+the resident sees progress; §16's "no new column" for re-stamping is partially
+overturned by `supervision_inherited_at`, so inherited work can be badged on a
+supervisor-only surface; and "being worked right now" is the worker's own
+Start (`started_at` stamp added, *Pause* deferred rather than rippling a new
+status through the dispatch triggers). One aggregate read
+(`supervisor_triage_snapshot`) replaces the triage screen's N+1.
+
+**Same day, the build landed** (`DERIVED` from the §18 rulings; two specialist
+agents against the frozen contract in `docs/plans/SUPERVISOR_TRIAGE_SPEC.md`,
+whose "Logged decisions" section records every reconciled judgement call).
+`docs/API.md` gains "The supervisor's dashboard — added 2026-08-22":
+`GET /departments/{id}/triage-snapshot` and `POST /complaints/{id}/take-up`
+(55 → 57 operations; take-up declares no request body because the frontend's
+house `post()` always sends `{}`); `docs/openapi.yaml` regenerated (172 paths,
+203 operations) and `docs/api_yaml_mapper.md` re-run. The runbook gains §18
+for `20260822120000_supervisor_triage.sql` — take-up columns, `started_at`,
+`supervision_inherited_at`, both RPCs, additive-copy redeclarations of
+`start_work_order` and `restamp_department_supervision` proved line-by-line by
+`test_supervisor_triage_migration.py`. `docs/FRONTEND_CHANGES.md` gains "The
+supervisor lands on their department, not on an empty calendar": the `/worker`
+index forks on roster rank, phase one ships the shell plus Section 1 complete
+(urgent stack, category palette that excludes the priority tones, reassignment
+badges, Take-up), sections 2–4 await product review. Test baselines:
+backend 1163 → 1205 passed / 4 skipped, frontend 34/182 → 36/215, both green.
+
+**Runbook §19 + `backend/supabase/migrations/20260822150000_taken_up_event_word.sql`.**
+`AUDIT` (live testing, 2026-08-22, same day). The very first live Take-up
+press answered 422 "Could not take that complaint up." — SQLSTATE 23514,
+`complaint_events_type_check`. The triage migration reasoned from `0001`'s
+"event_type is text with no CHECK" and missed that `20260813105000` had
+bolted an enumerating constraint on later; its new `taken_up` timeline word
+was refused at the insert. Cure: recreate the constraint with the one new
+word, in the creating file's own drop-and-recreate shape. Pinned by
+`backend/tests/test_taken_up_event_word_migration.py` (word list *derived*
+from `20260813105000`'s own text plus exactly `taken_up`; also proves the
+triage migration writes no other unknown word, so the cure has no hidden
+sibling). Backend baseline 1205 → 1211 passed / 4 skipped. Second find of the
+day for the `pg_errors` server-side log line — the 23514 was named in one
+log read.
+
+**`docs/plans/SUPERVISOR_TRIAGE_SPEC.md` Amendment 2 + `docs/COMPLAINT_ENGINE_HANDOFF.md` §20.**
+`PO` (2026-08-22, same day). The dashboard grows from a place to look into a
+place to act: five sections (an *Open job requests* section slots between
+taken-up and assigned), three universal card actions (eye popup with the full
+staff timeline, chat with the complaint owner, permanent internal note), and
+stage verbs — raise-job deep-link and *Resolved* on §2; mark-resolved,
+one-way priority raise and manual assign on §3; §4/§5 monitor-only. Four
+explicit rulings: chat is a **real thread** (new `dm_threads` kind, not a
+comments panel); *Resolved* cancels unstarted jobs and refuses while one is
+running; a job is *open* until a worker **accepts** (an unaccepted offer is
+not "assigned", overturning v1's `engaged` definition); manual assign is a
+**true force-assign** — the product owner chose the consent override over the
+recommended offer flow. Orchestrator riders: notes are internal-only (the
+ruling's phrasing named staff and workers, not the resident), and raise-job
+reuses the queue's form by deep-link rather than duplicating it. Three
+resident-facing strings approved verbatim.
+
+**Same day, the amendment-2 build landed** (`DERIVED`; same two-specialist
+shape, adjudications appended to the spec's decisions log).
+`backend/supabase/migrations/20260822170000_supervisor_actions.sql` carries
+the whole DDL surface: complaint chat threads (kind + column + policies +
+reopen-aware lock), the four action RPCs, an explicit
+`force_assign_work_order`, the five-bucket snapshot rebuild, and the one new
+event word `priority_changed` shipped **inside a constraint rebuild** —
+runbook §19's rule applied in advance rather than after a live 23514.
+Notable adjudicated deviation: `supervisor_resolve_complaint` writes no
+`status_changed` and sends no notification itself, because the
+`complaints_on_resolved` trigger already does both and arms the 48h/72h
+timers — the migration refuses to apply if that trigger is absent.
+`docs/API.md` gains "The supervisor's card actions — amendment 2" (resolve,
+priority-raise, notes, chat, the `force` flag, and the staff-detail guard
+widened from `require_admin` to active membership — the RPC underneath always
+decided admin-or-supervisor for itself); `docs/openapi.yaml` regenerated
+(`--check` clean), mapper re-run, runbook §20 appended.
+`docs/FRONTEND_CHANGES.md` gains "The supervisor dashboard becomes a place to
+act, not only to look" — full cards everywhere, `MinimalRow` retired, the
+deferred *Inherited* badge shipped, `ChatDock` learns to open a thread by id.
+Test baselines: backend 1211 → 1270 passed / 4 skipped, frontend
+36/215 → 38/264, oxlint clean — re-run by the orchestrator, not taken from
+agent reports. Migration awaiting the owner's hand-apply.
+
+## 2026-08-22 — the admin Save button was accused of writing nothing; it writes everything
+
+`AUDIT` (orchestrator verification, 2026-08-22). A specialist report from the
+2026-08-21 deep-link workstream flagged, out of scope, that
+`AdminDashboard/Complaints.jsx`'s *Save Changes* and comment controls "write to
+zustand only — no server call". Line-verified false before any fix was planned:
+`store/slices/createComplaintsSlice.js` follows its optimistic store write with
+`PATCH /complaints/{id}` and `POST /complaints/{id}/comments`, both routes exist
+in `backend/app/api/v1/routers/complaints.py` behind `require_admin`, the edit
+and its timeline entries are one transaction, and both writes fire the shared
+SSE trigger that re-snapshots the dashboard. The rumour never reached a docs
+artifact, so nothing is retracted — this entry exists so the claim is findable
+next to its refutation.
+
+**What the audit did expose, and what changed.** A *failed* write fires no SSE
+event, so the optimistic copy of the refused state sat on the card indefinitely
+with only a transient toast against it. The slice's catch now re-reads the
+snapshot for server truth, falling back to restoring the affected row locally
+when the snapshot read fails too. Application-code change; recorded in
+`FRONTEND_CHANGES.md` ("A refused complaint write no longer stays on screen")
+and, because the surface belongs to the complaint-engine owner, in
+`COMPLAINT_ENGINE_HANDOFF.md` §17 — which also notes for the owner that the
+screen's "Staff / Assignee" box persists a display label (`assignee_label`),
+not an assignment: it does not touch `assigned_to_membership_id` and drives no
+dispatch, consistent with §15's ruling 1 (complaints stay department-pooled).
+
+## 2026-08-21 — a supervisor's removal stops breaking the complaint chain
+
+`PO` (product owner, 2026-08-21). Seven rulings in one sitting, all about what
+happens to a department's work when the person supervising it leaves. They are
+recorded in full in `COMPLAINT_ENGINE_HANDOFF.md` §15; what follows is what
+changed in `docs/` because of them.
+
+**Ruling 1 — complaints stay department-pooled.** This closes the question §14 of
+the handoff left open. `complaints.assigned_to_membership_id` remains a dead
+column: one function writes it (`update_complaint`, `0031`), nothing reads it, and
+nothing new does either. A complaint belongs to a department, and the person who
+answers it is named on the *work order*, which is a different record with a
+different lifetime.
+
+**Ruling 2 — removal continuity is work-order re-stamping.** The defect the
+sitting revealed: `work_orders.supervisor_membership_id` is the delivery address
+for five notification kinds (`work_order.no_candidates`,
+`work_order.resident_accepted`/`_declined`, `work_order.accepted`,
+`work_order.completed`, `work_order.failed`) and nothing anywhere re-pointed it
+when the person it named left. `20260821140000` §8 then made those rows invisible
+to their recipient as well, so a department's live jobs reported their progress
+into a mailbox nobody could open. Live work orders now move to the least-loaded
+remaining active supervisor of the same department, else to its manager, else
+nowhere — *a wrong address is worse than a stale one*.
+
+**Ruling 3 — the last supervisor's departure is a notification and a banner, not
+a new screen.** The manager is told they are covering the queue, and their
+Complaints screen says so while it is true. Explicitly **not** a new workspace:
+`can_manage_department` implies `can_supervise_department` (`0036`), so the
+manager's screens already exceed the supervisor's, and building a second one would
+be building a subset.
+
+**Ruling 4 — removal gets a real confirmation dialog.** The two `window.prompt`
+flows on the roster tab asked for a reason and, by being the only thing in the
+way, doubled as the confirmation. Now a sheet that names the person, states what
+they actually hold, and warns when they are the last supervisor.
+
+**Ruling 5 — the always-zero roster count dies.** `activeAssignmentCount` counted
+open complaints by `assigned_to_membership_id` or by a prefix match on
+`assignee_label`: one column nothing writes and one no frontend has ever set. It
+was `0` on every row of every roster ever rendered, displayed as "0 open
+complaints" beside a real number. Replaced by `supervisedWorkOrderCount`, which
+somebody writes.
+
+**Ruling 6 — the admin "Assign to staff" control is removed.** This executes R13,
+which the change log recorded as settled on 2026-08-13 and which was never done.
+The control wrote `assigneeStaffId` into zustand and nowhere else.
+
+**Ruling 7 — supervisors really are notified when a complaint is raised.** This
+executes R18, recorded as done and never implemented: `notify_complaint_staff`
+reached admins and the department's manager and stopped. A supervisor is a *rank
+on a roster row*, so no role-based helper could name them, which is how the gap
+survived a review that read the audience as "admins and managers" and found it
+correct.
+
+**Ruling 8 — the claim pass runs on every session read.**
+`auth_service._claim_staff_invitations` was called only on the branch that had
+already established the caller holds no membership, so anybody who already
+belonged to a community never reached it: their pending leadership invitation was
+neither applied nor refused, and the inviting department went on seeing `pending`
+forever with nothing reporting a problem. The refusal half added by
+`20260821140000`/`20260821170000` was reachable by the same narrow population
+only.
+
+**Ruling 9 — the serviceman release mechanics are untouched.** The rank-1 "just
+below urgent" re-queue in `release_staff_commitments` already does what the owner
+wants. Recorded so nobody re-opens it.
+
+**Migration — `20260821200000_departure_continuity.sql`. NOT APPLIED. The
+repository owner must paste it into the Supabase SQL editor by hand.** Three new
+helper functions, one new trigger function and its trigger on `staff_assignments`,
+a redeclared `notify_complaint_staff` (ruling 7), a recreated
+`department_staff_overview` (ruling 5), and a `do` block that repairs work orders
+already addressed to an ended membership and reports the count. It adds no column,
+no table, no policy and no SQLSTATE, and it deliberately declares no
+`claim_staff_invitations` — ruling 8's fix is a Python call site, and a
+redeclaration here would have to guess which generation of that body
+(`20260821140000`'s or `20260821170000`'s) is on the database.
+
+**A trigger, not an edit to `remove_department_member`, and that is the entry
+worth keeping.** Removal has four RPC entry paths and a fifth that is not an RPC:
+`staff_assignments_admin_write` is `for all to authenticated` with direct grants
+(`20260812200000`), so an admin can flip `status = 'inactive'` straight through
+PostgREST. All five end at the same `update public.staff_assignments`, so one
+`after update` trigger covers five where a function edit covers four —
+`20260821140000` §2 chose triggers over RPC edits for the same reason, and this is
+that argument applied to continuity rather than to an invariant. `after` and not
+`before`, so the departing row is already `inactive` in the snapshot the successor
+search reads and "a remaining active supervisor" excludes them by construction.
+
+Artifacts changed:
+
+* `API.md` — §3.5 records that the claim pass now runs on every session read and
+  what the old guard cost; §7's audience note gains the department's supervisors
+  and the R18 history; §8's `StaffMember` prose replaces `activeAssignmentCount`
+  with `supervisedWorkOrderCount` (and says the old field is *gone*, not renamed,
+  so a client reading it gets `undefined` rather than a wrong number); the sample
+  payload follows; `POST …/members/{staffId}/remove` gains the re-stamping
+  contract, the `department.supervision_uncovered` notification, and the statement
+  that residents and workers see nothing — by construction, not by suppression.
+* `plans/MIGRATION_APPLY_RUNBOOK.md` — §16 for the new file, in §13–§15's style,
+  paste-and-run verification only. **Two stale-header repairs in the same edit**:
+  the title said "the seven unapplied migrations" and §0.2 said "confirm the
+  highest version present is `0047`", both fifteen migrations out of date — §0.2
+  would now stop the owner on a database that is exactly where it should be. A
+  dated box under the title gives the real state, and §0.2 keeps its original text
+  labelled as the §1–§7 boundary with the modern check beside it. §15's
+  "and is the last file in the directory" row is corrected to the property it was
+  standing in for.
+* `COMPLAINT_ENGINE_HANDOFF.md` — §15, all nine rulings with attribution and date.
+  It answers §14's open question about the pooled model rather than leaving it
+  open beside a decision that assumes an answer.
+* `FRONTEND_CHANGES.md` — the dialog, the banner and the removed control.
+* `openapi.yaml` — `DERIVED`. `python scripts/export_openapi.py`;
+  `--check` reports it up to date. `StaffMember` and `StaffMemberDetail` swap
+  `activeAssignmentCount` for `supervisedWorkOrderCount`; no path, request or
+  status code moves.
+* `api_yaml_mapper.md` — `DERIVED`. `python scripts/regen_mapper.py` reports it up
+  to date: the mapper keys on endpoints, and no endpoint changed.
+* No ERD or class-diagram change: no column is added, removed or re-typed. The
+  re-stamp writes `work_orders.supervisor_membership_id`, which both diagrams
+  already carry, and the meaning of the column is unchanged — only the number of
+  things that maintain it.
+
 ---
+
+## 2026-08-21 — the supervisor gets the screen they were already allowed to use
+
+`PO` (product owner, 2026-08-21): **"The supervisor is the channel through whom
+the worker gets the job."** Mount the existing work-order triage screens in the
+worker portal for supervisor rank.
+
+**What the ruling found.** A service department's supervisor holds a `worker`
+membership — rank is not role, `0035` settled that — so `_portal_for` lands them
+in `/worker`. `WORK_ORDER_ROUTES` in `App.jsx` was mounted under
+`/security-manager`, `/manager` and `/admin`, and under `/worker` there was no
+work-order screen at all: the person whose job is dispatch had one complaint
+list with one button. The comment above the `/security-manager` mount had
+already written the argument against this — *"`can_supervise_department` is what
+every work-order RPC checks, and a supervisor satisfies it, so this surface is
+theirs to use rather than merely to look at"* — for a portal a supervisor of a
+plumbing department never sees. The ruling resolves the contradiction the way
+that comment wanted.
+
+**`DERIVED` — no permission moved, and none needed to.** The nine endpoints in
+`work_orders.py` are guarded `require_membership_role("admin","manager","worker",
+"security")` at the router and `can_supervise_department` inside every RPC
+(`0036:435`), which admits a `manager`- or `supervisor`-rank roster row. What was
+missing was a route. `backend/tests/api/test_work_orders.py` now sends all nine
+as a `worker` membership (`test_api_337`) and all nine as a resident
+(`test_api_338`), so the claim this mount rests on is a test rather than an
+assumption.
+
+**`AUDIT` — one read genuinely refuses a supervisor, and it is not a
+work-order route.** `GET /departments/{id}` is `require_admin_or_manager`
+(`departments.py:47`), and the triage screen uses it for the department's trade
+list and roster. The roster has a second source that does admit them
+(`GET /work-orders/{id}/candidates`); the trade list does not, so on that read's
+403 the screen now says which box is affected instead of rendering the guard's
+own *"You do not have permission for this community action."* under the queue.
+Widening that endpoint is a departments-owner decision and is **not** taken
+here: it would expose every department's roster in the community to every
+worker in it, which is a bigger question than a trade dropdown.
+
+### Artifacts
+
+* `FRONTEND_CHANGES.md` — the two routes, the rank-gated nav entry, the shared
+  `supervisedEngagement`, and the department-read note. Appended to the *Worker
+  portal* section.
+* `backend/tests/api/README.md`, `backend/tests/README.md` — `DERIVED`,
+  regenerated by `pytest --collect-only --generate-test-docs`.
+* No `API.md`, `openapi.yaml` or `api_yaml_mapper.md` change: **no endpoint, no
+  request and no response shape moved.** `GET /worker/snapshot` already carries
+  `communities[].rank`, `.status` and `.departmentId` (`ServiceEngagement`,
+  `hiring_schemas.py:314`), which is everything the new screen needed to know —
+  so the snapshot schema was read, not extended.
+* No ERD or class-diagram change: no table, column or relationship is involved.
+* **Not fixed here, on record instead:** `portalNotificationUrl`
+  (`frontend/src/features/notifications/portalUrl.js`) rewrites `/admin/…`
+  notification urls for `manager` and `security-manager` only. A supervisor's
+  portal is `worker`, so `20260812120000`'s seven work-order notifications still
+  reach them spelled `/admin/departments/{id}/work-orders?job=…` and bounce off
+  `ProtectedRoute requiredRole="Admin"`. The destination now exists, which is
+  the half that was missing; the rewrite rule is per-portal and cannot simply
+  gain a `worker` key, because that key would also rewrite `hiring`, `staff/`
+  and `candidates/` — three sub-screens the worker portal does not have — and
+  `backend/tests/test_notification_links.py` mirrors that rule table in Python
+  and would have to grow a worker parametrisation with it.
+
+---
+
+## 2026-08-21 — the person whose invitation was refused is told why
+
+`PO` (product owner, 2026-08-21, on reading the entry below): **the invitee must
+be told why the invitation did not take.** The claim-time refusal shipped that
+morning tells the department three times — `blockedReason`, `blockedAt`, and a
+`staff_invitation.blocked` notification — and tells the person nothing at all.
+They sign in with the address a manager typed for them, the invitation silently
+does not take, they land in whatever portal their own identity already entitled
+them to, and no surface in the product connects the two. Somebody told they had
+been made a supervisor, who then signs in and finds an ordinary account, has been
+handed a puzzle where an answer was owed.
+
+The wording is the ruling and is frozen — approved verbatim, with the community's
+name substituted:
+
+> **Registered provider.** "Your invitation to join *{community}* couldn't be
+> applied. This account is registered as a marketplace service professional, and
+> department leadership can't be combined with a provider profile. Ask the
+> community to invite a different email address."
+>
+> **Already leads elsewhere.** "Your invitation to join *{community}* couldn't be
+> applied because you already manage or supervise another community. Leadership
+> is held in one community at a time — once your current engagement ends, the
+> invitation can be applied on your next sign-in."
+
+`DERIVED`: **the same edge, not a second one.** The message is written inside the
+existing `if v_row.blocked_at is null then` guard, beside the department's. The
+claim runs on *every* membership-less session read and a blocked person keeps
+signing in, so a message outside that guard is a message re-sent forever; and two
+separate guards are two things that can drift into disagreeing about whether a
+refusal has already been announced.
+
+`DERIVED`: **`notify_profile`, so the row is person-scoped and community-less.**
+It is `0041` §2's writer, built for exactly this population. Both refused people
+are people a community-scoped row cannot serve: the registered provider holds no
+membership anywhere, and the sitting leader's only membership is in the *other*
+community — the one that caused the refusal — so the entry below's own ruling-3
+feed scoping would hide the explanation on the day that posting ended. A
+community-less row is what `membership_is_live(null)` deliberately keeps readable
+forever.
+
+`DERIVED`: **a separate `kind`, `staff_invitation.not_applied`.** Dotted, in the
+`staff_invitation.` namespace the department's `staff_invitation.blocked` opened,
+because these are one event told to two audiences. *Separate* rather than a second
+row of the same kind because the two carry opposite voices — "they could not be
+admitted" against "your invitation couldn't be applied" — and one kind that
+renders as either sentence is one kind whose fallback title is wrong for half its
+readers. The payload mirrors the department side's shape and names the community
+where that one names the department.
+
+`DERIVED`: **no `url`, and that is the house rule rather than an omission.** There
+is no screen for this — the invitee is not a member of that community and never
+becomes one, no portal lists invitations addressed to you, and the two refused
+populations land in different portals. `notifications_service._FALLBACK_URLS`
+already settled the general question: "a guess about where a notification should
+land is a worse failure than no link, because a link that goes to the wrong screen
+is one the reader believes." `render` returns `""`, and `NotificationBell` marks
+the row read and navigates nowhere.
+
+`AUDIT`, stated rather than fixed: **an invitation blocked before this migration
+is applied is never told retroactively.** Its `blocked_at` has already crossed the
+edge. Sending for those rows would mean writing `blocked_at` backwards or
+bypassing the guard, and either would re-notify anybody the department has since
+re-invited — so the migration counts them into a `raise notice` and touches
+nothing, which is the entry below's §9 argument at a smaller scale. The
+department's existing remedy already re-arms the edge: `update_staff_invitation`
+clears `blocked_reason`/`blocked_at`, so a corrected or re-issued address
+announces itself normally on the next sign-in. Expected count on the hosted
+database: zero — the columns were added the same day.
+
+**Migration — `20260821170000_blocked_invitee_notice.sql`. NOT APPLIED. The
+repository owner must paste it into the Supabase SQL editor by hand.** It
+redeclares exactly one function, `claim_staff_invitations`, under the house
+convention for changing a function another migration owns (`20260812113000` §1):
+the body is copied whole out of `20260821140000` §5 and every added region is
+marked `-- CHANGED (20260821170000)`. No column, no table, no policy, no trigger,
+no grant. It **must** sort after `20260821140000` and does.
+`backend/tests/test_blocked_invitee_notice_migration.py` pins it statically: that
+it parses, that it sorts last, that the copy is *purely additive* (every non-blank
+line of the applied version is still present), that the loop still contains no
+`raise`, that both notifications sit inside one edge guard, that both approved
+sentences are stored character for character, and that nothing is destructive.
+
+**One existing test was rewritten rather than deleted, and the precedent for that
+is in this file.** `test_leadership_exclusivity_migration.py::
+test_nothing_later_redeclares_what_this_file_owns` asserted that no later file may
+declare any of nine names — stricter than the property that matters, and the same
+assertion `test_location_label_migration.py` had already had to loosen a few hours
+earlier when the leadership work copied `register_service_provider` forward. It
+now exempts `claim_staff_invitations` **conditionally**: a later declaration is a
+clash unless it carries every claim-time semantic forward — the skip, `pending`
+status, both blocked columns, the edge guard and the department's notification.
+The other eight names remain nobody's to redeclare.
+
+Artifacts changed:
+
+* `API.md` — §3.5's "a refused claim is invisible on this endpoint" paragraph is
+  corrected to "invisible in this *response*" and gains the two-audience table,
+  the frozen wording, and why the row is person-scoped and link-less; §8's
+  leadership block records both notifications and why the invitee's copy is not
+  the department's sentence; the `GET …/staff-invitations` note that
+  `blockedReason` is "the only place that answer appears" is corrected to "the
+  only place *this reader* gets that answer".
+* `plans/MIGRATION_APPLY_RUNBOOK.md` — §15 for the new file, in the style of §13
+  and §14, with paste-and-run verification only (§14's `PUT-A-ROSTER-ROW-ID`
+  placeholder is the lesson: every check here self-selects its data or skips with
+  a `notice`) and the ledger insert.
+* `openapi.yaml` — **unchanged**, and verified rather than assumed: no endpoint,
+  request, response or status code moves, and `python scripts/export_openapi.py
+  --check` reports it up to date.
+* `api_yaml_mapper.md` — `DERIVED`. `python scripts/regen_mapper.py`. 100 rows
+  differ and **every one of them differs only in its `API.md:` line number**,
+  which moved because §3.5 grew above them; normalising the line references makes
+  the two files byte-identical. This is the drift the script exists to catch and
+  the same regeneration the entry below needed.
+* No `FRONTEND_CHANGES.md` bullet — no frontend file is touched.
+
+Five-gate check: **No ERD change** — no column, no table, no relationship; one
+function body moves. **No class-diagram change** — no entity, no attribute. **No
+component-design change**: the feed renders `title`/`body`/`url` generically, and
+a kind no JavaScript has heard of already renders from its own payload (pinned by
+`test_api_284`). **Frontend**: nothing touched — verified rather than assumed;
+`NotificationBell` reads `item.title`/`item.body` as text nodes and guards its
+navigation with `if (item.url)`, so a link-less row of an unknown kind renders and
+clicks correctly today. **Supabase**: the migration above, and it is the only DDL.
+
+---
+
+## 2026-08-21 — leadership is invite-only, exclusive, and revocable
+
+`PO` (product owner, 2026-08-21) — three rulings, quoted rather than paraphrased
+because all three are about who may see what:
+
+1. **Leadership is invite-only and never from the marketplace pool.** "A
+   supervisor or manager is NEVER a freelancer and is never picked from
+   servicemen." A profile holding a `service_providers` row must never hold a
+   `manager` or `supervisor` roster row, and a profile holding an active
+   leadership membership must be refused marketplace registration.
+2. **Leadership is exclusive to one community.** At most one active leadership
+   membership per person across all communities, ever. Technicians may serve
+   several communities and that is untouched. Being invited to a different
+   community *after* the previous engagement has fully ended is legitimate and
+   must keep working.
+3. **Removal severs access completely.** Once a supervisor or manager is removed
+   from a community and later invited to another, "they must not be able to see
+   ANYTHING from the old community — engagements, complaints,
+   conversations/messages, calendar, notifications, anything their portal reads."
+
+`DERIVED`: **the invariants are triggers, not checks in each writer.** There are
+five writers of `community_memberships` and four of `staff_assignments`, and a
+guard repeated nine times is a guard that will be eight places the tenth writer
+does not know about — `20260812113000` made the same argument for the
+separate-account rule and it holds here. `staff_assignments` also carries
+`staff_assignments_admin_write` (`20260812200000`), a `for all` policy that lets
+any community admin insert a roster row straight through PostgREST with no RPC in
+the way; nothing but a trigger stands in front of that. The RPCs additionally
+refuse early, not for safety but for the *sentence*: a trigger fires three frames
+below a registration form and the message that form renders should say what to do
+about it.
+
+`DERIVED`: **two new SQLSTATEs, not one.** `HBMKT` (ruling 1) and `HBLED` (ruling
+2) are both 409s, like `HB409` and `HBSEP`, because all four answer *this account
+is the wrong kind of account*. They are separate codes because a client that must
+offer "hire them at technician rank instead" for one and "wait until they leave
+the other society" for the other cannot tell them apart from an HTTP status, and
+branching on message text is what custom SQLSTATEs exist to avoid.
+
+`PO`-shaped judgement call, recorded because the charter asked for it:
+**the claim-time refusal is a skip, not a raise.** `claim_staff_invitations` runs
+inside `GET /auth/session`, on the service client, on every membership-less
+session read, and `auth_service._claim_staff_invitations` swallows whatever it
+raises — deliberately, because claiming is an enhancement to a session that is
+already valid. A refusal spelled as an exception would therefore not refuse *that*
+invitation; it would abandon the whole call, including any legitimate invitation
+later in the same loop, silently, behind a screen that looks fine. So the
+offending invitation is **skipped and marked**: the loop `continue`s (exactly as
+it already did for somebody who is already a member), `status` stays `pending`
+(the situation is not terminal — they may leave the other community tomorrow, and
+both the correct and withdraw verbs still apply, where a fourth status would have
+been a terminal state for a non-terminal situation), two new columns
+`blocked_reason`/`blocked_at` record what happened, and the department is sent one
+`staff_invitation.blocked` notification on the transition into blocked so the
+signal does not depend on somebody opening the right tab.
+
+`AUDIT` (ruling 3): **three of seven leadership-reachable surfaces were leaking,
+and the worst of them was not leadership-specific.** Session context, the worker
+snapshot's `communities[]`, the supervisor complaint reads and the hiring
+conversation were already correctly scoped. The three that were not:
+
+* `is_own_staff_assignment` (`0036`) asked "is this roster row the caller" with
+  **no reference to time**, so it stayed true forever. It is the predicate behind
+  the worker calendar, the job list, leave, availability, `can_read_work_order`,
+  `staff_departures_read`, `security_shifts_read` and eight worker action RPCs —
+  so a removed worker kept all of it. Fixed in the predicate rather than in seven
+  call sites, for the reason above. **The cost is stated rather than hidden**: a
+  departed worker loses their own history, which is what "removal severs access
+  completely" means.
+* `dm_threads_read` / `dm_messages_read` (`0046`) were keyed on the two
+  participant columns alone. A thread is only ever created between two people
+  `dm_pair_allowed` accepts — both active members of one community — but the read
+  never asked again, so a removed supervisor kept reading every community-A
+  thread including the manager's side of their own departure. The write rule and
+  the read rule now say the same thing.
+* `notifications_read_own` (`0041`) let a community-scoped row survive the
+  membership it names.
+
+**This overturns something already written, and names it** (as this file's own
+convention requires). `0041`'s header argued, under "THE RULE THIS OVERTURNS,
+STATED PLAINLY", that "a notification is a copy of something the person was
+already told, and every inbox in the world retains those". Ruling 3 says
+otherwise for the community-scoped ones, so the feed now hides rows whose
+`recipient_membership_id` names an ended membership. **It is applied uniformly
+rather than only to leadership, because it cannot be scoped to leadership**:
+`remove_department_member` resets the roster row's `rank` to `member`
+(`0043` §9), so after a removal nothing in the database still says the person was
+a supervisor. And one message deliberately survives — `remove_department_member`
+writes *"You were taken off a roster"* **after** ending the membership, so
+`notify_member` now files a message addressed to an already-ended membership
+against the **person** and no community. Without that, the one notification a
+removed person most needs would have been written and instantly invisible, lost
+to the rule meant to protect them.
+
+`AUDIT`, out of scope but fixed because a test found it: **`HB422` was never
+mapped in `pg_errors.py`.** Fifteen call sites across four migrations have raised
+it since 2026-08-12 — `invite_staff_member`'s three argument checks,
+`update_staff_invitation`'s three, `create_skill`'s and the complaint-routing
+RPCs' — and every one surfaced as a **500 with a generic message**, which is the
+API reporting its own failure for what is squarely the caller's mistake. Now a
+422.
+
+**Migration — `20260821140000_leadership_exclusivity.sql`. APPLIED and ledgered
+by the repository owner, 2026-08-21** (marker corrected the same day; it read NOT
+APPLIED while this entry was being written and the apply happened a few hours
+later). It adds
+two triggers (`staff_assignments_leadership_exclusivity`,
+`service_providers_not_leadership`), two columns on `staff_invitations`, four new
+predicates, rewrites six functions it does not own (`register_service_provider`,
+`invite_staff_member`, `update_staff_invitation`, `claim_staff_invitations`,
+`department_staff_invitations`, `is_own_staff_assignment`, `notify_member`) and
+replaces three RLS policies. It **repairs nothing**: `20260812113000` §1b's
+argument applies unchanged — which community loses its supervisor, and which
+identity a person keeps, are somebody's job and somebody's account, so the file
+counts the pre-existing violations into a `raise notice` and touches no row. It
+sorts after `20260821113000` deliberately, and carries that file's
+`p_location_label` forward verbatim.
+`backend/tests/test_leadership_exclusivity_migration.py` checks statically what a
+hand-applied file cannot get wrong: that it parses, that nothing later redeclares
+what it owns, that every copied body kept the features it could have silently
+deleted, that the claim's blocked branch contains no `raise`, that no statement
+is destructive, and that every custom SQLSTATE it raises is mapped in Python.
+
+Artifacts changed:
+
+* `API.md` — §3.5 gains a paragraph on the one write that happens inside
+  `GET /auth/session` and why a refused claim is invisible there **on purpose**;
+  §8's leadership block gains two subsections, *Who may hold leadership* (the two
+  rulings, the three entry points and how each behaves) and *Removal severs
+  access* (the seven-surface leak table); the four `staff-invitations` endpoints
+  gain `blockedReason`/`blockedAt` and their new 409 codes; §18's
+  `POST /service-providers` gains the leadership refusal and the 503 that was
+  already reachable and undocumented.
+* `openapi.yaml` — `DERIVED`. `cd backend && python scripts/export_openapi.py`.
+  `POST /service-providers` gains `409` and `503`; `StaffInvitation` gains two
+  properties.
+* `api_yaml_mapper.md` — `DERIVED`. `python scripts/regen_mapper.py`. Row content
+  is unchanged apart from `API.md` line references, which moved.
+* `FRONTEND_CHANGES.md` — one bullet for the blocked-invitation banner.
+* `plans/MIGRATION_APPLY_RUNBOOK.md` — §14 for the new file, in the style of the
+  thirteen before it, with its post-apply verification queries.
+* `COMPLAINT_ENGINE_HANDOFF.md` — one entry. Nothing about the complaint
+  lifecycle changed, but two of the fixes touch what a supervisor can *read* of
+  it, and that boundary has an owner.
+
+Five-gate check: **ERD** — two nullable columns on `staff_invitations`
+(`blocked_reason text`, `blocked_at timestamptz`); no new table, no new
+relationship. **No class-diagram change** — no new entity; the two new fields are
+attributes of an existing one. **Supabase**: the migration above, and it is the
+only DDL. **Component design**: no screen added or removed; `PendingInvitations`
+gains one conditional line. **Frontend**: one component, listed in
+`FRONTEND_CHANGES.md`.
+
+---
+
+## 2026-08-21 — a serviceman should not have to know his own latitude
+
+`PO` (product owner, 2026-08-21, from live testing): **stop asking people for
+coordinates.** Registration, founder onboarding and admin settings all showed the
+same widget — a Latitude box, a Longitude box, and a "Use my location" button —
+and that is a question almost nobody can answer about their own house. The
+chosen replacement, decided in the same conversation: **type an address and press
+Search, or drag a pin on a map. No API keys and no paid services**, which fixes
+the upstream as OpenStreetMap: Nominatim for the geocoding, `tile.openstreetmap.org`
+for the tiles, Leaflet for the map.
+
+Why it mattered more than an ergonomics complaint. `latitude`/`longitude` are the
+stored truth on `service_providers` and `communities`, and PostGIS `location` is
+*generated* from them (`0034` §3, §6). A provider who skipped the field has a null
+`location`, and a null `location` is invisible to `search_hireable_service_providers`
+and makes `search_serviceable_communities` refuse to run at all. So the least
+answerable field on the form was also the one that decided whether the account
+worked. **Nothing about the distance mathematics changed here** — this is an
+input-quality change and every search's geometry, radius and ordering is
+byte-for-byte what it was.
+
+`PO`: **a human-readable location label, stored and shown.** A hiring manager's
+candidate card carried `distanceKm` and nothing else about where somebody is, so
+"4.2 km away" had to stand in for an answer. `locationLabel` is a coarse, editable
+place name — "Andheri West, Mumbai" — auto-filled from whichever gesture produced
+the coordinate, capped at 120 characters.
+
+`DERIVED`: **the cap is a privacy boundary, not a storage decision.** Hiring reads
+deliberately withhold `latitude`/`longitude` (`_CANDIDATE_SELECT`, and §18 of
+`API.md` says why). A label long enough for "suburb, city, state" and too short for
+a street address is what keeps it on the publishable side of that line — which is
+also why `GET /geo/reverse` asks the upstream for suburb-level detail rather than
+trimming a building-level answer after the fact.
+
+`DERIVED`: **the geocoder is proxied by the backend, not called from the browser.**
+Nominatim's usage policy asks for an identifying `User-Agent`, at most one request
+per second per application, and caching of results. A tab can honour none of the
+three — script cannot set that header, and a thousand tabs cannot coordinate a
+rate limit. So `GET /geo/search` and `GET /geo/reverse` exist, with a process-wide
+async throttle and a bounded 24-hour cache behind them. The same policy forbids
+autocomplete, which is why the search box has a button and no type-ahead; that is
+a product constraint imposed by the upstream, recorded here so nobody "improves"
+it later.
+
+**Migration — `20260821113000_location_labels.sql`. APPLIED and ledgered by the
+repository owner, 2026-08-21** (marker corrected the same day; it read NOT
+APPLIED while this entry was being written). It adds `location_label text` (with a 1–120 `check`) to
+`service_providers` and to `communities`, and then rewrites four functions and two
+views to carry it: `upsert_service_provider`, `register_service_provider` and
+`set_my_community_location` each gain a parameter, `create_founder_community`
+reads one more key out of its payload, `service_provider_overview` and
+`community_settings_overview` gain a column, and
+`search_hireable_service_providers` gains a returned column. The three that gain a
+parameter are **dropped and recreated rather than replaced**: a defaulted
+parameter added with `create or replace` leaves an overload behind, after which
+every existing PostgREST call is "function is not unique". The file is idempotent
+and ends with a verification block that raises if any part of it did not take.
+**Until it is applied, the code that ships with it does not work, and it is meant
+not to**: three column lists ask PostgREST for `location_label` by name, so the
+worker profile, the hiring candidate page and the admin settings page fail to
+load, and the two provider writes answer 503 naming the rollout gap. That is the
+same pattern `register_service_provider` used for its own rollout — a select list
+that quietly fell back would hide an outstanding migration, and a write that
+retried without the label would save a profile that lost what the person typed.
+`backend/tests/test_location_label_migration.py` checks statically what a
+hand-applied file cannot be allowed to get wrong — that it parses, that every
+drop names the exact signature the earlier migration declared, that the hiring
+search still returns no coordinates, and that every predicate deciding who is
+hireable survived the rewrite verbatim.
+
+Artifacts changed:
+
+* `API.md` — new **§21 Address search — the location picker's proxy**: both `geo`
+  endpoints with their status codes, the three-line table of what the upstream's
+  usage policy asks and where each obligation is discharged, and a closing
+  subsection on `locationLabel` and every payload it appears in. `locationLabel`
+  also added in place to §3 (`POST /onboarding/community`, as `location_label` —
+  that body is the documented `snake_case` exception), §11 (`GET`/`PUT /settings`,
+  where the coordinate pair was undocumented too and now is not) and §18 (the
+  provider register/read/patch, the candidate profile, and the candidate list).
+* `openapi.yaml` — `DERIVED`. `cd backend && python scripts/export_openapi.py`,
+  per the standing rule that it is generated and never hand-edited. Two new
+  operations, one new `GeoPlace` schema, one new tag description.
+* `api_yaml_mapper.md` — `DERIVED`. `python scripts/regen_mapper.py`. The
+  `geo.py` section heading and its layer line are hand-written (the script
+  regenerates rows inside a section, it does not invent the section); the two
+  rows under it are generated.
+* `FRONTEND_CHANGES.md` — one bullet for the picker and the four screens that now
+  use it.
+* `plans/MIGRATION_APPLY_RUNBOOK.md` — §13 for the new file, in the style of the
+  twelve before it, including its own static-verification table.
+
+Five-gate check: **ERD changes** — one nullable `text` column on each of
+`service_providers` and `communities`, with a length check; no new table, no new
+relationship, nothing generated. **No class-diagram change** — `GeoPlace` is a
+wire DTO for a proxy and models no domain entity; the label is a field on two
+entities that already exist. **Supabase**: the migration above, and it is the
+only DDL. **Component design**: `LocationPicker` replaces
+`LocationCoordinatesInput` at every call site, and `LocationMap` is a new lazy
+leaf beneath it; no screen was added or removed. **Frontend**: four forms and two
+read surfaces, listed in `FRONTEND_CHANGES.md`.
+
+---
+
+## 2026-08-21 — supervisors are not freelancers
+
+`PO` (product owner, 2026-08-21, from live testing): **a manager or supervisor
+hired into a department must never see "Register as a service partner."** The
+marketplace registration process stays mandatory for technician-rank workers
+(`staff_assignments.rank = 'member'`) and for membership-less marketplace
+professionals — they are found by distance and trade, and the form is where the
+coordinates and skills that find them come from. Leadership is not found: an
+administrator typed their name and their email, and nobody will ever match them
+by radius.
+
+The defect, exactly. `claim_staff_invitations` (`20260812090200` §4) writes a
+`community_memberships` row and a `staff_assignments` row keyed on the
+**membership** and **no `service_providers` row**. Every provider-keyed read is
+therefore blind to leadership: `service_engagement_overview` joins
+`service_providers` and filters `service_provider_id is not null` (`0035`
+418–444), and `GET /worker/snapshot` returned an empty snapshot the moment
+`service_providers_service.get_mine` raised. So an invited supervisor arrived at
+`/worker` looking exactly like somebody who had never registered — and the
+layout put a marketplace form in front of them. The same empty `communities`
+took their Complaints screen with it, since that screen decides supervisor
+access from `communities[].rank`.
+
+`DERIVED`: `provider` and `communities` answer two different questions and are
+now asked separately.
+
+* `API.md` § the worker's portal — `GET /worker/snapshot` documents that
+  `communities` is populated independently of `provider`, that `provider: null`
+  beside a non-empty `communities` is department leadership, and that a client
+  must decide the registration form on `provider` **and** `communities[].rank`
+  rather than on `provider` alone. It also names which of the two reads answers
+  for which caller, and why the membership-keyed one carries no `departure`.
+* `GET /worker/communities` is deliberately **unchanged** and still `404`s an
+  unregistered caller. There the difference between *you have not registered*
+  and *nobody has hired you* is the endpoint's whole point, and the dashboard
+  routes on it; widening it would have made one contract serve two questions.
+  The worker portal's "Where I work" panel reads the snapshot instead when there
+  is no provider profile.
+* `openapi.yaml` and `api_yaml_mapper.md` regenerated. No schema changed —
+  `WorkerSnapshot` already carried `communities[].rank`; what changed is which
+  callers get rows in it. (The regeneration also picked up the 2026-08-20
+  remember-me descriptions, which had not been exported.)
+* `FRONTEND_CHANGES.md` — one bullet for the layout gate and the four screens
+  that now say plainly that there is no marketplace profile.
+
+No migration was needed and none was written. The membership-keyed read is
+backend code only: `community_memberships`, `staff_assignments`, `departments`
+and `communities` are read with the service client keyed on the caller's own
+`profile_id`, which is the same path `auth_service._active_memberships` and
+`_portal_for` already take on every session read — so it is known to work on the
+hosted project without touching hosted DDL.
+
+Five-gate check: no ERD change (nothing stored is new — the roster rows and
+memberships already existed), no class-diagram change (no new type; the two
+existing engagement reads are both `HiringService` methods), no Supabase change,
+and the component design's worker portal keeps every screen it had.
+
+---
+
+## 2026-08-21 — the notification rewriter learns the worker portal
+
+`PO` (product owner, 2026-08-21): **fix the routing, do not widen it.** The
+notification urls stay admin-shaped in SQL — SQL does not know who will read
+them — and the per-reader rewrite in
+`frontend/src/features/notifications/portalUrl.js` stays the single place that
+answers "where does *this* person go".
+
+The defect. That module's `PORTAL_BASES` knew `manager` and `security-manager`.
+A service department's supervisor is neither: `_portal_for`
+(`auth_service.py:248`) upgrades only a `security`-role membership by roster
+rank, so a `worker`-role supervisor stays `worker`. Their `/admin/…` links came
+back unrewritten, hit `ProtectedRoute requiredRole="Admin"`, and redirected home
+— a click that appears to do nothing, which is
+`docs/potential issues/14` for the third time and one portal over. Two families
+reach them now: the five work-order kinds keyed to
+`work_orders.supervisor_membership_id`, and the complaint staff notices
+`notify_complaint_staff` widened to supervisor-rank roster holders (R18,
+`20260821200000`).
+
+`DERIVED`: the rule table became **per-portal** rather than gaining a third row
+of the same shape, because `/worker` does not mount the same screens.
+
+| Path under `/admin` | `manager` | `security-manager` | `worker` |
+|---|---|---|---|
+| `departments/{id}/work-orders` | rewritten | rewritten | **rewritten** |
+| `departments/{id}/hiring`, `staff/{id}`, `candidates/{id}` | rewritten | rewritten | **left alone** — no such screen |
+| `departments/{id}` (root) | → portal base | → portal base | **left alone** — a worker's base is a jobs dashboard, not a department |
+| `complaints` | rewritten | left alone | **rewritten** |
+| `messages` | rewritten | rewritten | **rewritten** |
+| `security/incidents` | left alone | → `/security-manager/incidents` | left alone |
+| `amenities`, `complaint-triage` | left alone | left alone | left alone |
+
+The three "left alone" rows for a worker are the module's own doctrine held
+rather than bent: a rewrite to a route that does not exist fails more
+confusingly than one that visibly bounces. A rank-`member` technician shares the
+`worker` portal and a rewritten work-order link lands them on the triage
+wrapper's in-page refusal panel instead of silently home — visible and
+self-explaining, so an improvement. Rank is not on the session, and this module
+keys on portal only.
+
+* `backend/tests/test_notification_links.py` mirrors that table in Python by
+  design and was restructured in lockstep: per-portal `_SUBSCREENS`, a new
+  `UNREWRITTEN_FOR_A_WORKER` record, and the mirror test now compares
+  dictionary against dictionary and reads the two `new Set([…])` portal lists by
+  content — so reverting the JavaScript half, or quietly handing `worker` the
+  manager's four sub-screens, still fails loudly. The record entries also became
+  whole paths matched exactly rather than prefixes matched with `startswith`,
+  because a department-root prefix would otherwise have silently excused the two
+  sub-screen entries beneath it.
+* `portalUrl.test.js` — **new file**. The module had no test of its own; the
+  Python mirror is compared with its source text, not run against it, so an
+  object looked up with the wrong key or a `Set` membership inverted was
+  invisible to both halves.
+* `docs/potential issues/14-…` — the third recurrence written up, and one new
+  line in "What is still not fixed".
+
+**Recorded, not fixed**: `WorkerDashboard/Complaints.jsx` reads no query
+parameter, so a supervisor sent `?complaint=` now lands on the right screen and
+the wrong row. That screen belongs to the complaint-engine owner
+(`COMPLAINT_ENGINE_HANDOFF.md`) and highlighting a row there is their call. It
+is not in `IGNORED_QUERY_PARAMETERS` because that check reads the emitted
+`/admin/complaints`, already on record, rather than the per-reader rewrite.
+
+No migration, no DDL, no API surface change — so `API.md`, `openapi.yaml` and
+the mapper are deliberately untouched. Five-gate check: no ERD change (nothing
+is stored), no class-diagram change (no new type), no Supabase change, and the
+component design's screens are the ones already mounted.
+
+---
+
+## 2026-08-21 — the deep link lands on the row, and the department root is rewritten after all
+
+`PO` (product owner, 2026-08-21), two rulings closing the two findings the
+notification-links workstream left open earlier the same day. Both are
+frontend-only: no migration, no DDL, no API surface change.
+
+**Ruling A — `?complaint=` must highlight, on the worker screen and the admin
+screen.** The resident screen stays untouched while that portal is still a
+dummy-data demo (`docs/potential issues/09-…`), which is a deferral with a
+reason rather than an oversight: highlighting a row in fixture data proves
+nothing.
+
+`DERIVED`, worker screen: nothing was missing but a prop.
+`features/complaints/components/DepartmentComplaintList` has taken `highlightId`
+and ringed that card since the manager's screen was built, and
+`WorkerDashboard/Complaints.jsx` renders that exact component — it read the
+parameter nowhere and passed the prop never. The `canMove={false}` rule and the
+roster gate are untouched.
+
+`DERIVED`, admin screen: a different surface, so a different idiom.
+`AdminDashboard/Complaints.jsx` renders the dashboard snapshot's `complaints`
+projection out of the zustand store rather than the shared department list, so
+the named card gets `border-2 border-indigo-400 bg-indigo-50/40` in place of its
+hairline border, `aria-current="true"` so the mark is not colour-only, and a
+scroll into view once the snapshot arrives. **Marked, never filtered** — the
+same rule the shared list and `WorkOrderTriage`'s `?job=` follow, because a
+queue narrowed to one card hides the rest of an inbox somebody still has to
+work. No complaint lifecycle behaviour, mutation or route was touched; that
+surface is the complaint-engine owner's and the ruling is recorded for them in
+`COMPLAINT_ENGINE_HANDOFF.md` §16.
+
+`AUDIT`: `("/admin/complaints", "complaint")` has left
+`IGNORED_QUERY_PARAMETERS` in `backend/tests/test_notification_links.py`. That
+assertion is equality precisely so a screen which starts honouring its parameter
+is a test change rather than a silent improvement, and this is the mechanism
+earning its keep for the first time. `("/resident/complaints", "complaint")`
+stays on record. The docstring paragraph the earlier workstream added — that a
+supervisor now lands on the right screen and the wrong row — was a true
+statement for one day and is now the history of one, so it says so.
+
+**Ruling B — the department-root link is rewritten for a `worker` reader too**,
+overturning the reading recorded four sections above, where the row
+`departments/{id} (root)` said *left alone — a worker's base is a jobs
+dashboard, not a department*. That is true about the screens and answers the
+wrong question. `/admin/departments/{id}` is Admin-guarded, so a worker-portal
+reader who follows it is redirected to `/worker` by `ProtectedRoute` whatever
+the rewriter does; the choice was never between two destinations but between
+reaching their portal home deliberately and reaching it via a click that
+appeared to fail. `worker` joins `DEPARTMENT_ROOT_PORTALS`.
+
+They are a real audience for that url, not a hypothetical one produced by the
+mirror test's deliberately blind every-portal check:
+`notify_department_leadership` (`0043_staff_departures.sql` §419–436) includes
+supervisor-rank roster holders, who hold portal `worker`, and
+`staff_invitation.blocked` (`20260821170000`) carries `/admin/departments/{id}`.
+
+`DERIVED`: the doctrine in `portalUrl.js`'s header is intact. It forbids
+rewriting to a route that **does not exist**; every portal's base exists. This
+is the one rule in that table which does not point at a screen the portal
+mounts, and the module says so out loud rather than leaving it to be discovered.
+The hiring, staff and candidates rows for `worker` are unchanged and stay
+bouncing — those *are* missing screens.
+
+`PO`, explicitly: **no migration.** Redeclaring `claim_staff_invitations` to
+change the url it writes was considered and rejected — the same function has now
+been redeclared repeatedly, the fix belongs at the point of the click where the
+reader's portal is known, and the rewriter already answers that question.
+
+* `frontend/src/features/notifications/portalUrl.js`,
+  `backend/tests/test_notification_links.py` (`_DEPARTMENT_ROOT_PORTALS`) — the
+  two halves change in lockstep or the mirror test fails by content comparison,
+  which is what it was rebuilt for earlier the same day.
+* `/admin/departments/{param}` left `UNREWRITTEN_FOR_A_WORKER`. It was the only
+  line in that record naming a live audience; the three that remain are all "no
+  such screen in this portal".
+* `portalUrl.test.js` — the worker department-root case flips from *unchanged*
+  to *→ `/worker`*, with the sub-screen precedence pinned beside it so the root
+  rule can never swallow a `work-orders` link and throw its `?job=` away.
+* `docs/potential issues/14-…` — the `?complaint=` remainder and the
+  department-root remainder both close; the hiring/staff-links-to-supervisors
+  remainder stays recorded, because it is still true.
+
+Five-gate check: no ERD change (nothing is stored), no class-diagram change (no
+new type), no Supabase change, no component-design change (both screens were
+already mounted; one gained a highlight), and the frontend change is the one
+described above. `API.md`, `openapi.yaml` and the mapper are deliberately
+untouched — no endpoint moved.
+
+---
+
+## 2026-08-20 — "Remember me", and a login page that is actually there
+
+`PO` (product owner, 2026-08-20): **the login page must always appear unless the
+person explicitly opted into staying signed in.** Until now every successful
+sign-in wrote a refresh cookie with `Max-Age = AUTH_SESSION_IDLE_DAYS` (30 days),
+so a returning visitor was silently signed back in and the sign-in card's
+existing redirect forwarded them straight to their portal. On a shared or public
+browser that is the wrong default: the second person to open it lands inside the
+first person's account. The redirect itself is correct and stays — it is the
+autologin mechanism, and it should only fire for people who asked for it.
+
+`DERIVED`: consent has to be asked once and then honoured on all three paths that
+mint a session, so the change is one decision (`persist`) threaded through each:
+
+* `API.md` § 1.2 — the cookie table gains `__Host-hb_remember` and a paragraph
+  stating the contract explicitly: access and CSRF cookies keep their ~1h life;
+  the refresh cookie is written **without `Max-Age`** (a browser-session cookie)
+  unless the sign-in asked to be remembered. The remember cookie exists only so
+  `POST /auth/refresh` can carry the answer across token rotation — it holds no
+  secret, so it is not signed; the worst a user can do by editing it is change
+  how long their own session lasts.
+* `API.md` § 3.2 — `GET /auth/oauth/{provider}/start` (and the `/google/start`
+  alias) documents the `remember` query parameter. The provider round trip has
+  nowhere to keep it, so it rides in the signed PKCE transaction cookie and is
+  read back by the callback.
+* `API.md` § 3.3 — `POST /auth/password/sign-in` documents `remember_me`,
+  default `false`. `POST /auth/email/verify` is documented as never persistent:
+  the confirmation link never asked the question, so it takes the safe answer.
+* `API.md` § 3.5 — `POST /auth/refresh` re-issues the persistence the sign-in
+  chose rather than defaulting; `POST /auth/logout` clears the remember cookie,
+  so signing out ends autologin instead of leaving it armed for the next person.
+* `openapi.yaml` and `api_yaml_mapper.md` regenerated. The mapper's auth section
+  gained a note, because the feature is spelled three different ways (a body
+  field, a query parameter, a cookie) and appears in no response schema, so the
+  generated rows cannot show it.
+* `FRONTEND_CHANGES.md` — the auth-client bullet list now names the checkbox and
+  both spellings it produces, since that file describes what the client sends.
+
+Five-gate check: no ERD change (this is cookie lifetime, not stored state), no
+Supabase change, and the class diagram lists `WebSession.establish_session()`
+without a parameter list, so its new `persist` argument does not appear there.
+Frontend and API docs are the two gates that moved.
 
 ## 2026-08-20 (merge) — live-app-fixes reconciled with main
 

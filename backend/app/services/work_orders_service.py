@@ -267,7 +267,29 @@ def update(
 def assign(
     client: Client, *, work_order_id: str, body: AssignWorkOrderRequest
 ) -> WorkOrderDetail:
-    """Put a named person on the job, and book their hour."""
+    """Put a named person on the job, and book their hour.
+
+    Two RPCs behind one route, chosen by ``force`` and by nothing else. The
+    default path is ``assign_work_order`` **unchanged**: an offer the worker may
+    decline, with the schedule rules and the 409s it has always had.
+
+    ``force`` routes to ``force_assign_work_order``, which is the dispatch
+    engine's own force-assign with the picking taken out and a supervisor's
+    guard put in: an ``is_forced`` accepted assignment the worker cannot decline.
+    The branch is here and not in SQL because the two are different decisions --
+    "ask this person" and "send this person" -- and one function that did either
+    depending on a flag would have two sets of refusals sharing one name.
+    """
+    if body.force:
+        repo.force_assign_work_order(
+            client,
+            work_order_id=work_order_id,
+            staff_assignment_id=body.staff_assignment_id,
+            scheduled_start_at=_iso(body.scheduled_start_at),
+            scheduled_end_at=_iso(body.scheduled_end_at),
+        )
+        return _read_back_detail(client, work_order_id=work_order_id)
+
     repo.assign_work_order(
         client,
         work_order_id=work_order_id,

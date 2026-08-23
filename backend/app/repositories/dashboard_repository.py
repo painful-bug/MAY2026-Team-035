@@ -82,19 +82,27 @@ def list_complaints(client: Client, community_id: str, *, legacy: bool) -> list[
     )
 
 
-def list_visitors(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
-    if legacy:
-        # The legacy event log was renamed to `legacy_visitor_events` when
-        # `0032_visitor_passes.sql` claimed the `visitor_events` name for the
-        # baseline table. The new `visitor_events` has no FK to
-        # `visitor_access_requests`, so embedding it here is PGRST200.
-        columns = "id,visitor_name,visitor_phone_e164,purpose,status,requested_by_membership_id,unit_id,expected_from,expected_until,checked_in_at,checked_out_at,created_at,updated_at,legacy_visitor_events(event_type,note,occurred_at)"
-        table = "visitor_access_requests"
-    else:
-        columns = "id,visitor_name,visitor_phone_e164,status,requested_by_membership_id,valid_from,valid_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events(event_type,created_at)"
-        table = "visitor_requests"
+def list_visitors(client: Client, community_id: str) -> list[dict[str, Any]]:
+    """Visitor requests, newest first -- from the table residents write.
+
+    **Not schema-generation dependent, and the branch that said it was is
+    gone.** Until 2026-08-23 the legacy arm read `visitor_access_requests`,
+    the pre-baseline table. Residents have not written that table since
+    `0032_visitor_passes.sql` moved the visitor flow onto `visitor_requests`,
+    so on the hosted project the admin dashboard was reading the empty half of
+    a split brain: the owner's probe of that date counted
+    `visitor_access_requests` = 0 rows against `visitor_requests` = 3, and the
+    three real requests were invisible to every admin (runbook §22, probes (g)
+    and (h); the SSE half is `20260823160000_visitor_requests_sse.sql`).
+
+    One source now, because there is only one true one. `purpose` is selected:
+    `0032` gave `visitor_requests` that column, the resident fills it in, and
+    the projection that dropped it made every card on the dashboard read
+    "Guest".
+    """
+    columns = "id,visitor_name,visitor_phone_e164,purpose,status,requested_by_membership_id,valid_from,valid_until,checked_in_at,checked_out_at,created_at,updated_at,visitor_events(event_type,created_at)"
     return (
-        client.table(table).select(columns).eq("community_id", community_id)
+        client.table("visitor_requests").select(columns).eq("community_id", community_id)
         .order("created_at", desc=True).limit(200).execute().data
         or []
     )
@@ -113,28 +121,19 @@ def list_amenities(client: Client, community_id: str, *, legacy: bool) -> list[d
     )
 
 
-def list_bookings(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
-    if legacy:
-        # `0023_amenities_on_baseline.sql` renamed the legacy series tables to
-        # `legacy_amenity_booking_series` / `legacy_amenity_booking_occurrences`
-        # when it claimed the booking namespace for `amenity_bookings`.
-        series = (
-            client.table("legacy_amenity_booking_series")
-            .select("id,amenity_id,booked_by_membership_id,status")
-            .eq("community_id", community_id).execute().data
-            or []
-        )
-        series_by_id = {row["id"]: row for row in series}
-        rows = (
-            client.table("legacy_amenity_booking_occurrences")
-            .select("id,booking_series_id,amenity_id,starts_at,ends_at,status,cancellation_reason,created_at,updated_at")
-            .order("starts_at", desc=True).limit(500).execute().data
-            or []
-        )
-        return [
-            {**row, "series": series_by_id[row["booking_series_id"]]}
-            for row in rows if row.get("booking_series_id") in series_by_id
-        ]
+def list_bookings(client: Client, community_id: str) -> list[dict[str, Any]]:
+    """Amenity bookings, newest first -- from the table residents write.
+
+    The other half of the split brain `list_visitors` documents. The legacy arm
+    read `legacy_amenity_booking_series` / `legacy_amenity_booking_occurrences`,
+    the names `0023_amenities_on_baseline.sql` parked the pre-baseline tables
+    under when it claimed the booking namespace for `amenity_bookings`. `0023`
+    also moved the booking RPCs onto `amenity_bookings`, so nothing has written
+    a series row since -- hosted holds 0 of them -- and the two tables were
+    still what the dashboard asked for. The `legacy` parameter is gone with the
+    branch: there was never a second source, only a second name for an empty
+    one.
+    """
     return (
         client.table("amenity_bookings")
         .select("id,amenity_id,booked_by_membership_id,starts_at,ends_at,status,created_at,updated_at")
@@ -148,7 +147,6 @@ def weekly_new_counts(
     client: Client,
     community_id: str,
     *,
-    legacy: bool,
     since_iso: str,
     executor: Executor | None = None,
 ) -> dict[str, int]:
@@ -184,14 +182,12 @@ def weekly_new_counts(
             "community_memberships", {"role": "resident", "status": "active"}
         ),
         "complaints": ("complaints", None),
-        "visitorRequests": (
-            "visitor_access_requests" if legacy else "visitor_requests", None
-        ),
-        # One legacy series row is one booking request (the occurrences hang
-        # off it and carry no community_id of their own).
-        "bookings": (
-            "legacy_amenity_booking_series" if legacy else "amenity_bookings", None
-        ),
+        # The two tables residents write, on every schema generation -- see
+        # `list_visitors` and `list_bookings`. Counting the pre-baseline names
+        # here made both chips read `+0 this week` on a hosted project where
+        # requests were arriving.
+        "visitorRequests": ("visitor_requests", None),
+        "bookings": ("amenity_bookings", None),
     }
     if executor is not None:
         futures = {

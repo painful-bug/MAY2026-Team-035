@@ -213,6 +213,27 @@ components:
       - message
       title: AddCommentRequest
       type: object
+    AddComplaintNoteRequest:
+      description: 'A permanent internal note for a complaint''s timeline.
+
+
+        Staff and workers read it; the resident does not. The bound is the
+
+        database''s own (``add_complaint_note_internal`` refuses anything outside
+
+        1--2000 with ``HB422``), stated here as well so an empty composer is a 422
+
+        that names the field rather than a round trip.'
+      properties:
+        note:
+          maxLength: 2000
+          minLength: 1
+          title: Note
+          type: string
+      required:
+      - note
+      title: AddComplaintNoteRequest
+      type: object
     AddDepartmentSkillRequest:
       description: 'One skill, by name, to create if needed and attach.
 
@@ -897,8 +918,25 @@ components:
 
         reschedules in a single write, which is the common case: the supervisor
 
-        picked the person and the hour at the same moment.'
+        picked the person and the hour at the same moment.
+
+
+        ``force`` is the 2026-08-22 ruling A4 and defaults to **false**, which is the
+
+        offer flow unchanged in every respect. ``true`` books the person outright,
+
+        non-declinable, through the engine''s own force-assign mechanics. It is a
+
+        field on this model rather than a route of its own because it is the same
+
+        request -- *this person, on this job, at this hour* -- answering the
+
+        supervisor''s question of whether the person may say no.'
       properties:
+        force:
+          default: false
+          title: Force
+          type: boolean
         scheduledEndAt:
           anyOf:
           - format: date-time
@@ -1724,6 +1762,19 @@ components:
         hand out.
 
 
+        ``locationLabel`` **is** here, and is not a reversal of the first rule. It
+
+        is a coarse place name the person wrote and can edit -- "Andheri West,
+
+        Mumbai" -- capped at 120 characters by the database precisely so it cannot
+
+        become a street address. ``distanceKm`` answers *how far from us*; nothing
+
+        on this card answered *where*, and a manager deciding whom to ring has been
+
+        reading a blank line where that belongs.
+
+
         ``phone`` *is* here, and is not a widening: the candidate list and every
 
         application card have carried ``phoneE164`` since ``0035``. Somebody being
@@ -1748,6 +1799,9 @@ components:
         isAvailable:
           title: Isavailable
           type: boolean
+        locationLabel:
+          title: Locationlabel
+          type: string
         phone:
           title: Phone
           type: string
@@ -1777,6 +1831,7 @@ components:
       - headline
       - bio
       - phone
+      - locationLabel
       - serviceRadiusKm
       - status
       - isAvailable
@@ -1885,6 +1940,12 @@ components:
           minimum: -90.0
           title: Latitude
           type: number
+        location_label:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Location Label
         longitude:
           maximum: 180.0
           minimum: -180.0
@@ -1975,6 +2036,11 @@ components:
           - type: number
           - type: 'null'
           title: Latitude
+        locationLabel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Locationlabel
         longitude:
           anyOf:
           - type: number
@@ -2414,6 +2480,23 @@ components:
       - reopenedCount
       - commentCount
       title: ComplaintSummary
+      type: object
+    ComplaintThreadOpened:
+      description: 'The id of the complaint''s chat thread.
+
+
+        Only the id, deliberately. The dock already knows how to fetch a thread and
+
+        its messages (`GET /messages/threads/{id}`), so returning the whole thread
+
+        here would be a second projection of it, free to disagree with the first.'
+      properties:
+        threadId:
+          title: Threadid
+          type: string
+      required:
+      - threadId
+      title: ComplaintThreadOpened
       type: object
     CompleteJobRequest:
       description: The work is done.
@@ -4077,6 +4160,39 @@ components:
       - credential
       title: GateVerifyRequest
       type: object
+    GeoPlace:
+      description: 'One place: what to call it, and where it is.
+
+
+        ``label`` is the short form -- three address parts at most -- and is what the
+
+        picker writes into the editable label field. ``description`` is the
+
+        upstream''s own full line, kept because a pick-list of five results needs
+
+        enough to tell two "Andheri West" entries apart, and the short label by
+
+        itself does not.'
+      properties:
+        description:
+          title: Description
+          type: string
+        label:
+          title: Label
+          type: string
+        latitude:
+          title: Latitude
+          type: number
+        longitude:
+          title: Longitude
+          type: number
+      required:
+      - label
+      - description
+      - latitude
+      - longitude
+      title: GeoPlace
+      type: object
     GuestInput:
       properties:
         name:
@@ -4125,6 +4241,11 @@ components:
           default: true
           title: Isavailable
           type: boolean
+        locationLabel:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Locationlabel
         matchingSkillNames:
           items:
             type: string
@@ -5892,6 +6013,10 @@ components:
           minLength: 1
           title: Password
           type: string
+        remember_me:
+          default: false
+          title: Remember Me
+          type: boolean
       required:
       - email
       - password
@@ -7465,6 +7590,12 @@ components:
           minimum: -90.0
           title: Latitude
           type: number
+        locationLabel:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Locationlabel
         longitude:
           maximum: 180.0
           minimum: -180.0
@@ -8066,6 +8197,9 @@ components:
           - type: number
           - type: 'null'
           title: Latitude
+        locationLabel:
+          title: Locationlabel
+          type: string
         longitude:
           anyOf:
           - type: number
@@ -8102,6 +8236,7 @@ components:
       - phone
       - latitude
       - longitude
+      - locationLabel
       - serviceRadiusKm
       - status
       - isAvailable
@@ -8661,6 +8796,17 @@ components:
 
         that rank is reached solely by hiring a registered service provider.'
       properties:
+        blockedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Blockedat
+        blockedReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Blockedreason
         claimedAt:
           anyOf:
           - format: date-time
@@ -8721,10 +8867,6 @@ components:
 
         not the other way round.'
       properties:
-        activeAssignmentCount:
-          default: 0
-          title: Activeassignmentcount
-          type: integer
         departureEffectiveAt:
           anyOf:
           - format: date-time
@@ -8779,6 +8921,10 @@ components:
           default: active
           title: Status
           type: string
+        supervisedWorkOrderCount:
+          default: 0
+          title: Supervisedworkordercount
+          type: integer
       required:
       - id
       - name
@@ -8798,10 +8944,6 @@ components:
 
         does not.'
       properties:
-        activeAssignmentCount:
-          default: 0
-          title: Activeassignmentcount
-          type: integer
         departure:
           anyOf:
           - $ref: '#/components/schemas/StaffDeparture'
@@ -8860,6 +9002,10 @@ components:
           default: active
           title: Status
           type: string
+        supervisedWorkOrderCount:
+          default: 0
+          title: Supervisedworkordercount
+          type: integer
       required:
       - id
       - name
@@ -8912,6 +9058,285 @@ components:
       required:
       - name
       title: StaffMemberInput
+      type: object
+    TriageComplaint:
+      description: 'A complaint on the supervisor''s dashboard: sections 1 and 2.
+
+
+        ``reroutedAt`` is derived rather than stored -- the newest
+
+        ``department_assigned`` timeline event naming this department as the
+
+        destination. There is deliberately no column for it: a complaint can arrive
+
+        here more than once, and the events already record every arrival with who
+
+        and when.
+
+
+        ``returnedToPoolAt``, ``reopenedCount`` and ``reroutedAt`` are the three
+
+        "this is not as new as it looks" badges the spec freezes. All three ride on
+
+        facts the engine already recorded; none of them is a new lifecycle state.'
+      properties:
+        category:
+          default: ''
+          title: Category
+          type: string
+        createdAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Createdat
+        dueAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Dueat
+        id:
+          title: Id
+          type: string
+        liveWorkOrderCount:
+          default: 0
+          title: Liveworkordercount
+          type: integer
+        location:
+          default: ''
+          title: Location
+          type: string
+        openRequestId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Openrequestid
+        priority:
+          title: Priority
+          type: string
+        raisedBy:
+          default: ''
+          title: Raisedby
+          type: string
+        reopenedCount:
+          default: 0
+          title: Reopenedcount
+          type: integer
+        reroutedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Reroutedat
+        returnedToPoolAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Returnedtopoolat
+        status:
+          title: Status
+          type: string
+        takenUpAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Takenupat
+        takenUpByName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Takenupbyname
+        title:
+          default: ''
+          title: Title
+          type: string
+        unitCode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unitcode
+      required:
+      - id
+      - priority
+      - status
+      title: TriageComplaint
+      type: object
+    TriageSnapshot:
+      description: 'One department''s dashboard, in one read.
+
+
+        Empty arrays and never a 404: a department with nothing in a section has an
+
+        empty section, and a department the caller may not see is a 403 from the RPC
+
+        rather than a snapshot that happens to be blank. An empty dashboard and a
+
+        refused one look identical on a screen, and the difference is the whole
+
+        content of the answer.
+
+
+        **Five sections since amendment 2**, and the fifth is not a split of an old
+
+        one so much as a correction to it: an offered job nobody has accepted was
+
+        being shown as assigned work. ``openRequests`` sits between ``takenUp`` and
+
+        ``assignedPending``, and *committed* -- an ``accepted`` assignment, or status
+
+        ``scheduled`` -- is now the line between them.'
+      properties:
+        assignedPending:
+          default: []
+          items:
+            $ref: '#/components/schemas/TriageWorkOrder'
+          title: Assignedpending
+          type: array
+        departmentId:
+          title: Departmentid
+          type: string
+        inProgress:
+          default: []
+          items:
+            $ref: '#/components/schemas/TriageWorkOrder'
+          title: Inprogress
+          type: array
+        newComplaints:
+          default: []
+          items:
+            $ref: '#/components/schemas/TriageComplaint'
+          title: Newcomplaints
+          type: array
+        openRequests:
+          default: []
+          items:
+            $ref: '#/components/schemas/TriageWorkOrder'
+          title: Openrequests
+          type: array
+        takenUp:
+          default: []
+          items:
+            $ref: '#/components/schemas/TriageComplaint'
+          title: Takenup
+          type: array
+      required:
+      - departmentId
+      title: TriageSnapshot
+      type: object
+    TriageWorkOrder:
+      description: 'A job on the supervisor''s dashboard: sections 3, 4 and 5.
+
+
+        ``status`` is the **work-order** vocabulary and is passed through unmapped --
+
+        ``draft``, ``awaiting_resident``, ``offered``, ``scheduled``,
+
+        ``in_progress``. That is not an inconsistency with ``TriageComplaint.status``
+
+        beside it: the two are different vocabularies for different nouns, and
+
+        ``work_order_schemas.WorkOrder`` has always sent the storage words for this
+
+        one. Renaming them here would give the same field two spellings depending on
+
+        which endpoint answered.
+
+
+        ``inheritedAt`` is ``work_orders.supervision_inherited_at``: this job arrived
+
+        by somebody''s removal rather than by the reader''s own hand. Supervisor-only
+
+        by construction -- no resident-facing or worker-facing read has ever returned
+
+        a supervisor''s identity, which is why re-stamping needed no notification.
+
+
+        ``offeredToName`` is the other half of ``assigneeName`` and arrived with
+
+        amendment 2''s ruling A3. ``assigneeName`` is now the person who **accepted**
+
+        and ``offeredToName`` is the person who has been asked and has not answered.
+
+        One field carrying both would make a section-3 card read "Ravi is coming"
+
+        about a job Ravi has not agreed to, which is the exact confusion the ruling
+
+        exists to remove.'
+      properties:
+        assigneeName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assigneename
+        complaintCategory:
+          default: ''
+          title: Complaintcategory
+          type: string
+        complaintId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complaintid
+        complaintTitle:
+          default: ''
+          title: Complainttitle
+          type: string
+        id:
+          title: Id
+          type: string
+        inheritedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Inheritedat
+        locationText:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Locationtext
+        offeredToName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Offeredtoname
+        priority:
+          title: Priority
+          type: string
+        scheduledEndAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduledendat
+        scheduledStartAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduledstartat
+        skillName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillname
+        startedAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Startedat
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - priority
+      - status
+      title: TriageWorkOrder
       type: object
     UnassignedComplaint:
       description: 'One complaint in the admin''s triage queue.
@@ -9289,6 +9714,12 @@ components:
             type: number
           - type: 'null'
           title: Latitude
+        locationLabel:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Locationlabel
         longitude:
           anyOf:
           - maximum: 180.0
@@ -9337,6 +9768,12 @@ components:
             type: number
           - type: 'null'
           title: Latitude
+        locationLabel:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Locationlabel
         longitude:
           anyOf:
           - maximum: 180.0
@@ -12532,7 +12969,8 @@ paths:
 
 
         Kept because it is registered as a redirect URI with Google and exists in shipped bookmarks; it
-        delegates to the generic route and behaves identically. Prefer the generic form in new clients.'
+        delegates to the generic route and behaves identically, `remember` included. Prefer the generic
+        form in new clients.'
       operationId: google_start_api_v1_auth_google_start_get
       parameters:
       - description: 'Path to return to after sign-in. Validated, not sanitised: anything absolute or
@@ -12545,6 +12983,16 @@ paths:
           - type: string
           - type: 'null'
           title: Next
+      - description: The sign-in card's *Remember me* answer, carried across the provider round trip in
+          the signed transaction cookie. Default `false`, which makes the refresh cookie last only for
+          the browser session.
+        in: query
+        name: remember
+        required: false
+        schema:
+          default: false
+          title: Remember
+          type: boolean
       responses:
         '307':
           content:
@@ -12572,7 +13020,11 @@ paths:
         **Cannot fail because the provider failed.** Revocation is attempted and its errors are swallowed,
         then the cookies are cleared regardless -- a logout that leaves the browser holding a session
         because Supabase timed out is worse than an unrevoked server-side token. Only the CSRF guard can
-        refuse this call.'
+        refuse this call.
+
+
+        The `remember` cookie is cleared with the rest, so signing out ends the silent sign-in rather
+        than leaving it armed for whoever opens the browser next.'
       operationId: logout_api_v1_auth_logout_post
       responses:
         '200':
@@ -12683,7 +13135,11 @@ paths:
         A signed, five-minute transaction cookie carries the PKCE verifier and the return path across
         the round trip. `next` is validated before it is stored -- an absolute or off-site value is rejected
         rather than sanitised, so this cannot be turned into an open redirect. A provider not in the enabled
-        set is **422**, not 404: the route exists, the configuration does not permit it.'
+        set is **422**, not 404: the route exists, the configuration does not permit it.
+
+
+        `remember` rides in that same cookie, because the provider round trip has nowhere else to keep
+        it; the callback reads it back to decide whether the refresh cookie outlives the browser session.'
       operationId: oauth_start_api_v1_auth_oauth__provider__start_get
       parameters:
       - description: OAuth provider key. Must be in the deployment's enabled set, or the answer is 422.
@@ -12703,6 +13159,16 @@ paths:
           - type: string
           - type: 'null'
           title: Next
+      - description: The sign-in card's *Remember me* answer, carried across the provider round trip in
+          the signed transaction cookie. Default `false`, which makes the refresh cookie last only for
+          the browser session.
+        in: query
+        name: remember
+        required: false
+        schema:
+          default: false
+          title: Remember
+          type: boolean
       responses:
         '307':
           content:
@@ -12857,7 +13323,12 @@ paths:
         **An unconfirmed address is refused** with **401** `email_not_confirmed`, whether the provider
         rejected the grant or returned a session for an address nobody has proven they own. That one code
         names the reason rather than hiding behind the generic message: reaching it requires the correct
-        password, so it discloses nothing the caller did not already know. Recover with `POST /auth/email/resend`.'
+        password, so it discloses nothing the caller did not already know. Recover with `POST /auth/email/resend`.
+
+
+        **`remember_me` decides how long the session lasts.** Omitted or `false` -- the default -- the
+        refresh cookie is written without a `Max-Age`, so it dies with the browser session and the login
+        page is there again next time. `true` keeps it for `AUTH_SESSION_IDLE_DAYS`.'
       operationId: password_sign_in_api_v1_auth_password_sign_in_post
       requestBody:
         content:
@@ -12941,7 +13412,12 @@ paths:
 
 
         Takes no body: the refresh token is read from its `HttpOnly` cookie and never travels through
-        JavaScript. Absent or rejected, the answer is **401** and the client must sign in again.'
+        JavaScript. Absent or rejected, the answer is **401** and the client must sign in again.
+
+
+        Rotation re-issues the cookies with the persistence the sign-in chose, read from the `remember`
+        cookie. Without it a session the user never asked to keep would be silently promoted to a multi-day
+        one by its first refresh.'
       operationId: refresh_api_v1_auth_refresh_post
       responses:
         '200':
@@ -13542,6 +14018,33 @@ paths:
         title: Complaint status tracking with history
   /api/v1/complaints/staff/complaints/{complaint_id}:
     get:
+      description: 'One complaint with its whole timeline, for whoever may act on it.
+
+
+        **The router guard is active membership and not `require_admin`**, changed
+
+        2026-08-22 with the supervisor dashboard''s detail popup. It is not a
+
+        widening of who may read this: `staff_complaint_detail` has decided
+
+        `is_community_admin(...) OR can_supervise_department(...)` inside Postgres
+
+        since it was written, and answers `HB404` — not a 403 — to anybody else, so
+
+        a stranger walking complaint ids learns nothing either way. What
+
+        `require_admin` was doing was refusing the department''s own supervisors at
+
+        the door, before the rule that admits them could be asked.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `active_membership_required` | The caller belongs to no community |
+
+        | 404 | `not_found` | No such complaint, or not one the caller may act on |'
       operationId: staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get
       parameters:
       - description: Complaint id, scoped to the caller's community.
@@ -13769,6 +14272,94 @@ paths:
         id: US-2.6
         role: Lets the resident cancel a pre-start visit or return the complaint for re-evaluation.
         title: Complaint status tracking with history
+  /api/v1/complaints/{complaint_id}/chat:
+    post:
+      description: 'Open — or get — the one chat thread about this complaint. **No body.**
+
+
+        A real thread in the existing chat dock (`kind = ''complaint''`), not a
+
+        comments panel: the resident reaches it from their ordinary thread list and
+
+        the department reaches it from the card. **One per complaint.** A second
+
+        supervisor pressing the button joins the thread that exists rather than
+
+        forking one the resident would have to watch two of, which is why this is
+
+        idempotent and why the client calls it every time instead of remembering.
+
+
+        Reading and writing it are the raiser''s and the **department''s** — any
+
+        supervisor of the complaint''s department, not only whoever opened it. A
+
+        `closed` or `cancelled` complaint locks the thread: it still reads, and a
+
+        send answers `409`, exactly as a finished job''s channel does.
+
+
+        `200` rather than `201` on purpose: the common case is getting the thread
+
+        that already exists, and a status code that alternated between the two would
+
+        be describing the database''s history rather than the caller''s request.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | Not this department''s supervisor |
+
+        | 404 | `not_found` | No such complaint |
+
+        | 409 | `conflict` | The complaint has no department, no raiser, or is your own |'
+      operationId: open_complaint_chat_api_v1_complaints__complaint_id__chat_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplaintThreadOpened'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Open the complaint's chat thread
+      tags:
+      - supervisor-triage
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'The supervisor''s machinery for turning a triaged complaint into a scheduled visit:
+          the queue, the job record, the edit and the assignment history. Three operations on this surface
+          DO serve stories -- proposing a time, assigning a person and moving or cancelling a visit all
+          reach the resident -- and these do not, which is the distinction worth keeping. The interviews
+          produced ''nobody tells me what is happening''; they did not produce a work queue. What a resident
+          learns from this machinery arrives through `GET /complaints`, the timeline and the schedule
+          request, and claiming US-2.8 for a screen only the department can open would make the matrix
+          say a resident sees something they cannot.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/complaints/{complaint_id}/comments:
     post:
       description: 'Add a comment. Any member may comment; only admins may write `internal`.
@@ -14027,6 +14618,176 @@ paths:
           silently empty their own queue.'
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/complaints/{complaint_id}/notes:
+    post:
+      description: 'A permanent note on the complaint''s timeline, **for staff and workers**.
+
+
+        The resident does not see it. That is the product owner''s own scoping — the
+
+        people who read these were enumerated as staff and workers — and it is
+
+        carried by a payload flag on the existing `note_added` event rather than by a
+
+        new event word, so the admin''s resident-visible *Update from management*
+
+        notes (`PATCH /complaints/{id}` with `updateNote`) are untouched.
+
+
+        **Append-only.** No edit, no delete: a timeline that can be rewritten is not
+
+        a record of what happened.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | Not this department''s supervisor |
+
+        | 404 | `not_found` | No such complaint |
+
+        | 409 | `conflict` | The complaint has no department yet |
+
+        | 422 | `validation_error` | An empty note, or one over 2000 characters |'
+      operationId: add_complaint_note_api_v1_complaints__complaint_id__notes_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddComplaintNoteRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Add an internal note to a complaint
+      tags:
+      - supervisor-triage
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'The supervisor''s machinery for turning a triaged complaint into a scheduled visit:
+          the queue, the job record, the edit and the assignment history. Three operations on this surface
+          DO serve stories -- proposing a time, assigning a person and moving or cancelling a visit all
+          reach the resident -- and these do not, which is the distinction worth keeping. The interviews
+          produced ''nobody tells me what is happening''; they did not produce a work queue. What a resident
+          learns from this machinery arrives through `GET /complaints`, the timeline and the schedule
+          request, and claiming US-2.8 for a screen only the department can open would make the matrix
+          say a resident sees something they cannot.'
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/complaints/{complaint_id}/priority-raise:
+    post:
+      description: '`Low → Medium → High`, one step, one way. **No request body.**
+
+
+        **One way is the design.** A supervisor who could lower a priority could
+
+        quietly un-escalate something somebody else escalated, and that is a decision
+
+        worth its own verb and its own audit line rather than a second use of this
+
+        one. At `High` it is a `409` — there is nowhere further to go.
+
+
+        **Priority is load-bearing, deliberately.** `High` is what arms the dispatch
+
+        engine''s automatic force-assign when every candidate has declined, and what
+
+        shortens the manual dispatch window from 24 hours to 2. The complaint''s live
+
+        jobs move with it, because a job''s urgency *is* its complaint''s urgency —
+
+        `create_work_order` never took a priority argument for the same reason.
+
+
+        The SLA deadline is **not** recomputed. `expectedResolutionAt` is a promise
+
+        already made to the resident, and moving it because the department
+
+        reclassified the work would make a complaint overdue for a reason the
+
+        resident never saw.
+
+
+        Nobody is notified — a passive field change under `ARCHITECTURE.md`''s rule —
+
+        but the timeline gains a `priority_changed` entry the resident can read.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | Not this department''s supervisor |
+
+        | 404 | `not_found` | No such complaint |
+
+        | 409 | `conflict` | Already `High` · no department yet |'
+      operationId: raise_complaint_priority_api_v1_complaints__complaint_id__priority_raise_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Raise a complaint's priority one step
+      tags:
+      - supervisor-triage
+      x-user-stories:
+      - coverage: served
+        id: US-2.6
+        role: Escalation is visible history rather than a private reclassification -- the timeline says
+          the department raised it and to what
+        title: Complaint status tracking with history
   /api/v1/complaints/{complaint_id}/read:
     post:
       description: 'Record that the caller has seen the complaint as it now stands.
@@ -14202,6 +14963,91 @@ paths:
         role: 'Closes the loop the story leaves open: resolved is what the association says, closed is
           what the resident agrees'
         title: Complaint status tracking with history
+  /api/v1/complaints/{complaint_id}/resolve:
+    post:
+      description: 'The department saying the work is done. **No request body.**
+
+
+        One transaction. Every other **live** job on the complaint is called off —
+
+        `draft`, `awaiting_resident`, `offered`, `scheduled` — its `offered` and
+
+        `accepted` assignment rows withdrawn, and every affected worker notified
+
+        with the reason *"Complaint resolved by the department"*. A worker who is
+
+        holding an offer must not have to find out from an empty queue.
+
+
+        **A job that is `in_progress` refuses the whole call** with a `409`.
+
+        Somebody is inside a resident''s flat; the honest answers are to let them
+
+        finish or to cancel the visit, and both are somebody''s deliberate act rather
+
+        than a side effect of this button.
+
+
+        It moves the complaint to `resolved` and **not** to `closed`: `closed` is
+
+        what the *resident* says by confirming with a rating. The v0 aftermath is
+
+        unchanged — confirm, reopen, the 48-hour reminder and the 72-hour auto-close
+
+        all hang off `resolved` and all still fire, because the trigger that arms
+
+        them watches the status this writes.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | Not this department''s supervisor |
+
+        | 404 | `not_found` | No such complaint |
+
+        | 409 | `conflict` | A job is in progress · already settled · no department |'
+      operationId: resolve_complaint_api_v1_complaints__complaint_id__resolve_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Mark a complaint resolved
+      tags:
+      - supervisor-triage
+      x-user-stories:
+      - coverage: served
+        id: US-2.6
+        role: 'The department''s own end of the lifecycle: the status a resident tracks reaches Resolved
+          from the screen where the work is actually managed, and the confirm-or-reopen aftermath starts
+          from there'
+        title: Complaint status tracking with history
   /api/v1/complaints/{complaint_id}/schedule:
     post:
       description: 'Answer the question. `confirmed` or `declined`.
@@ -14376,6 +15222,99 @@ paths:
         role: '''When to expect action'', answered with an hour and a name instead of an SLA estimate
           -- and `respondBy` says when the association will stop waiting for the resident'
         title: Complaint accountability
+  /api/v1/complaints/{complaint_id}/take-up:
+    post:
+      description: 'The supervisor saying *this one is mine to triage*.
+
+
+        **Triage ownership, not dispatch.** `complaints.assigned_to_membership_id`
+
+        stays the dead column the 2026-08-21 rulings made it; the complaint still
+
+        belongs to the department, and who is actually going is still a work-order
+
+        assignment. What this stamps is who is looking at it, so two supervisors do
+
+        not both start arranging the same visit.
+
+
+        It moves the storage status `open → acknowledged`, which the resident already
+
+        reads as *In Progress*, and **only from `open`** — a complaint a worker has
+
+        already started is not walked backwards by a triage button.
+
+
+        **No request body**, and none is read: the acting supervisor is the session,
+
+        and a body would be a place to name somebody else.
+
+
+        **Nobody is notified.** A field changing with no action attached is the
+
+        passive change `ARCHITECTURE.md`''s rule exists to suppress; the resident
+
+        learns the same fact from the status their screen re-snapshots within a beat.
+
+
+        Taking up your own again is a `200` no-op — a double-clicked button is not an
+
+        error worth a message — while somebody else''s is a `409` that **names them**,
+
+        because "already taken up" without a name sends a supervisor to ask around an
+
+        office.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | Not this department''s supervisor |
+
+        | 404 | `not_found` | No such complaint |
+
+        | 409 | `conflict` | Somebody else holds it · it has no department yet |'
+      operationId: take_up_complaint_api_v1_complaints__complaint_id__take_up_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResult'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Take a new complaint up
+      tags:
+      - supervisor-triage
+      x-user-stories:
+      - coverage: served
+        id: US-2.6
+        role: Moves the complaint out of Pending the moment a human picks it up, and puts who and when
+          on the timeline -- the status a resident tracks stops meaning 'nobody has looked at this yet'
+          only when somebody has
+        title: Complaint status tracking with history
   /api/v1/complaints/{complaint_id}/work-orders:
     get:
       description: 'The complaint''s work history, newest first.
@@ -17220,6 +18159,67 @@ paths:
           which US-2.7 already credits.'
         status: Not covered by user story
       x-user-stories: []
+  /api/v1/departments/{department_id}/triage-snapshot:
+    get:
+      description: "Five sections, bucketed server-side, newest first within each.\n\n* `newComplaints`\
+        \ — storage status `open`, no take-up stamp, no live job.\n* `takenUp` — a supervisor pressed\
+        \ *Take up* and no job exists yet.\n* `openRequests` — a job is raised and nobody has committed\
+        \ to it:\n  `draft`, `awaiting_resident` or `offered`.\n* `assignedPending` — a worker **accepted**\
+        \ it (or it is booked) and has not\n  started.\n* `inProgress` — the worker pressed *Start*; `startedAt`\
+        \ says when.\n\n**The bucketing is the server's and the client never re-derives it.** *Live*\n\
+        (not completed, cancelled or failed) and *committed* (an `accepted`\nassignment, or work-order\
+        \ status `scheduled`) are defined once, in\n`supervisor_triage_snapshot`. Five definitions that\
+        \ must agree are one\ndefinition or they are five answers.\n\n**Furthest stage wins**, so a complaint\
+        \ appears exactly once across the five:\nas a complaint until a job exists, and as that job afterwards.\
+        \ An offered but\nunaccepted job is an *open request* and not assigned work — the 2026-08-22\n\
+        ruling A3, and the reason `offeredToName` exists beside `assigneeName`.\n\nOne call rather than\
+        \ the N+1 the triage screen makes today — a department\nread followed by a work-order read per\
+        \ complaint, which four sections would\nhave multiplied by four.\n\n| Status | Code | Cause |\n\
+        |---|---|---|\n| 403 | `forbidden` | You do not supervise this department |\n| 404 | `not_found`\
+        \ | No such department |"
+      operationId: triage_snapshot_api_v1_departments__department_id__triage_snapshot_get
+      parameters:
+      - description: Department id, scoped to the caller's community.
+        in: path
+        name: department_id
+        required: true
+        schema:
+          title: Department Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriageSnapshot'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: The supervisor's dashboard, in one read
+      tags:
+      - supervisor-triage
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'The supervisor''s machinery for turning a triaged complaint into a scheduled visit:
+          the queue, the job record, the edit and the assignment history. Three operations on this surface
+          DO serve stories -- proposing a time, assigning a person and moving or cancelling a visit all
+          reach the resident -- and these do not, which is the distinction worth keeping. The interviews
+          produced ''nobody tells me what is happening''; they did not produce a work queue. What a resident
+          learns from this machinery arrives through `GET /complaints`, the timeline and the schedule
+          request, and claiming US-2.8 for a screen only the department can open would make the matrix
+          say a resident sees something they cannot.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/departments/{department_id}/work-orders:
     get:
       description: 'Soonest first, with the unscheduled underneath.
@@ -17392,6 +18392,169 @@ paths:
           application and the admin portal, and 0028 gives each outbox row an audience so one endpoint
           can serve both without a resident receiving admin traffic
         title: Real-time sync across modules
+  /api/v1/geo/reverse:
+    get:
+      description: 'The suggested label for a coordinate the person chose on the map.
+
+
+        Answers at roughly suburb precision rather than building precision. That is
+
+        a deliberate ceiling, not a limitation of the upstream: the label is stored
+
+        on the profile and shown to hiring managers, and "Andheri West, Mumbai" is
+
+        the coarse fact the person offered. A street address would be a different
+
+        disclosure wearing the same field name.
+
+
+        **404 over the sea.** A point with no address is not an error in the
+
+        request; the picker keeps the coordinate and leaves the label for the person
+
+        to write.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 401 | `authentication_error` | No credentials |
+
+        | 404 | `geo_place_not_found` | Nothing is addressable at that point |
+
+        | 422 | `request_validation_error` | `lat`/`lon` missing or out of range |
+
+        | 503 | `geocoding_unavailable` | The upstream timed out, refused, or throttled us |'
+      operationId: reverse_place_api_v1_geo_reverse_get
+      parameters:
+      - in: query
+        name: lat
+        required: true
+        schema:
+          maximum: 90
+          minimum: -90
+          title: Lat
+          type: number
+      - in: query
+        name: lon
+        required: true
+        schema:
+          maximum: 180
+          minimum: -180
+          title: Lon
+          type: number
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeoPlace'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      security:
+      - HTTPBearer: []
+      summary: Name the point a pin was dropped on
+      tags:
+      - geo
+      x-no-user-story:
+        api-type: Functional
+        rationale: 'Turning typed address text into a coordinate, and a coordinate back into a place name.
+          It serves no story because it is not a feature anybody asked for -- it is what makes three existing
+          forms fillable. Live testing on 2026-08-21 found registration asking a serviceman for a latitude,
+          which is not a fact a person knows about their own house, so the field was skipped and the provider
+          became invisible to every proximity search. The endpoints exist to honour the upstream''s usage
+          policy from one place: a browser cannot set a User-Agent, cannot coordinate a one-request-per-second
+          ceiling across tabs, and cannot share a cache.'
+        status: Not covered by user story
+      x-user-stories: []
+  /api/v1/geo/search:
+    get:
+      description: 'Up to five places matching the typed address, best match first.
+
+
+        **Called on an explicit search, never per keystroke.** The upstream''s usage
+
+        policy forbids autocomplete against it in as many words, which is why the
+
+        picker has a Search button and no type-ahead. Treat this as a button, not as
+
+        an input event.
+
+
+        An empty list is a 200, not a 404: "no match" is an answer the pick-list
+
+        renders ("nothing found -- drop the pin instead"), and a 404 would push it
+
+        down the error branch that means the route is missing.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 401 | `authentication_error` | No credentials |
+
+        | 422 | `request_validation_error` | `q` shorter than 3 or longer than 120 |
+
+        | 503 | `geocoding_unavailable` | The upstream timed out, refused, or throttled us |'
+      operationId: search_places_api_v1_geo_search_get
+      parameters:
+      - description: 'The address text a person typed. Three characters minimum: a shorter query matches
+          most of the planet and spends the upstream''s one-per-second budget on nothing.'
+        in: query
+        name: q
+        required: true
+        schema:
+          description: 'The address text a person typed. Three characters minimum: a shorter query matches
+            most of the planet and spends the upstream''s one-per-second budget on nothing.'
+          maxLength: 120
+          minLength: 3
+          title: Q
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/GeoPlace'
+                title: Response Search Places Api V1 Geo Search Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      security:
+      - HTTPBearer: []
+      summary: Find a place by typing its address
+      tags:
+      - geo
+      x-no-user-story:
+        api-type: Functional
+        rationale: 'Turning typed address text into a coordinate, and a coordinate back into a place name.
+          It serves no story because it is not a feature anybody asked for -- it is what makes three existing
+          forms fillable. Live testing on 2026-08-21 found registration asking a serviceman for a latitude,
+          which is not a fact a person knows about their own house, so the field was skipped and the provider
+          became invisible to every proximity search. The endpoints exist to honour the upstream''s usage
+          policy from one place: a browser cannot set a User-Agent, cannot coordinate a one-request-per-second
+          ceiling across tabs, and cannot share a cache.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/invitations/prepare:
     post:
       description: 'Resolve an invitation link or code and stage it for redemption.
@@ -20224,10 +21387,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
       security:
       - HTTPBearer: []
       summary: Register as a service person
@@ -21391,6 +22558,19 @@ paths:
         Writes an **offered** assignment. The worker must accept before the visit is
 
         booked; the existing 409 rules remain unchanged.
+
+
+        **`force: true` is the supervisor''s override** (2026-08-22 ruling A4) and
+
+        changes nothing else about this route. It writes an `is_forced` assignment
+
+        straight to `accepted` — the worker cannot decline it, and their card already
+
+        hides the button for a forced row — through the same mechanics the dispatch
+
+        engine uses when every candidate has declined a critical job. Omitting the
+
+        flag, or sending `false`, is the offer flow byte for byte.
 
 
         **Assigning a job that is still `awaiting_resident` is allowed**, and that
@@ -22897,6 +24077,23 @@ paths:
         failures.
 
 
+        **`communities` is filled independently of `provider`.** `provider: null`
+
+        with a non-empty `communities` is department leadership: a manager or
+
+        supervisor an administrator created by email holds a membership and a roster
+
+        row and no `service_providers` row, because leadership has no registration
+
+        process. A client must therefore decide the registration form on `provider`
+
+        **and** `communities[].rank` — an active `manager` or `supervisor`
+
+        engagement is never sent to it, while `member` and no engagement at all
+
+        still are, because coordinates and trades are how those people are found.
+
+
         `todayJobs` and `nextJob` answer different questions and both are needed: at
 
         six in the evening today''s list is history, and what a worker wants then is
@@ -23236,6 +24433,11 @@ tags:
     coarse because a supervisor is a rank on a roster and not a membership role; the department check
     is in the database.
   name: work-orders
+- description: 'The supervisor''s landing dashboard: the department''s untouched, taken up, offered-but-unanswered,
+    assigned and being-worked-right-now work in one read, and the verbs on the cards -- take up, resolve,
+    raise the priority, note it internally, open a chat with the resident. All of them are triage and
+    none is dispatch: who is actually going is a work-order assignment, which is `work-orders`'' route.'
+  name: supervisor-triage
 - description: The resident's answer to a proposed visit. Two routes, neither of which takes a work-order
     id -- the job is resolved from the complaint, so naming somebody else's is not expressible.
   name: resident-scheduling
@@ -23248,5 +24450,11 @@ tags:
     screen and any signed-in person may call it; everything here is admin-or-manager only. The catalogue
     is global and a department's claim on it is not.
   name: skills
+- description: 'Address search and reverse geocoding for the location picker, proxied to OpenStreetMap''s
+    Nominatim. Server-side rather than from the browser because the upstream''s usage policy asks for
+    an identifying User-Agent, one request per second per application, and caching -- and a tab can honour
+    none of the three. No API key, one fixed host, and explicit search only: autocomplete against that
+    service is forbidden.'
+  name: geo
 - description: Liveness.
   name: system

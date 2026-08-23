@@ -32,7 +32,9 @@ class DmThread(CamelModel):
     id: str
     community_id: str
     community_name: str | None = None
-    #: ``direct`` or ``work_order``.
+    #: ``direct``, ``work_order``, or -- since 2026-08-22 -- ``complaint``: the
+    #: department's channel to the resident who raised one, opened from the
+    #: supervisor dashboard and locked when the complaint closes.
     kind: str
     work_order_id: str | None = None
     #: The other person, resolved for the caller.

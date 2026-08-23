@@ -1,6 +1,7 @@
 import { genId } from '../../lib/ids';
 import { useAuthStore } from '../authStore';
 import { api } from '../../lib/api/client';
+import { getDashboardSnapshot } from '../../lib/dashboard/dashboardApi';
 
 // What is left here is the **admin** half of the demo store, and only that.
 //
@@ -17,6 +18,24 @@ import { api } from '../../lib/api/client';
 //
 // `complaints`, `updateComplaint` and `addComplaintComment` stay because the
 // admin and manager screens still read and write them.
+
+// A write the server refused must not stay on screen. Both writers below set
+// the store first (the optimistic copy the SSE re-snapshot normally replaces
+// within a beat), but a *failed* write fires no SSE event — nothing would ever
+// correct the lie. So the catch re-reads the snapshot for server truth, and if
+// even that read fails (the network is down, which is usually why the write
+// failed), it restores the one row to the last state the server agreed to.
+const restoreAfterFailedWrite = async (set, get, priorComplaint) => {
+  try {
+    get().hydrateDashboard(await getDashboardSnapshot());
+  } catch {
+    set((s) => ({
+      complaints: s.complaints.map((x) =>
+        x.id === priorComplaint.id ? priorComplaint : x
+      ),
+    }));
+  }
+};
 
 const createTimelineEvent = (type, label, message, actor, createdAt) => ({
   id: genId('event'),
@@ -127,6 +146,8 @@ export const createComplaintsSlice = (set, get) => ({
       }
     } catch (e) {
       get().showToast(e.message || 'Failed to update complaint on server', 'error');
+      await restoreAfterFailedWrite(set, get, c);
+      return null;
     }
 
     return { ...c, ...nextFields, timeline, updatedAt };
@@ -168,6 +189,8 @@ export const createComplaintsSlice = (set, get) => ({
       get().showToast('Comment added', 'success');
     } catch (e) {
       get().showToast(e.message || 'Failed to add comment on server', 'error');
+      await restoreAfterFailedWrite(set, get, complaint);
+      return null;
     }
 
     return comment;

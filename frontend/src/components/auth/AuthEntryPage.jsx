@@ -33,6 +33,9 @@ export default function AuthEntryPage({ initialMode = 'sign-in' }) {
   const [form, setForm] = useState({ full_name: '', email: '', password: '', confirm: '', captcha_token: '' });
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
+  // Off by default: unless someone asks to stay signed in, the session ends
+  // with the browser session and this page is here again next time.
+  const [remember, setRemember] = useState(false);
   const setCaptcha = useCallback((captcha_token) => setForm((current) => ({ ...current, captcha_token })), []);
 
   useEffect(() => {
@@ -76,6 +79,9 @@ export default function AuthEntryPage({ initialMode = 'sign-in' }) {
   }
 
   const redirecting = authFlowState === AUTH_FLOW_STATE.REDIRECTING;
+  // The checkbox is only offered for sign-in; creating an account ends in an
+  // email confirmation, which deliberately establishes a non-persistent session.
+  const rememberActive = mode === 'sign-in' && remember;
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
   const submit = async (event) => {
     event.preventDefault();
@@ -89,7 +95,7 @@ export default function AuthEntryPage({ initialMode = 'sign-in' }) {
         const result = await signUpWithPassword({ full_name: form.full_name, email: form.email, password: form.password, captcha_token: form.captcha_token || null, intent });
         setNotice(result.message);
       } else {
-        await signInWithPassword({ email: form.email, password: form.password, captcha_token: form.captcha_token || null });
+        await signInWithPassword({ email: form.email, password: form.password, captcha_token: form.captcha_token || null, remember_me: rememberActive });
         const result = await completeExternalLogin();
         if (!result.success) throw new Error(result.message);
         if (intent) void recordServiceSignupEvent('auth_completed');
@@ -108,11 +114,20 @@ export default function AuthEntryPage({ initialMode = 'sign-in' }) {
       <div className="space-y-4">
         {methods === null && !error ? <div className="flex justify-center py-3"><Loader2 className="h-5 w-5 animate-spin text-indigo-600" /></div> : null}
         {ordered.map((method) => method.id === 'google' ? (
-          <button key={method.id} type="button" onClick={() => beginOAuth(method.id, `${AUTH_ROUTES.AUTH_CALLBACK}${intent ? `?intent=${intent}` : ''}`)} disabled={redirecting} className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 font-bold shadow-sm transition-all disabled:cursor-wait disabled:opacity-60 ${primary === method.id ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+          <button key={method.id} type="button" onClick={() => beginOAuth(method.id, `${AUTH_ROUTES.AUTH_CALLBACK}${intent ? `?intent=${intent}` : ''}`, { remember: rememberActive })} disabled={redirecting} className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 font-bold shadow-sm transition-all disabled:cursor-wait disabled:opacity-60 ${primary === method.id ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
             {redirecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className={primary === method.id ? 'text-white' : 'text-[#4285F4]'}>G</span>}
             {redirecting ? 'Redirecting…' : method.label}
           </button>
         ) : null)}
+        {ordered.length > 0 && mode === 'sign-in' ? (
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+            <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 accent-indigo-600" />
+            <span>
+              <span className="block text-sm font-bold text-slate-700">Remember me</span>
+              <span className="block text-xs text-slate-500">Keep me signed in on this device. Otherwise you will be asked to sign in again next time.</span>
+            </span>
+          </label>
+        ) : null}
         {ordered.some((method) => method.id === 'email_password') ? (
           <form onSubmit={submit} className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
             <div className="flex rounded-lg bg-white p-1 text-xs font-bold">

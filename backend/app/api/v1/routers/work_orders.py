@@ -220,6 +220,13 @@ async def assign_work_order(
     Writes an **offered** assignment. The worker must accept before the visit is
     booked; the existing 409 rules remain unchanged.
 
+    **`force: true` is the supervisor's override** (2026-08-22 ruling A4) and
+    changes nothing else about this route. It writes an `is_forced` assignment
+    straight to `accepted` — the worker cannot decline it, and their card already
+    hides the button for a forced row — through the same mechanics the dispatch
+    engine uses when every candidate has declined a critical job. Omitting the
+    flag, or sending `false`, is the offer flow byte for byte.
+
     **Assigning a job that is still `awaiting_resident` is allowed**, and that
     is deliberate rather than an oversight. It is the hand-operated form of the
     resident timeout the dispatcher will later fire, so a supervisor whose

@@ -195,6 +195,9 @@ class PasswordSignInRequest(StrictModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=256)
     captcha_token: str | None = Field(default=None, max_length=4096)
+    # "Remember me" on the sign-in card. Off unless asked for, so a shared or
+    # public browser gets the login page back once the window closes.
+    remember_me: bool = False
 
 
 class EmailTokenRequest(StrictModel):
@@ -380,6 +383,11 @@ class CommunityOnboardingRequest(StrictModel):
     country_code: str = Field(default="IN", min_length=2, max_length=2)
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+    # Optional, unlike the pair above. A community must have a pin -- every
+    # proximity search in 0034 is written against it -- but nothing breaks when
+    # nobody names the pin, and the founder wizard already asks for a postal
+    # address two fields up. 120 characters matches the database check.
+    location_label: str | None = Field(default=None, max_length=120)
     blocks: list[CommunityStructure] = Field(default_factory=list, max_length=10)
     villas: list[CommunityStructure] = Field(default_factory=list, max_length=50)
     block_locations: dict[str, MapPoint] = Field(default_factory=dict)

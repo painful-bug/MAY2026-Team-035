@@ -93,6 +93,22 @@ def assignment_row(**overrides: Any) -> dict[str, Any]:
     return base
 
 
+def candidate_row(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "staff_assignment_id": "staff-id",
+        "membership_id": "worker-membership-id",
+        "service_provider_id": "provider-id",
+        "display_name": "Ravi Kumar",
+        "has_adjacent_job": False,
+        "open_jobs": 2,
+        "distance_km": None,
+        "away_until": None,
+        "excluded": False,
+    }
+    base.update(overrides)
+    return base
+
+
 @pytest.fixture
 def supervisor(admin_api_client: TestClient) -> TestClient:
     """An admin, who passes the coarse router guard.
@@ -114,6 +130,7 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
         "for_department": [work_order_row()],
         "for_complaint": [work_order_row()],
         "assignments": [assignment_row()],
+        "candidates": [candidate_row()],
     }
 
     def fake_get(client: Any, *, work_order_id: str) -> dict[str, Any] | None:
@@ -154,7 +171,12 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     def fake_cancel(client: Any, **kwargs: Any) -> None:
         captured["cancelled"] = kwargs
 
+    def fake_candidates(client: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        captured["candidates_query"] = kwargs
+        return captured["candidates"]
+
     repo = work_orders_service.repo
+    monkeypatch.setattr(repo, "candidates", fake_candidates)
     monkeypatch.setattr(repo, "get_work_order", fake_get)
     monkeypatch.setattr(repo, "list_for_department", fake_for_department)
     monkeypatch.setattr(repo, "list_for_complaint", fake_for_complaint)
@@ -569,6 +591,151 @@ def test_api_175_an_unsafe_call_without_the_csrf_pair_is_refused(
     actual_output = {
         "status_code": response.status_code,
         "reached_repository": "assigned" in jobs,
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+# ---------------------------------------------------------------------------
+# The department supervisor, who is who this surface is for
+# ---------------------------------------------------------------------------
+#
+# Every test above authenticates as an admin, on the fixture's own reasoning:
+# the router guard is not what those tests are about. That left the guard's
+# *point* unproven — a service-department supervisor holds a ``worker``
+# membership (``0035``: rank is not role, and ``claim_staff_invitations`` mints
+# ``worker`` for a supervisor of a non-security department), and until
+# 2026-08-21 no test in this file had ever sent one of these nine requests as
+# that person.
+#
+# It mattered on the day the worker portal got a work-order screen. The
+# assumption behind mounting it there is exactly this table, and an assumption
+# is what the two tests below stop it being.
+
+
+@pytest.fixture
+def dispatcher(worker_api_client: TestClient) -> TestClient:
+    """A department supervisor, as the API sees one: membership role ``worker``.
+
+    There is nothing else to set. Rank lives on ``staff_assignments`` and never
+    reaches the request -- which is the design, and the reason the router guard
+    has to admit every worker and let ``can_supervise_department`` decide.
+    """
+    return worker_api_client
+
+
+def _every_operation(client: TestClient, csrf: dict[str, str]) -> dict[str, int]:
+    """All nine calls the triage screen makes, in one dict of status codes."""
+    return {
+        "POST /complaints/{id}/work-orders": client.post(
+            COMPLAINT_WORK_ORDERS, json={}, headers=csrf
+        ).status_code,
+        "GET /complaints/{id}/work-orders": client.get(
+            COMPLAINT_WORK_ORDERS
+        ).status_code,
+        "GET /departments/{id}/work-orders": client.get(
+            DEPARTMENT_WORK_ORDERS
+        ).status_code,
+        "GET /work-orders/{id}": client.get(WORK_ORDER).status_code,
+        "GET /work-orders/{id}/candidates": client.get(
+            f"{WORK_ORDER}/candidates"
+        ).status_code,
+        "PATCH /work-orders/{id}": client.patch(
+            WORK_ORDER, json={"priority": "high"}, headers=csrf
+        ).status_code,
+        "POST /work-orders/{id}/assign": client.post(
+            ASSIGN, json={"staffAssignmentId": "staff-id"}, headers=csrf
+        ).status_code,
+        "POST /work-orders/{id}/reschedule": client.post(
+            RESCHEDULE,
+            json={"scheduledStartAt": SLOT_START, "scheduledEndAt": SLOT_END},
+            headers=csrf,
+        ).status_code,
+        "POST /work-orders/{id}/cancel": client.post(
+            CANCEL, json={"reason": "Resident is away"}, headers=csrf
+        ).status_code,
+    }
+
+
+def test_api_337_a_worker_membership_reaches_every_work_order_operation(
+    dispatcher: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """The whole table, because a single call would leave eight untested and the
+    one that drifts is always the one nobody looked at.
+
+    A supervisor is a `worker` and passes the coarse guard; what they may do to
+    *this* department is `can_supervise_department` in Postgres, which is
+    stubbed here -- so what this proves is the half that is Python: no route in
+    this router refuses them before the database is asked. That is precisely the
+    claim the worker portal's new `/worker/work-orders` route rests on."""
+    endpoint = "9 routes in app/api/v1/routers/work_orders.py"
+    expected_output = {
+        "POST /complaints/{id}/work-orders": 201,
+        "GET /complaints/{id}/work-orders": 200,
+        "GET /departments/{id}/work-orders": 200,
+        "GET /work-orders/{id}": 200,
+        "GET /work-orders/{id}/candidates": 200,
+        "PATCH /work-orders/{id}": 200,
+        "POST /work-orders/{id}/assign": 200,
+        "POST /work-orders/{id}/reschedule": 200,
+        "POST /work-orders/{id}/cancel": 200,
+    }
+
+    actual_output = _every_operation(dispatcher, csrf_headers)
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_338_a_resident_reaches_none_of_them(
+    resident_api_client: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """The other half of the same table, and the reason the guard is there at
+    all: it turns "signed-in resident poking at work-order ids" into a 403
+    before any query runs. Widening the router to admit a supervisor did not
+    widen it to admit the person whose flat the visit is in -- who has their own
+    routes, in `resident_scheduling.py`."""
+    endpoint = "9 routes in app/api/v1/routers/work_orders.py"
+    expected_output = {
+        "POST /complaints/{id}/work-orders": 403,
+        "GET /complaints/{id}/work-orders": 403,
+        "GET /departments/{id}/work-orders": 403,
+        "GET /work-orders/{id}": 403,
+        "GET /work-orders/{id}/candidates": 403,
+        "PATCH /work-orders/{id}": 403,
+        "POST /work-orders/{id}/assign": 403,
+        "POST /work-orders/{id}/reschedule": 403,
+        "POST /work-orders/{id}/cancel": 403,
+    }
+
+    actual_output = _every_operation(resident_api_client, csrf_headers)
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_339_the_candidate_read_admits_the_supervisor_who_needs_it(
+    dispatcher: TestClient, jobs: dict
+) -> None:
+    """Named on its own because the screen leans on it harder than the others.
+
+    `GET /departments/{id}` is `require_admin_or_manager` and a supervisor
+    cannot call it, so the roster the assign box offers does **not** come from
+    the department read -- it comes from here, which admits them. If this route
+    ever narrowed to match the departments router, the worker portal's assign
+    box would go quietly empty rather than fail."""
+    endpoint = "GET /api/v1/work-orders/work-order-id/candidates?includeExcluded=true"
+    expected_output = {
+        "status_code": 200,
+        "names": ["Ravi Kumar"],
+        "forwarded": {"work_order_id": "work-order-id", "include_excluded": True},
+    }
+
+    response = dispatcher.get(
+        f"{WORK_ORDER}/candidates", params={"includeExcluded": "true"}
+    )
+    actual_output = {
+        "status_code": response.status_code,
+        "names": [row["displayName"] for row in response.json()],
+        "forwarded": jobs["candidates_query"],
     }
 
     assert actual_output == expected_output, endpoint

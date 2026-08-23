@@ -13,6 +13,50 @@ No description provided.
 | `test_legacy_access_request_phone_constraint_is_removed` | No description provided. |
 
 
+## `test_admin_raised_complaints_migration.py`
+`20260820150000_admin_raised_complaints.sql` -- what a hand-applied file
+cannot be allowed to get wrong.
+
+This migration is pasted into the Supabase SQL editor by a person, once, against
+a live database. There is no local Supabase in this repository's CI, so nothing
+runs it before it runs for real. That raises the value of the checks a static
+reader *can* make and narrows them to three questions:
+
+**Is it idempotent?** It says so in its own header, and the header is not the
+thing that makes it true. Every DDL statement in it must be guarded, because the
+recovery from a half-applied hand-run is to run it again.
+
+**Did the view survive the copy?** `complaint_overview` is dropped and recreated
+here to gain one column. A `drop view` that recreates a *slightly* different view
+is the failure mode: nothing errors, and the resident's list quietly loses
+`isUnread`, or its overdue rule stops matching the admin's. So the new definition
+is diffed line by line against `0031`'s, which is still the latest.
+
+**Is the resident's path untouched?** The one instruction the spec gives that
+this file could violate silently.
+
+Whether Postgres accepts the bodies is a question only Postgres answers; `pglast`
+parsing it is as close as this suite gets.
+
+*Total tests in this file: 13*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_everything_it_builds_on` | Filename order is apply order.  `0031` owns the view this recreates, `20260813100000` owns the `raise_complaint` whose pipeline is mirrored, and `20260820120000` adds the `complaint_events.payload` that `admin_raise_complaint` writes. Sorting before any of them would mean this file's work is undone, or attempted against a column that is not there yet. |
+| `test_nothing_later_redeclares_the_view_or_the_function` | Last declaration of a name wins, and this file must be it. |
+| `test_every_ddl_statement_is_guarded` | Re-running a hand-applied file must be a no-op.  Each of these is the *only* unguarded form of its statement that this file could plausibly have been written with, which is why they are asserted absent rather than the guarded forms asserted present -- present says a guarded one exists, absent says an unguarded one does not. |
+| `test_the_resident_raise_is_not_touched` | The spec's one prohibition. `raise_complaint` keeps the body `20260813100000` gave it, and this file adds a sibling rather than a fork. |
+| `test_the_column_defaults_to_the_value_every_existing_row_already_has` | No backfill statement, and none needed: until this file there was no way to raise a complaint other than from the resident portal, so `'resident'` is true of every row that exists. A migration that added the column nullable and then backfilled would have a window in which it was neither. |
+| `test_the_ownership_split_is_the_two_lines_the_ruling_names` | The product ruling in one assertion.  `raised_by_membership_id` is the resident when one is named and the admin otherwise; `raised_via` is `'admin'` **only** in the unattached case. Getting the second backwards is the mistake that would put every on-behalf complaint on nobody's resident list -- silently, since the complaint would still exist and the admin portal would still show it. |
+| `test_the_raised_event_records_the_admin_as_the_actor` | In both modes. The row says whose complaint it is; the timeline says who acted. Writing the resident's membership there would forge a history entry -- the one thing an append-only timeline exists to prevent. |
+| `test_the_pipeline_is_the_one_resident_complaints_already_enter` | Same department resolution, same SLA, same notification fan-out. A second complaint pipeline is how the admin's queue and the resident's start disagreeing about the same complaint. |
+| `test_the_new_view_is_0031s_definition_with_one_column_added` | Line by line, both directions.  A `drop view` that recreates a subtly different view raises nothing. Every line of `0031`'s definition must still be here, and the only line this one adds must be the column it was recreated for. |
+| `test_the_view_restates_what_dropping_it_took_away` | `drop view` takes the comment and the grant with it -- unlike `create or replace function`, which keeps the oid and therefore keeps both. Losing the grant would make the resident's list a 401 from PostgREST. |
+| `test_it_verifies_its_own_work_before_reporting_success` | The house shape for a hand-applied file: five claims, each of which fails the run rather than letting somebody believe it took. |
+| `test_the_function_the_backend_calls_is_the_function_that_exists` | The argument names are the RPC contract: PostgREST binds by name, so a rename on either side is a 404 at runtime and nothing at import time. |
+
+
 ## `test_amenity_mapping.py`
 Unit tests for the amenity translation layer.
 
@@ -136,6 +180,65 @@ verified the address, and an OAuth JWT is not required to carry the claim at all
 | `test_email_confirmation_is_read_from_where_supabase_actually_puts_it` | Supabase nests the flag in ``user_metadata``. Reading only the top level left the field false for every real caller -- inert while nothing consults it, and a total lockout for whoever first writes ``if not email_verified``. |
 
 
+## `test_blocked_invitee_notice_migration.py`
+`20260821170000_blocked_invitee_notice.sql` -- what a static reader can prove
+about a file nobody in this repository runs.
+
+The file is pasted into the Supabase SQL editor by a person, once, against a live
+database. It does one thing: it redeclares `claim_staff_invitations` so that the
+person whose leadership invitation was refused is told why, on the same
+`blocked_at is null` edge that already tells the department.
+
+That is a small change to a function with a large number of properties, and the
+properties are the reason this file exists rather than a diff review:
+
+**Is the copy additive?** The body is copied whole from
+`20260821140000_leadership_exclusivity.sql` under the house convention
+(`20260812113000` 1). "Whole" is checkable: every non-blank line of the applied
+version has to still be there. A copy that quietly dropped the already-a-member
+skip, the rank derivation or one of the two inserts would not error -- it would
+delete a feature from a function that runs on every membership-less sign-in.
+
+**Is the refusal still a skip?** `claim_staff_invitations` runs inside
+`resolve_session` and `auth_service._claim_staff_invitations` swallows what it
+raises, so a `raise` anywhere in the loop abandons every *other* pending
+invitation in the same call, silently. `notify_profile` is a new call inside that
+loop, and this is the check that it did not arrive with an exception behind it.
+
+**Does it fire once?** Both notifications must sit inside the same
+`blocked_at is null` guard. A blocked person keeps signing in; a message outside
+that guard is a message re-sent on every session read.
+
+**Is the wording the wording?** The two sentences were approved by the product
+owner on 2026-08-21 and are frozen. They are asserted character for character
+here, because the one thing a reviewer cannot see in a 300-line SQL file is a
+comma somebody improved.
+
+**Is anything destructive?** Nothing here may delete or alter a row that is not
+the invitation being marked.
+
+Whether Postgres accepts the body is a question only Postgres answers; `pglast`
+parsing it is as close as this suite gets. The rest is in
+`docs/plans/MIGRATION_APPLY_RUNBOOK.md` 15.
+
+*Total tests in this file: 12*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_whose_work_it_builds_on` | Filename order is apply order.  `20260821140000` is the constraint that matters: this file copies its `claim_staff_invitations` forward, and sorting before it would restore the version with no invitee notification -- silently, because both files declare the same name and the last one applied wins.  **The check used to be "and it is the last file in the directory", and that became wrong on 2026-08-21** when `20260821200000_departure_continuity.sql` was added -- the same thing that had already happened twice that day, to `test_location_label_migration.py` and then to `test_leadership_exclusivity_migration.py`, and it is answered here the same way. Being last in the directory was never the property; being last *among the files that declare this function* is. The departure-continuity file declares no `claim_staff_invitations` at all, so it cannot undo anything here, and `test_nothing_later_redeclares_the_claim` below is what holds the line for one that ever does. |
+| `test_nothing_later_redeclares_the_claim` | The same conditional exemption this file needed from `test_leadership_exclusivity_migration.py`, now owed to the next author.  A later file may redeclare `claim_staff_invitations` -- that is the house convention for changing somebody else's function -- but only by carrying both halves of the announcement forward. One that told the department and dropped the invitee would put the gap this file closed straight back. |
+| `test_the_copied_body_is_purely_additive` | The house convention, checked rather than promised.  Every non-blank line of the version `20260821140000` put on the hosted database has to still be present. This is the check that catches a copy made by retyping instead of by extracting -- the already-a-member skip, the rank derivation, both inserts and the claimed-clears-blocked update are all lines that can vanish without anything erroring. |
+| `test_the_signature_and_return_type_are_untouched` | `create or replace` cannot change a return type, and would fail on the hosted database if this file tried. It also must not gain a defaulted parameter, which would create an overload rather than replace anything. |
+| `test_the_refusal_is_still_a_skip` | The property the whole claim-time design rests on, and the one a new call inside the loop is most likely to break. |
+| `test_both_notifications_fire_once_and_on_the_same_edge` | One guard, two `perform`s. Two guards could drift; no guard would re-send the message on every session read a blocked person makes. |
+| `test_the_invitee_is_addressed_as_a_person_and_never_as_a_membership` | `notify_profile`, with the claim's own `p_profile_id`.  The recipient may hold no membership at all (a registered provider hired nowhere) or one in a *different* community (the sitting leader). Addressing either through `notify_member` would file the message under a community it is not about, and `20260821140000` 8's feed policy would hide it the day that membership ended. |
+| `test_the_two_approved_sentences_are_stored_verbatim` | Frozen product wording, 2026-08-21. Both are one uninterrupted `body` string -- not split across `title` and `body`, which would make the sentence depend on which surface reassembled it. |
+| `test_the_payload_names_the_community_and_offers_no_link` | The `url` decision, pinned where it was made.  There is no screen for this: the invitee is not a member of that community, no portal lists invitations addressed to you, and the two blocked populations land in different portals. `notifications_service` renders a missing `url` as `""` and `NotificationBell` then navigates nowhere, which is the house answer -- "a guess about where a notification should land is a worse failure than no link". |
+| `test_nothing_is_destructive_and_nothing_else_is_declared` | One function and one counting block. A file this small has no business touching a table, a policy, a trigger or a grant. |
+| `test_the_pre_existing_blocked_rows_are_counted_and_left_alone` | `20260821140000` 9's argument at a smaller scale: an invitation blocked before this file was applied has already crossed the edge, and re-arming it would mean writing `blocked_at` backwards. The count goes in the deploy log; nothing is repaired. |
+
+
 ## `test_department_mapping.py`
 The department wire/storage seams.
 
@@ -173,6 +276,77 @@ invisible until a user noticed the wrong thing on screen:
 | `test_blank_staff_id_is_not_an_id` | The create form seeds ``id: ''``; sending it would look like an update. |
 | `test_update_request_distinguishes_omitted_from_null` | The whole partial-update contract rests on this. |
 | `test_operating_hours_rejects_a_non_clock_string` | A bad time must fail at the edge, not become a null column silently. |
+
+
+## `test_departure_continuity_migration.py`
+`20260821200000_departure_continuity.sql` -- what a static reader can prove
+about a file nobody in this repository runs.
+
+The file is pasted into the Supabase SQL editor by a person, once, against a live
+database. It closes the gap that a supervisor's removal opens: five notification
+kinds are addressed to `work_orders.supervisor_membership_id`, and nothing
+anywhere re-pointed that column when the person it named stopped being a
+supervisor. After the removal those messages are written to an ended membership
+and `20260821140000` 8's feed policy hides them, so a department's live jobs
+report their progress into a mailbox nobody can open.
+
+The properties worth asserting without a database are these.
+
+**Does it sort last, and does it stay out of the other files' way?** Three
+sibling files pin earlier migrations by name. This one must not redeclare
+anything they own -- in particular `claim_staff_invitations`, whose fix (product
+ruling 8) is Python-side and deliberately not here.
+
+**Is the copy of `notify_complaint_staff` additive?** It is reproduced whole from
+`20260812090300` under the house convention (`20260812113000` 1) to gain one
+recipient arm. A copy that quietly dropped the admin call, the null-community
+guard or the department-manager predicate would not error -- it would delete an
+audience.
+
+**Does re-stamping have exactly one target rule?** The trigger and the backfill
+both call `department_supervision_successor`, and that is the point of its
+existing: two implementations of "who inherits this" would drift, and the drift
+would be invisible until somebody compared a live queue against a deploy log.
+
+**Does it move only live work?** A completed or cancelled job needs no
+supervisor, and renaming one is falsifying a record rather than repairing it.
+
+**Is anything destructive?** Nothing here may delete a row or drop a column. The
+one `drop` is the roster view, recreated in the same file, and the one `update`
+is the re-stamp itself.
+
+Whether Postgres accepts the bodies is a question only Postgres answers; `pglast`
+parsing it is as close as this suite gets. The rest is in
+`docs/plans/MIGRATION_APPLY_RUNBOOK.md` 16.
+
+*Total tests in this file: 24*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_whose_work_it_builds_on` | Filename order is apply order.  `20260821140000` is the tightest: this file calls `membership_is_live`, which that one declares, and it relies on that file's roster trigger having already settled what a leadership row may be. `0045` matters for the roster view -- sorting before it would mean this file's version is silently replaced by the one with the dead complaint count. |
+| `test_it_leaves_the_claim_alone` | Product ruling 8's fix is Python-side, and that is a decision.  `claim_staff_invitations` is the most-rewritten function in this directory and `20260821170000` -- which the owner has in hand and may not have applied when this file goes in -- is its current owner. A redeclaration here would have to guess which generation of that body is on the database, and guessing wrong reverts the invitee notification without erroring. The claim-pass gap is a call site in `auth_service`, so it is fixed at the call site. |
+| `test_it_redeclares_nothing_the_sibling_files_pin` | The three static-check files next to this one each guard a name list.  Asserted here as well as there, so the failure names *this* file when it is this file that broke the rule. |
+| `test_it_never_writes_the_dead_complaint_column` | Product ruling 1: complaints stay department-pooled.  `complaints.assigned_to_membership_id` is written by exactly one function (`update_complaint`, `0031` 668) and read by nothing. This file re-points *work orders*, which is a different question, and the whole design depends on not answering the other one by accident. |
+| `test_the_target_rule_exists_exactly_once` | One function answers "who inherits this", and both callers ask it.  The trigger and the backfill are written months apart in reading order and would be the obvious place for two slightly different orderings to appear. They cannot: neither contains a successor search of its own. |
+| `test_the_successor_is_a_live_supervisor_then_the_manager_then_nobody` | The three steps, in that order, and the third one really is "nobody".  A wrong address is worse than a stale one -- the stale one at least names the person the department remembers assigning the job to -- so the search must be able to return null rather than widening until it finds somebody. |
+| `test_the_successor_choice_is_deterministic_and_load_aware` | Two supervisors and a coin toss is a re-run of the backfill that moves work around for no reason. The ordering is total: load, then age, then id. |
+| `test_only_live_work_is_re_stamped_and_only_within_the_department` | Two scopes, both load-bearing.  A completed job needs no supervisor and rewriting it names somebody who was not there. And a membership can appear on more than one department's work -- an admin membership that raised jobs in two of them -- so re-stamping by membership alone would hand all of it to whichever department lost them first. |
+| `test_the_trigger_fires_after_the_write_on_the_columns_removal_touches` | `after`, deliberately.  By then the departing row is already `inactive` in the snapshot the successor search reads, so "a remaining active supervisor" excludes them by construction rather than by an `id <> old.id` a later edit could drop. And the columns are the ones `remove_department_member` writes -- it sets `status` and `rank` in one update, which is one fire and not two. |
+| `test_the_trigger_is_what_covers_the_postgrest_bypass` | `staff_assignments_admin_write` is `for all to authenticated` with direct grants (`20260812200000` 26-31), so an admin can flip `status = 'inactive'` without any RPC. That is the fifth removal path and the reason this is a trigger at all -- an edit to `remove_department_member` would cover four.  Checkable statically only as an absence: nothing here may make the re-stamping conditional on having arrived through a function. |
+| `test_the_cover_notice_fires_once_on_the_last_supervisor_edge` | Three gates, each for its own reason: the row was a supervisor, the department is one that has a complaint queue, and nobody is left. |
+| `test_the_cover_notice_reuses_the_existing_leadership_audience` | With zero supervisors left, `notify_department_leadership`'s audience is exactly "the community's admins plus this department's manager" -- which is precisely the set now covering. A new recipient loop would be a second implementation of a rule `0043` 6 already wrote. |
+| `test_the_cover_notice_links_somewhere_that_exists_for_its_reader` | `/admin/complaints`, not `/manager/complaints`.  `frontend/src/features/notifications/portalUrl.js` rewrites the admin path to the manager's for a manager reader, and that module exists precisely because SQL does not know who will read the row. Writing the manager's path here would break it for the admins in the same audience. |
+| `test_the_complaint_audience_copy_keeps_every_recipient_it_had` | The house convention, checked rather than promised.  `notify_complaint_staff` is the helper behind six call sites across five migrations, so a recipient lost in this copy is a message lost on every one of them. Each of the three things the original did is asserted present. |
+| `test_the_complaint_audience_gains_supervisors_by_roster_rank` | R18, recorded as done in 2026-08-13's ruling table and never implemented.  A supervisor is a rank on a roster row in one department, deliberately (`0043` 386), so no role-based helper can express them. The arm added here is `notify_department_leadership`'s own predicate, narrowed to the complaint's department. |
+| `test_nobody_in_the_complaint_audience_is_told_twice` | An admin who also sits on the department's roster as its supervisor satisfies both arms, and being told twice about one complaint reads as a bug in the app (`0043` 416, the same argument one level up). |
+| `test_the_roster_view_keeps_every_column_it_had_but_the_dead_one` | The view is dropped and recreated for one column.  A recreated view that is *slightly* different is the failure nobody notices: nothing errors, and a roster tile quietly loses `departureStatus`. So the old column list is read out of `0045` and each name is required to still be there -- except the one being removed. |
+| `test_the_new_count_is_a_definer_function_like_its_sibling` | `0043` 245's argument, one column along.  The view is `security_invoker`, so a count computed inline would be filtered by the reader's own RLS on `work_orders` and would under-report for exactly the readers who need it. A number against a roster id the caller already holds leaks nothing. |
+| `test_the_python_wire_model_agrees_with_the_view` | The half-landed change this catches: the SQL ships and the repository still asks PostgREST for a column that no longer exists, which is a 400 on every roster read rather than a wrong number. |
+| `test_the_backfill_repairs_and_reports_and_refuses_nothing` | The mechanical repair, bounded.  Every removal before this file left its live work orders addressed to an ended membership. Those are repaired to the same rule the trigger uses -- not to a remembered one -- and anything with no successor is counted rather than guessed at. A `raise exception` here would abort an otherwise clean apply over data the file exists to tidy. |
+| `test_nothing_is_destructive` | Section 7 repairs an address. It may not remove anything, and the only `drop` in the file is the roster view it recreates two lines later. |
+| `test_it_raises_nothing_so_there_is_no_sqlstate_to_map` | A SQLSTATE the API cannot map surfaces as a 500 with a generic message. This file refuses nothing, which is why `pg_errors` is untouched -- asserted rather than assumed, because the check that matters is the same one either way. |
+| `test_the_five_notification_kinds_it_exists_for_are_named_somewhere` | Not an assertion about this file's SQL -- it writes none of them -- but about the claim the whole design rests on: these kinds are addressed to `supervisor_membership_id`, so re-pointing that column is what re-points them. If one is ever re-keyed to something else, this fails and somebody re-reads the argument. |
 
 
 ## `test_dispatcher.py`
@@ -248,6 +422,36 @@ from frontend/src/data/complaints.js and notices.js.
 | `test_naive_datetimes_are_treated_as_utc` | No description provided. |
 
 
+## `test_hosted_work_order_drift_migration.py`
+`20260822090000_hosted_work_order_column_drift.sql` -- what a static reader
+can prove about a file nobody in this repository runs.
+
+The file is pasted into the Supabase SQL editor by a person, once, against a
+live database whose `work_orders` table predates `0001_baseline.sql` and
+carries hand-built legacy columns the repository has never declared. One of
+them (`title`, NOT NULL, no default) rejected every `create_work_order` insert
+with SQLSTATE 23502 -- found live on 2026-08-22, when a supervisor's "Raise it"
+button answered 422 "Could not raise that job."
+
+The file is a sweep, not a named fix, because `20260820120000` 3 taught the
+lesson that these constraints bite one behind the other. A sweep's one real
+hazard is its protected list: a repository column wrongly *missing* from that
+list would have its NOT NULL dropped on the hosted table, silently weakening a
+constraint the repository relies on. So the list is not reviewed here -- it is
+**derived** from the declaring migrations' own text and compared exactly.
+
+*Total tests in this file: 6*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_it_reasons_about` | Filename order is apply order. This file must postdate the last repository declaration it protects and the precedent it cites -- and, as of the day it was written, everything else in the directory. |
+| `test_the_protected_list_is_exactly_the_repository_declaration` | The sweep's one real hazard, held by derivation rather than review.  A repository column missing from the list would get its NOT NULL dropped on the hosted table; a name in the list that no migration declares would protect a legacy column and leave the 422 alive behind a passing apply. |
+| `test_the_sweep_touches_only_insert_blocking_columns` | Nullable legacy columns, and NOT NULL ones with a default, block no insert and must be left exactly as they are. |
+| `test_the_only_ddl_is_the_widening` | One dynamic statement shape, and it can only loosen. `set not null` anywhere here would be the file tightening the very thing it exists to loosen; everything else on the forbidden list is out of scope for a drift reconciliation by definition. |
+| `test_the_sweep_reports_and_the_verification_fails` | The sweep may only NOTICE -- an exception there aborts a partial fix into no fix. The verification may only EXCEPTION -- a NOTICE there is the file reporting success it has not checked. Idempotence is the zero-found notice: re-running the file finds nothing and says so. |
+
+
 ## `test_invitation_logic.py`
 Unit tests for the pure invite-redemption decision and token hashing.
 
@@ -263,6 +467,161 @@ Unit tests for the pure invite-redemption decision and token hashing.
 | `test_hash_is_stable_and_matches` | No description provided. |
 | `test_code_normalization_round_trip` | No description provided. |
 | `test_generated_code_uses_unambiguous_alphabet` | No description provided. |
+
+
+## `test_leadership_exclusivity_migration.py`
+`20260821140000_leadership_exclusivity.sql` -- what only a static reader can
+check about a file nobody in this repository runs.
+
+The file is pasted into the Supabase SQL editor by a person, once, against a
+live database. It installs two triggers, rewrites six functions it does not own,
+adds two columns and replaces three RLS policies -- and every one of those is
+load-bearing for a rule the product owner froze on 2026-08-21:
+
+    RULING 1  leadership is invite-only and never from the marketplace pool
+    RULING 2  leadership is exclusive to one community
+    RULING 3  removal severs access completely
+
+So the questions worth asking without a database are these.
+
+**Does it parse, and does it sort last?** A migration that lands before the file
+owning a function it rewrites is silently undone. `20260821113000` (the
+location-picker work) is the tightest constraint: this file copies
+`register_service_provider` forward, and copying it forward is only correct if
+this file wins.
+
+**Did the copied bodies survive?** Five functions are reproduced whole to gain a
+guard each -- the convention `20260812113000` set. A copy that quietly dropped
+`p_location_label`, or the already-a-member skip in the claim, or the
+separate-account refusal in registration, would not error. It would delete a
+feature.
+
+**Is the claim's refusal a skip rather than a raise?** This is the design
+decision the charter asked to be recorded, and it is visible in the SQL: the
+blocked branch ends in `continue`, and there is no `raise` anywhere between the
+loop's `for` and its `end loop` that a blocked invitation reaches. A `raise`
+there would be swallowed by `_claim_staff_invitations` and would abandon every
+other pending invitation in the same call, silently.
+
+**Do the errcodes exist in Python?** A SQLSTATE the API cannot map surfaces as a
+500 with a generic message, which is precisely the outcome custom SQLSTATEs
+exist to prevent.
+
+**Is anything destructive?** Nothing here may delete a row. Both memberships and
+provider profiles are somebody's account, and section 9 of the file argues at
+length that repairing them is not a migration's decision.
+
+*Total tests in this file: 20*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_whose_work_it_rewrites` | Filename order is apply order.  ``20260821113000`` is the one that matters most and the one most recently added: it put ``p_location_label`` on ``register_service_provider``, and this file copies that signature forward. Sorting before it would restore the seven-argument version and break the location picker. |
+| `test_nothing_later_redeclares_what_this_file_owns` | Last declaration of a name wins, and this file's *claim-time work* must survive.  The check the name suggests -- nobody may ever redeclare these nine -- is stricter than the property that matters, and it became wrong on 2026-08-21 when `20260821170000_blocked_invitee_notice.sql` added the invitee's half of the blocked-invitation announcement. That file redeclares `claim_staff_invitations` deliberately and copies this one's body whole, which is the house convention (`20260812113000` 1: "the body below was extracted mechanically from that file, so the starting point is provably the applied text"). `test_location_label_migration.py` had the same thing happen to it a few hours earlier, and answered it the same way.  So `claim_staff_invitations` is exempted **conditionally**: a later declaration of it is a clash unless it carries every claim-time semantic this file established -- the skip, the two blocked columns, the edge guard and the department notification. A file that reverted the refusal to a `raise`, or dropped the department's message while adding somebody else's, would still fail here, which is the accident this test exists to catch. The other eight names remain nobody's to redeclare. |
+| `test_every_ddl_statement_is_guarded` | Re-running a hand-applied file must be a no-op.  The recovery from a half-applied hand-run is to run the file again, so every statement has to tolerate its own effect already being present. |
+| `test_nothing_is_destructive` | Section 9's argument, enforced rather than promised.  An account holding two leaderships, or a leadership and a provider profile, is somebody's job and somebody's livelihood. Which one they keep is not a question this file may answer, so it counts them into a `notice` and touches nothing. |
+| `test_the_roster_trigger_fires_before_the_write_on_the_right_columns` | A trigger that fires `after` cannot refuse, and one that watches the wrong columns does not fire when the rank changes. |
+| `test_the_roster_trigger_refuses_both_rulings_with_distinct_codes` | One trigger, two answers.  Collapsing them into one code would leave a client unable to offer "hire them at technician rank" for one and "wait until they leave" for the other. |
+| `test_the_provider_trigger_closes_the_same_door_from_the_other_side` | No description provided. |
+| `test_the_leadership_predicate_asks_all_three_active_conditions` | It has to agree with `can_supervise_department`, which one policy asks beside it. A predicate that said somebody leads while the authorisation predicate said they do not is a hole in one direction or a lockout in the other. |
+| `test_registration_keeps_the_location_label_and_the_older_refusal` | Two features this copy could have deleted without erroring.  ``p_location_label`` is 2026-08-21's location-picker work, and the separate-account refusal is 2026-08-12's. Both live in the body being copied forward, and both are invisible in a diff that only reads the new lines. |
+| `test_the_claim_keeps_every_rule_it_already_had` | No description provided. |
+| `test_the_claim_skips_rather_than_raises` | The claim-time refusal design, asserted where it is decided.  ``claim_staff_invitations`` runs inside ``resolve_session`` on every membership-less session read, and ``_claim_staff_invitations`` (``auth_service.py``) swallows whatever it raises. So a refusal spelled as an exception would not refuse *this* invitation, it would abandon the whole call -- including any legitimate invitation later in the same loop -- and it would do it silently, on a screen that looks fine. |
+| `test_the_invitation_refuses_early_and_still_refuses_the_old_collisions` | No description provided. |
+| `test_the_invitation_read_carries_the_new_columns` | No description provided. |
+| `test_the_ownership_predicate_now_asks_whether_the_row_is_live` | `is_own_staff_assignment` is the predicate behind the worker calendar, the job list, leave, availability, every work order the caller was ever assigned, their old departures and their old gate rota. It had no time condition at all, so a removed worker satisfied it forever. |
+| `test_the_mailbox_policies_ask_for_an_active_membership` | `0046`'s policies were keyed on the participant columns alone, so a removed supervisor kept reading every community-A thread forever -- including the manager's side of their own departure. |
+| `test_the_feed_policy_asks_whether_the_membership_is_still_live` | No description provided. |
+| `test_the_farewell_notification_survives_the_feed_scoping` | The trap in section 8, closed in section 8.  ``remove_department_member`` ends the membership and *then* tells the person they were removed, keyed to the membership it just ended. Under the policy alone that message would be written and instantly invisible -- the one notification a removed person most needs, lost to the rule meant to protect them. |
+| `test_every_custom_sqlstate_this_file_raises_is_mapped_in_python` | An unmapped SQLSTATE is a 500 with a generic message, which is exactly what custom codes exist to prevent. This catches the half-landed change where the SQL ships and ``pg_errors`` does not. |
+| `test_the_two_new_codes_are_conflicts_and_are_distinguishable` | No description provided. |
+
+
+## `test_leadership_stale_access.py`
+Ruling 3 on the one read the BFF composes itself.
+
+    "Once a supervisor/manager is removed from a community and later invited to
+    a different one, they must not be able to see ANYTHING from the old
+    community." -- product owner, 2026-08-21.
+
+Almost every read that ruling covers is decided in Postgres: the calendar and
+job list through ``is_own_staff_assignment``, the complaint queue through
+``can_supervise_department``, the mailbox and the feed through RLS policies.
+None of those is reachable without a database, and all of them are asserted
+statically in ``test_leadership_exclusivity_migration.py``.
+
+``list_engagements_for_profile`` is the exception. It is four plain PostgREST
+reads stitched together in Python -- and it is the *only* read that can see a
+provisioned manager or supervisor at all, because leadership holds no
+``service_providers`` row and every provider-keyed path is blind to it. It fills
+``communities[]`` on the worker snapshot, which is where the supervisor's
+Complaints screen finds a department to ask about. If it returned the ended
+community-A engagement, the removed supervisor would be looking at community A's
+name on their own dashboard.
+
+So the filters are asserted where they are written, against a fake client that
+records what was asked rather than what came back. Asserting the *rows* would
+pass just as well against a repository with no filters at all and a fixture that
+happens to contain only live ones.
+
+*Total tests in this file: 4*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_membership_read_asks_only_for_live_memberships` | ``status = 'active'`` **and** ``ended_at is null``, both.  They are not the same question. ``0043``'s ``remove_department_member`` writes both, but the baseline's older paths set one or the other, and a read that asked for only the first would admit a membership somebody ended without restatusing it. |
+| `test_the_roster_read_asks_only_for_live_assignments_by_default` | ``active_only`` defaults to True, and the snapshot leaves it there.  The parameter exists for a "communities I have worked in" screen that has never been built. The default is what ruling 3 rides on, so the default is what is pinned. |
+| `test_an_account_with_no_live_membership_gets_nothing_at_all` | A supervisor removed from A and not yet invited anywhere.  The short-circuit matters: without it the roster read would run with an empty ``in_`` list, and an empty ``in`` is a filter that matches nothing on PostgREST but is a filter this code would rather not depend on. |
+| `test_the_engagement_that_survives_is_the_live_one` | No description provided. |
+
+
+## `test_location_label_migration.py`
+`20260821113000_location_labels.sql` -- what a hand-applied file cannot be
+allowed to get wrong.
+
+This migration is pasted into the Supabase SQL editor by a person, once, against
+a live database. Nothing in this repository runs it first. It is also the most
+dangerous shape a migration takes here: **four functions and two views are
+dropped and rewritten whole** to gain one column each, and every one of them is
+load-bearing for a different screen. So the checks a static reader can make are
+worth more than usual, and they are these:
+
+**Is it idempotent?** Its own header says so, and a header is not what makes it
+true. The recovery from a half-applied hand-run is to run the file again.
+
+**Is every old signature actually gone?** Three functions gain a parameter.
+`create or replace` cannot add one -- a defaulted parameter creates an
+*overload*, after which every existing PostgREST call is "function is not
+unique" and fails. The drop has to name the old signature exactly, so the drops
+here are diffed against the signatures the previous migrations declared.
+
+**Did the bodies survive the copy?** `search_hireable_service_providers` is
+rewritten to add one returned column. A rewrite that quietly changes a radius
+predicate or an `order by` would not error; it would change who gets hired.
+Every predicate that decides *which* people come back is asserted to have been
+carried over character for character.
+
+**Did the coordinates stay out of the hiring read?** The whole feature is a
+label on a card that deliberately withholds a home coordinate. A file that adds
+`p.latitude` while it is in there widening the same function is the way that
+protection dies.
+
+Whether Postgres accepts the bodies is a question only Postgres answers;
+`pglast` parsing it is as close as this suite gets.
+
+*Total tests in this file: 10*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_whose_work_it_rewrites` | Filename order is apply order.  `0034` owns `service_provider_overview`, `0045` owns the current `upsert_service_provider`, `20260811162409` owns `register_service_provider`, `set_my_community_location`, `create_founder_community` and `community_settings_overview`, and `20260812090100` owns the hiring search. Sorting before any of them would mean this file's work is silently undone by the older definition. |
+| `test_nothing_later_redeclares_what_this_file_owns` | Last declaration of a name wins, and this file's *label work* must survive.  The check the name suggests -- nobody may ever redeclare these seven -- is stricter than the property that matters, and it became wrong on 2026-08-21 when `20260821140000_leadership_exclusivity.sql` added a leadership refusal to `register_service_provider`. That file redeclares the name deliberately and copies this one's body whole, which is the house convention (`20260812113000` 1: "the body below was extracted mechanically from that file, so the starting point is provably the applied text").  So the assertion is the real invariant instead: a later redeclaration is a clash **unless it carries the label parameter forward**. A file that reverted to the seven-argument signature would still fail here, which is the accident this test exists to catch. |
+| `test_every_ddl_statement_is_guarded` | Re-running a hand-applied file must be a no-op.  The unguarded forms are asserted *absent* rather than the guarded ones asserted present: present only says a guarded statement exists somewhere, absent says an unguarded one does not. |
+| `test_each_changed_function_is_dropped_by_the_signature_it_actually_has` | The overload trap, asserted against the previous files rather than a remembered list.  Adding a defaulted parameter with `create or replace` leaves *two* functions of that name, and PostgREST then fails every call with "function is not unique". The drop must therefore name the exact argument list the earlier migration declared -- so each expected drop below is built from the file that owns the old definition, not typed out here. |
+| `test_the_hiring_search_gains_a_label_and_still_returns_no_coordinates` | The point of the whole feature, and the line it must not cross.  `_CANDIDATE_SELECT` in the repository withholds `latitude`/`longitude` from every hiring read. This function is the other half of that promise, and it is being rewritten here -- which is exactly when a coordinate would slip in. |
+| `test_the_rules_that_decide_who_is_hireable_are_carried_over_unchanged` | Distance mechanics are not this file's business.  Every predicate that decides *which* providers come back, and the ordering that decides in what order, is compared against the definition `20260812090100` left behind. A rewrite that dropped a `not exists` would offer a manager somebody they had blacklisted, and nothing would error. |
+| `test_the_provider_overview_keeps_every_column_it_had` | The view is dropped and recreated for one column.  A recreated view that is *slightly* different is the failure mode nobody notices: nothing errors, and a profile screen quietly loses `communityCount` or `skillNames`. So the old column list is read out of `0034` and each name is required to still be there. |
+| `test_the_stored_cap_is_the_one_the_wire_model_truncates_to` | 120 characters is a privacy boundary, not a storage decision -- long enough for "suburb, city, state" and too short for a street address.  The number lives in two places by necessity (a `check` constraint and the label builder that must not emit one the constraint would refuse), so the two are compared rather than trusted. |
+| `test_nothing_here_touches_a_distance_function_or_a_generated_column` | The one prohibition the change carried from the start: input quality only.  `location` stays generated from `latitude`/`longitude`, and `search_serviceable_communities` -- the provider's own side of the same proximity maths -- is not mentioned at all. |
 
 
 ## `test_logging.py`
@@ -373,6 +732,16 @@ plainly in DECISIONS_NEEDED E1 rather than implied to be covered.
 | `test_invoice_prefix_rejects_characters_that_would_break_a_number` | No description provided. |
 
 
+## `test_nearby_community_search_migration.py`
+No description provided.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_nearby_search_keeps_nearby_communities_without_open_matching_work` | No description provided. |
+
+
 ## `test_notification_links.py`
 Every notification `url` a migration emits must be a route the app has.
 
@@ -409,7 +778,7 @@ several of those screens belong to other workstreams and are already filed under
 makes a screen that starts honouring its parameter a test change rather than a
 silent improvement nobody notices.
 
-*Total tests in this file: 11*
+*Total tests in this file: 12*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -421,9 +790,10 @@ silent improvement nobody notices.
 | `test_the_component_behind_every_linked_route_can_be_read` | The parameter check below is only worth as much as this resolution.  If a path stopped resolving to a file -- renamed folder, re-exported component, a route whose element is an inline expression -- the checks that follow would quietly pass by having nothing to look at. |
 | `test_the_ignored_query_parameters_are_the_ones_on_record` | A link that lands on the right screen and shows the wrong row.  `/security/shifts?shift=` was the case that prompted this: the path was corrected on 2026-08-11 and the guard still arrived at a fortnight of rows with nothing marking the one they had been told about. Fixing that without checking the others would have left five more of the same, each invisible for the same reason -- the link works, so nothing reports it.  Equality, not a subset. A screen that starts honouring its parameter must leave this set, so the record cannot drift into an allow-list nobody prunes. |
 | `test_every_notification_url_resolves_to_a_mounted_route` | No description provided. |
-| `test_the_python_mirror_matches_the_javascript_rule_table` | A second implementation is only safe while it is checked against the first. The four rules are read out of `portalUrl.js` by name rather than by behaviour -- enough to fail loudly if somebody adds a fifth here and not there, or renames one.  **The sub-screen list is compared by content**, not by name. Naming was enough while the list was three entries nobody touched; `work-orders` joined it on 2026-08-12 for the work-order notification repoint, and a name check would have passed just as happily with the JavaScript half of that change reverted -- leaving every one of the seven links bouncing a department manager home while this file asserted they were fine. |
-| `test_a_managers_notification_lands_somewhere_they_may_go[manager]` | No description provided. |
-| `test_a_managers_notification_lands_somewhere_they_may_go[security-manager]` | No description provided. |
+| `test_the_python_mirror_matches_the_javascript_rule_table` | A second implementation is only safe while it is checked against the first. The four rules are read out of `portalUrl.js` by name rather than by behaviour -- enough to fail loudly if somebody adds a fifth here and not there, or renames one.  **The sub-screen list is compared by content**, not by name. Naming was enough while the list was three entries nobody touched; `work-orders` joined it on 2026-08-12 for the work-order notification repoint, and a name check would have passed just as happily with the JavaScript half of that change reverted -- leaving every one of the seven links bouncing a department manager home while this file asserted they were fine.  **And per portal, since 2026-08-21.** The comparison is now dictionary against dictionary rather than tuple against tuple, which keeps that property under the restructure: reverting the JavaScript to one shared list, or quietly handing `worker` the manager's four sub-screens, changes the parsed table and fails here. A comparison that had flattened both sides back into one set of names would have lost exactly the teeth the paragraph above is about. |
+| `test_a_notification_lands_somewhere_its_reader_may_go[manager]` | Renamed on 2026-08-21: it said `a_managers_` and `worker` is not one.  A supervisor is the reader this parametrisation was extended for, and the name would have been a small lie of exactly the kind the rest of this file spends its comments correcting. |
+| `test_a_notification_lands_somewhere_its_reader_may_go[security-manager]` | Renamed on 2026-08-21: it said `a_managers_` and `worker` is not one.  A supervisor is the reader this parametrisation was extended for, and the name would have been a small lie of exactly the kind the rest of this file spends its comments correcting. |
+| `test_a_notification_lands_somewhere_its_reader_may_go[worker]` | Renamed on 2026-08-21: it said `a_managers_` and `worker` is not one.  A supervisor is the reader this parametrisation was extended for, and the name would have been a small lie of exactly the kind the rest of this file spends its comments correcting. |
 
 
 ## `test_openapi_spec.py`
@@ -631,7 +1001,7 @@ repository functions, so the tests substitute those and drive the rest for real
 -- including the asyncio queues, so the concurrency being asserted is the
 concurrency that ships.
 
-*Total tests in this file: 32*
+*Total tests in this file: 43*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -667,6 +1037,17 @@ concurrency that ships.
 | `test_an_admin_receives_the_pending_join_requests` | The field the sidebar badge counts. Absent from the payload until now, which is why the badge could never render. |
 | `test_a_resident_never_receives_other_residents_join_requests` | These rows carry a third party's name, email and phone. Role is the only thing standing between a resident and that list. |
 | `test_a_security_guard_does_not_receive_them_either` | The gate is an allowlist on 'admin', not a denylist on 'resident' -- so every other role is excluded too. |
+| `test_the_snapshot_always_carries_the_four_weekly_new_counts` | The frontend replaces its hardcoded '+2 this week' chips with exactly this object, so the field name and its four keys are load-bearing. |
+| `test_weekly_new_defaults_to_zeroes_never_to_absence` | `0` when nothing was created; the key itself must never be missing. |
+| `test_the_legacy_visitor_projection_embeds_the_renamed_event_log` | `visitor_events` now names the baseline table, which has no FK to `visitor_access_requests` -- embedding it is the PGRST200 this pins out. |
+| `test_the_baseline_visitor_projection_still_embeds_visitor_events` | No description provided. |
+| `test_the_legacy_booking_projection_reads_the_renamed_series_tables` | No description provided. |
+| `test_the_service_reads_events_from_the_key_each_schema_embeds` | The repository's embed key and the service's `.get` must move together; this is the pair that drifted apart when `0032` took the old name. |
+| `test_weekly_new_counts_ask_the_tables_the_deployed_schema_has` | Head-only counts, filtered to the window -- and pointed at the renamed legacy tables, not the names the rename freed up. |
+| `test_weekly_new_counts_on_the_baseline_schema` | No description provided. |
+| `test_weekly_new_counts_on_an_executor_ask_the_same_four_tables` | The snapshot hands its pool down so the counts join the concurrent batch; the executor path must be the sequential path, only faster. |
+| `test_the_snapshot_assembles_correctly_when_reads_finish_out_of_order` | The earliest-submitted reads finish last here, so any assembly that depended on completion order (rather than on which future is which) would scramble the payload. |
+| `test_a_failing_read_fails_the_snapshot_with_its_own_exception` | Concurrency must not soften errors into a partial payload: the read's own exception type propagates, exactly as it did sequentially. |
 
 
 ## `test_registration_contracts.py`
@@ -677,8 +1058,8 @@ No description provided.
 | Test Function | Description |
 |---------------|-------------|
 | `test_google_and_email_password_are_supported_configured_methods` | No description provided. |
-| `test_establishing_a_session_clears_the_preauth_csrf_cookie[establish_session]` | No description provided. |
-| `test_establishing_a_session_clears_the_preauth_csrf_cookie[establish_recovery_session]` | No description provided. |
+| `test_establishing_a_session_clears_the_preauth_csrf_cookie[establish_session-extra0]` | No description provided. |
+| `test_establishing_a_session_clears_the_preauth_csrf_cookie[establish_recovery_session-extra1]` | No description provided. |
 | `test_unsupported_auth_method_fails_closed` | No description provided. |
 | `test_auth_methods_can_swap_primary_without_changing_enabled_order` | No description provided. |
 | `test_production_refuses_disabled_email_confirmation` | No description provided. |
@@ -699,6 +1080,45 @@ No description provided.
 | `test_auth_method_and_registration_routes_are_mounted` | No description provided. |
 | `test_stalled_refresh_does_not_block_public_auth_methods` | Provider I/O must not freeze the login screen's public configuration. |
 | `test_dashboard_snapshot_does_not_block_the_api_event_loop` | A slow tenant projection must leave public auth routes schedulable. |
+
+
+## `test_resident_capability.py`
+The resident capability, which is a residency and not a role.
+
+`require_membership_role("resident")` guarded the resident verbs -- cancel work,
+reopen, confirm a resolution, answer a proposed visit -- and refused them to the
+admin who owns flat B-402. That was never a policy anybody chose. One
+`community_memberships` row exists per person per community
+(`memberships_active_person_community`, `0001_baseline.sql:45`), so the person
+who both runs the association and lives in it has exactly one membership and its
+role says `admin`; the fact that they are also a resident lives in
+`unit_residencies` and nowhere else.
+
+`require_resident_capability` asks `unit_residencies`. These tests pin the three
+things that makes true and the two it must not change:
+
+1. `resident` passes with **no query at all** -- the guard runs on every one of
+   these routes and the common caller must not pay for the uncommon one.
+2. Any other role passes if and only if an active residency row exists.
+3. The query is the one the session layer already runs
+   (`app/services/auth_service.py:463-471`): `unit_residencies`, membership
+   equality, `ended_at is null`, one row.
+4. The refusal is byte-identical to the role guard's -- same message, same
+   `community_role_required` code. Widening who passes must not be a wire change.
+5. It still refuses staff who live nowhere, which is the whole reason the routes
+   are guarded.
+
+*Total tests in this file: 7*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_a_resident_passes_without_a_single_query` | The role is already the answer, and this guard sits on every resident write in the product. A round trip that could only ever confirm what the role column already said is a round trip on every one of them. |
+| `test_an_admin_who_lives_here_passes` | The reason this exists. An admin with a flat is the resident of that flat, and the role column was never where that fact was recorded. |
+| `test_an_admin_who_lives_nowhere_is_refused` | The guard is not a licence for staff. An association secretary who lives across town still may not confirm a resolution on somebody's home; the admin portal's own raise endpoint is where their complaints go. |
+| `test_the_refusal_is_identical_to_the_role_guard_s` | Widening who passes is not a wire change. Every client that already handles the resident 403 must keep handling this one, so the two refusals are compared to each other rather than to a literal. |
+| `test_the_lookup_is_the_one_the_session_layer_already_runs` | `unit_residencies`, this membership, `ended_at is null`, one row. Two places answering "is this person resident here" must not be able to disagree, and `ended_at is null` is also the predicate the partial unique index `residencies_active_member_unit` is built on. |
+| `test_one_query_and_not_two` | The guard runs on every write it protects, so a duplicated read here is a duplicated read on all of them. |
+| `test_a_past_tenant_is_not_a_resident` | The row is filtered in the database, so "moved out" arrives here as no rows. Pinned because a guard that read the residencies and then decided in Python is one refactor away from forgetting the `ended_at` test. |
 
 
 ## `test_service_professional_migrations.py`
@@ -729,6 +1149,42 @@ Real local-Supabase service-professional flow using authenticated user JWTs.
 | `test_radius_boundary_stable_top_twenty_and_name_filter` | No description provided. |
 | `test_concurrent_registration_creates_one_complete_provider` | No description provided. |
 | `test_funnel_retention_removes_only_expired_events` | No description provided. |
+
+
+## `test_session_capabilities.py`
+What `capabilities` on the session promises, and who it promises it to.
+
+`GET /auth/session` returns a list of words the frontend renders navigation
+from. It is the *only* thing that decides whether an admin is offered the
+resident portal at all -- there is no second check in the browser -- which makes
+a wrong entry here invisible in exactly the way a wrong `portal` value is:
+nothing errors, somebody is simply shown a door.
+
+**The rule under test.** An admin is also a resident when they actually live
+here. There is one `community_memberships` row per person per community
+(`0001_baseline.sql`:45), so admin-ness and resident-ness are not two rows and
+not two roles; resident-ness is an active `unit_residencies` row and nothing
+else (product ruling, 2026-08-20). `require_resident_capability`
+(`app/api/deps.py`) asks that table per request. This is the same question asked
+once, at sign-in, from a read the session already performs -- so the two cannot
+disagree.
+
+They did. `capabilities.append("resident")` fired on `role == "admin"` alone,
+which meant a flat-less admin -- a managing-committee member who owns nothing in
+the society, which is common -- was shown the resident portal and then refused by
+the guard on the first thing they clicked in it. A 403 nobody can act on is worse
+than an absent menu item, because it looks like a bug in the software rather than
+a fact about the account.
+
+*Total tests in this file: 5*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_an_admin_who_lives_here_is_also_a_resident` | Both capabilities, and the residency is what earns the second one. |
+| `test_an_admin_who_lives_nowhere_is_only_an_admin` | The defect this module exists for.  A committee member who owns no flat is an ordinary account, not an edge case. The session used to hand them the resident portal on the strength of their role, and `require_resident_capability` would then refuse every write inside it -- so the menu item was real and everything behind it was a 403. |
+| `test_the_answer_comes_from_the_residency_table` | Same table `require_resident_capability` asks, which is the whole point: one source, so the session and the per-request guard cannot drift. |
+| `test_a_resident_is_not_given_a_second_copy_of_their_own_capability` | The grant is admin-only. A resident's capability is their role, and the predicate must not have turned into "anyone with a residency". |
+| `test_a_manager_with_a_flat_is_still_only_a_manager` | The ruling is about admins specifically, and widening it here would be a product decision wearing the clothes of a consistency fix. A manager who lives in the society reaches the resident portal the same way anybody else does -- by holding a `resident` membership -- and that is not this row. |
 
 
 ## `test_session_portal.py`
@@ -821,6 +1277,198 @@ is a test failure and not a quiet behaviour change:
 | `test_omitting_a_field_is_distinct_from_sending_null` | The whole basis of the patch: null clears the unit-label override and returns to deriving it; an absent key leaves it as it was. |
 | `test_an_invite_ttl_beyond_thirty_days_is_rejected` | An invite that outlives a month is not a second factor, it is a credential sitting in an inbox. The database CHECK agrees; this is the earlier of the two. |
 | `test_visitor_code_ttl_bounds` | No description provided. |
+
+
+## `test_supervisor_actions_migration.py`
+`20260822170000_supervisor_actions.sql` -- what a static reader can prove
+about a file nobody in this repository runs.
+
+Amendment 2 of the supervisor dashboard: the buttons on the cards. It adds a
+`complaint` chat thread, four complaint verbs, a hand-operated force-assign, a
+re-bucketed snapshot, and **one** new `complaint_events` word.
+
+The properties worth asserting without a database are these.
+
+**Is the new event word the only one, and is the constraint's old vocabulary
+intact?** The 2026-08-22 lesson (runbook 19) cost a whole extra migration:
+`complaint_events_type_check` enumerates its words, so a word is a migration.
+Recreating an enumerating constraint risks *losing* one, and a lost word poisons
+every later insert of that type. So the list is not reviewed here -- it is
+**derived** from `20260822150000`'s own text plus exactly `priority_changed`,
+and compared. The same derivation is applied to `dm_threads_kind_check` against
+`0046`.
+
+**Is the copy of `post_dm_message` additive?** It is `0046`'s, redeclared whole
+under the house convention to admit a department to its own complaint thread.
+Every non-blank line of the owning file's version has to still be present
+verbatim -- the 1--4000 check, the `HB404` that hides other people's threads, the
+`HB409` lock and the notification are each things that can vanish without
+anything erroring.
+
+**Does `supervisor_resolve_complaint` avoid saying the same thing twice?**
+`complaints_on_resolved` (`20260813104000`) already writes the `status_changed`
+event, notifies the raiser and arms both auto-close timers when the status moves.
+So this file must *not* -- and must fail its own apply if that trigger is
+missing, because a Resolve that tells the resident nothing is the failure with no
+symptom.
+
+**Is the dead column still dead?** Ruling 1 of 2026-08-21. Resolve, priority and
+notes are all triage; nothing here writes `assigned_to_membership_id` or
+`assignee_label`.
+
+**Is anything destructive beyond what it must be?** The four `drop`s this file is
+allowed are named one by one, and everything else is forbidden.
+
+*Total tests in this file: 42*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_the_snapshot_query_parses_on_its_own` | A syntax error in the query that fills the entire dashboard would sail past the whole-file parse and surface in the SQL editor, on a live database, in front of the owner. |
+| `test_it_sorts_after_every_file_whose_work_it_builds_on` | Filename order is apply order.  `20260822150000` is the tightest: this file recreates the same constraint, and applying that one afterwards would silently drop `priority_changed` back out of the vocabulary. `0046` matters because the `complaint` kind is an extension of a CHECK that file creates, and `20260822120000` because the snapshot replaced here is the one it declared. |
+| `test_it_is_the_last_word_on_both_functions_it_replaces` | Not "it is last in the directory" -- that property has expired five times in this directory already. The property is being last *among the files that declare this function*, which is what decides which body the database holds. |
+| `test_it_redeclares_nothing_else_the_sibling_files_pin` | One function is copied forward and no others.  Each name below is one a sibling static-check file guards and one this file plausibly could have touched: the engine's own force-assign it is modelled on, the offer path it must leave byte-for-byte alone, the thread openers beside its own, the auto-close trigger it depends on, and the two functions phase one copied forward. Copying any of them forward to gain nothing would put this file in the way of the next person who needs to change one. |
+| `test_it_never_writes_the_dead_complaint_column` | Ruling 1 of 2026-08-21, restated for amendment 2. Resolve, priority and notes are triage; who is going is a work-order assignment, and the whole design depends on not answering the second question by accident. |
+| `test_the_new_event_list_is_the_old_list_plus_exactly_priority_changed` | Held by derivation rather than review.  Every word `20260822150000` allowed, plus the one word amendment 2 adds, and nothing else. A word dropped here would make the guard block refuse the apply (good) or, were the guard wrong, poison every later insert of that type (bad). |
+| `test_the_file_writes_no_event_word_the_constraint_does_not_allow` | The 23514 of 2026-08-22, asked of this file before it is applied rather than after. Every literal this file inserts as an `event_type` must be in the list it recreates. |
+| `test_the_thread_kind_list_is_the_old_list_plus_exactly_complaint` | The same derivation for `dm_threads_kind_check`, whose two words are `0046`'s. Losing `work_order` here would make every job chat unwritable. |
+| `test_both_constraint_swaps_are_guarded_before_the_drop` | `20260822150000`'s shape, twice.  The guard runs before the DROP, so its exception leaves the old constraint standing untouched. Without it, a row outside the new list would fail the ADD with the old constraint already gone -- a table with no check on it at all. |
+| `test_the_verification_proves_the_new_word_specifically` | A bare existence check would pass against the very constraint this file replaces. |
+| `test_the_complaint_thread_is_one_row_per_complaint_and_cascades` | `on delete cascade` is forced rather than chosen: the subject CHECK makes `kind = 'complaint'` and a non-null `complaint_id` the same fact, so `set null` would raise 23514 and refuse to delete the complaint at all. |
+| `test_only_the_thread_opener_writes_the_complaint_id` | One writer, asserted as a count. A second one -- a backfill, a trigger -- would attach a conversation to a complaint nobody opened it about. |
+| `test_the_thread_seeds_the_frozen_sentence` | Approved copy, and the title is interpolated rather than described. |
+| `test_the_opener_returns_the_existing_thread_before_it_resolves_a_pair` | "A later supervisor joins the existing thread rather than forking a second one" is this ordering and nothing else: the lookup happens before the pair is computed, so the second supervisor gets the first one's thread with their own right to write it coming from the policy rather than from the row. |
+| `test_the_lock_mirrors_the_job_thread_and_reopens_what_a_job_cannot` | `closed \| cancelled` shuts the channel and says so in it; anything else opens it again. The `else` arm is the one difference from `0046`'s trigger, and it exists because a complaint can be reopened and a job cannot. |
+| `test_reading_and_writing_a_complaint_thread_ask_the_same_question` | One rule, three places, and they cannot drift because all three call it.  A read policy that admitted the department while `post_dm_message` did not would be a chat a supervisor can open, watch, and never answer in. |
+| `test_the_post_message_copy_is_purely_additive` | The house convention, checked rather than promised.  Every non-blank line of `0046`'s `post_dm_message` has to still be present. The length check, the `HB404` that hides other people's threads, the `HB409` lock, the `last_message_at` bump and the counterpart notification are all lines that can vanish without anything erroring -- and the lock is the whole of amendment 2's write-locking requirement. |
+| `test_the_post_message_copy_keeps_its_signature_and_return_type` | `create or replace` refuses a changed return type and would fail on the hosted database; a new defaulted parameter would create an overload rather than replace anything, which fails silently and is worse. |
+| `test_resolve_refuses_a_running_job_and_a_settled_complaint` | The refusal the button exists to produce well. Somebody is inside a resident's flat: the honest answers are to let them finish or to cancel the visit, and both are somebody's deliberate act. |
+| `test_resolve_cancels_every_other_live_job_and_tells_its_worker_why` | Ruling A2's other half, with the frozen reason. A worker holding an offer must not find out from an empty queue, and an assignment is withdrawn rather than deleted -- one holder at a time, and the history survives. |
+| `test_resolve_leaves_the_status_event_and_the_notification_to_the_trigger` | `complaints_on_resolved` (`20260813104000`) writes the `status_changed` row, notifies the raiser `complaint.resolved` and arms both auto-close timers when the status moves. This function moves the status, so all four happen in the same transaction. Writing them here as well would put two "Status changed to Resolved" lines on one timeline and buzz one phone twice. |
+| `test_the_file_refuses_to_apply_without_the_auto_close_trigger` | Because the paragraph above is a dependency and not a comment. A hosted database missing `complaints_on_resolved` would give this feature a Resolve button that tells the resident nothing, with nothing anywhere erroring. |
+| `test_priority_is_one_way_and_stops_at_high` | A supervisor who could lower a priority could quietly un-escalate something somebody else escalated -- a different decision, worth a different verb and a different audit line. |
+| `test_priority_moves_the_live_jobs_with_the_complaint` | A job's urgency *is* its complaint's urgency -- `create_work_order` never took a priority argument for exactly that reason. A live job left at the old value is a dispatcher acting on the answer before the escalation. |
+| `test_priority_writes_the_event_in_storage_vocabulary_and_notifies_nobody` | The payload carries `medium`/`high`; the sentence the resident reads says *Medium*/*High*, and `app/domain/vocabularies.py` is the seam. A `case` in SQL would be a second copy of that table in a language nobody would look in. |
+| `test_a_note_is_flagged_internal_and_bounded` | Ruling A5: the flag is on the payload rather than in a new event word -- which would have cost the constraint rebuild a second time -- so the admin's resident-visible notes, which carry no flag, are untouched. |
+| `test_every_complaint_verb_asks_the_same_guard_the_snapshot_asks` | One predicate, five callers. A verb that asked a different question from the dashboard it is pressed on would put a button on a card that refuses it. |
+| `test_an_unrouted_complaint_is_a_conflict_and_not_a_refusal` | Phase one's call, ratified by the orchestrator and applied to all four verbs: there is no department to supervise, so `HB403` would tell a supervisor they lack a permission when what is missing is the routing. |
+| `test_force_assign_is_the_engine_s_mechanics_with_a_guard` | Modelled on `dispatch_force_assign` and deliberately not a second mechanism: the same `is_forced` accepted row, the same two timeline events, the same notifications. What it adds is the guard the dispatcher does not need -- this caller is a person. |
+| `test_force_assign_withdraws_the_previous_holder_and_refuses_a_closed_job` | The assign idiom: one holder at a time, withdrawn rather than deleted, and a terminal job refused. Forcing overrides the worker's consent, not the state machine. |
+| `test_force_assign_takes_the_frozen_two_arguments_and_defaults_the_rest` | The spec froze `force_assign_work_order(work_order_id, staff_assignment_id)`. The two slot parameters default to null, so that call is exactly this function -- and a supervisor who picked the person and the hour in one gesture does not need a second round trip to set the time. |
+| `test_the_five_buckets_are_defined_here_and_only_here` | The frozen contract says the frontend renders the arrays as-is, which means these five predicates are the definitions and not a copy of them.  *Committed* replaces phase one's *engaged* and the difference is one word: an `offered` assignment no longer counts, because a job nobody has accepted is an open request rather than assigned work. |
+| `test_the_two_complaint_sections_exclude_any_live_work_order` | "Furthest stage wins": a complaint with a job appears once, as that job, in whichever of sections 3-5 it has reached. Phase one excluded only *engaged* work, which put an unaccepted job's complaint in section 2 and its work order nowhere. |
+| `test_the_two_names_are_two_facts` | `assigneeName` is the person who accepted; `offeredToName` is the person who has been asked. One field carrying both would make a section-3 card read "Ravi is coming" about a job Ravi has not answered. |
+| `test_the_snapshot_is_replaced_wholesale_and_still_writes_nothing` | Dropped and recreated rather than replaced, because it is a different answer to the same question and the old one should not be reachable by a caller who missed the change. It remains a read: `stable`, and no write verb anywhere in it. |
+| `test_every_section_is_newest_first_and_translates_no_vocabulary` | One ordering, five times. The urgent stack is the frontend's own pinning and is deliberately not sorted for here. |
+| `test_the_python_wire_model_agrees_with_the_rpc` | The half-landed change this catches: the SQL ships and the service reads a key the function does not emit, which is a silently empty dashboard section rather than an error. |
+| `test_the_only_ddl_is_what_this_file_declares_it_makes` | Four `drop`s, each named, and nothing else destructive.  The snapshot is dropped because it is being replaced by a different answer; the two policies and the trigger are dropped because `create policy` and `create trigger` have no `or replace`. Everything else -- a table, a column, a view, an index, a row -- is out of bounds. |
+| `test_every_sqlstate_it_raises_is_one_the_api_can_map` | A SQLSTATE `pg_errors` has never heard of surfaces as a 500 with a generic message -- the one failure mode a supervisor cannot act on, because the sentence the RPC wrote never reaches them. |
+| `test_it_verifies_itself_in_the_same_transaction` | `20260822090000` 2's shape: a file that claims to have added something fails rather than reporting success. The two `prosrc` probes are the ones that matter most -- a `create or replace` that lost the department clause from `post_dm_message`, or an older snapshot winning, are both failures with no symptom. |
+| `test_every_new_function_is_granted_to_somebody` | A definer function nobody may execute is a feature that fails with 42501 at the first press. The trigger function is the deliberate exception: it runs as the trigger's owner and has no business being callable. |
+
+
+## `test_supervisor_triage_migration.py`
+`20260822120000_supervisor_triage.sql` -- what a static reader can prove
+about a file nobody in this repository runs.
+
+The file is pasted into the Supabase SQL editor by a person, once, against a live
+database. It adds the four facts the supervisor dashboard needs and the model
+could not say: that a supervisor has *picked a complaint up*, when a worker
+actually *started*, and that a job arrived by somebody else's removal rather than
+by the reader's own hand.
+
+The properties worth asserting without a database are these.
+
+**Does it sort last, and does it stay out of the other files' way?** Five sibling
+static-check files pin earlier migrations by name. This one redeclares two
+functions on purpose and must redeclare nothing else.
+
+**Are the two copies additive?** `start_work_order` (`0039`) and
+`restamp_department_supervision` (`20260821200000`) are reproduced whole under
+the house convention (`20260812113000` 1) to gain one stamp each. A copy that
+quietly dropped the resident notification, an `HB404`, the successor lookup or
+the `get diagnostics` would not error -- it would delete behaviour. So every
+non-blank line of the owning file's version is required to still be present,
+verbatim, which is the check that catches a copy made by retyping.
+
+**Do the two new columns have exactly one writer each?** `taken_up_at` is
+`take_up_complaint`'s and `supervision_inherited_at` is
+`restamp_department_supervision`'s. A second writer for either is a dashboard
+section that fills up for reasons nobody chose.
+
+**Is the dead column still dead?** Ruling 1 of 2026-08-21: nothing new writes
+`complaints.assigned_to_membership_id` or `assignee_label`. Take-up is triage
+ownership and is exactly the change most likely to be mistaken for dispatch, so
+the absence is asserted rather than argued.
+
+**Is anything destructive?** Nothing here may drop a column, a function, a table
+or a policy, and nothing may delete a row. The only DDL shapes are `add column if
+not exists` and `create index if not exists`.
+
+Whether Postgres accepts the bodies is a question only Postgres answers; `pglast`
+parsing it -- the whole file, and then the snapshot query on its own, because a
+function body is an opaque string to the outer parse -- is as close as this suite
+gets. The rest is in `docs/plans/MIGRATION_APPLY_RUNBOOK.md` 18.
+
+*Total tests in this file: 29*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_the_snapshot_query_parses_on_its_own` | The check the whole-file parse cannot make.  Everything interesting in this file is inside a `$$ ... $$` body, which the outer parse reads as one opaque string -- so a syntax error in the query that fills the entire dashboard would sail past `test_the_migration_parses_as_postgresql` and surface in the SQL editor, on a live database, in front of the owner. |
+| `test_it_sorts_after_every_file_whose_work_it_builds_on` | Filename order is apply order.  `20260821200000` is the tightest: this file copies its `restamp_department_supervision` forward, and sorting before it would mean the version *without* the stamp is applied second and wins -- silently, because both files declare the same name. `20260822090000` matters for a different reason: until that file is applied nothing can insert a `work_orders` row at all, so a column added here would be a column on a table nobody can write. |
+| `test_it_is_the_last_word_on_both_functions_it_copies` | Not "it is last in the directory" -- that property has expired four times in this directory already. The property is being last *among the files that declare this function*, which is what decides which body the database ends up holding. |
+| `test_it_redeclares_nothing_else_the_sibling_files_pin` | Two functions are copied forward and no others.  Each name below is one a sibling static-check file guards, and each is one this file plausibly *could* have touched: the trigger that calls the re-stamp, the successor rule behind it, the status projection that gains a second writer for `acknowledged`, and the department queue whose read the snapshot generalises. Copying any of them forward to gain nothing would put this file in the way of the next person who needs to change one. |
+| `test_it_never_writes_the_dead_complaint_column` | Ruling 1 of 2026-08-21, restated by ruling 1 of 2026-08-22 because take-up is the change most easily mistaken for dispatch.  `complaints.assigned_to_membership_id` has one writer (`update_complaint`, `0031`) and no reader anywhere. Take-up records who is *looking at* a complaint; who is going is a work-order assignment, and the whole design depends on not answering the second question by accident. |
+| `test_take_up_is_the_only_writer_of_the_take_up_columns` | One writer, asserted as a count rather than promised in prose.  A second writer -- a backfill, a trigger, a convenience `update` in the snapshot -- would fill the dashboard's second section for reasons nobody chose, and there is no error anywhere to notice it by. |
+| `test_take_up_moves_the_status_only_from_open` | Ruling 2, and the half of it that is not the headline.  `acknowledged` gains a second writer deliberately. What it must not gain is a path that walks a complaint *backwards*: one a worker has already started is `in_progress`, and a triage button is not a reason to un-start it. |
+| `test_take_up_writes_the_timeline_and_notifies_nobody` | A passive field change under ARCHITECTURE.md's rule.  The resident learns the same fact from the status their screen re-snapshots within a beat, so a notification would be a second telling of one thing. The timeline entry is not the same category: it is the record, and `0020`'s reader renders it. |
+| `test_take_up_refuses_three_ways_and_is_idempotent_for_its_owner` | 404 unknown, 403 not yours, 409 somebody else's -- and a second press by the same person is a no-op rather than the 409 a naive implementation gives it. A double-clicked button is not an error worth a message. |
+| `test_take_up_refuses_an_unrouted_complaint_as_a_conflict_not_a_refusal` | There is no department to supervise, so `HB403` would tell a supervisor they lack a permission when what is missing is the routing. |
+| `test_the_start_copy_is_purely_additive` | The house convention, checked rather than promised.  Every non-blank line of `0039`'s `start_work_order` has to still be present. The resident notification, both `HB404`s, the `HB409`, the already-started early return and the `job_started` event are all lines that can vanish without anything erroring -- and the last of them is what the resident's timeline is built from.  This is also why the added assignment is written leading-comma style: the line `set status = 'in_progress', updated_at = now()` survives verbatim, so the copy is *provably* additive rather than additive-looking. |
+| `test_the_restamp_copy_is_purely_additive` | The same check for `20260821200000`'s `restamp_department_supervision`.  The successor lookup, the "nothing to move" pre-check, the department scope on both the check and the update, and `get diagnostics` are each load-bearing: losing the scope would hand a membership's work in *every* department to whichever one lost them first, and losing the diagnostics would make the last-supervisor notice claim zero jobs moved. |
+| `test_neither_copy_changes_its_signature_or_return_type` | `create or replace` refuses a changed return type and would fail on the hosted database; a new defaulted parameter would create an overload rather than replace anything, which fails silently and is worse. |
+| `test_each_stamp_has_exactly_one_writer` | `started_at` is the worker's Start and `supervision_inherited_at` is the re-stamp, and neither is written anywhere else in this file.  A stamp with two writers is a dashboard badge that appears for two different reasons, one of which nobody documented. |
+| `test_the_start_stamp_cannot_be_reset` | `coalesce(started_at, now())`, not `now()`.  The already-`in_progress` early return means a second press cannot reach the statement today. It is written defensively anyway because the dashboard's elapsed time is measured from this column, and a future writer that reaches `in_progress` some other way should not be able to restart the clock. |
+| `test_the_inherited_stamp_marks_only_what_the_restamp_moves` | Same row, same statement, same scope. Marking rows the re-stamp did not move would badge work that arrived by somebody's own hand as inherited. |
+| `test_the_snapshot_asks_the_same_guard_the_department_queue_asks` | `can_supervise_department`, and a refusal rather than an empty snapshot.  An empty dashboard and a refused one look identical on a screen, and the difference is the whole content of the answer. The predicate is the one `department_complaints` (`20260813103000`) and `create_work_order` (`0036`) already ask, so the dashboard and the verbs on it agree about who may act. |
+| `test_the_snapshot_writes_nothing` | It is a read and it decides nothing -- the claim `COMPLAINT_ENGINE_HANDOFF.md` 18 makes on this engine's behalf. `stable` is the declaration of that, and the absence of every write verb is the proof. |
+| `test_the_four_buckets_are_defined_here_and_only_here` | The frozen contract says the frontend renders the arrays as-is.  Which means these four predicates are the definitions, not a copy of them. Each is asserted by the shape that makes it wrong if it drifts: `new` is untouched work, `taken_up` is stamped work nobody is engaged on, `assigned_pending` is engaged work that has not started, `in_progress` is what the worker started. |
+| `test_every_section_is_newest_first` | One ordering, four times. The urgent stack is the frontend's own pinning and is deliberately not sorted for here -- a server that pre-pinned would be deciding a layout. |
+| `test_the_snapshot_never_translates_a_vocabulary` | `app/domain/vocabularies.py` is the one place this codebase maps a stored word to a rendered one. A `case` in SQL turning `high` into `High` would be a second copy of that table, free to disagree with it, in a language where nobody would think to look for it. |
+| `test_the_reroute_marker_is_derived_from_the_timeline_and_not_a_column` | `reroutedAt` is the newest `department_assigned` event naming *this* department as the destination.  `raise_complaint` writes `raised` rather than `department_assigned` (`20260812090300` 3), so automatic routing at raise time is correctly not a reroute -- only an admin allotting, a manager moving, or an accepted transfer request is. A column would also have been wrong: a complaint can arrive here more than once, and the events already record every arrival. |
+| `test_the_snapshot_reads_the_two_new_stamps` | The columns exist for these two sections and would otherwise be write-only.  `startedAt` is what makes "being worked right now" show for how long, and `inheritedAt` is the badge ruling 3 partially reversed `16`'s "no new column" to make possible. |
+| `test_the_four_columns_are_added_additively_and_nullable` | `add column if not exists`, which is what has always applied cleanly around the hosted tables' legacy columns (`20260820120000`, `20260822090000`).  Nullable with no default, deliberately: `taken_up_at is null` **is** the answer to "is this untouched", and a default would make every row that predates this file claim a moment nobody lived through. |
+| `test_nothing_is_destructive` | This file adds. It may not remove anything, and it has no view or trigger to drop and recreate -- so unlike its siblings, the count of `drop` statements it is allowed is zero. |
+| `test_every_sqlstate_it_raises_is_one_the_api_can_map` | A SQLSTATE `pg_errors` has never heard of surfaces as a 500 with a generic message -- which is the one failure mode a supervisor cannot act on, because the sentence the RPC wrote never reaches them. |
+| `test_it_verifies_itself_in_the_same_transaction` | `20260822090000` 2's shape: a file that claims to have added something fails rather than reporting success.  The two `prosrc` probes are the ones that matter most, because a `create or replace` losing its stamp is the failure with no symptom -- the dashboard section simply stays empty and nothing anywhere errors. |
+| `test_the_python_wire_model_agrees_with_the_rpc` | The half-landed change this catches: the SQL ships and the service reads a key the function does not emit, which is a silently empty dashboard section rather than an error. |
+
+
+## `test_taken_up_event_word_migration.py`
+`20260822150000_taken_up_event_word.sql` -- what a static reader can prove.
+
+`take_up_complaint` (20260822120000) writes `event_type = 'taken_up'`;
+`complaint_events_type_check` (20260813105000) enumerates the allowed words
+and did not know it. The first live Take-up press answered 23514 on
+2026-08-22. The cure recreates the constraint with exactly one new word.
+
+The hazard of recreating an enumerating constraint is losing a word: any
+already-allowed type missing from the new list would make the guard block
+refuse the apply (good) or, were the guard wrong, poison every later insert
+of that type (bad). So the word list is not reviewed here -- it is **derived**
+from the creating migration's own text and compared exactly.
+
+*Total tests in this file: 6*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_the_creator_and_the_breaker` | No description provided. |
+| `test_the_new_list_is_the_old_list_plus_exactly_taken_up` | Held by derivation rather than review: every word the creator allowed, plus the one word the breaker writes, and nothing else. |
+| `test_the_breaker_writes_no_other_new_word` | If 20260822120000 inserted a second unknown word, this cure would fix one 23514 and leave its sibling live behind a passing apply. |
+| `test_the_only_ddl_is_the_constraint_swap` | No description provided. |
+| `test_the_guard_refuses_and_the_verification_fails` | The guard runs before the DROP, so its exception leaves the old constraint standing. The verification may only EXCEPTION, and must prove the new word specifically -- a bare existence check would pass against the very constraint this file replaces. |
 
 
 ## `test_unit_residencies_rls_migration.py`
@@ -942,5 +1590,15 @@ are the applied text with seven url lines changed and nothing else.
 | `test_the_url_carries_the_department_the_screen_is_scoped_to` | `:departmentId` is in the path under all three portal bases.  A url that named only the job would resolve to no route at all -- there is no `/admin/work-orders` -- so the department is not decoration. |
 | `test_no_acl_or_comment_is_restated_from_memory` | `create or replace` keeps the oid, so both survive on their own.  Restating them would mean writing out two opposite postures by hand: `0037`'s three are service_role only and `0039`'s three are granted to `authenticated`. A copy that gets one backwards is a privilege change wearing the clothes of a link fix. |
 | `test_the_worker_and_resident_links_in_these_bodies_are_untouched` | Only the supervisor's link moves. The worker's and the resident's do not.  Both were corrected once already (`0036`'s header records `/worker/jobs…` twice), and a body-wide search-and-replace on `?job=` is exactly how they would be broken a third time. |
+
+
+## `test_worker_repository.py`
+No description provided.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_worker_job_read_retries_without_the_v2_column_on_legacy_view` | No description provided. |
 
 

@@ -36,6 +36,7 @@ const createInitialOnboardingState = () => ({
   countryCode: 'IN',
   latitude: '',
   longitude: '',
+  locationLabel: '',
   communityType: COMMUNITY_TYPES.APARTMENT,
   blocks: [createInitialBlock()],
   villas: [createInitialVilla()],
@@ -75,7 +76,12 @@ export const useOnboardingStore = create(
         };
         if (fields[field]) set({ [fields[field]]: value });
       },
-      setCommunityCoordinates: ({ latitude, longitude }) => set({ latitude, longitude }),
+      // `locationLabel` travels with the pair rather than in `setAddressField`:
+      // it is produced by the same gesture that produces the coordinates (a
+      // search result picked, a pin dragged), and one setter keeps the three
+      // from drifting apart across a refresh.
+      setCommunityCoordinates: ({ latitude, longitude, locationLabel }) =>
+        set({ latitude, longitude, locationLabel: locationLabel ?? '' }),
 
       setCommunityType: (communityType) =>
         set((state) => ({
@@ -318,6 +324,7 @@ export const useOnboardingStore = create(
           countryCode: currentState.countryCode ?? 'IN',
           latitude: currentState.latitude ?? '',
           longitude: currentState.longitude ?? '',
+          locationLabel: currentState.locationLabel ?? '',
           villas:
             currentState.villas?.length > 0
               ? currentState.villas

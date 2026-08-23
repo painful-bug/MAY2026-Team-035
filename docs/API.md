@@ -1,10 +1,10 @@
 # HomeBandhu API reference
 
-**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-12
+**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-21
 
 > ## Where the numbers stand
 >
-> The live surface is **199 operations across 168 paths**, all of them in
+> The live surface is **201 operations across 170 paths**, all of them in
 > [`openapi.yaml`](openapi.yaml), all carrying a user-story verdict (§16). Every `###` heading below
 > corresponds to an operation that exists; that is checked mechanically rather than by eye.
 >
@@ -21,6 +21,10 @@
 > **198 across 167**, so three had been sitting in the generated file with this sentence still saying
 > 195. Found by counting `openapi.yaml` rather than by reading the line, which is the only way this
 > ever gets found.)*
+>
+> *(And **199 across 168** until 2026-08-21, moved here rather than found stale: §21's two `geo`
+> reads are this session's, the count was accurate before them, and the line is updated in the same
+> change that invalidated it. Read off `export_openapi.py`'s own summary, not counted by eye.)*
 >
 > **Two contract-wide rules that apply to every endpoint below.**
 >
@@ -53,8 +57,8 @@ checked in under **[`product/`](product/)**.
 - `POST /complaints/{complaintId}/cancel` accepts `{ mode: "cancel" | "repool", reason? }` and returns the refreshed resident complaint. It is available only before work starts; a stale request returns `409`. **Requires the resident capability since 2026-08-20** (§7.2), like the other three resident verbs.
 - `GET /work-orders/{workOrderId}/candidates?includeExcluded=true` returns the supervisor's ranked offer candidates, including workload, distance, leave end and exclusion flag.
 - `POST /complaints` accepts optional `skillId`; when present, the database validates the active skill and snapshots its name as the complaint category.
-- `POST /work-orders/{workOrderId}/assign` now creates a worker offer. The worker must accept before the job is scheduled.
-- The staff detail read is `GET /complaints/staff/complaints/{complaintId}`. It uses this non-colliding path because the existing resident `GET /complaints/{complaintId}` is already mounted unprefixed.
+- `POST /work-orders/{workOrderId}/assign` now creates a worker offer. The worker must accept before the job is scheduled. **Since 2026-08-22** it also takes optional `force: true`, which assigns outright and non-declinably instead (§18, amendment 2).
+- The staff detail read is `GET /complaints/staff/complaints/{complaintId}`. It uses this non-colliding path because the existing resident `GET /complaints/{complaintId}` is already mounted unprefixed. **Since 2026-08-22** its router guard is active membership rather than `require_admin`; the RPC underneath has always decided `is_community_admin OR can_supervise_department` for itself.
 
 > **Standing rule.** Every backend change updates this file in the same commit — new endpoints,
 > changed shapes, changed status codes. The frontend team is not in the room, and an endpoint that
@@ -123,9 +127,18 @@ sets HTTP-only cookies, and the browser simply sends them.
 | `__Host-hb_access` | Supabase access token | No |
 | `__Host-hb_refresh` | Supabase refresh token | No |
 | `__Host-hb_csrf` | CSRF token bound to the access token | Yes — it must be echoed in a header |
+| `__Host-hb_remember` | `"1"` when the user ticked **Remember me**; absent otherwise | No |
 
 Local HTTP development drops the `__Host-` prefix (`hb_access`, …), because browsers reject
 `__Host-` cookies without `Secure`. The names are the only difference; the contract is identical.
+
+**Session length is the user's choice.** `__Host-hb_access` and `__Host-hb_csrf` always expire with
+the access token (~1 hour). `__Host-hb_refresh` is written **without `Max-Age`** unless the sign-in
+asked to be remembered — a browser-session cookie, so closing the browser ends the session and the
+login page is there again. With **Remember me** it carries `Max-Age = AUTH_SESSION_IDLE_DAYS` (30 days
+by default) and the returning visitor is silently signed back in. `__Host-hb_remember` exists only so
+`POST /auth/refresh` can carry that choice across token rotation; it holds no secret, and editing it
+changes nothing but how long the editor's own session survives.
 
 A bearer header is also accepted and takes precedence, which is what server-to-server callers and the
 test suite use:
@@ -369,11 +382,15 @@ how the person signed in.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/auth/oauth/{provider}/start` | **307** to the provider. Plants a signed, HTTP-only PKCE transaction cookie (5-minute TTL) |
+| `GET /api/v1/auth/oauth/{provider}/start` | **307** to the provider. Plants a signed, HTTP-only PKCE transaction cookie (5-minute TTL). Query: `next?`, `remember?` (default `false`) |
 | `GET /api/v1/auth/oauth/{provider}/callback` | **307** back to the frontend, with session cookies set |
-| `GET /api/v1/auth/google/start`, `GET /api/v1/auth/google/callback` | Compatibility aliases, so existing bookmarks and registered Google callbacks keep working |
+| `GET /api/v1/auth/google/start`, `GET /api/v1/auth/google/callback` | Compatibility aliases, so existing bookmarks and registered Google callbacks keep working. `/google/start` takes the same `remember` param |
 
 **A redirect is the success case here**, which is why these four declare `307` and no `2xx`.
+
+`remember=true` is the OAuth spelling of the sign-in card's **Remember me** box. The provider round
+trip has nowhere to keep it, so it is written into the signed PKCE transaction cookie on the way out
+and read back on the callback, which then sets a persistent refresh cookie (§ 1.2).
 
 GoTrue generates the provider `state` itself; supplying our own makes it reject the callback as
 `bad_oauth_state`. The transaction cookie binds the browser to its PKCE verifier instead.
@@ -383,8 +400,8 @@ GoTrue generates the provider `state` itself; supplying our own makes it reject 
 | Endpoint | Request | Notes |
 |---|---|---|
 | `POST /api/v1/auth/password/sign-up` | `{ full_name, email, password, captcha_token?, intent? }` | Password minimum is **15 characters**. `intent` accepts only `service-provider` and is a navigation hint, never a role grant |
-| `POST /api/v1/auth/password/sign-in` | `{ email, password, captcha_token? }` | Sets the session cookies |
-| `POST /api/v1/auth/email/verify` | `{ token_hash, verification_type }` | Spends the one-time hash from the confirmation email and signs the user in |
+| `POST /api/v1/auth/password/sign-in` | `{ email, password, captcha_token?, remember_me? }` | Sets the session cookies. `remember_me` defaults to **`false`**: the refresh cookie then lasts only for the browser session (§ 1.2) |
+| `POST /api/v1/auth/email/verify` | `{ token_hash, verification_type }` | Spends the one-time hash from the confirmation email and signs the user in. Never persistent — the confirmation flow never asked |
 | `POST /api/v1/auth/email/resend` | `{ email, captcha_token?, intent? }` | Sends the confirmation link again and preserves the allowlisted intent. **200 is not a delivery receipt** — provider errors are swallowed so the response cannot enumerate accounts |
 
 With `AUTH_EMAIL_CONFIRMATION_REQUIRED=true` (the default and mandatory in production), an
@@ -427,8 +444,8 @@ is never usable as an ordinary login.
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/v1/auth/session` | The caller's identity, active membership, portal and capabilities. **Requires a token** |
-| `POST /api/v1/auth/refresh` | Rotate the session from the refresh **cookie** — no body |
-| `POST /api/v1/auth/logout` | Revoke at the provider (best effort) and clear the cookies (authoritative) |
+| `POST /api/v1/auth/refresh` | Rotate the session from the refresh **cookie** — no body. Re-issues the same persistence the sign-in chose, read from `hb_remember` |
+| `POST /api/v1/auth/logout` | Revoke at the provider (best effort) and clear the cookies (authoritative), `hb_remember` included — so signing out ends the silent sign-in for good |
 
 `GET /auth/session` is what the frontend routes on: it returns `onboarding_eligible: true` for a
 signed-in identity with no membership yet, and otherwise the membership that decides which portal
@@ -472,6 +489,66 @@ writes; `portal` is derived to agree with it. See
 A session with no membership and no `portal` is somebody about to register a society; `capabilities`
 carries `resident` alongside `admin` for an admin, who may use the resident surfaces.
 
+**One write happens inside this read, and it can now decline.** `claim_staff_invitations` turns any
+pending leadership invitation naming the caller's verified email into a membership and a roster row
+(§8, *Leadership provisioning*). Since 2026-08-21 that claim refuses an invitation the two
+exclusivity rulings forbid — the caller is a registered marketplace provider, or already leads
+another community.
+
+**It runs on every session read, and until 2026-08-21 it did not** (product ruling 8). The call sat
+behind the branch that had already established the caller holds no membership, which meant the whole
+population that *does* hold one never reached it: a resident invited to supervise a department, a
+worker on one community's roster invited to manage another. Their invitation was neither applied nor
+refused — it waited, invisibly, while the inviting department went on seeing `pending` and nothing
+anywhere reported a problem. The refusal half was reachable only by the same narrow population, so
+the two notifications below never fired for anybody who already belonged somewhere. The guard is
+gone. The RPC is idempotent, skips anyone who is already a member of the inviting community, and
+costs one indexed read when nothing is pending; the membership re-read after it stays conditional on
+something actually having been claimed.
+
+**A refused claim is invisible in this *response*, on purpose, and that is the contract.** It is not
+an error and never becomes one: the response is exactly what the caller would have got had no
+invitation existed, so a registered provider lands on `portal: "worker"` and anybody else on
+`onboarding_eligible: true`. No field is added, no status changes, and no client branches on it. The
+alternative design, raising inside the claim, would have been swallowed by
+`auth_service._claim_staff_invitations` and would have abandoned every *other* pending invitation in
+the same call, silently. See §8 for the full rationale.
+
+**Both parties are told out of band, on the first refusal only.** The refusal writes two
+notifications inside the same transaction, guarded by the same `blocked_at is null` edge — the claim
+runs on *every* session read, and a blocked person keeps signing in, so a message outside that guard
+would be re-sent forever.
+
+| Told | `kind` | Where else it appears |
+|---|---|---|
+| The inviting department | `staff_invitation.blocked` | `blockedReason` / `blockedAt` on `GET /departments/{id}/staff-invitations` |
+| The invitee | `staff_invitation.not_applied` | Nowhere else — this is the only thing they are ever told |
+
+**The invitee's message was added 2026-08-21** (`20260821170000_blocked_invitee_notice.sql`), because
+until then they were told nothing at all: they signed in with the address a manager had typed for
+them, the invitation silently did not take, and no surface in the product connected the two. The
+wording is fixed by the product owner and is stored whole as the notification's `body`, with the
+community's name substituted:
+
+> **Registered provider.** "Your invitation to join *{community}* couldn't be applied. This account is
+> registered as a marketplace service professional, and department leadership can't be combined with a
+> provider profile. Ask the community to invite a different email address."
+>
+> **Already leads elsewhere.** "Your invitation to join *{community}* couldn't be applied because you
+> already manage or supervise another community. Leadership is held in one community at a time — once
+> your current engagement ends, the invitation can be applied on your next sign-in."
+
+It is written with `notify_profile`, so it is addressed to the **person** and to no community. That
+is load-bearing twice over: a registered provider hired nowhere holds no membership for a
+community-scoped row to hang on, and a sitting leader's only membership is in the *other* community —
+the one that caused the refusal — so ruling 3's feed scoping (§8) would hide the explanation on the
+day that posting ended. It carries **no `url`**: there is no screen anywhere that lists invitations
+addressed to you, and `items[].url` comes back `""` (§5.2), which the bell renders as a row that
+marks itself read and navigates nowhere.
+
+An invitation that was already blocked *before* that migration was applied stays silent — the edge
+has passed. Correcting or re-issuing the address clears `blockedReason`/`blockedAt` and re-arms it.
+
 | Status | Code | Cause |
 |---|---|---|
 | `401` | `authentication_error` | No refresh cookie, or it is invalid, expired or revoked |
@@ -484,9 +561,20 @@ exception to the active-membership rule: it creates the caller's membership. It 
 access token and the same `X-CSRF-Token`/cookie pair as every unsafe browser request.
 
 **Request.** Required fields are `name`, `community_type` (`apartment` or `layout_villa`),
-`address_line1`, `city`, `state`, `postal_code`, and `admin_profile`. The profile requires `fullName`
-and `unitNumber`; optional structures, map locations, feature keys, contact fields, and a second
-address line are described by `CommunityOnboardingRequest` in [`openapi.yaml`](openapi.yaml).
+`address_line1`, `city`, `state`, `postal_code`, `latitude`, `longitude`, and `admin_profile`. The
+profile requires `fullName` and `unitNumber`; optional structures, map locations, feature keys,
+contact fields, and a second address line are described by `CommunityOnboardingRequest` in
+[`openapi.yaml`](openapi.yaml).
+
+**This body is `snake_case`**, unlike every other request in this API — see §1.3. `location_label`
+follows that convention too.
+
+**`latitude`/`longitude` are required and the RPC refuses a community without them**: every
+proximity search in the service-operations feature is written against the generated `location`
+column, so a society with no pin is a society no serviceman can ever be matched to.
+**`location_label`** (optional, ≤120 characters, added 2026-08-21) is the coarse name of that pin —
+"Whitefield, Bengaluru" — filled in for the founder by §21's picker and editable before submit. It
+is decoration on the coordinate, never a substitute for it.
 
 **200.** Returns `{ "community": { ... }, "admin": { ... } }`: the newly created community and
 founder administrator records.
@@ -861,10 +949,21 @@ emits).
 
 > **Every write in this section notifies somebody.** A status change reaches the resident who raised
 > the complaint; raising, reopening, confirming and a resident's own comment reach the community's
-> admins and **the complaint's own department manager**. The notification is written **inside the
-> same transaction** as the change that caused it, in the RPC rather than in this API, so there is no
-> path that changes a complaint without telling anyone — including the paths this API does not own.
-> See §5.2 for how it is delivered.
+> admins, **the complaint's own department manager** and — since 2026-08-21 — **that department's
+> supervisors**. The notification is written **inside the same transaction** as the change that
+> caused it, in the RPC rather than in this API, so there is no path that changes a complaint without
+> telling anyone — including the paths this API does not own. See §5.2 for how it is delivered.
+
+> **The supervisors were added 2026-08-21** (`20260821200000`, product ruling 7). Ruling R18 —
+> *"supervisors now notified on raise and reopen"* — was recorded as settled in the complaint
+> engine's own ruling table and never implemented: `notify_complaint_staff` reached admins and the
+> department's manager, and stopped. A supervisor is a **rank on a roster row in one department**,
+> deliberately (`0043`), so no role-based helper can name them — which is why the gap survived a
+> review that read the audience as "admins and managers" and found it correct. The arm added is
+> `notify_department_leadership`'s own predicate narrowed to this complaint's department, `distinct`
+> and excluding admins so nobody is told twice. It is in the shared helper rather than at the raise
+> call site, so it holds for every complaint-shaped event: the raise, the admin raise, a reopen, a
+> resident's cancellation, a forced assignment and an all-declined.
 
 > **Corrected 2026-08-12.** That audience used to be `notify_community_staff` — every admin *and
 > every manager in the community*. The manager of the plumbing department was told about lift
@@ -1458,7 +1557,7 @@ Page through departments, each with its roster. **Requires `ADMIN`.**
           "status": "active",
           "membershipId": null,
           "serviceProviderId": null,
-          "activeAssignmentCount": 2,
+          "supervisedWorkOrderCount": 2,
           "openCommitmentCount": 0,
           "departureStatus": null
         }
@@ -1497,12 +1596,23 @@ roster row take two different ids: removal takes this row's `id`, and
 [`POST /departments/{id}/blacklist`](#post-apiv1departmentsdepartmentidblacklist) takes the
 provider's. Without it one screen cannot offer both, which is how the gap was found.
 
-`activeAssignmentCount` counts open complaints held by that member **within that department**, which
-is what the detail screen shows.
+**`supervisedWorkOrderCount` replaced `activeAssignmentCount` on 2026-08-21** (product ruling 5,
+`20260821200000`). It counts the **live work orders this person supervises in this department** —
+`work_orders.supervisor_membership_id`, everything not `completed`, `cancelled` or `failed` — and it
+is `0` for anybody whose `rank` is not `manager` or `supervisor`. That zero is the truth and not a
+placeholder: a team member's number is `openCommitmentCount` below.
+
+What it replaced was a constant. `activeAssignmentCount` counted complaints by
+`assigned_to_membership_id` or by a prefix match on `assignee_label` — one column written by nothing
+(complaints are department-pooled and ruling 1 keeps them that way) and one no frontend has ever
+set — so it was `0` on every row of every roster ever returned, and the hiring screen rendered it as
+"0 open complaints" beside a real number. The field is **gone**, not renamed in place: a client
+reading `activeAssignmentCount` now gets `undefined` rather than a wrong number, which is the
+outcome worth having.
 
 **`openCommitmentCount` is a different number, and the difference matters** (`0043`). That one counts
-open *complaints*; this counts jobs and shifts actually **booked** in their name — a complaint can
-sit with nobody scheduled, and a job can outlive the complaint that caused it. It is projected
+work this person is accountable *for*; this counts jobs and shifts actually **booked** in their
+name — a supervisor holds none of the second, and a worker's job outlives whoever raised it. It is projected
 because it decides which verb a roster row offers:
 [removal](#post-apiv1departmentsdepartmentidmembersstaffidremove) is refused while it is non-zero, so
 a screen that did not know the number could only find out by trying, and a manager would experience
@@ -2670,7 +2780,10 @@ Everything the settings screen needs, in one request. **Requires `ADMIN`.**
     "communityType": "apartment",
     "communityTypeLabel": "Apartment",
     "status": "Active",
-    "createdAt": "2026-01-04T06:20:00+00:00"
+    "createdAt": "2026-01-04T06:20:00+00:00",
+    "latitude": 12.9716,
+    "longitude": 77.5946,
+    "locationLabel": "Whitefield, Bengaluru"
   },
   "preferences": {
     "timezone": "Asia/Kolkata",
@@ -2754,11 +2867,26 @@ Patch the community preferences. Omitted fields are left unchanged. **Requires `
   "inviteTtlHours": 72,
   "visitorCodeTtlMinutes": 120,
   "requireVisitorPreapproval": true,
-  "noticeSmsBroadcastEnabled": false
+  "noticeSmsBroadcastEnabled": false,
+  "latitude": 12.9716,
+  "longitude": 77.5946,
+  "locationLabel": "Whitefield, Bengaluru"
 }
 ```
 
 Every field is optional. The billing toggles are **not** accepted here — they are `PUT /billing-settings`.
+
+**`latitude` and `longitude` travel as a pair or not at all** — sending one without the other is a
+`422`. They are written by `set_my_community_location`, a separate SECURITY DEFINER function that
+re-checks that the caller administers this community, which is why they are not part of the same
+preferences write as everything above them.
+
+**`locationLabel` (2026-08-21) rides with that pair and never alone.** It is an optional place name
+of at most 120 characters, suggested by §21's picker; a label sent without coordinates is ignored,
+because the RPC that stores it is the one that moves the pin, and naming a place the community is
+not would be worse than leaving it unnamed. Omitting it while moving the pin keeps whatever label
+was stored. The community's pin is what every proximity search in the service-operations feature
+measures from; the label is what a person reads.
 
 **`unitLabelSingular: null` clears the override** and goes back to deriving the word from the
 community type, which is not what omitting the field does. An empty string means the same as `null`,
@@ -3838,6 +3966,9 @@ reports `Medium`, permanently.** This story needs one column before it needs an 
 | [`PATCH /complaints/{complaintId}`](#patch-apiv1complaintscomplaintid) | Writes the status **and its timeline entries in one transaction** |
 | [`POST /complaints/{complaintId}/comments`](#post-apiv1complaintscomplaintidcomments) | `resident` visibility reaches the resident; `internal` reaches neither their thread nor their timeline |
 | [`POST /complaints/admin-raise`](#post-apiv1complaintsadmin-raise) | The ownership half: a complaint filed **on a resident's behalf** is owned by *their* membership, so the tracking, the timeline and their own verbs are the ones they already have. The admin is the `raised` event's actor, not the complaint's owner |
+| [`POST /complaints/{complaintId}/take-up`](#post-apiv1complaintscomplaintidtake-up) | The department's end of the same status: *Pending* stops meaning "nobody has looked at this" the moment somebody has, and the timeline says when |
+| [`POST /complaints/{complaintId}/resolve`](#post-apiv1complaintscomplaintidresolve) | And the other end of it, from the screen where the work is actually managed — the confirm-or-reopen aftermath starts here |
+| [`POST /complaints/{complaintId}/priority-raise`](#post-apiv1complaintscomplaintidpriority-raise) | Escalation as visible history rather than a private reclassification: the timeline says the department raised it, and to what |
 | `GET /dashboard/snapshot` → `complaints[]` | Returns `status`, `comments[]` and `history[]`, **filtered to the caller's own complaints** for a non-admin |
 
 > **Closed, 2026-08-04, by `0031`.** The shortfall below was real and is no longer this story's
@@ -4322,6 +4453,8 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-22 | **The supervisor's card actions — amendment 2, four operations and one flag.** `POST /complaints/{complaintId}/resolve`, `/priority-raise`, `/notes` and `/chat` (surface **203 → 207 across 176 paths**), plus `force` on `POST /work-orders/{workOrderId}/assign` and a guard widening on `GET /complaints/staff/complaints/{complaintId}` — backed by `20260822170000_supervisor_actions.sql` and frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md)'s *Amendment 2*, under four product rulings. **Resolve** cancels every other live job with its workers told why and refuses while one is `in_progress`; it moves the complaint to `resolved` and leaves the timeline entry, the resident's notification and both auto-close timers to `complaints_on_resolved`, which already writes them. **Priority** is one-way `Low → Medium → High`, carried onto the complaint's live jobs because a job's urgency *is* its complaint's, and it is the one new `complaint_events` word this amendment cost (`priority_changed` — an enumerating CHECK means a word is a migration, the lesson of `20260822150000`). **Notes** are internal by a payload flag, invisible to the resident and untouched for the admin's resident-visible ones. **Chat** is a real `dm_threads` thread of a third kind, one per complaint, shared by the raiser and the whole department, locked when the complaint closes and unlocked when it reopens. `force: true` on assign routes to `force_assign_work_order` — the dispatch engine's own forced mechanics with the picking removed and a supervisor's guard added — while `false` is the offer flow byte for byte. The snapshot was **re-bucketed into five arrays**: *engaged* became *committed* (an unaccepted offer no longer counts, ruling A3), `openRequests` was added, and the two complaint sections now exclude **any** live work order, so a complaint appears exactly once across the five. `TriageWorkOrder` gains `offeredToName`, additively. |
+| 2026-08-22 | **The supervisor's dashboard — two operations, and three facts the model could not state.** `GET /departments/{departmentId}/triage-snapshot` and `POST /complaints/{complaintId}/take-up` (surface **201 → 203 across 172 paths**), backed by `20260822120000_supervisor_triage.sql` and interface-frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md), against which the screen was built in parallel. The snapshot answers the dashboard's four sections — new, taken up, assigned-but-not-started, being-worked-right-now — in **one read**, and **buckets them server-side**: *live* and *engaged* are defined once, in the RPC, because four definitions that must agree are one definition or they are four answers. Three new columns exist because three facts had nowhere to live: `complaints.taken_up_at` (+ `taken_up_by_membership_id`), so "new" and "mine, not yet dispatched" stop being the same row; `work_orders.started_at`, because `start_work_order` let the moment fall into `updated_at` and the next write overwrote it; and `work_orders.supervision_inherited_at`, which is §16 of the handoff's "no new column" **partially reversed** so an inheriting supervisor can tell the work they chose from the work that arrived by somebody else's removal. Take-up is **triage ownership and never dispatch** — `assigned_to_membership_id` stays the dead column the 2026-08-21 ruling made it — and it gives `acknowledged` a deliberate second writer beside the worker-offer trigger; both move `open` and only `open`, so they cannot race. It notifies nobody, by ARCHITECTURE.md's passive-change rule: the resident reads the same fact as *In Progress* on the next SSE re-snapshot. `US-2.6`'s new row is take-up only; the dashboard read traces to no story, on the standing verdict that a screen only the department can open must not claim a story about what a resident sees. |
 | 2026-08-20 | **`POST /complaints/admin-raise`, and "resident" stops meaning the role column.** One operation added (surface **195 → 199 across 168 paths**, three of the four having arrived unremarked before today). The endpoint files a complaint from the admin portal in two modes decided by one optional `forMembershipId`: **on a resident's behalf**, owned by their membership and appearing on their portal with every resident verb intact, or **attached to no flat**, owned by the admin and admin-portal-only. Provenance lives in the `raised` event — the actor is always the admin, `"on_behalf": true` in the payload — never in the complaint row, so it cannot move a complaint off the list of the person whose home the problem is in. New column `complaints.raised_via` (`'resident'`\|`'admin'`, `20260820150000_admin_raised_complaints.sql`) says which portal owns the raiser-side view; `complaint_overview` exposes it; `GET /complaints` and `GET /complaints/{id}` filter to `'resident'`; the snapshot's complaint rows carry `raisedVia` and print `flat` as `"—"` for `'admin'`. **Six routes widened and one narrowed** by the new `require_resident_capability` (§7.2): resident-ness is an active `unit_residencies` row, so an admin who owns a flat gets the verbs on their own home, while `POST /complaints` — previously any active membership — now refuses a flat-less `worker`, `security` or `manager` with the same `403` `community_role_required` it always used. `GET /auth/session` grants an admin the `resident` capability only with a residency, so the session and the per-request guard stop disagreeing. **`US-2.5`'s new row is the on-behalf mode only** and §16.4 says so; the unattached mode serves no story. |
 | 2026-08-09 | **§18 added — service personnel.** Six operations backed by `0034`: registering as a service person, editing that registration, setting which trades you offer, the offline toggle, and the global skill catalogue. **The first surface on this API whose caller holds no community membership** — a plumber exists before any society has heard of them — which is why none of these routes resolves one and why CSRF is the only guard on the four writes. Overturns two things in print and says so: `USER_IDENTIFICATION.md` and §16.1's *"a staff member is a name on a roster, not an account"*, and `CONFLICT_RESOLUTIONS.md` R16's *"build nothing against them"* for `skills`. Coverage is unchanged — all six trace to no story, because every story this feature eventually closes begins at **hiring**, which is `0035` and not built. `app/api/deps.py` gained a multi-community resolver at the same time, additively: `get_active_membership` keeps its signature, its `Principal` parameter and its single round trip, and `tests/test_membership_set.py` is the evidence offered to the auth workstream. §18 sits after the meta-sections deliberately; the renumber is deferred to this feature's documentation sweep. |
 | 2026-08-08 | **User-story sweep: the matrix was right and its index was not.** §16's verdicts, `api_annotations.py` and the spec agreed on all 24 stories; [`product/USER_STORIES.md`](product/USER_STORIES.md) — the one-line index of the same matrix — did not, on **six**. US-2.2, US-2.5, US-2.6, US-2.8 and US-2.12 still read *partial* or *none* after they closed, and US-2.3 read *none* after moving to partial. Every one erred toward under-reporting, which is the direction nobody checks. Fixed there, with the stale *reasons* on US-2.1, US-2.4, US-2.9 and US-3.1 rewritten too, and the three `#14-user-stories--endpoints` links under `product/` repointed at §16. Eight operations that carry a story tag were named nowhere in that story's own section — the amenity damage and charges writes (US-1.2), `POST /invoices` (US-1.6), `GET /notifications` (US-2.1, US-2.4, US-2.7), `PATCH /complaints/{id}` (US-2.7, which had no endpoint table at all) and `POST /admins` (US-2.9) — now listed. **US-3.1 was the one real traceability defect**: §16.5 has credited `POST /visitor-passes` and `/cancel` with issuing and revoking a scheduled code since `0032`, while the story was absent from the annotation table, so the spec recorded nothing as serving it. Tagged; counts unmoved at 51 served / 48 none, because both operations already carried US-2.2. Root cause recorded plainly: the export guard checks that every **operation** declares its stories, never that every **story** a verdict credits has an operation — `api_map_scan.py` now asks that too. |
@@ -4343,9 +4476,10 @@ that is the whole difference this item made.
 
 ## 18. Service personnel
 
-Backed by migrations `0034`, `0035`, `0036`, `0037`, `0038`, `0039`, `0043` and `0045`. Fifty-five
-operations — `0037` is the engine and adds none of them; `0045` reworks departures and adds the
-three employee-management reads — and they open with the first callers on this API who are **not
+Backed by migrations `0034`, `0035`, `0036`, `0037`, `0038`, `0039`, `0043`, `0045` and
+`20260822120000`. Fifty-seven operations — `0037` is the engine and adds none of them; `0045` reworks
+departures and adds the three employee-management reads; `20260822120000` adds the supervisor's
+dashboard and its one verb — and they open with the first callers on this API who are **not
 members of any community**. Direct messages (`0046`) are §20, because their audience is every
 portal rather than this population alone.
 
@@ -4607,8 +4741,16 @@ Register as a service person. **Requires authentication only.**
 ```json
 { "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
   "phone": "+919876543210", "latitude": 12.9716, "longitude": 77.5946,
-  "serviceRadiusKm": 15, "skillIds": ["…"] }
+  "locationLabel": "Indiranagar, Bengaluru", "serviceRadiusKm": 15,
+  "skillIds": ["…"] }
 ```
+
+**`locationLabel` is optional and never load-bearing** — added 2026-08-21 with the location picker.
+It is a coarse place name of at most 120 characters, filled in for the person by
+`GET /geo/search` or `GET /geo/reverse` (§21) and then editable, and it exists so a hiring
+manager's candidate card can say *where* rather than only *how far*. Distance is computed from
+`latitude`/`longitude` as it always was; nothing reads this field to decide anything. Omitting it,
+here or on the `PATCH`, leaves any stored label alone.
 
 **One atomic, idempotent registration.** Profile upsert and full skill replacement share one
 PostgreSQL transaction. Invalid or inactive skills roll the whole write back; retrying for the same
@@ -4618,6 +4760,16 @@ Coordinates and at least one active skill are mandatory. The radius defaults to 
 between 1 and 500 km. A first registration is refused when the identity already holds an active
 resident, admin or manager membership: professional accounts are separate accounts.
 
+**A manager or supervisor is refused outright, added 2026-08-21** (ruling 1: *leadership is
+invite-only and never from the marketplace pool*). This is a different refusal from the one above and
+needs to be, because a supervisor holds a **`worker`** membership — rank is not role — so the
+separate-account check deliberately lets them through. The message says why there is nothing here for
+them rather than merely that they may not: *"You manage or supervise a community, and leadership is
+not part of the marketplace. A manager or supervisor is placed by an administrator, never matched by
+distance and trade, so there is no professional profile for you to register."* The worker portal
+already routes leadership past this form (`WorkerLayout`), so a caller reaching it is using the API
+directly or has just been given a posting in another tab.
+
 The response is the full profile read back from the database, not the request echoed with an id
 attached — see `GET /service-providers/me` for the three fields that could not be echoed.
 
@@ -4626,7 +4778,9 @@ attached — see `GET /service-providers/me` for the three fields that could not
 | 401 | `authentication_error` | No credentials |
 | 403 | `csrf_invalid`, `csrf_origin_invalid` | The CSRF pair failed |
 | 409 | `conflict` | The identity already has an active non-professional membership |
-| 422 | `request_validation_error`, `missing_value`, `check_violation` | Invalid name, location, radius, duplicate/empty skills, or an unknown/inactive skill |
+| 409 | `leadership_marketplace_conflict` | The identity currently manages or supervises a community (ruling 1, 2026-08-21) |
+| 422 | `request_validation_error`, `missing_value`, `check_violation`, `provider_location_required` | Invalid name, location, radius, duplicate/empty skills, or an unknown/inactive skill |
+| 503 | `service_provider_registration_not_deployed` | The registration RPC is not on the database yet — the rollout gap named in §21 |
 | 500 | `internal_error` | Unhandled |
 
 ### `GET /api/v1/service-providers/me`
@@ -4636,7 +4790,8 @@ The caller's own profile. **Requires authentication only.**
 ```json
 { "id": "…", "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
   "bio": "", "phone": "+919876543210", "latitude": 12.9716, "longitude": 77.5946,
-  "serviceRadiusKm": 15, "status": "active", "isAvailable": true,
+  "locationLabel": "Indiranagar, Bengaluru", "serviceRadiusKm": 15,
+  "status": "active", "isAvailable": true,
   "skillIds": ["…"], "skillNames": ["Plumbing"], "communityCount": 2,
   "createdAt": "…", "updatedAt": "…" }
 ```
@@ -4752,6 +4907,7 @@ one route on this router with a role guard, and the only one about somebody othe
 {
   "id": "e0c4…", "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
   "bio": "Twelve years on residential plumbing…", "phone": "+919876543210",
+  "locationLabel": "Indiranagar, Bengaluru",
   "serviceRadiusKm": 15, "status": "active", "isAvailable": true,
   "skillIds": ["…"], "skillNames": ["Plumbing", "Carpentry"],
   "communityCount": 2, "registeredAt": "2026-07-02T09:00:00Z"
@@ -4770,6 +4926,12 @@ never open one.
 community's own point, which is the question a manager actually has; a home coordinate is a
 different fact, offered for a different purpose. `serviceRadiusKm` is here because it is a statement
 the person published about how far they travel.
+
+**`locationLabel` is here for the same reason `serviceRadiusKm` is** — added 2026-08-21. It is a
+place name of at most 120 characters that the provider typed or accepted ("Indiranagar,
+Bengaluru"), which makes it a statement they published, not a measurement taken of them. The cap is
+what keeps the distinction real: it holds a suburb and a city and does not hold a street address.
+The coordinates it was derived from remain absent from this response and from the candidate list.
 
 **The guard is the whole point of the route.** `service_providers_read` (`0034` §11) is
 `auth.uid() is not null`, so Postgres would hand this row to any signed-in caller — a manager has to
@@ -5014,12 +5176,18 @@ Service people this department could hire, nearest first. **Requires `admin` or 
 [{ "id": "…", "displayName": "Ravi Kumar", "headline": "Plumber, 12 years",
    "phoneE164": "+919876543210", "status": "active", "isAvailable": true,
    "serviceRadiusKm": 15, "distanceKm": 4.2,
+   "locationLabel": "Indiranagar, Bengaluru",
    "matchingSkillNames": ["Plumbing"], "skillNames": ["Plumbing", "Carpentry"],
    "communityCount": 2, "hasOpenApplication": false }]
 ```
 
 The mirror of `GET /worker/communities/search`: the same three rules seen from the other end, plus
 "not already on this roster".
+
+**`locationLabel` (2026-08-21) is nullable and is not the coordinate.** `distanceKm` is measured
+from the community's pin and is the fact; the label is a coarse name the provider wrote for
+themselves, and it is on this card because "4.2 km away" does not say *which direction*. The search
+function returns no `latitude`/`longitude` and still does not.
 
 **`matchingSkillNames` is the subset that put them on this list**, and it is not `skillNames`.
 Showing only the second leaves a manager wondering why an electrician is being offered for a plumbing
@@ -5144,6 +5312,35 @@ the bar, so **no path removes somebody holding work**.
 something that does not happen. And `reason` is a note one person writes about another that reaches
 them in a notification: a `DELETE` cannot carry a body, and the alternative — a query parameter —
 would put it in every access log between the browser and the database.
+
+**Removing a supervisor re-stamps their live work** (`20260821200000`, product ruling 2, 2026-08-21).
+`work_orders.supervisor_membership_id` is the address five notification kinds are delivered to —
+`work_order.no_candidates`, `work_order.resident_accepted` / `_declined`, `work_order.accepted`,
+`work_order.completed` and `work_order.failed` — and until 2026-08-21 nothing re-pointed it. After
+the removal those messages went on being written to the departed person's ended membership, where
+`notifications_read_own` then hid them: the department's live jobs reported their progress into a
+mailbox nobody could open.
+
+Every live work order (anything not `completed`, `cancelled` or `failed`) in **this department**
+whose supervisor was the removed person is now re-pointed at the least-loaded remaining active
+supervisor, or failing that at the department's manager, or — if there is neither — left exactly as
+it is, because a wrong address is worse than a stale one. This happens in an `after update` trigger
+on `staff_assignments`, so it covers this route, an immediate departure approval, the timekeeper's
+dated removal, a blacklist, **and** an admin flipping `status` straight through PostgREST. Nothing
+about the response changes and no request field controls it.
+
+**Residents and workers never see the change**, by construction rather than by suppression: no
+resident-facing or worker-facing read has ever returned a supervisor's identity.
+
+**When the removed person was the department's last supervisor**, the department's manager and the
+community's admins receive one `department.supervision_uncovered` notification — *"You are covering
+…'s complaint queue"* — linking to `/admin/complaints` (rewritten to `/manager/complaints` for a
+manager reader by `portalUrl.js`). It fires once, on the edge, and only for `service` departments: a
+security department's manager lands in `/security-manager`, which has no complaints screen. The
+standing half of the same fact is a banner on the manager's Complaints screen while the department
+has no active supervisor. **No new workspace exists behind either** — `can_manage_department`
+implies `can_supervise_department` (`0036`), so the manager's screens already exceed the
+supervisor's.
 
 | Status | Code | Cause |
 |---|---|---|
@@ -5359,6 +5556,87 @@ typing the address correctly is the only check. The resident invite's mandatory 
 **untouched**; leadership has its own table for exactly that reason. See
 `docs/design/STAFF_PROVISIONING_DESIGN.md`.
 
+##### Who may hold leadership — two rulings, 2026-08-21
+
+> 1. **Leadership is invite-only and never from the marketplace pool.** A supervisor or a manager is
+>    never a freelancer and is never picked from servicemen. A profile holding a `service_providers`
+>    row may not hold a `manager` or `supervisor` roster row, and a profile holding an active
+>    leadership posting is refused marketplace registration.
+> 2. **Leadership is exclusive to one community.** At most one active leadership posting per person
+>    across every community. Technicians are unaffected — they may serve several. Being invited to a
+>    different community *after* the previous posting has fully ended is legitimate and works.
+
+Both are enforced in Postgres by `20260821140000_leadership_exclusivity.sql`, in triggers on
+`staff_assignments` and `service_providers` rather than in each writer, so no API path can route
+around them. Three endpoints surface them, and they surface them differently because they run in
+different places:
+
+| Entry point | Behaviour | Code |
+|---|---|---|
+| `POST …/staff-invitations`, `PATCH …/staff-invitations/{id}` | **Refused, loudly.** An admin is at a screen | `409 leadership_marketplace_conflict` / `409 leadership_already_held` |
+| `GET /auth/session` (the claim) | **Skipped, silently, and marked.** The invitation stays `pending` and gains `blockedReason` | No error — the session read succeeds |
+| `POST /service-providers` | **Refused, loudly.** The registration form renders `error.message` | `409 leadership_marketplace_conflict` |
+
+**An address with no profile behind it is not checked at invite time, and cannot be.** That is the
+ordinary case for leadership — the person has never signed in — so the two rules are asked again at
+the claim, where the profile finally exists.
+
+**Why the claim does not raise.** `claim_staff_invitations` runs inside `GET /auth/session`, on the
+service client, on every membership-less session read, and `auth_service._claim_staff_invitations`
+swallows whatever it raises — deliberately, because claiming is an enhancement to a session that is
+already valid. So a refusal spelled as an exception would not refuse *that* invitation, it would
+abandon the whole call, including any legitimate invitation later in the same loop, silently, behind
+a screen that looks fine. Instead the offending invitation is skipped, kept `pending` (the situation
+is not terminal — the person may leave the other community tomorrow, and both `PATCH` and `DELETE`
+still apply to it), stamped with `blockedReason`/`blockedAt`, and **both parties are notified** on the
+transition: the department gets `staff_invitation.blocked`, and — since
+`20260821170000_blocked_invitee_notice.sql`, 2026-08-21 — the invitee gets
+`staff_invitation.not_applied`, addressed to their profile with no community and no link. §3.5 has
+the approved wording and the reasoning behind both choices. **The session read itself is
+unaffected**: the caller gets their session, and lands wherever their own identity entitles them to —
+the worker portal for a registered provider, the account page for anyone else.
+
+**Why the invitee is told at all, given that the department is.** The department's copy is an
+operational record — it is what turns "the supervisor we created never arrived" into a sentence an
+administrator can act on. It does nothing for the person sitting in front of the screen where nothing
+happened, and that person is the only one who can act on half of it: a registered provider's remedy
+is to ask for a different address, and a sitting leader's is simply to wait until their current
+posting ends, at which point the invitation applies itself on the next sign-in. Neither sentence is
+reachable from any other surface they can see.
+
+##### Removal severs access — ruling 3, 2026-08-21
+
+> *"Once a supervisor/manager is removed from a community and later invited to a different one, they
+> must not be able to see ANYTHING from the old community — engagements, complaints,
+> conversations/messages, calendar, notifications, anything their portal reads."*
+
+Removal already ended both halves of the posting: `remove_department_member` deactivates the
+`staff_assignments` row **and** ends the `community_memberships` row in one transaction, so the
+session read stops finding a membership and the claim path re-opens for the next invitation. What the
+2026-08-21 audit changed is what a *stale* row still granted. No endpoint's request or response shape
+moves; what moves is what comes back in them.
+
+| Surface | Before | Now |
+|---|---|---|
+| `GET /auth/session` | Clean — `_active_memberships` already filtered on `status`/`ended_at` | unchanged |
+| `GET /worker/snapshot` → `communities[]` | Clean — the roster read already asked for active memberships and active assignments | unchanged |
+| `GET /departments/{id}/complaints` and the other supervisor complaint reads | Clean — `can_supervise_department` requires an active roster row *and* an active membership | unchanged |
+| `GET /worker/jobs`, `/worker/jobs/{id}`, `/worker/calendar`, `/worker/unavailability`, `/worker/availability-rules` | **Leaked.** `is_own_staff_assignment` had no time condition, so a removed worker kept every job, every leave entry and every old work order forever | The predicate now requires the roster row to be active and, on the membership arm, the membership to be live |
+| `GET /messages/threads`, `GET /messages/threads/{id}`, `GET /messages/threads/{id}/messages` | **Leaked.** The RLS policies were keyed on the participant columns alone, so a removed supervisor kept reading every community-A thread including the manager's side of their own departure | Both policies now also require an active membership in the thread's community |
+| `GET /notifications` | **Leaked**, in the narrow sense: rows keyed to an ended membership stayed in the feed | Community-scoped rows for an ended membership are hidden; rows addressed to the person with no community stay |
+| `GET /conversations/*` (the hiring thread) | Clean — supervisors were never participants; it is manager-or-provider only | unchanged |
+
+The notifications change **overturns a decision `0041` recorded**, and names it: that file argued
+that "a notification is a copy of something the person was already told, and every inbox in the world
+retains those". Ruling 3 says otherwise for the community-scoped ones. The rule is applied uniformly
+rather than only to leadership, because `remove_department_member` resets the roster row's `rank` to
+`member`, so after a removal nothing in the database still says the person was a supervisor.
+
+**One notification deliberately survives**: the *"you were taken off a roster"* message, which
+`remove_department_member` writes *after* ending the membership. `notify_member` now files a message
+addressed to an already-ended membership against the **person** and no community, so the one thing a
+removed person most needs to read is the one thing the scoping does not hide.
+
 #### `GET /api/v1/departments/{departmentId}/staff-invitations`
 
 Managers and supervisors created here, whether or not they have arrived.
@@ -5368,7 +5646,8 @@ department.
 ```json
 [{ "id": "…", "departmentId": "…", "email": "manager@example.com", "name": "Priya Nair",
    "phone": "+919876543210", "rank": "manager", "jobTitle": "Department manager",
-   "status": "pending", "claimedAt": null, "createdAt": "2026-08-11T09:00:00Z" }]
+   "status": "pending", "claimedAt": null, "createdAt": "2026-08-11T09:00:00Z",
+   "blockedReason": null, "blockedAt": null }]
 ```
 
 **Claimed rows stay in the list.** An administrator needs to distinguish "still expected" from "has
@@ -5378,6 +5657,16 @@ way.
 `claimedAt` is null until their first sign-in. **A `pending` row that is weeks old is usually a
 mistyped address, and this list is the only place that is visible** — nothing is delivered, so
 nothing bounces and nothing errors.
+
+**`blockedReason` (added 2026-08-21) is the other reason a row stays pending**, and it is the only
+place *this reader* gets that answer. It is a sentence written for the administrator — *"They signed
+in, but already manage or supervise another community"* — set when the invitee signed in and one of
+the two exclusivity rulings turned them away. The invitee is told separately, in their own words and
+their own feed (§3.5); the two sentences are deliberately not the same sentence, because one is a
+report about somebody else and the other is an explanation to the person it happened to. `status` is still `pending`, on purpose: they may leave the
+other community tomorrow, and both the correct and the withdraw verbs still apply. `blockedAt` is
+when it was first set, and does not move on repeat sign-ins. Both are `null` on every ordinary
+invitation, and `null` again once one is corrected onto a new address or finally claimed.
 
 Optional `?status=pending|claimed|revoked`.
 
@@ -5411,13 +5700,27 @@ address, and showing an administrator `Manager@Example.COM` while the database w
 Returns **409** when that address already belongs to this community — the claim would fail on the
 same check, so offering the invitation would be offering a dead end.
 
+**Two more 409s since 2026-08-21**, and they carry their own codes rather than plain `conflict`,
+because a client that must offer *"hire them at technician rank instead"* for one and *"wait until
+they leave the other society"* for the other cannot tell them apart from a status:
+
+| Code | Meaning |
+|---|---|
+| `leadership_marketplace_conflict` | That address belongs to a registered service professional. Leadership is never hired out of the marketplace (ruling 1) |
+| `leadership_already_held` | That person already manages or supervises another community (ruling 2) |
+
+Both are only reachable when the address already names a profile. An address nobody has signed in
+with yet is accepted, and the same two rules are asked again at the claim.
+
 | Status | Code | Cause |
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
 | 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
 | 404 | `not_found` | No such department |
 | 409 | `conflict` | That address already belongs to this community |
-| 422 | `request_validation_error`, `check_violation` | A rank outside the two, a blank name, or an address with no `@` |
+| 409 | `leadership_marketplace_conflict` | That address is a registered service professional (ruling 1) |
+| 409 | `leadership_already_held` | That person already leads another community (ruling 2) |
+| 422 | `request_validation_error`, `check_violation`, `validation_error` | A rank outside the two, a blank name, or an address with no `@` — the last of which is the RPC's own `HB422`, which surfaced as a 500 until 2026-08-21 |
 | 500 | `internal_error` | Unhandled |
 
 #### `PATCH /api/v1/departments/{departmentId}/staff-invitations/{invitationId}`
@@ -5458,8 +5761,13 @@ typed?"*.
 | 403 | `csrf_invalid`, `csrf_origin_invalid`, `role_not_permitted`, `HB403` | The CSRF pair, the membership role, or a manager of a different department |
 | 404 | `not_found` | No such invitation |
 | 409 | `conflict` | Already claimed, already withdrawn, the new address already belongs to this community, or it already has an open invitation |
-| 422 | `request_validation_error`, `check_violation` | A rank outside the two, a blank name, or an address with no `@` |
+| 409 | `leadership_marketplace_conflict` | The **new** address is a registered service professional (ruling 1) |
+| 409 | `leadership_already_held` | The **new** address already leads another community (ruling 2) |
+| 422 | `request_validation_error`, `check_violation`, `validation_error` | A rank outside the two, a blank name, or an address with no `@` |
 | 500 | `internal_error` | Unhandled |
+
+A successful correction **clears `blockedReason` and `blockedAt`**: a new address is a new question,
+and leaving the old reason behind would leave the pending list accusing the wrong person.
 
 #### `DELETE /api/v1/departments/{departmentId}/staff-invitations/{invitationId}`
 
@@ -6158,11 +6466,25 @@ Book somebody, and book their hour. **Requires ADMIN, MANAGER, WORKER or SECURIT
 {
   "staffAssignmentId": "…",
   "scheduledStartAt": "2026-08-12T10:00:00Z",
-  "scheduledEndAt": "2026-08-12T11:00:00Z"
+  "scheduledEndAt": "2026-08-12T11:00:00Z",
+  "force": false
 }
 ```
 
 Responds `200` with the job and its assignment history.
+
+**`force` — added 2026-08-22, amendment 2 ruling A4.** Optional, defaults to `false`, and `false` is
+the offer flow described below byte for byte. `true` is the supervisor's explicit **override of the
+consent model**: it calls `force_assign_work_order` instead, which writes an `is_forced` assignment
+straight to `accepted` — the worker cannot decline it, and their card already hides the button for a
+forced row — and then does what the dispatch engine's own `dispatch_force_assign` does when every
+candidate has declined a critical job: the `job_assigned` and `job_force_assigned` timeline entries,
+the worker's notification, the staff notice, and the resident being told somebody is coming.
+
+It is a field on the existing request rather than a route of its own because it is the same request —
+*this person, on this job, at this hour* — answering one further question: may they say no. Its
+refusals are this route's, unchanged, including the double-booking `409` **by name**: forcing
+overrides the worker's consent, not physics.
 
 **Writes an `accepted` assignment, not an offer.** A supervisor naming a person is a decision, not a
 question; the offer-and-wait path belongs to `0037`. Until that exists, this is also the manual form
@@ -6440,6 +6762,31 @@ a snapshot with nothing in it rather than a `404`, and a registered caller emplo
 empty `communities` — so the dashboard decides between *show the registration form*, *show the
 community search* and *show the week* from one response instead of interpreting two failures.
 `GET /service-providers/me` still `404`s, because there the question being asked is different.
+
+**`communities` is populated independently of `provider`, and the pair `provider: null` plus a
+non-empty `communities` is an ordinary answer — it is department leadership.** `provider` answers
+*do you have a marketplace profile*; `communities` answers *does anybody employ you*. For a
+marketplace professional those two rise and fall together, which is why until 2026-08-21 this
+endpoint returned an empty snapshot the moment there was no provider row. For a manager or a
+supervisor they do not: `claim_staff_invitations` (`20260812090200` §4) writes a
+`community_memberships` row and a `staff_assignments` row keyed on the **membership**, and no
+`service_providers` row at all. There is no registration process for leadership — an administrator
+types a name and an email — so there never will be one.
+
+The consequence for a client: **decide the registration form on `provider` *and* `communities[].rank`,
+never on `provider` alone.** A caller holding an active engagement ranked `manager` or `supervisor`
+must not be sent to the marketplace registration form; they were hired into a department and nobody
+will ever match them by distance or trade. Technician-rank (`member`) engagements and callers with
+no engagement at all keep the form — coordinates and skills are precisely how those people are
+found. `rank` is the only place the rank appears in any session-shaped response: nothing on
+`GET /auth/session` carries one.
+
+The two reads behind `communities` are chosen by the same question. A caller with a provider row
+gets `service_engagement_overview` (provider-keyed, and it carries the open departure on each row);
+a caller without one gets the membership-keyed read, which carries no `departure` because both
+worker-side departure verbs require a provider row and so can never produce one. `GET
+/worker/communities` is unchanged and still `404`s an unregistered caller: there the difference
+between *you have not registered* and *nobody has hired you* is the whole point of the endpoint.
 
 `today` and `nextJob` answer different questions and both are needed: at six in the evening today's
 list is history, and what a worker wants then is tomorrow morning.
@@ -6746,6 +7093,284 @@ by deciding on Wednesday that Tuesdays are off.
 | 404 | `service_provider_not_found` | The caller has not registered |
 | 422 | `validation_error` | A window that ends before it starts, or a weekday outside 0–6 |
 | 500 | `internal_error` | Unhandled |
+
+### The supervisor's dashboard — added 2026-08-22
+
+Backed by `20260822120000_supervisor_triage.sql`. Two operations, and the interface between them and
+the screen is frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md) — the
+backend and the frontend were built against that document in parallel, so a field renamed on either
+side is a section that stops rendering rather than a compile error.
+
+**Why the supervisor got a landing page at all.** `_portal_for` sends every service person to
+`/worker`, and rank is not role (`0035`), so a supervisor and the technician they dispatch hold the
+same `worker` membership and arrived at the same screen — a technician's day, which a supervisor
+holds none of. The dashboard is four stacked sections: **new complaints** (with the High-priority
+stack pinned on top), **taken up by you**, **assigned but not started**, and **being worked right
+now**.
+
+**Three facts the model could not state**, and the reason there is a migration under this rather than
+only a query:
+
+* nothing recorded that a supervisor had *picked a complaint up*, so "new" and "mine, not yet
+  dispatched" were the same row — hence `complaints.taken_up_by_membership_id` + `taken_up_at`;
+* nothing recorded when a worker pressed **Start**. `start_work_order` moved the status and let the
+  instant fall into `updated_at`, which the next write overwrites — hence `work_orders.started_at`,
+  which is what makes section 4 able to say *for how long*;
+* re-stamping a departed supervisor's live work deliberately left no mark
+  (§16 of the handoff), so the inheriting supervisor could not tell the work they chose from the work
+  that arrived by somebody else's removal — hence `work_orders.supervision_inherited_at`, which is
+  that ruling partially reversed and nothing else about the departure-continuity design changed.
+
+**Take-up is triage ownership and never dispatch.** The 2026-08-21 ruling keeps complaints
+department-pooled and `complaints.assigned_to_membership_id` dead, and this does not touch it: the
+complaint still belongs to the department, and who is actually going is still a work-order
+assignment. What take-up records is *who is looking at it*, so two supervisors do not both start
+arranging the same visit.
+
+#### `GET /api/v1/departments/{departmentId}/triage-snapshot`
+
+The dashboard's four sections in one read, for the department's **supervisors and its manager** —
+`can_supervise_department`, the same guard and the same posture as
+`GET /departments/{departmentId}/complaints`.
+
+```jsonc
+{
+  "departmentId": "…",
+  "newComplaints":   [TriageComplaint],   // status open, nobody has taken it up
+  "takenUp":         [TriageComplaint],   // taken up, no worker engaged yet
+  "assignedPending": [TriageWorkOrder],   // a worker is engaged and has not started
+  "inProgress":      [TriageWorkOrder]    // the worker pressed Start
+}
+```
+
+**Bucketing is decided server-side and the client never re-derives it.** *Live* means a work order
+whose status is not `completed`, `failed` or `cancelled`; *engaged* means a live work order with an
+assignment in `offered` or `accepted`, or one whose status is `scheduled`. Those two definitions
+appear exactly once, in `supervisor_triage_snapshot`. Four definitions that must agree are one
+definition or they are four answers — and the one that drifts is always the one nobody is testing.
+
+A taken-up complaint whose job becomes engaged moves into `assignedPending` **as its work order** and
+leaves `takenUp`: the supervisor's question has changed from "who do I send" to "is Ravi going to turn
+up", and a row that answered both would be in two places at once.
+
+Every array is newest-first by `createdAt`. **The urgent stack is not sorted for here** — pinning High
+above the rest is a layout, and a server that pre-pinned would be deciding one.
+
+`TriageComplaint` carries `priority` and `status` in the **wire** vocabulary (`High`, `In Progress`),
+translated through `app/domain/vocabularies.py` like every other complaint surface; the RPC returns
+the stored words, because a `case` in SQL turning `high` into `High` would be a second copy of that
+table in a language nobody would look in. `TriageWorkOrder.status` is passed through unmapped
+(`draft`, `awaiting_resident`, `offered`, `scheduled`, `in_progress`), which is what `WorkOrder` has
+always sent — different noun, different vocabulary.
+
+Three fields exist for the "this is not as new as it looks" badges and all three ride on facts the
+engine already recorded: `returnedToPoolAt` (a resident sent the work back), `reopenedCount`, and
+`reroutedAt`. The last is **derived and not stored** — the newest `department_assigned` timeline event
+naming this department as the destination. There is no column for it because a complaint can arrive
+here more than once, and because automatic routing at raise time writes `raised` rather than
+`department_assigned` and correctly is not a reroute. `TriageWorkOrder.inheritedAt` is the fourth
+badge and is supervisor-only by construction: no resident-facing or worker-facing read has ever
+returned a supervisor's identity.
+
+**One call rather than the N+1 the triage screen makes today** — a department read followed by a
+work-order read per complaint, which four sections would have multiplied by four.
+
+| | |
+|---|---|
+| Guard | `admin`, `manager`, `worker`, `security` at the router; `can_supervise_department` in the RPC |
+| Returns | `200` `TriageSnapshot` — four arrays, empty rather than absent |
+| `403` | you do not supervise this department — a refusal and not an empty snapshot, because the two look identical on a screen |
+| Errors | `401`, `403`, `404`, `500` |
+
+#### `POST /api/v1/complaints/{complaintId}/take-up`
+
+The supervisor saying *this one is mine to triage*. **No request body**, and none is read: the acting
+supervisor is the session, and a body would be a place to name somebody else.
+
+One transaction, three effects: it stamps `takenUpByMembershipId` and `takenUpAt`, moves the storage
+status `open → acknowledged` — **and only from `open`**, because a complaint a worker has already
+started is not walked backwards by a triage button — and writes a `taken_up` row on the timeline.
+
+**Nobody is notified**, and that is a decision rather than an omission. A field changing with no
+action attached is the passive change `ARCHITECTURE.md`'s rule exists to suppress; the resident learns
+the same fact from the status their screen already renders as *In Progress*, re-snapshotted within an
+SSE beat. `acknowledged` had exactly one writer before this — the worker-offer trigger in
+`20260813102000` — and gains a second deliberately. The two cannot race: both move `open` and only
+`open`, so whichever runs second finds nothing to do.
+
+Taking up your own again is a **`200` no-op** — a double-clicked button is not an error worth a
+message. Somebody else's is a `409` that **names them**, because "already taken up" with no name sends
+a supervisor to ask around an office.
+
+| | |
+|---|---|
+| Guard | `can_supervise_department` on the complaint's own department |
+| Returns | `200` `{ "message": "Complaint taken up." }` |
+| `409` | somebody else holds it (the message names them), or the complaint has no department yet — which is a conflict and not a `403`, because what is missing is the routing and not a permission |
+| Errors | `401`, `403`, `404`, `409`, `500` |
+
+### The supervisor's card actions — amendment 2, added 2026-08-22
+
+Backed by `20260822170000_supervisor_actions.sql`, and frozen in the same spec
+([`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md), *Amendment 2*) under four
+product rulings taken the same day. Phase one gave the supervisor a screen that reads and one verb;
+this is the rest of the verbs, plus the one correction to the snapshot they forced.
+
+**The snapshot now returns five arrays**, and `openRequests` sits between `takenUp` and
+`assignedPending`:
+
+```jsonc
+{
+  "departmentId": "…",
+  "newComplaints":   [TriageComplaint],   // open, not taken up, and no live job
+  "takenUp":         [TriageComplaint],   // taken up, and no live job
+  "openRequests":    [TriageWorkOrder],   // raised, live, nobody has committed
+  "assignedPending": [TriageWorkOrder],   // a worker accepted, and has not started
+  "inProgress":      [TriageWorkOrder]    // the worker pressed Start
+}
+```
+
+**`engaged` became `committed`, and that is the whole of ruling A3.** A live work order is
+*committed* when it has an `accepted` assignment **or** its status is `scheduled`; an offered job
+nobody has answered is no longer counted, because "we have asked someone" and "someone is coming" are
+different answers to the supervisor's question and only one of them needs chasing. The two complaint
+sections now exclude **any** live work order rather than only an engaged one, so *furthest stage
+wins*: a complaint appears exactly once across the five — as a complaint until a job exists, and as
+that job afterwards.
+
+`TriageWorkOrder` gains **`offeredToName`** (additive), the person a job is currently offered to and
+waiting on. `assigneeName` now means the person who **accepted** and nothing else. Two fields because
+they are two facts: one field carrying both would make an *Open job requests* card read *"Ravi is
+coming"* about a job Ravi has not answered.
+
+Three actions appear on **every** card in every section — a detail popup (the staff read below), a
+chat, and an internal note — and the stage-specific ones are *Take up*, *Mark as resolved*, *Raise
+priority* and *Assign*.
+
+#### `POST /api/v1/complaints/{complaintId}/resolve`
+
+The department saying the work is done. **No request body.** Guard: `can_supervise_department`.
+
+One transaction. Every other **live** job on the complaint is called off — `draft`,
+`awaiting_resident`, `offered`, `scheduled` — its `offered` and `accepted` assignment rows withdrawn
+(never deleted), and every affected worker notified `job.cancelled` with the reason *"Complaint
+resolved by the department"*. A worker holding an offer must not have to find out from an empty
+queue.
+
+**A job that is `in_progress` refuses the whole call.** Somebody is inside a resident's flat; the
+honest answers are to let them finish or to cancel that visit, and both are somebody's deliberate act
+rather than a side effect of this button. That is the `409` — *"Somebody is working on this right
+now. Finish or cancel the running job first."*
+
+It moves the complaint to `resolved` and **not** to `closed`. `closed` is what the *resident* says by
+confirming with a rating, and the v0 aftermath is unchanged: confirm, reopen, the 48-hour reminder
+and the 72-hour auto-close all hang off `resolved` and all still fire — the trigger that arms them
+(`complaints_on_resolved`, `20260813104000`) watches the status this writes, which is also why this
+endpoint does not write the `status_changed` timeline entry or the resident's notification itself.
+One writer, said once.
+
+| | |
+|---|---|
+| Returns | `200` `{ "message": "Complaint resolved." }` |
+| `409` | a job is in progress · the complaint is already resolved, closed or cancelled · it has no department yet |
+| Errors | `401`, `403`, `404`, `409`, `500` |
+
+#### `POST /api/v1/complaints/{complaintId}/priority-raise`
+
+`Low → Medium → High`, one step at a time, one direction only. **No request body.** Guard:
+`can_supervise_department`. Responds `200` `{ "message": "Priority raised to High." }`.
+
+**One way is the design.** A supervisor who could lower a priority could quietly un-escalate
+something somebody else escalated — a different decision, worth its own verb and its own audit line.
+At `High` there is nowhere further to go, and that is a `409` rather than a silent no-op: a
+supervisor who pressed the button and saw nothing change would press it again.
+
+**Priority is load-bearing, deliberately.** `high` is what arms the dispatch engine's automatic
+force-assign when every candidate has declined, and what shortens the manual dispatch window from 24
+hours to 2. The complaint's **live jobs move with it**, because a job's urgency *is* its complaint's
+urgency — `create_work_order` never took a priority argument for exactly that reason.
+
+The SLA deadline is **not** recomputed. `expectedResolutionAt` is a promise already made to the
+resident, and moving it because the department reclassified the work would make a complaint overdue
+for a reason the resident never saw.
+
+Nobody is notified — a passive field change under `ARCHITECTURE.md`'s rule — but the timeline gains a
+`priority_changed` entry the resident *does* read: *"The department raised the priority to High."*
+That word is the one new `complaint_events` type in this amendment, and it cost a constraint rebuild;
+see §20 of the migration runbook.
+
+| | |
+|---|---|
+| Returns | `200` `{ "message": "Priority raised to Medium\|High." }` |
+| `409` | already `High` · no department yet |
+| Errors | `401`, `403`, `404`, `409`, `500` |
+
+#### `POST /api/v1/complaints/{complaintId}/notes`
+
+Body `{ "note": "…" }`, 1–2000 characters. Guard: `can_supervise_department`. Responds `201`.
+
+A permanent note on the complaint's timeline **for staff and workers**. The resident does not see it:
+the product owner's own scoping named those two populations and not them. It is carried by an
+`internal: true` flag on the payload of the existing `note_added` event rather than by a new event
+word — which would have cost a second constraint rebuild — so the admin's resident-visible *Update
+from management* notes (`PATCH /complaints/{id}` with `updateNote`) carry no flag and are untouched.
+`resident_complaints_service` drops the flagged ones from the resident's timeline; the staff detail
+read below shows them with their author's name.
+
+**Append-only.** No edit and no delete: a timeline that can be rewritten is not a record of what
+happened.
+
+| | |
+|---|---|
+| Returns | `201` `{ "message": "Note added." }` |
+| `422` | an empty note, or one over 2000 characters |
+| Errors | `401`, `403`, `404`, `409`, `422`, `500` |
+
+#### `POST /api/v1/complaints/{complaintId}/chat`
+
+Open — or get — the one chat thread about this complaint. **No request body.** Guard:
+`can_supervise_department`. Responds `200` `{ "threadId": "…" }`.
+
+A **real thread in the existing chat dock** (`dm_threads.kind = 'complaint'`, added by this
+amendment's migration), not a comments panel: the resident reaches it from their ordinary thread list
+and the department reaches it from the card, and both sides get the notifications, the unread counts
+and the transcript the dock already has.
+
+**One thread per complaint.** A second supervisor pressing the button joins the thread that exists
+rather than forking one the resident would have to watch two of — which is why this is idempotent and
+why the client calls it every time instead of remembering. Reading and writing it belong to the
+raiser **and the department**: any supervisor of the complaint's department, not only whoever opened
+it. The thread is seeded with a system line — *"The department opened this chat about '…'."*
+
+**A `closed` or `cancelled` complaint locks the thread**: it still reads, and
+`POST /messages/threads/{id}/messages` answers `409`, exactly as a finished job's channel does.
+Unlike a job, a complaint can be **reopened**, and reopening unlocks it — the conversation the
+resident was already having is the one they come back to.
+
+`200` rather than `201`, because the common case is getting the thread that already exists; a status
+code that alternated between the two would be describing the database's history rather than the
+caller's request.
+
+| | |
+|---|---|
+| Returns | `200` `{ "threadId": "…" }` |
+| `409` | the complaint has no department, nobody to talk to, or is the caller's own |
+| Errors | `401`, `403`, `404`, `409`, `500` |
+
+#### `GET /api/v1/complaints/staff/complaints/{complaintId}` — guard widened 2026-08-22
+
+The eye popup's read: the complaint and its whole timeline, internal notes included. **The router
+guard dropped from `require_admin` to active membership.** That is not a widening of who may read it:
+`staff_complaint_detail` has decided `is_community_admin(...) OR can_supervise_department(...)` inside
+Postgres since it was written, and answers `HB404` — not a `403` — to everybody else, so a stranger
+walking complaint ids still learns nothing. What `require_admin` was doing was refusing a
+department's own supervisors at the door, before the rule that admits them could be asked.
+
+| | |
+|---|---|
+| Guard | active membership at the router; `is_community_admin OR can_supervise_department` in the RPC |
+| Returns | `200` `StaffComplaintDetail` |
+| Errors | `401`, `403`, `404`, `500` |
 
 ### What is not here yet
 
@@ -7429,3 +8054,121 @@ person-addressed, because a provider counterpart may hold no membership at all.
 | 409 | `conflict` | The thread is locked |
 | 422 | `request_validation_error` | An empty body, or one over 4000 characters |
 | 500 | `internal_error` | Unhandled |
+
+## 21. Address search — the location picker's proxy
+
+Two `GET`s, added 2026-08-21, and the reason for both is a defect that live testing surfaced rather
+than a feature anybody asked for.
+
+**The defect.** Registration asked a service person for a latitude and a longitude and offered
+nothing else but a browser geolocation button. A latitude is not a fact a person knows about their
+own house. So the field was skipped — and a provider with no coordinates has a null generated
+`location`, which makes them invisible to `search_hireable_service_providers` and makes
+`search_serviceable_communities` refuse to run at all. The most accessibility-hostile field on the
+form was also the one that decided whether the account worked. The community-founding wizard and the
+admin settings screen asked the same question the same way.
+
+**The fix, in order of prominence on the screen:** type an address and press Search; drag a pin on a
+map; use the device's location; or, folded away under a disclosure, type the two numbers. All four
+write the same one pair of coordinates. These two endpoints serve the first two.
+
+### Why this is a backend proxy and not a `fetch` from the browser
+
+The upstream is [Nominatim](https://nominatim.openstreetmap.org), OpenStreetMap's own geocoder. It
+is free, needs no key, and asks three things in return:
+
+| The policy asks | Where this API honours it |
+|---|---|
+| An identifying `User-Agent` | Sent on every upstream call. A browser refuses to let script set this header at all. |
+| At most **1 request/second** for the whole application | A process-wide async lock held across each upstream call. A thousand tabs cannot coordinate; one process can. |
+| Cache results | A bounded 24-hour in-memory cache, keyed on the normalised query or the coordinate rounded to ~1 m. |
+
+It also **forbids autocomplete**. That is why `GET /geo/search` is documented as a button: the picker
+submits on Enter or on the Search button and never on an input event. A client that debounces this
+into a type-ahead is not using it more responsively, it is using somebody else's free service against
+their stated terms.
+
+There is no configuration for the upstream host. A proxy whose destination the caller can influence
+is a server-side request forgery with a nicer name, so the host is a constant in
+`app/services/geocoding_service.py`.
+
+**Both routes require authentication and nothing more** — no membership. Two of the three screens
+that use the picker belong to people who hold no membership at the moment they need it: a service
+person registering, and a founder creating the community that will be their first. Neither takes
+CSRF, because both are `GET`.
+
+**Upstream failure is `503`, never `500`.** A timeout or a 429 is a true statement about a third
+party and the screen stays usable without it — the map pin and the manual fields are right there —
+so the client shows a line of prose and carries on.
+
+### `GET /api/v1/geo/search`
+
+**Requires authentication only.** `?q=` is the typed address, 3–120 characters.
+
+```json
+[{ "label": "Andheri West, Mumbai, Maharashtra",
+   "description": "Andheri West, Mumbai, Mumbai Suburban, Maharashtra, 400053, India",
+   "latitude": 19.1364, "longitude": 72.8296 }]
+```
+
+Up to five results, best match first. `label` is the short three-part form the picker writes into the
+editable `locationLabel` field; `description` is the upstream's own full line, kept because five
+results named "Andheri West" need something to tell them apart.
+
+**Never the upstream's payload.** Nominatim answers with roughly thirty fields per result — OSM ids,
+bounding boxes, licence strings, place ranks — and none of them are ours to publish or to keep
+stable. The three facts a picker needs are the two that place a pin and the one a person reads.
+
+**No match is `200 []`.** The pick-list renders that as *nothing found — drop the pin instead*, which
+is a state and not a failure; a `404` would send it down the branch that means the route is missing.
+
+| Status | Code | Cause |
+|---|---|---|
+| 200 | | Zero to five matches |
+| 401 | `authentication_error` | No credentials |
+| 422 | `request_validation_error` | `q` missing, under 3 characters, or over 120 |
+| 503 | `geocoding_unavailable` | The upstream timed out, refused, or throttled us |
+| 500 | `internal_error` | Unhandled |
+
+### `GET /api/v1/geo/reverse`
+
+**Requires authentication only.** `?lat=` and `?lon=`, both required and range-checked. Returns one
+object in the shape above.
+
+Called when the pin is dropped or dragged, to refresh the suggested label. **Answers at roughly
+suburb precision, not building precision** — a deliberate ceiling rather than a limit of the
+upstream. The label it produces is stored on the profile and shown to hiring managers who are never
+given the coordinate; a street address returned here would become a different disclosure under the
+same field name.
+
+**`404` over the sea.** A point with nothing addressable is not an invalid request: the client keeps
+the coordinate and leaves the label for the person to write.
+
+| Status | Code | Cause |
+|---|---|---|
+| 200 | | A place name for that point |
+| 401 | `authentication_error` | No credentials |
+| 404 | `geo_place_not_found` | Nothing is addressable there |
+| 422 | `request_validation_error` | `lat`/`lon` missing or out of range |
+| 503 | `geocoding_unavailable` | The upstream timed out, refused, or throttled us |
+| 500 | `internal_error` | Unhandled |
+
+### `locationLabel` — where the answer is kept
+
+Both endpoints exist to fill one optional field, stored by migration
+`20260821113000_location_labels.sql` as `location_label text` on **both** `service_providers` and
+`communities`, capped at 120 characters by a `CHECK`.
+
+It appears on `POST`/`PATCH`/`GET /service-providers/me`, `GET /service-providers/{providerId}`,
+`GET /departments/{departmentId}/candidates`, `GET`/`PUT /settings`, and
+`POST /onboarding/community` (as `location_label`, that body being `snake_case`).
+
+**It is never an input to distance.** `latitude`/`longitude` remain the stored truth, `location`
+remains generated from them, and every search's geometry, radius and ordering is exactly what it was
+before this shipped. The label is a decoration on the *input*, and its one job downstream is to let a
+candidate card say "Andheri West, Mumbai" where it previously said nothing.
+
+**Its 120-character cap is a privacy boundary, not a storage decision.** The hiring surface
+deliberately withholds coordinates (§18). A label short enough to hold "suburb, city, state" and too
+short to hold a street address is what keeps the field on the right side of that line, which is why
+the reverse lookup asks for suburb-level detail rather than trimming a building-level answer.

@@ -94,7 +94,7 @@ it.**
 So the last three cases deliberately let the real service run, replacing only the
 repository beneath it. They are the ones that would have failed.
 
-*Total tests in this file: 5*
+*Total tests in this file: 13*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -102,6 +102,14 @@ repository beneath it. They are the ones that would have failed.
 | `test_api_010_resident_comments_on_complaint` | No description provided. |
 | `test_api_133_a_comment_reaches_the_database_as_public_not_as_resident` | The defect this case exists for.  `complaint_comments_visibility_check` allows `public` and `internal`. The request says `resident`, because that is what the frontend sends and what API.md documents. Forwarding it unmapped made every comment a 23514 -> 422 -- and `test_api_010` above passed throughout, because it replaced the service that does the translating. |
 | `test_api_134_an_unknown_visibility_is_a_422_before_the_database_sees_it` | Previously a `409` -- the database's answer to a word it had never heard.  Raised in the service now, so the error can name the field. The repository stub records whether it ran, which is how the case proves the RPC is never reached rather than merely that the status code is right. |
+| `test_a_resident_may_not_raise_from_the_admin_portal` | `require_admin`, and it must refuse before the RPC is called.  The RPC refuses a non-admin too -- it re-checks the role where the row is, because an endpoint guard is not a database guard. This case is about the other direction: that the guard is actually declared on the route, which is the failure nothing else in the stack would notice. |
+| `test_an_unattached_complaint_carries_no_for_membership` | The amenity/common-area mode. `forMembershipId` absent is what makes the complaint admin-portal-only, and it is absent by being absent -- there is no `raisedVia` on the wire for a client to contradict it with. |
+| `test_an_on_behalf_complaint_forwards_the_residents_membership` | The other mode, and the one field that selects it.  Which membership ends up owning the row is the database's derivation, not this layer's -- so what is asserted here is that the id survives the trip, unmodified and distinct from the caller's own. |
+| `test_the_priority_reaches_the_database_in_the_columns_vocabulary[High-high]` | `complaints_priority_check` allows `low`/`medium`/`high`; the admin screen renders `High`. Both spellings are accepted and only one is stored -- the same translation the resident's `urgency` goes through, so the two portals cannot mean different things by the same word. |
+| `test_the_priority_reaches_the_database_in_the_columns_vocabulary[low-low]` | `complaints_priority_check` allows `low`/`medium`/`high`; the admin screen renders `High`. Both spellings are accepted and only one is stored -- the same translation the resident's `urgency` goes through, so the two portals cannot mean different things by the same word. |
+| `test_an_unknown_priority_is_a_422_before_the_database_sees_it` | Raised in the service so the error can name the field. Reaching the RPC with it would produce a `22P02` -- a 422 either way, with a message written for Postgres rather than for the person who typed it. |
+| `test_a_trade_alone_is_a_valid_body` | `category` is optional exactly as it is on the resident's form.  A caller submitting `skillId` has an id, not a display string, and the RPC snapshots that trade's current name into `category` itself. Requiring the field here would make the admin's trade picker invent one -- and the string it invented would be the one stored, which is the mutable-display-name problem `20260813100000` removed. |
+| `test_a_blank_title_is_refused_by_the_model_not_by_the_database` | Three spaces satisfy `min_length=1` without `strip_whitespace`, and would arrive at the RPC as the empty string it raises `23514` for. |
 | `test_api_135_the_edit_carries_the_membership_the_request_already_resolved` | The other defect. The service used to call a repository function that has never existed in this codebase, so both writes raised `AttributeError` on their second line. The membership now arrives from the dependency graph, which resolved it before the handler body ran. |
 
 
@@ -271,6 +279,110 @@ a test that read it would block until the timeout rather than pass.
 | `test_both_paths_declare_the_stream_media_type` | FastAPI defaults an un-inferable return type to `application/json`, and a client generated from that would try to JSON-decode a live stream. |
 
 
+## `test_geo.py`
+The location picker's address proxy.
+
+Four things are tested, and only the first is about geocoding.
+
+**That the upstream's payload never reaches the client.** Nominatim answers with
+about thirty fields per result. Three cross this boundary. A test that asserted
+"the response has a label" would pass on a handler that forwarded the lot, so
+the assertions here are on the *exact* key set.
+
+**That the usage policy is honoured**, because that is the only reason this
+endpoint exists rather than a `fetch` in the browser: an identifying
+`User-Agent`, one request per second, and a cache. All three are asserted from
+the outside -- what the upstream *received*, and how often -- rather than by
+reading module state, so an implementation that keeps the constants and stops
+applying them fails.
+
+**That an upstream failure is a 503 and not a 500.** The picker keeps working
+without address search; the map pin is right there. A 500 would tell the client
+that the request was wrong when it was not.
+
+**That the guard is identity-only.** A service person registering and a founder
+onboarding a community both need this and neither holds a membership yet, so a
+membership guard creeping onto these routes would 403 exactly the callers the
+feature exists for. The fixture therefore overrides identity alone.
+
+*Total tests in this file: 13*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_api_320_a_search_returns_three_fields_and_not_the_upstreams_payload` | Thirty fields go in and four come out. Asserted as an exact key set, because "it has a label" would also pass on a handler that forwarded the licence string, the OSM id and the bounding box. |
+| `test_api_321_the_upstream_call_identifies_itself_and_asks_for_five_results` | Nominatim's usage policy asks for an identifying `User-Agent`, which a browser will not let script set -- so this endpoint existing at all is only justified while it sends one. |
+| `test_api_322_the_same_search_twice_reaches_the_upstream_once` | Caching is a term of use, not an optimisation: a hundred servicemen registering in one suburb type the same three strings. Case and spacing are normalised before the key, so "Andheri  West" is the same question. |
+| `test_api_323_two_different_searches_are_spaced_out_by_the_throttle` | One request per second is the documented absolute maximum, and the cache cannot help two people searching different things. The interval is shortened here so the assertion is about the mechanism rather than about waiting. |
+| `test_api_324_an_upstream_429_is_a_503_the_picker_can_act_on` | Being throttled by somebody else's free service is a true statement about a third party, not a broken request. The screen still has a map pin, so the message says to use it. |
+| `test_api_325_an_upstream_timeout_is_a_503_and_is_not_cached` | A failure must not poison the cache for a day. The retry after a timeout is the whole recovery path, and a cached error would remove it.  The throttle interval is shortened because the retry is genuinely subject to it -- a failed attempt still spent the second -- and a test that proved that by waiting would cost the suite a second to say what `test_api_323` already says. |
+| `test_api_326_no_match_is_an_empty_list_and_not_a_404` | "Nothing found -- drop the pin instead" is a state the pick-list renders. A 404 would send the client down the branch that means the route is gone. |
+| `test_api_327_a_one_character_query_is_refused_before_the_upstream_is_touched` | A one-character search matches most of the planet and would spend the one-per-second budget on nothing. |
+| `test_api_328_an_unauthenticated_caller_is_refused` | The guard is identity-only, which is a narrowing and not an absence: this proxies a third party's free service under our name, and an open one would be a rate limit anybody could exhaust for everybody. |
+| `test_api_329_a_reverse_lookup_names_the_dropped_pin` | The label is built from the address parts rather than from the head of `display_name`, which starts with a house number as often as not -- and the house number is exactly what this field must not carry. |
+| `test_api_330_a_point_with_no_address_is_a_404` | Open sea. The client keeps the coordinate the person chose and leaves the label for them to write; nothing about the pin is invalid. |
+| `test_api_331_an_out_of_range_latitude_is_refused` | Clamped at the route rather than passed through: this is the one place a caller can put an arbitrary value into an outbound URL. |
+| `test_api_332_a_label_is_capped_at_the_length_the_column_accepts` | The database check is 120 characters. A label this API emits that could not then be saved is not a label, it is a form the person has to retype. |
+
+
+## `test_leadership_exclusivity.py`
+The three leadership rulings of 2026-08-21, at the seams the API owns.
+
+    RULING 1  Leadership is invite-only and never from the marketplace pool.
+    RULING 2  Leadership is exclusive to one community.
+    RULING 3  Removal severs access completely.
+
+**What these tests can and cannot prove.** Rulings 1 and 2 are enforced by
+triggers and RPCs in ``20260821140000_leadership_exclusivity.sql``, and no test
+in this suite runs Postgres. So the database half is asserted statically in
+``tests/test_leadership_exclusivity_migration.py``, and what is asserted *here*
+is the half the Python owns and is the half that has actually broken before:
+
+* that the two new SQLSTATEs reach a caller as a 409 carrying a code they can
+  branch on, rather than as an opaque 500 (``pg_errors`` is exercised for real,
+  not stubbed -- the fakes raise what ``translate`` produces from a genuine
+  ``HBMKT``/``HBLED``);
+* that a refused claim does not cost anybody their session. That is not a
+  hypothetical: ``_claim_staff_invitations`` swallows exceptions on purpose, so
+  a claim that raises abandons *every* invitation in the loop silently, and the
+  only way to tell the two designs apart from outside is that the refused
+  person still gets a session and the department still sees the invitation;
+* that ruling 3's snapshot read asks for active engagements only, so an account
+  with an ended posting in one community and a live one in another sees exactly
+  one.
+
+Ruling 3's other surfaces -- the mailbox, the calendar, the feed -- are RLS and
+are unreachable from here by construction. They are enumerated with their
+verification queries in the migration's section 10.
+
+**Added 2026-08-21, same day:** the refused invitee is now told why
+(``20260821170000_blocked_invitee_notice.sql``). The write is SQL and is pinned
+in ``tests/test_blocked_invitee_notice_migration.py``; what the API owns is the
+*read* -- that the person-scoped, community-less, link-less row the claim files
+comes back out of ``GET /notifications`` as the sentence the product owner
+approved, rather than as a fallback title over an invented link.
+
+*Total tests in this file: 16*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_api_270_a_registered_provider_cannot_be_invited_as_leadership` | Ruling 1, refused where somebody is watching.  The trigger on ``staff_assignments`` would refuse this eventually -- at the claim, days later, with nobody at a screen. Refusing at the invitation is what turns "the manager we created never arrived" into a sentence the administrator reads while their hand is still on the mouse. |
+| `test_api_271_a_second_leadership_invitation_is_refused` | Ruling 2, and a different code from ruling 1 on purpose.  Both are 409s. A client that must offer "hire them at technician rank instead" for one and "wait until they leave the other society" for the other cannot tell them apart from a status, and branching on the message text is what the custom SQLSTATEs exist to avoid. |
+| `test_api_272_the_two_refusals_do_not_collapse_into_one_code` | The property the two tests above only imply when read together. |
+| `test_api_273_an_invitation_after_the_previous_posting_ended_is_created` | Ruling 2 bounds *active* leadership, not leadership ever held.  "Being invited to a different community AFTER the previous leadership engagement has fully ended is legitimate and must keep working" is half the ruling, and it is the half a guard written as "has this person ever led" would break. Nothing is armed here, so the RPC accepts -- which is what an ended posting looks like from this side of the wire. |
+| `test_api_274_a_blocked_invitation_says_why_in_the_pending_list` | The claim has no screen, so the pending list is where the answer lands.  Without this the row reads "waiting for first sign-in", which after a blocked claim is false: they signed in and were turned away. The status stays ``pending`` deliberately -- the situation is not terminal, and both existing verbs (correct the address, withdraw) still apply. |
+| `test_api_275_a_supervisor_is_refused_a_marketplace_profile` | The mirror of ``api_270``, from the other side of ruling 1.  A supervisor holds a ``worker`` membership -- rank is not role -- so ``register_service_provider``'s older separate-account check deliberately lets them through: it refuses residents, managers and administrators. ``HBMKT`` is the refusal written for them, and the message says why there is nothing here for them rather than merely that they may not. |
+| `test_api_276_a_refused_claim_does_not_cost_the_session` | The claim-time design, asserted as an outcome rather than a mechanism.  A registered provider whose email was invited as a supervisor signs in. The invitation must not take effect -- and the sign-in must still work. Under the rejected design (raise inside ``claim_staff_invitations``) the RPC would throw, ``_claim_staff_invitations`` would swallow it, and the observable result here would be identical *except* that any other legitimate invitation in the same loop would also have been abandoned. So what is pinned is what the API can see: the claim was attempted, nothing was claimed, and the caller ends up in the portal their provider row entitles them to rather than on an error page. |
+| `test_api_277_nothing_claimed_is_not_reported_as_a_claim` | An empty result must stay falsy through the blocked path too.  ``get_session_context`` re-reads memberships only when the claim reports success. A blocked claim that reported ``True`` would make every sign-in by a refused invitee run the membership query twice, forever, and would look like a claim that keeps not sticking. |
+| `test_api_278_a_claim_that_raises_still_leaves_a_session` | The backstop behind the design, kept honest.  The trigger is the guarantee and the in-function skip is the courtesy. If a path is ever found that reaches the trigger, the RPC *will* raise -- and the person must still get a session, because being refused an invitation is not the same as being refused an account. |
+| `test_api_279_a_reinvitation_after_the_old_posting_ended_is_claimed` | The other half of ruling 2, at the claim.  Somebody whose supervision of community A has fully ended holds no active membership, so the session read reaches the claim -- which is exactly the path a *first* sign-in takes, and that is the point: an ended posting leaves the person indistinguishable from somebody who has never led anywhere, and community B's invitation lands normally. |
+| `test_api_280_the_snapshot_shows_only_the_community_that_still_employs_them` | Ruling 3 on the one surface the BFF composes rather than the database.  Every other ruling-3 read is RLS. ``communities[]`` is not: it is assembled in Python from ``list_engagements_for_profile``, and it is what the supervisor's Complaints screen picks a department out of (``WorkerDashboard/Complaints.jsx`` 29-37). A single ended community-A row leaking into it would put community A's complaint queue on the screen of somebody who was removed from community A -- and the endpoint behind that queue is guarded by ``can_supervise_department``, so it would 403 rather than leak, which is a broken screen instead of a breach but is still not the answer.  Two assertions, and the second is the load-bearing one: the *request* is for active engagements only, so the filter is the repository's rather than a coincidence of the fixture. |
+| `test_api_281_the_refused_invitee_reads_the_reason_in_their_own_feed[marketplace-Your invitation to join Blue Waters couldn't be applied. This account is registered as a marketplace service professional, and department leadership can't be combined with a provider profile. Ask the community to invite a different email address.]` | The gap this closes, from the only side that could see it.  Before 2026-08-21 the department was told three times -- `blockedReason` on the invitation, `blockedAt`, and a `staff_invitation.blocked` notification -- and the invitee was told nothing. They signed in, the invitation did not take, and the session read returned exactly what it returns for somebody nobody has ever invited (`api_276`). That contract is unchanged and must stay unchanged; the answer arrives out of band, here. |
+| `test_api_281_the_refused_invitee_reads_the_reason_in_their_own_feed[elsewhere-Your invitation to join Blue Waters couldn't be applied because you already manage or supervise another community. Leadership is held in one community at a time \u2014 once your current engagement ends, the invitation can be applied on your next sign-in.]` | The gap this closes, from the only side that could see it.  Before 2026-08-21 the department was told three times -- `blockedReason` on the invitation, `blockedAt`, and a `staff_invitation.blocked` notification -- and the invitee was told nothing. They signed in, the invitation did not take, and the session read returned exactly what it returns for somebody nobody has ever invited (`api_276`). That contract is unchanged and must stay unchanged; the answer arrives out of band, here. |
+| `test_api_282_the_notice_is_readable_with_no_community_behind_it` | Person-scoped, and that is not incidental.  A registered provider hired nowhere holds no membership at all, and a sitting leader holds one in a *different* community. `notify_member` would have filed this under whichever community was to hand, and ruling 3's own feed policy (`membership_is_live`) would then hide it the day that membership ended -- deleting the explanation for a refusal caused by that very posting. |
+| `test_api_283_the_notice_offers_no_link_and_none_is_invented` | There is no screen for this, and a guessed one would be worse than none.  The invitee is not a member of that community and never becomes one; no portal lists invitations addressed to you, and the two refused populations land in different portals anyway. `notifications_service._FALLBACK_URLS` exists for four hiring kinds whose payloads carry the id a route needs, and its docstring is the rule being relied on here -- "a link that goes to the wrong screen is one the reader believes". `NotificationBell.openItem` marks an empty-url row read and navigates nowhere, which is the intended click. |
+| `test_api_284_an_unrecognised_kind_still_renders_as_a_row` | The property that let this ship without touching the reader.  `render` reads `title`, `body` and `url` and nothing else, so a kind no Python file has heard of renders from its own payload. The fallback table is for writers that supplied no title; this writer supplies one, which is why `staff_invitation.not_applied` needed no entry -- exactly as the department's `staff_invitation.blocked` needed none. |
+
+
 ## `test_messages.py`
 Direct messages: the chat dock's API.
 
@@ -400,6 +512,37 @@ Founder and invitation activation regressions.
 | `test_invitation_identity_failure_is_an_authentication_response` | No description provided. |
 
 
+## `test_remember_me.py`
+The sign-in card's "Remember me" answer, end to end through the cookies.
+
+The feature is entirely a question about *one header*: does the refresh cookie
+carry a ``Max-Age``? Without one the browser drops it when the window closes and
+the login page is there again, which is what someone on a shared machine expects.
+With one, the returning visitor is silently signed back in.
+
+Nothing else in the suite could catch a regression here, because every other auth
+test asserts on the cookie *jar* -- and a jar shows the value, never the lifetime.
+So these tests read ``Set-Cookie`` directly.
+
+The companion ``hb_remember`` cookie is why ``/auth/refresh`` can keep the answer:
+rotation re-issues the session cookies and has no other memory of what the user
+chose. Logout has to clear it, or the next sign-in would inherit a decision made
+by whoever used the browser last.
+
+*Total tests in this file: 8*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_remembered_sign_in_persists_the_refresh_cookie` | No description provided. |
+| `test_sign_in_defaults_to_a_browser_session` | No `remember_me` in the body means the safe answer, not the sticky one. |
+| `test_email_confirmation_never_persists` | The confirmation link never asked the question, so it cannot assume yes. |
+| `test_refresh_preserves_the_original_answer[1-True]` | Rotation must not promote a browser session into a remembered one. |
+| `test_refresh_preserves_the_original_answer[None-False]` | Rotation must not promote a browser session into a remembered one. |
+| `test_logout_clears_the_remember_cookie` | Otherwise signing out would leave autologin armed for the next person. |
+| `test_oauth_start_carries_remember_into_the_signed_transaction` | No description provided. |
+| `test_oauth_callback_honours_the_remembered_transaction` | No description provided. |
+
+
 ## `test_resident_amenities.py`
 `GET /amenities/available` -- the resident amenity catalogue.
 
@@ -454,6 +597,39 @@ assertion.
 | `test_a_client_that_reports_no_count_is_read_as_a_whole_catalogue` | Not every SDK version surfaces `count`. Falling back to the rows in hand keeps the endpoint claiming exactly what it claimed before the count existed, rather than inventing a truncation that did not happen. |
 
 
+## `test_resident_capability_guard.py`
+The resident routes, seen from the admin who lives in the building.
+
+`tests/test_resident_capability.py` pins the guard itself. This pins what the
+guard did to the surface: which routes gained it, which deliberately did not,
+and that an admin with a flat now reaches the handler on every route where the
+answer is about their own home.
+
+The residency lookup is a service-role read the API fixtures cannot satisfy, so
+`tests/api/conftest.py` stubs it to *False* for the whole suite -- the fixture
+memberships describe people with no flat, and only `resident_api_client` carries
+a `unit_id`. `lives_here` is the opt-in for the caller this feature exists for.
+
+*Total tests in this file: 14*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_an_admin_with_a_flat_may_use_the_resident_verbs_on_it[/api/v1/complaints/complaint-id/cancel-body0-cancel_work]` | The bug this change fixes. Cancelling work in your own flat, reopening and confirming a resolution are verdicts about a home; the person who both runs the association and lives there was refused all three, because one membership row cannot say `admin` and `resident` at once. |
+| `test_an_admin_with_a_flat_may_use_the_resident_verbs_on_it[/api/v1/complaints/complaint-id/reopen-body1-reopen]` | The bug this change fixes. Cancelling work in your own flat, reopening and confirming a resolution are verdicts about a home; the person who both runs the association and lives there was refused all three, because one membership row cannot say `admin` and `resident` at once. |
+| `test_an_admin_with_a_flat_may_use_the_resident_verbs_on_it[/api/v1/complaints/complaint-id/resolution-body2-confirm_resolution]` | The bug this change fixes. Cancelling work in your own flat, reopening and confirming a resolution are verdicts about a home; the person who both runs the association and lives there was refused all three, because one membership row cannot say `admin` and `resident` at once. |
+| `test_an_admin_with_a_flat_may_raise_a_complaint_about_it` | `POST /complaints` owns the complaint by the raiser's own membership and shows it on their resident portal, which only means anything for a membership that lives somewhere. |
+| `test_an_admin_with_a_flat_may_answer_a_visit_proposed_to_them` | The scheduling router carries the guard at router level, so both of its routes move together. `respond_to_work_order_schedule` still checks `is_own_membership` in the same statement that would do the write -- this guard was only ever the early, clear error. |
+| `test_staff_who_live_nowhere_are_still_refused[/api/v1/complaints-body0]` | The guard widened who counts as a resident; it did not stop asking. A department manager with no residency has no home for any of these to be about, and their complaints belong on `POST /complaints/admin-raise`. |
+| `test_staff_who_live_nowhere_are_still_refused[/api/v1/complaints/complaint-id/cancel-body1]` | The guard widened who counts as a resident; it did not stop asking. A department manager with no residency has no home for any of these to be about, and their complaints belong on `POST /complaints/admin-raise`. |
+| `test_staff_who_live_nowhere_are_still_refused[/api/v1/complaints/complaint-id/reopen-body2]` | The guard widened who counts as a resident; it did not stop asking. A department manager with no residency has no home for any of these to be about, and their complaints belong on `POST /complaints/admin-raise`. |
+| `test_staff_who_live_nowhere_are_still_refused[/api/v1/complaints/complaint-id/resolution-body3]` | The guard widened who counts as a resident; it did not stop asking. A department manager with no residency has no home for any of these to be about, and their complaints belong on `POST /complaints/admin-raise`. |
+| `test_staff_who_live_nowhere_are_still_refused[/api/v1/complaints/complaint-id/schedule-body4]` | The guard widened who counts as a resident; it did not stop asking. A department manager with no residency has no home for any of these to be about, and their complaints belong on `POST /complaints/admin-raise`. |
+| `test_reading_stays_open_to_any_active_member` | `GET /complaints` and `GET /complaints/{id}` are scoped to the caller's own membership, so they answer "what have *you* raised" -- a question a member with no flat may still ask, and one whose answer is an empty list. |
+| `test_marking_read_stays_open_to_any_active_member` | The marker is per membership, so clearing your own says nothing about anybody's home and cannot touch the resident's. |
+| `test_a_resident_never_pays_for_the_residency_lookup` | The common caller short-circuits on the role. Asserted through the HTTP surface as well as in the unit tests because it is the property most easily lost by a later refactor that "simplifies" the two branches into one. |
+| `test_csrf_is_still_checked_before_the_capability` | A guard that admits more callers must not admit more origins. |
+
+
 ## `test_resident_complaints.py`
 The resident complaint surface -- six operations and one projection.
 
@@ -475,7 +651,7 @@ above would notice if the read were pointed at `complaints` instead of the view,
 or if the ownership predicate were dropped -- which is the mistake that matters
 most here.
 
-*Total tests in this file: 61*
+*Total tests in this file: 63*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -532,7 +708,9 @@ most here.
 | `test_the_detail_puts_the_timeline_back_into_reading_order` | The repository reads newest-first so the bound keeps the recent end; the screen reads downwards. The reversal happens once, in the service. |
 | `test_the_list_is_read_from_the_overview_view` | No description provided. |
 | `test_the_list_filters_on_the_callers_membership` | Not the security boundary -- `0031` puts a policy on `complaints` -- but the difference between "mine" and "everything I may see". |
+| `test_the_list_leaves_out_the_admins_own_community_complaints` | `raised_by_membership_id` alone stopped being enough on 2026-08-20.  An admin is also a resident -- one membership row per person -- so a complaint they raised about the lobby is *owned by the membership reading this list*. Without the second predicate every amenity and common-area complaint an admin has ever filed would appear in their personal "My Complaints", a list of things that happened to them at home.  The complement is the half worth stating: a complaint an admin filed **on a resident's behalf** is `raised_via = 'resident'` and does appear, on that resident's list, with their verbs intact. |
 | `test_one_complaint_is_looked_up_by_id_and_owner_together` | No description provided. |
+| `test_an_admin_portal_complaint_is_a_404_on_the_resident_detail_route` | The predicate is part of the lookup, not a check afterwards -- so an admin opening their own lobby complaint through the resident route gets the same answer as for a complaint that does not exist. Same reasoning as the ownership predicate beside it: a caller must not be able to tell "not on this portal" from "not there". |
 | `test_the_comment_thread_asks_for_public_comments_only` | The RLS policy is what makes it true. This predicate is what makes it obvious to the next person reading the query. |
 | `test_the_timeline_reads_the_newest_end_even_though_it_displays_oldest_first` | The order and the bound are not independent choices. Ordering ascending and stopping at the limit keeps the *opening* of a long complaint and throws away everything since -- so on the one screen where the bound would ever bite, the resident sees a complaint frozen on the day they raised it. The service reverses these rows; the query keeps the end that matters. |
 | `test_the_thread_reads_one_row_past_the_bound` | A read of exactly the limit cannot be told from a truncated one. The extra row is what turns `hasOlderEvents` into something measured. |
@@ -643,7 +821,7 @@ replaced it.
 | `test_api_180_confirming_forwards_the_resolved_job_and_the_answer` | The work-order id the RPC receives was resolved here from the complaint, never sent by the caller. The response is the re-read row, so a screen sees the confirmation land rather than having to assume it. |
 | `test_api_181_answering_twice_is_the_rpc_s_409_and_not_a_recheck_here` | The service does not look at the status before calling. Whether the job is still waiting is a question about a row, and by the time this process had read it and decided, a supervisor could have assigned somebody -- so the check is inside the transaction that does the write. |
 | `test_api_182_answering_somebody_else_s_proposal_is_the_rpc_s_403` | `respond_to_work_order_schedule` checks `is_own_membership` against whoever raised the complaint. A neighbour in the same community passes every guard in this process and is refused there -- which is the whole reason the check is not duplicated here. |
-| `test_api_183_staff_cannot_answer_on_the_resident_s_behalf` | Resident-only, matching the precedent `resident_complaints.py` set for reopening and confirming a resolution: not because an admin could not press the button, but because this is the resident's verdict about their own home, and an admin answering for them is a record that says something untrue. |
+| `test_api_183_staff_cannot_answer_on_the_resident_s_behalf` | Matching the precedent `resident_complaints.py` set for reopening and confirming a resolution: not because an admin could not press the button, but because this is the resident's verdict about their own home, and an admin answering for them is a record that says something untrue.  The guard is `require_resident_capability` since 2026-08-20, so what is refused here is an admin with **no flat of their own** -- which is what this fixture describes, and what `tests/api/conftest.py` stubs the residency lookup to say. The admin who does live in the building may answer, and `tests/api/test_resident_capability_guard.py` is where that is pinned. |
 | `test_api_184_answering_without_the_csrf_pair_is_refused` | A cross-site form post confirming a visit somebody did not agree to is a small harm with a long tail -- a technician turns up to an empty flat and the slot is spent. |
 
 
@@ -831,7 +1009,7 @@ from the catalogue, ``communityCount`` is counted from live memberships, and
 ``serviceRadiusKm`` defaults in SQL -- so a write is asserted by what comes back
 differing from what went in.
 
-*Total tests in this file: 20*
+*Total tests in this file: 23*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -851,6 +1029,9 @@ differing from what went in.
 | `test_skills_cannot_be_replaced_with_an_empty_set` | No description provided. |
 | `test_api_131_a_name_shorter_than_the_schema_allows_is_a_422` | Validated in pydantic as well as in the RPC. The duplicate is deliberate: the RPC's `22004` is the guarantee, and the 422 is the one that can point at the field. |
 | `test_api_132_the_router_calls_the_service_it_imported` | Guards the wiring rather than the behaviour: a router that imported the module under a different name would pass every test above while calling nothing this suite has replaced. |
+| `test_api_333_registering_carries_the_location_label_to_the_rpc_and_back` | The picker's whole output, end to end: a coordinate pair and a name for it.  The label reaches the RPC as its own argument rather than being derived server-side from the coordinates -- it is editable, so a person who drops a pin outside their own gate and types "Indiranagar" has said something the reverse geocode did not. |
+| `test_api_334_a_blank_label_reaches_the_rpc_as_null_so_the_stored_one_survives` | The RPC coalesces null onto the stored value, and the column check refuses an empty string. Both are why "I cleared the box and saved" has to arrive as `None`: the alternative is a 422 for a gesture that meant nothing. |
+| `test_api_335_a_label_longer_than_the_column_allows_is_a_422` | 120 characters is the database check, and it is a privacy boundary rather than a storage decision: a field that holds "suburb, city, state" and not a street address is what keeps this publishable on a hiring card. |
 | `test_api_237_a_hiring_manager_reads_a_candidate_without_their_coordinates` | The read behind every "open this person" click on the hiring surface.  `latitude` and `longitude` are absent, and that is the case worth having: `service_providers_read` is `auth.uid() is not null`, so the view would hand a home coordinate to anybody signed in. `distanceKm` on the candidate list already answers where somebody is, measured from the community's own point, which is the question a manager actually has. |
 | `test_api_238_a_resident_may_not_browse_the_service_directory` | `require_admin_or_manager` is the whole point of this route existing separately from a plain view read.  Postgres would return the row -- the read policy admits any signed-in caller, because a manager has to be able to find somebody they have never met. The guard here is what stops that being a directory of every tradesperson in the country, browsable by every resident with an account. |
 | `test_api_239_the_literal_me_still_reaches_the_caller_s_own_profile` | Route ordering, asserted rather than assumed.  `/service-providers/{providerId}` is declared after `/service-providers/me` precisely so FastAPI matches the literal first. Reversed, `me` would arrive as a provider id -- and because the new route carries a role guard, an unregistered service person would get a 403 on their own settings screen instead of the 404 that sends them to the registration form. |
@@ -1006,14 +1187,19 @@ about what the *Python* does rather than what the RPC returns:
 
 * the email comes from `verified_identity`, never from the profile row or
   anything a client sent;
-* the claim is attempted only when there is no membership already;
+* the claim is attempted on **every** session read (`api_336`). It was attempted
+  only when the caller held no membership until 2026-08-21, and that guard was a
+  gap rather than an optimisation: a person who already belonged to a community
+  never reached the claim, so their pending invitation was neither applied nor
+  refused — it waited, invisibly, while the department that sent it saw
+  `pending` forever;
 * a failure inside it does not fail the session.
 
 The RPC itself is Postgres and is stubbed here, so none of these tests prove a
 membership is created correctly. They prove the API never offers a path to the
 wrong one.
 
-*Total tests in this file: 14*
+*Total tests in this file: 15*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1031,6 +1217,107 @@ wrong one.
 | `test_api_216_a_failed_claim_does_not_fail_the_session` | Claiming is an enhancement to a session that is already valid.  Somebody provisioned who meets a database error should land on the account page and be admitted on their next sign-in -- not be refused a session they are entitled to, which is what raising here would do to every request they make. |
 | `test_api_217_nothing_to_claim_reports_nothing` | An empty result must not read as a claim.  `get_session_context` re-reads memberships only when this returns True. A truthy empty list would make every membership-less sign-in run the membership query twice, forever. |
 | `test_api_261_the_provisioned_manager_is_admitted_by_the_session_read` | The claim, called the way production calls it -- with a `Profile`.  `api_215`-`api_217` hand `_claim_staff_invitations` its argument directly, so they were free to invent its shape, and they invented a dict. The only real caller is `get_session_context`, which holds whatever `profiles_repository` returns, and that has always been the `Profile` model. Reading it with `.get()` therefore raised `AttributeError` *before* the deliberate swallow inside the claim -- so the failure did not degrade to "no claim this time", it took down `GET /api/v1/auth/session` with a 500 for every signed-in user, on every request, whatever their intent.  Nothing above this line would have noticed: no test called `get_session_context` at all. This one does, and asserts the outcome the claim exists to produce -- a manager who has never signed in before lands in their portal on their first sign-in. |
+| `test_api_336_a_sitting_member_still_gets_their_invitation_processed` | The claim-pass gap, closed. Product ruling 8, 2026-08-21.  `_claim_staff_invitations` sat inside `if not rows:` — the branch that had already established the caller holds no membership. So the whole population that *does* hold one never reached it: a resident invited to supervise a department, a worker on one community's roster invited to manage another, a supervisor being promoted. Their invitation was neither claimed nor refused. It stayed `pending` and the department that sent it kept seeing `pending`, with nothing anywhere reporting a problem.  Since `20260821140000`/`20260821170000` the refusal half matters as much as the claim half: an invitation that *cannot* be applied is marked `blocked` and both the department and the invitee are told — and that announcement was reachable only by people with no membership.  What is asserted is the call, not the outcome, because the outcome is the RPC's and the RPC is Postgres. The caller here holds a membership from the first read and the claim is attempted anyway. |
+
+
+## `test_supervisor_actions.py`
+The supervisor's card actions: resolve, priority, notes, chat, force-assign.
+
+**What these tests can and cannot prove.** Every decision worth making lives in
+`20260822170000_supervisor_actions.sql`: whether a running job blocks a resolve,
+whether the priority has anywhere left to go, whether a second supervisor may
+write in a thread the first one opened. Those are Postgres, they are stubbed
+here, and the static battery in `tests/test_supervisor_actions_migration.py` is
+the half that reads them.
+
+What is proved below is the half that is Python, and it is the half where a
+mistake is silent rather than loud:
+
+* **the three body-less verbs declare no request model.** The house `post()`
+  helper always sends `{}`, so a required model would answer 422 to every press
+  of a button that has nothing to say -- the same trap take-up avoided, restated
+  three times because it is three routes;
+* **`force` routes to a different RPC and nothing else changes.** The default
+  path must still call `assign_work_order` with exactly the arguments it always
+  did: an offer that quietly became a booking would take a worker's right to
+  decline away without any error anywhere;
+* **the refusals come out of the database with their own sentences.** "Somebody
+  is working on this right now" and "already at the highest priority" are what a
+  supervisor reads, and `pg_errors` passes a custom code's message through
+  untouched;
+* **the staff detail read no longer refuses the department at the door.** The
+  guard widened from `require_admin` to active membership because the RPC has
+  always decided `is_community_admin OR can_supervise_department` for itself.
+
+*Total tests in this file: 17*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_api_353_resolving_needs_no_body_and_refuses_none` | **The route declares no request model**, for take-up's reason: the house `post()` helper always sends `{}`, and a required body would answer 422 to every press. Both an empty object and no body at all are a 200. |
+| `test_api_354_a_running_job_refuses_the_resolve_in_the_rpc_s_own_words` | Ruling A2's refusal, and the reason nothing in Python pre-reads the jobs: "is anything running?" is asked under a row lock inside the RPC. A check here would be a second answer computed a moment earlier, against the caller's RLS rather than the RPC's, and it would disagree exactly when it mattered. |
+| `test_api_355_an_unknown_complaint_is_a_404_and_a_stranger_s_is_a_403` | Both refusals reach the caller unflattened. A 403 rendered as a 500 -- which is what an unmapped SQLSTATE does -- is the one failure a supervisor cannot act on, because the sentence the RPC wrote never arrives. |
+| `test_api_356_the_new_priority_comes_back_in_the_wire_vocabulary` | The RPC answers `high` and the supervisor reads *High*, through `app/domain/vocabularies.py` -- the one place this codebase maps a stored word to a rendered one. A `case` in SQL would be a second copy of that table in a language nobody would look in. |
+| `test_api_357_a_complaint_already_at_high_is_a_409` | One way only, and the top is a refusal rather than a silent no-op. A supervisor who pressed the button and saw nothing change would press it again; the sentence is what stops that. |
+| `test_api_358_a_note_is_created_and_its_bounds_are_checked_before_the_database` | `201`, because a note is a thing that now exists on a timeline.  The 1--2000 bound is stated twice on purpose: Pydantic answers an empty composer with a 422 naming the field, and `add_complaint_note_internal` answers `HB422` for any caller the API does not own. The note is trimmed here, so a body of spaces is refused rather than stored. |
+| `test_api_359_an_internal_note_never_reaches_the_resident_s_timeline` | Ruling A5, at the only layer that can enforce it.  The RLS policy on `complaint_events` scopes rows to the complaint and not to a payload flag, so the row *does* reach this service -- and dropping it here is the whole of what keeps it off the resident's screen. The admin's resident-visible note carries no flag and must survive the same filter, which is the half of this test that would fail on an over-eager fix. |
+| `test_api_360_the_priority_timeline_line_is_the_approved_copy` | The resident-facing sentence, rendered from the payload's *stored* words.  The RPC writes `{"from": "medium", "to": "high"}` because nothing in SQL translates a vocabulary; the sentence says *High* because `complaint_priority_to_wire` is asked here, in the same call every other complaint surface makes. |
+| `test_api_361_opening_a_chat_returns_only_the_thread_id` | `200` and `{ threadId }`, not the thread.  The dock already fetches a thread and its messages from `GET /messages/threads/{id}`; returning the whole thing here would be a second projection of it, free to disagree with the first. `200` rather than `201` because the common case is *getting* the thread that exists -- a status code that alternated would describe the database's history rather than the caller's request. |
+| `test_api_362_a_complaint_with_nobody_to_talk_to_is_a_409` | A conflict and not a 404: the complaint exists, and what is missing is a second person to put in the thread. The same shape `open_work_order_thread` already uses for a job with no worker-and-resident pair. |
+| `test_api_363_a_worker_membership_reaches_every_action` | The claim the whole surface rests on: a department supervisor holds a `worker` membership, rank is not role, and the coarse router guard therefore has to admit every worker. What they may do to *this* department's complaint is `can_supervise_department` in Postgres. |
+| `test_api_364_a_resident_reaches_none_of_them` | The other half of the same table. The person whose flat the leak is in has their own screens, and none of these is one of them -- refused before any query runs. |
+| `test_api_365_every_action_is_refused_without_the_csrf_pair` | All four change something a resident or a worker can see, so CSRF is checked before the role guard has anything to say. |
+| `test_api_366_assigning_without_force_is_the_offer_flow_unchanged` | The default path must reach `assign_work_order` with exactly the arguments it always did, and must not reach the forced one at all.  This is the assertion that matters most in the file. An offer that quietly became a booking would take a worker's right to decline away, and nothing anywhere would error. |
+| `test_api_367_force_routes_to_the_force_assign_rpc_and_carries_the_slot` | `force: true` is the supervisor's override of the consent model, and it carries the same optional slot the offer does -- the supervisor picked the person and the hour in one gesture, and a second call to set the time would be a booking that briefly had none. |
+| `test_api_368_a_forced_assignment_still_refuses_a_double_booking` | Forcing overrides the *worker's* consent, not physics. The overlap constraint is the same one the offer path meets, and the refusal names the person -- which is the whole reason the RPC checks it in words before the constraint checks it in `23P01`. |
+| `test_api_369_the_staff_detail_read_admits_the_department_not_only_the_admin` | The eye popup's read. `require_admin` was refusing a department's own supervisors at the door, before `staff_complaint_detail` -- which has decided `is_community_admin OR can_supervise_department` since it was written -- could be asked. Widening the router guard to active membership does not widen who may read anything: the RPC answers `HB404` to everybody else, and a stranger walking complaint ids still learns nothing. |
+
+
+## `test_supervisor_triage.py`
+The supervisor's triage dashboard: one read and one verb.
+
+**What these tests can and cannot prove.** The bucketing itself --- *live*,
+*engaged*, taken up but undispatched --- is `supervisor_triage_snapshot` in
+`20260822120000`, and it is Postgres. It is stubbed here, so nothing below shows
+that a job with an outstanding offer lands in `assignedPending` rather than
+`takenUp`. No test in this suite can: it has no database. That half is
+`tests/test_supervisor_triage_migration.py`, statically, and the SQL editor after
+the file is applied.
+
+What they do prove is the half that is Python, and it is the half where a mistake
+is silent:
+
+* the four arrays are rendered **in the order and grouping the RPC returned
+  them**. The frozen contract says the server buckets and the client does not
+  re-derive, and a service that filtered here would be a fifth definition of
+  *engaged* that nobody would think to look for;
+* the storage vocabulary is translated exactly once, through
+  `app/domain/vocabularies.py`, so `high` reaches the screen as `High` and
+  `acknowledged` as `In Progress` --- the same words every other complaint
+  surface sends;
+* `POST /complaints/{id}/take-up` **declares no request body**, which is not a
+  stylistic preference: the house `post()` helper on the frontend always sends
+  `{}`, and a required model would turn every press of the button into a 422;
+* every refusal comes out of the database. The 409 in particular carries the
+  RPC's own sentence, naming whoever already holds the complaint, because
+  "already taken up" with no name sends a supervisor to ask around an office.
+
+*Total tests in this file: 13*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_api_340_the_four_sections_arrive_grouped_as_the_database_grouped_them` | The frozen contract's load-bearing sentence: **bucketing is decided server-side**. Four rows go in, one per section, and each comes out in the section it went into --- nothing here re-derives *live* or *engaged*, which would be a second set of definitions free to disagree with the RPC's. |
+| `test_api_341_the_stored_vocabulary_is_translated_exactly_once` | `high` reaches the screen as `High` and `acknowledged` as `In Progress`, through `app/domain/vocabularies.py` --- the same table every other complaint surface uses. The RPC deliberately sends the stored words: a `case` in SQL turning `high` into `High` would be a second copy of that table, in a language where nobody would look for it.  The **work order's** status is passed through unmapped, and that is not an inconsistency: `scheduled` is the work-order vocabulary, `WorkOrder` has always sent it, and a second spelling depending on which endpoint answered would be the real inconsistency. |
+| `test_api_342_the_three_reassignment_badges_survive_the_projection` | `returnedToPoolAt`, `reopenedCount` and `reroutedAt` are the whole of section 1's "this is not as new as it looks", and `inheritedAt` is section 3's. All four ride on facts the engine already recorded --- none is a new lifecycle state --- so the only way to lose one is to drop it in the projection, which is exactly what nothing would error on. |
+| `test_api_343_an_empty_department_is_four_empty_arrays_and_a_200` | Never a 404 and never a partial body. A department with nothing on it has four empty sections, which is a thing the screen can render; a missing key would be a section that throws. |
+| `test_api_344_a_department_the_caller_does_not_supervise_is_a_403` | A refusal, not an empty snapshot.  An empty dashboard and a refused one look identical on a screen, and the difference is the whole content of the answer. The rule is `can_supervise_department` inside the RPC --- the same predicate `GET /departments/{id}/complaints` asks --- and nothing in Python restates it, because the copy that drifts is always the one nobody is testing. |
+| `test_api_345_taking_up_needs_no_body_and_refuses_none` | **The route declares no request model at all**, and the frontend is why.  The house `post()` helper always sends `{}`, even for a body-less endpoint (`workerApi.acceptJob` is the precedent). A required model would answer 422 to every press of the button; a model with optional fields would be a place to name somebody else, and the acting supervisor is the session. Both an empty object and no body at all are a 200. |
+| `test_api_346_somebody_else_s_complaint_is_a_409_that_names_them` | The refusal this verb exists to produce well. `take_up_complaint` raises `HB409` naming the holder, `pg_errors` passes a custom code's message through untouched, and it reaches the screen --- because "already taken up" without a name sends a supervisor to ask around an office. |
+| `test_api_347_an_unknown_complaint_is_a_404_from_the_database` | Nothing in this process reads a complaint before writing to it. A lookup here would be a second answer to "does this exist", asked with the caller's RLS rather than the RPC's, and the two would disagree on exactly the rows that matter. |
+| `test_api_348_taking_up_without_the_csrf_pair_is_refused` | It changes what a resident sees --- `open` becomes `acknowledged`, which their screen renders as *In Progress* --- so CSRF is checked before the role guard has anything to say. |
+| `test_api_349_a_worker_membership_reaches_both_operations` | The claim the whole surface rests on. A department supervisor holds a `worker` membership --- rank is not role, `0035` settled that --- so the coarse router guard has to admit every worker, and what they may do to *this* department is `can_supervise_department` in Postgres. This proves the half that is Python: no route here refuses them before the database is asked. |
+| `test_api_350_a_resident_reaches_neither` | The other half of the same table, and the reason the guard is there at all: it turns "signed-in resident poking at department ids" into a 403 before any query runs. The person whose flat the leak is in has their own screens and this is not one of them. |
+| `test_api_351_an_admin_reaches_both_because_managing_implies_supervising` | `can_manage_department` implies `can_supervise_department` --- it is the first line of that predicate's body (`0036` 4) --- so an admin opening a department's dashboard is not a widening, it is the rule already written. Asserted because the router guard and the database predicate are two different lists and only one of them is in this repository's Python. |
+| `test_api_352_a_malformed_section_empties_itself_and_not_the_screen` | The one piece of defensiveness in the service, and its bound.  `jsonb_agg` over an empty set is `null`, which the RPC already coalesces to `[]`. If a section ever arrives as something else, it renders empty rather than raising --- because one malformed section should not take the other three off the screen with it. This is a fallback and not a contract: the RPC owns the shape. |
 
 
 ## `test_system.py`
@@ -1067,7 +1354,7 @@ notice going missing:
   quietly writing a booking with no time -- which would be a booking the overlap
   constraint cannot see.
 
-*Total tests in this file: 16*
+*Total tests in this file: 19*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1087,6 +1374,9 @@ notice going missing:
 | `test_api_173_the_department_queue_forwards_its_status_filter_unwidened` | `?status=` narrows on top of the policy and never decides visibility. A supervisor asking for another department's queue gets an empty list from the policy rather than somebody else's work, which is why taking a department id from the path is safe here at all. |
 | `test_api_174_a_complaint_may_carry_several_jobs` | A failed visit is rescheduled and a reopened complaint goes to a different supervisor, and both are a second work order rather than an edit to the first. This is the read that would have been impossible had the assignment been columns on `complaints` -- the smaller change the plan rejected in D5. |
 | `test_api_175_an_unsafe_call_without_the_csrf_pair_is_refused` | Every write on this router changes somebody's working day, so CSRF is checked before the role guard has anything to say. |
+| `test_api_337_a_worker_membership_reaches_every_work_order_operation` | The whole table, because a single call would leave eight untested and the one that drifts is always the one nobody looked at.  A supervisor is a `worker` and passes the coarse guard; what they may do to *this* department is `can_supervise_department` in Postgres, which is stubbed here -- so what this proves is the half that is Python: no route in this router refuses them before the database is asked. That is precisely the claim the worker portal's new `/worker/work-orders` route rests on. |
+| `test_api_338_a_resident_reaches_none_of_them` | The other half of the same table, and the reason the guard is there at all: it turns "signed-in resident poking at work-order ids" into a 403 before any query runs. Widening the router to admit a supervisor did not widen it to admit the person whose flat the visit is in -- who has their own routes, in `resident_scheduling.py`. |
+| `test_api_339_the_candidate_read_admits_the_supervisor_who_needs_it` | Named on its own because the screen leans on it harder than the others.  `GET /departments/{id}` is `require_admin_or_manager` and a supervisor cannot call it, so the roster the assign box offers does **not** come from the department read -- it comes from here, which admits them. If this route ever narrowed to match the departments router, the worker portal's assign box would go quietly empty rather than fail. |
 
 
 ## `test_worker_communities.py`
@@ -1142,7 +1432,7 @@ row the database settled on rather than the request, that an unregistered caller
 gets a snapshot rather than an error, and that the notification badge is counted
 across every community the caller works in.
 
-*Total tests in this file: 7*
+*Total tests in this file: 8*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1152,6 +1442,7 @@ across every community the caller works in.
 | `test_api_188_somebody_elses_job_is_a_404_and_not_a_403` | The view returns nothing for a job the caller holds no assignment on, and a 403 would confirm that the id exists. Every route on this surface answers the same way for the same reason. |
 | `test_api_189_a_failed_visit_must_say_why_and_a_declined_offer_need_not` | The asymmetry is deliberate. A worker who was asked and is not free owes nobody an explanation; a worker who went and could not do the work is reporting something the next person has to act on, and "could not be done" with nothing after it guarantees a second wasted visit. |
 | `test_api_190_an_unregistered_caller_gets_a_snapshot_not_a_404` | This endpoint is the empty state. A null `provider` means "show the registration form" and an empty `communities` means "show the community search" -- both answered by one response rather than by a client interpreting two failures. `GET /service-providers/me` still 404s, because there the question is different. |
+| `test_an_invited_supervisor_gets_their_engagement_with_no_provider_row` | The defect live testing found. `claim_staff_invitations` writes a membership and a roster row and no `service_providers` row, so an invited supervisor is *unregistered* by every provider-keyed read -- and the snapshot used to return on the spot, empty. The portal read that as "show the marketplace registration form" and the Complaints screen, which decides supervisor access from `communities[].rank`, had nothing to decide from.  `provider: null` and a populated `communities` are now an ordinary answer: the two questions -- *do you have a marketplace profile* and *does anybody employ you* -- are asked separately because for leadership they have different answers. |
 | `test_api_191_the_badge_counts_every_community_the_caller_works_in` | The one place a user can see the multi-membership seam. A count scoped to a default community would silently drop the notifications from the two societies a plumber is not currently 'in'.  Since `0041` the count is asked of the *person*, which is what makes that true for a provider whose engagements are still being decided -- a badge assembled from a list of memberships is empty for somebody who holds none, and an unhired provider with an unanswered application is exactly who has something waiting. |
 
 

@@ -1,11 +1,45 @@
-# Apply runbook — the seven unapplied migrations
+# Apply runbook — the hand-applied migrations
 
-This is a step-by-step guide for the repository owner to apply, by hand, the seven
+This is a step-by-step guide for the repository owner to apply, by hand, the
 migration files that exist in `backend/supabase/migrations/` but are not yet
 applied to the linked hosted Supabase project. It assumes you have the
 Supabase dashboard and/or a `supabase` CLI linked to the project
 (`project_id = "homebandhu"`, see `backend/supabase/config.toml`), and general
 competence with Postgres and Supabase, but no context on this branch's work.
+
+> ## Where this stands, 2026-08-22 (evening)
+>
+> **The title above and §0.2 below are the original seven-file document, and the
+> file has grown fifteen sections past it.** They are left in place because
+> §1–§12 are the record of how the hosted database reached its current state,
+> and a runbook that deletes its own history is one nobody can audit. What is
+> *true today* is this:
+>
+> | | |
+> |---|---|
+> | **Applied and ledgered** | **everything, through §20 `20260822170000_supervisor_actions.sql`** — confirmed by the owner on the evening of 2026-08-22 |
+> | **Not applied, and never to be** | §21 `20260817144725_repair_staff_assignment_employment_type.sql` is applied *already* — it arrived on this branch after the fact, from `origin/main`, and its section exists so the file is not mistaken for outstanding work |
+> | **Outstanding** | nothing |
+>
+> This is the first time since 2026-08-12 that the answer is "nothing". The
+> queue that §15–§20 describe is closed; those sections are now history in the
+> same sense §1–§7 are, and are kept for their post-checks.
+>
+> So **§0.2's "confirm the highest version present is `0047`" is twenty-two
+> migrations stale** and would now stop you on a database that is exactly where
+> it should be. Read it as a description of the boundary §1–§7 started from, not
+> as a precondition for anything you would run today.
+>
+> **Order, for the record.** §15, §16 and §17 were independent of each other;
+> §18 had to follow §16 (it redeclares `restamp_department_supervision`), §19 had
+> to follow §18, and §20 had to follow §19 (both recreate
+> `complaint_events_type_check`, and running them backwards drops a word back
+> out of the vocabulary). **Filename order satisfied all of it**, as it always
+> does, and filename order is what was applied.
+>
+> **What is left is not an apply — it is a merge.** §22 records the issue #41
+> reconciliation: what is on this branch, what is on `origin/main`, and the one
+> read-only query the owner still needs to run before that merge lands.
 
 **Static verification of the original six files — parsing, statement-by-statement
 idempotence, and cross-file dependency order — was done before this runbook was
@@ -54,12 +88,28 @@ select version
  order by version;
 ```
 
-Confirm the highest version present is `0047` or one of the three
-`20260811…` timestamps (`162409`, `163408`, `192511`) — i.e. confirm none of
-the seven files below already has a row here. If any of the seven is already
-listed, stop and re-read `backend/supabase/migrations/README.md`'s boundary
-paragraph before proceeding; this runbook assumes a clean start from exactly
-that boundary.
+**As written in 2026-08-12, for §1–§7 only:** confirm the highest version present
+is `0047` or one of the three `20260811…` timestamps (`162409`, `163408`,
+`192511`) — i.e. confirm none of the seven files below already has a row here. If
+any of the seven is already listed, stop and re-read
+`backend/supabase/migrations/README.md`'s boundary paragraph before proceeding;
+this runbook assumes a clean start from exactly that boundary.
+
+**As of 2026-08-21, that boundary is long past** (see the box under the title).
+The seven *are* listed, and so are `20260812190000`, `20260812200000`,
+`20260821113000` and `20260821140000`. For §15 and §16 the check is the opposite
+one — confirm the row you need is **present**:
+
+```sql
+select version, name
+  from supabase_migrations.schema_migrations
+ where version in ('20260821113000', '20260821140000',
+                   '20260821170000', '20260821200000')
+ order by version;
+```
+
+`20260821140000` must be there before either. `20260821170000` and
+`20260821200000` are what you are about to add, in either order.
 
 If you are using the Supabase CLI linked to this project instead of the SQL
 Editor, the equivalent is:
@@ -873,3 +923,2229 @@ privileges from Supabase's own bootstrap (the grants are idempotent either way,
 so this changes nothing about whether to apply); and the exact table count the
 `do` loop touches, which depends on the hosted `pg_class` at apply time rather
 than on anything in the repository.
+
+---
+
+## 13. `20260821113000_location_labels.sql`
+
+Added 2026-08-21, and **the largest single-file rewrite in this runbook** — four
+functions and two views are dropped and recreated whole. Read §5x above before
+you start; the "if a file fails partway through" advice applies here more than
+anywhere else in the document.
+
+**Order.** Filename order, as ever. This one sorts after everything in §§1–12
+and after the `20260813…` and `20260820…` files added since this runbook was
+last extended, so it goes last: it rebuilds definitions those files depend on
+having read, and applying it early would put the old definitions back on top of
+it.
+
+**What it does.** Adds `location_label text` (with a `check` of 1–120 characters)
+to `service_providers` and to `communities`, then threads that one column through
+everything that reads or writes a location:
+
+| Object | Change | Owned before this by |
+|---|---|---|
+| `service_providers.location_label` | new nullable column + check | — |
+| `communities.location_label` | new nullable column + check | — |
+| `clean_location_label(text)` | new `immutable` helper: trim, cap at 120, empty becomes null | — |
+| `service_provider_overview` | dropped and recreated with one more column | `0034` §8 |
+| `community_settings_overview` | replaced with one more column | `20260811162409` §2 |
+| `upsert_service_provider` | **dropped**, recreated with an 8th parameter | `0045` §14 |
+| `register_service_provider` | **dropped**, recreated with an 8th parameter | `20260811162409` §1 |
+| `set_my_community_location` | **dropped**, recreated with a 4th parameter | `20260811162409` §2 |
+| `create_founder_community(jsonb)` | replaced; reads one more payload key. Signature unchanged | `20260811162409` §2 |
+| `search_hireable_service_providers` | **dropped**, recreated with one more returned column | `20260812090100` |
+
+**Why three functions are dropped rather than replaced, and why that is the
+riskiest part.** Adding a defaulted parameter with `create or replace` does not
+change the function — it creates a **second** one. After that, every existing
+PostgREST call with the old argument count matches both, and Postgres answers
+`function public.upsert_service_provider(...) is not unique`, which is a hard
+failure on the registration and settings paths. So each is dropped by its exact
+old signature first. If the file fails partway, the window in which a function is
+dropped and not yet recreated is the one that breaks writes — re-running the
+whole file closes it, and re-running is safe.
+
+**What it does not do.** No backfill, no `update`, no `delete`, no `drop
+column`, no `drop table`. Every existing provider and community keeps a null
+label. **No distance function is touched**: `search_serviceable_communities` is
+not named anywhere in the file, the generated `location` columns are untouched,
+and every radius predicate and `order by` inside the hiring search is carried
+over character for character (asserted in
+`backend/tests/test_location_label_migration.py`).
+
+**What to expect.** Roughly forty statements. Expect the "Potential issue
+detected" popup on the `drop function` and `drop view` statements → **Run
+query**. The last statement is an anonymous `do` block that verifies the result:
+if the file applied cleanly it returns "Success. No rows returned"; if any part
+of it did not take, it raises with the name of what is missing rather than
+reporting success.
+
+**Post-check.** The file's own verification block covers the structure. This
+checks the two things it cannot — that no old overload survived, and that the
+hiring read did not gain a coordinate:
+
+```sql
+select proname, pronargs
+  from pg_proc
+ where pronamespace = 'public'::regnamespace
+   and proname in ('upsert_service_provider', 'register_service_provider',
+                   'set_my_community_location', 'search_hireable_service_providers')
+ order by proname;
+-- expect exactly four rows:
+--   register_service_provider         | 8
+--   search_hireable_service_providers | 4
+--   set_my_community_location         | 4
+--   upsert_service_provider           | 8
+-- FIVE rows means an old overload survived. Re-run the file.
+
+select count(*) filter (where n.name = 'location_label')            as has_label,
+       count(*) filter (where n.name in ('latitude', 'longitude'))  as leaks_coordinates
+  from pg_proc pr
+  cross join lateral unnest(pr.proargnames) as n(name)
+ where pr.pronamespace = 'public'::regnamespace
+   and pr.proname = 'search_hireable_service_providers';
+-- expect: has_label = 1, leaks_coordinates = 0
+```
+
+**Record it in the ledger** (§12 explains why the SQL Editor does not do this
+for you):
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260821113000', 'location_labels')
+on conflict (version) do nothing;
+```
+
+**Functionally, after this file:** open the service-partner registration form,
+type a suburb into the address box and press Search — results appear, picking one
+drops the pin and fills the label, and saving keeps both. Then open a
+department's hiring tab and confirm a candidate card shows the place name beside
+the distance.
+
+**Until the file is applied, the code that ships with it does not work, and it
+is meant not to.** The repository asks PostgREST for `location_label` by name in
+three column lists (the provider profile read, the hiring candidate read, and the
+settings read), and asks the four rewritten RPCs for their new argument. Against
+a database without the column that is an error, not a degraded response: the
+worker profile, the hiring candidate page and the admin settings page all fail to
+load, and the two provider writes answer **503** naming the rollout gap
+(`location_label_migration_not_deployed` from the profile edit,
+`service_provider_registration_not_deployed` from registration). This is the
+house pattern from `register_service_provider`'s own rollout, and it is
+deliberate: a select list that quietly fell back would hide the fact that the
+migration is outstanding, and a write that retried without the label would save a
+profile that lost what the person had just typed. **Apply this file before
+testing anything from the 2026-08-21 location-picker work.**
+
+### What was checked before this section was written
+
+Static only — nothing below was run against any database. The checks are
+automated in `backend/tests/test_location_label_migration.py` rather than done
+once by hand, so they re-run on every change to the file.
+
+| Check | Result |
+|---|---|
+| The file parses as valid PostgreSQL (`pglast.parse_sql`) | Pass |
+| It sorts after every file whose definitions it rewrites (`0034`, `0045`, `20260811162409`, `20260812090100`) | Pass |
+| No later migration redeclares any of the seven objects it owns | Pass — checked across every `.sql` in the directory |
+| Every DDL statement is guarded (`add column if not exists`, `do`-block constraint guards, `drop … if exists` before each create) | Pass — four `drop function if exists`, one `drop view if exists` |
+| Each drop names the exact signature the owning migration declared | Pass — each expected signature is re-read out of the owning file rather than typed into the test |
+| `search_hireable_service_providers` returns `location_label` and neither `latitude` nor `longitude` | Pass |
+| Every predicate and ordering that decides who is hireable survived the rewrite | Pass — the `st_dwithin` bounds, both blacklist/roster `not exists` blocks, the `order by` and the `limit`, compared against `20260812090100` |
+| `service_provider_overview` kept every column it had | Pass — the old column list is parsed out of `0034` and each name required in the new body |
+| The 120-character cap matches the one the API truncates labels to | Pass — compared against `LOCATION_LABEL_MAX_LENGTH` in `app/domain/geo_schemas.py` |
+| No destructive statement | Pass — zero `drop table`, `drop column`, `delete`, `update`, `truncate`, `alter column` |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted project's `service_providers` or `communities` already carries a column of
+this name from some path the repository does not know about (the `if not exists`
+guard makes the add safe either way, but a pre-existing column with a different
+type or no check constraint would make the verification block raise, which is the
+intended outcome); and whether any *other* overload of the four rewritten
+functions exists on the hosted database from before the repository baseline —
+the first post-check query is exactly the probe for that.
+
+---
+
+## 14. `20260821140000_leadership_exclusivity.sql`
+
+Added 2026-08-21, after §13 and **because of** it: it copies §13's
+eight-argument `register_service_provider` forward verbatim in order to add one
+refusal to it. **Apply §13 first.** Applying this one against a database that has
+not had §13 will install a `register_service_provider` whose body calls
+`upsert_service_provider` with eight arguments that do not exist there.
+
+**Order.** Filename order. `20260821140000` sorts after `20260821113000`, which
+is the whole reason its refusal survives.
+
+**What it enforces.** The three product rulings of 2026-08-21:
+
+1. leadership is invite-only and never from the marketplace pool;
+2. leadership is exclusive to one community;
+3. removal severs access completely.
+
+| Object | Change | Owned before this by |
+|---|---|---|
+| `staff_invitations.blocked_reason` | new nullable `text` | — |
+| `staff_invitations.blocked_at` | new nullable `timestamptz` | — |
+| `staff_assignment_profile(uuid, uuid)` | new predicate: which person a roster row is | — |
+| `active_leadership_community(uuid)` | new predicate: where this person currently leads, or null | — |
+| `membership_is_live(uuid)` | new predicate, for the notifications policy | — |
+| `enforce_leadership_exclusivity()` + trigger on `staff_assignments` | new: rulings 1 and 2 (`HBMKT`, `HBLED`) | — |
+| `enforce_provider_not_leadership()` + trigger on `service_providers` | new: ruling 1 from the marketplace side | — |
+| `register_service_provider` | replaced; one refusal added, `p_location_label` carried forward | `20260821113000` §3 |
+| `invite_staff_member` | replaced; two refusals added | `20260812090200` §3 |
+| `update_staff_invitation` | replaced; two refusals added, clears `blocked_reason` | `20260812090200` §3 |
+| `department_staff_invitations` | **dropped**, recreated with two more returned columns | `20260812090200` §2 |
+| `claim_staff_invitations` | replaced; a blocked invitation is skipped and marked, never raised | `20260812090200` §4 |
+| `is_own_staff_assignment` | replaced; now requires the roster row **and** the membership to be live | `0036` §4 |
+| `notify_member` | replaced; a message to an ended membership is filed against the person | `0041` §2 |
+| `notifications_read_own` policy | replaced; community-scoped rows for an ended membership are hidden | `0041` §1 |
+| `dm_threads_read`, `dm_messages_read` policies | replaced; both now require an active membership in the thread's community | `0046` §6 |
+
+**Why `department_staff_invitations` is dropped rather than replaced.** It is the
+one object here whose `returns table` signature changes, and `create or replace`
+cannot change a return type — it fails with "cannot change return type of
+existing function". Its argument list is unchanged, so unlike §13 there is no
+overload risk; the drop is simply the only way to widen the projection. The grant
+is reissued immediately after, because dropping a function takes its grants with
+it.
+
+**What it does not do.** No backfill, no `update` of any existing row, no
+`delete`, no `drop column`, no `drop table`. Accounts that *already* break
+rulings 1 or 2 are **counted and reported, never repaired** — which community
+loses its supervisor, and which identity a person keeps, are somebody's job and
+somebody's account. Section 9 of the file raises a `notice` with the counts.
+Expect all three to be zero.
+
+**What to expect.** Roughly thirty statements. Expect the "Potential issue
+detected" popup on `drop function`, `drop trigger` and `drop policy` → **Run
+query**. One anonymous `do` block, the counting block in section 9, which prints
+`NOTICE` lines only if something already violates the rulings. There is no
+self-verification block: what this file installs is enforced by triggers and
+policies whose presence the post-check below queries directly.
+
+**Post-check.** Run all of these. They are reproduced in the file's own section
+10 so a reader of the SQL finds them without the runbook.
+
+```sql
+-- (a) Both triggers exist.
+select tgname
+  from pg_trigger
+ where tgname in ('staff_assignments_leadership_exclusivity',
+                  'service_providers_not_leadership');
+-- expect: two rows.
+
+-- (b) The two new columns exist.
+select column_name, data_type
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'staff_invitations'
+   and column_name in ('blocked_reason', 'blocked_at');
+-- expect: two rows.
+
+-- (c) Exactly one department_staff_invitations, and it is the wide one.
+select pr.pronargs, array_length(pr.proallargtypes, 1) as all_args
+  from pg_proc pr
+ where pr.pronamespace = 'public'::regnamespace
+   and pr.proname = 'department_staff_invitations';
+-- expect: one row, pronargs = 2, all_args = 14 (2 in + 12 out).
+
+-- (d) Nobody holds two active leadership postings.
+select m.profile_id, count(*)
+  from public.staff_assignments sa
+  join public.community_memberships m on m.id = sa.membership_id
+ where sa.status = 'active' and sa.rank in ('manager', 'supervisor')
+   and m.status = 'active' and m.ended_at is null
+ group by m.profile_id having count(*) > 1;
+-- expect: zero rows. Non-zero means section 9's notice fired and somebody has
+--         to decide which posting survives.
+
+-- (e) No active leader also holds a marketplace profile.
+select sa.id, sa.community_id, sa.rank
+  from public.staff_assignments sa
+  join public.community_memberships m on m.id = sa.membership_id
+  join public.service_providers p on p.profile_id = m.profile_id
+ where sa.status = 'active' and sa.rank in ('manager', 'supervisor')
+   and m.status = 'active' and m.ended_at is null;
+-- expect: zero rows.
+
+-- (f) The three ruling-3 policies carry their new conditions.
+select polname, pg_get_expr(polqual, polrelid) as predicate
+  from pg_policy
+ where polname in ('dm_threads_read', 'dm_messages_read',
+                   'notifications_read_own');
+-- expect: three rows; the first two mention is_community_member, the third
+--         mentions membership_is_live.
+
+-- (g) The guard actually refuses. Self-contained: finds a marketplace-hired
+--     roster row itself, attempts the forbidden promotion inside a
+--     subtransaction, and rolls everything back. If no such row exists yet it
+--     says so and skips — the trigger's presence is already proven by (a).
+do $$
+declare
+  v_row uuid;
+begin
+  select sa.id into v_row
+    from public.staff_assignments sa
+   where sa.service_provider_id is not null
+     and sa.rank = 'member'
+   limit 1;
+  if v_row is null then
+    raise notice 'check (g) skipped: no marketplace-hired roster row to test with; trigger presence is proven by check (a).';
+    return;
+  end if;
+  begin
+    update public.staff_assignments set rank = 'supervisor' where id = v_row;
+    raise exception 'check (g) FAILED: the promotion was not refused';
+  exception
+    when sqlstate 'HBMKT' then
+      raise notice 'check (g) OK: promotion refused with HBMKT, nothing persisted.';
+  end;
+end $$;
+-- expect: NOTICE "check (g) OK ..." (or the skip notice on an empty roster).
+--         The caught error rolls the subtransaction back, so the row is
+--         untouched either way.
+```
+
+**Record it in the ledger** (§12 explains why the SQL Editor does not do this for
+you):
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260821140000', 'leadership_exclusivity')
+on conflict (version) do nothing;
+```
+
+**Functionally, after this file:** try to invite a registered service
+professional's email as a supervisor from a department's staff panel — it comes
+back 409 naming the marketplace. Sign in as an account invited as a supervisor in
+two communities: one posting takes, the other stays `pending` in its department's
+list with a sentence saying why. Remove a supervisor from a community and sign in
+as them again: that community's threads, calendar, jobs and community-scoped
+notifications are gone, and the "You were taken off a roster" notification is
+still there.
+
+**Until the file is applied**, the API behaves as it did before, with two
+exceptions that are Python-side and ship independently: `HB422` from the invite
+RPCs now surfaces as a 422 instead of a 500, and `blockedReason`/`blockedAt` come
+back `null` on every invitation (the service reads them with `.get`, so a
+database without the columns does not 500 the department page). Nothing else in
+the 2026-08-21 leadership work has any effect until the DDL is on the database —
+the guards, the claim-time skip and all three ruling-3 fixes are entirely in SQL.
+
+### What was checked before this section was written
+
+Static only — nothing below was run against any database. The checks are
+automated in `backend/tests/test_leadership_exclusivity_migration.py` rather than
+done once by hand, so they re-run on every change to the file.
+
+| Check | Result |
+|---|---|
+| The file parses as valid PostgreSQL (`pglast.parse_sql`) | Pass |
+| It sorts after every file whose definitions it rewrites (`0036`, `0041`, `0046`, `20260812090200`, `20260821113000`) | Pass |
+| No later migration redeclares any of the nine objects it owns | Pass — checked across every `.sql` in the directory |
+| Every DDL statement is guarded (`add column if not exists`; `drop trigger`/`policy`/`function if exists` before each create) | Pass |
+| `register_service_provider`'s copy kept `p_location_label` **and** the 2026-08-12 separate-account refusal | Pass — both asserted by name, and the new refusal asserted to come first |
+| `claim_staff_invitations`' copy kept the rank derivation, the already-a-member skip and both inserts | Pass |
+| The claim's blocked branch contains no `raise` and ends in `continue` | Pass — the whole loop body is asserted to contain zero `raise exception` |
+| No destructive statement | Pass — zero `drop table`, `drop column`, `truncate`, `delete from`, and no `update` of `community_memberships`, `service_providers` or `staff_assignments` |
+| Every custom SQLSTATE the file raises is mapped in `app/core/pg_errors.py` | Pass — and this is the check that found the unmapped `HB422` |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted database already contains an account violating ruling 1 or 2 (section 9
+counts them and the file continues either way — a `notice`, not a failure);
+whether any `staff_assignments` row is active while the membership it names has
+ended, which the new `is_own_staff_assignment` would hide from its owner
+(post-checks (d) and (e) will not show it — if you suspect it, compare
+`staff_assignments.status = 'active'` against `community_memberships.status` for
+the same row); and whether the hosted `notify_member` differs from `0041`'s text,
+which is the body this file copied forward.
+
+---
+
+## 15. `20260821170000_blocked_invitee_notice.sql`
+
+Added 2026-08-21, after §14 and **because of** it: it redeclares §14's
+`claim_staff_invitations` so that the person whose leadership invitation was
+refused is told why, on the same edge that already tells the department.
+**Apply §14 first.** Applying this one against a database that has not had §14
+would install a function that reads `staff_invitations.blocked_at` and calls
+`active_leadership_community`, neither of which exists there — and it would fail
+on the first sign-in rather than at apply time, which is worse.
+
+**Order.** Filename order. `20260821170000` sorts after `20260821140000`, which
+is the whole reason its addition survives: both files declare the same function
+name, and the last one applied is the definition the database keeps.
+
+**Why it exists.** §14 made a blocked claim *survivable* — the invitation is
+skipped rather than raised, stays `pending`, gains a `blocked_reason`, and the
+inviting department gets one `staff_invitation.blocked` notification. Every one
+of those is addressed to the department. The invitee was told nothing: they sign
+in with the address that was typed for them, the invitation silently does not
+take, and they land wherever their own identity already entitled them to. The
+product owner's ruling of 2026-08-21 is that they must be told, on the same edge,
+in wording that is frozen and is reproduced in section 1 of the file.
+
+| Object | Change | Owned before this by |
+|---|---|---|
+| `claim_staff_invitations` | replaced; one `notify_profile` call added inside the existing `blocked_at is null` guard | `20260821140000` §5 |
+
+That is the whole table. **No column, no table, no view, no policy, no trigger, no
+grant, no index.** One `create or replace function`, its `comment`, its `revoke`,
+and one anonymous `do` block that counts and reports.
+
+**What the copy had to preserve, and does.** The body was extracted mechanically
+from §14's file — the house convention from `20260812113000` §1 — so the starting
+point is provably the text that was applied to this database. The additions are
+marked `-- CHANGED (20260821170000)` to keep them apart from §14's own `-- CHANGED`
+markers. `test_the_copied_body_is_purely_additive` asserts that every non-blank
+line of the applied version is still present, which is the check that catches a
+copy made by retyping: the already-a-member skip, the rank derivation, both
+inserts and the claimed-clears-blocked update are all lines that can vanish
+without anything erroring.
+
+**The property that matters most is the absence of a `raise`.** This function runs
+inside `resolve_session` on every membership-less session read, and
+`auth_service._claim_staff_invitations` swallows what it raises. A new call inside
+that loop that could throw would abandon every *other* pending invitation in the
+same call, silently, behind a screen that looks fine. `notify_profile` cannot
+throw for the arguments used here — its two guards are a null profile (impossible;
+the function returns early on one) and a blank kind (a literal).
+
+**What it does not do.** No backfill, no `update` of any row other than the
+`staff_invitations` row the copied body already marked, no `delete`, no `drop` of
+anything. An invitation that was **already** blocked before this file is applied
+has already crossed the `blocked_at is null` edge, and its invitee is not told
+retroactively — sending for those rows would mean writing `blocked_at` backwards
+or bypassing the guard, and either would re-notify anybody the department has
+since re-invited. Section 2 of the file counts them into a `raise notice` and
+touches nothing. Expect zero: the columns were added the same day, by §14. The
+department's own remedy re-arms the edge — `update_staff_invitation` clears
+`blocked_reason`/`blocked_at`, so a corrected or re-issued address announces
+itself normally on the next sign-in.
+
+**What to expect.** Four statements. Expect **no** "Potential issue detected"
+popup: there is no `drop` in the file. The `do` block in section 2 returns
+"Success. No rows returned", and prints a `NOTICE` only if pending blocked
+invitations already exist.
+
+**Post-check.** Paste the whole block below in one go. Every check either
+self-selects the data it needs or reports that there is nothing to check — there
+is nothing in it to fill in.
+
+```sql
+do $$
+declare
+  v_src         text;
+  v_definitions integer;
+begin
+  select count(*) into v_definitions
+    from pg_proc
+   where pronamespace = 'public'::regnamespace
+     and proname = 'claim_staff_invitations';
+
+  if v_definitions <> 1 then
+    raise exception
+      'check FAILED: % definition(s) of claim_staff_invitations, expected exactly 1. An overload makes PostgREST answer "function is not unique".',
+      v_definitions;
+  end if;
+
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace
+     and proname = 'claim_staff_invitations';
+
+  -- (a) Both halves of the announcement are present.
+  if v_src not like '%staff_invitation.not_applied%' then
+    raise exception 'check (a) FAILED: the invitee is still not told. This file did not take, or an older definition won.';
+  end if;
+  if v_src not like '%staff_invitation.blocked%' then
+    raise exception 'check (a) FAILED: the department notification was lost in the copy.';
+  end if;
+
+  -- (b) Both sit inside the one edge guard, so each fires once.
+  if v_src not like '%if v_row.blocked_at is null then%' then
+    raise exception 'check (b) FAILED: the blocked_at edge guard is gone; the messages would re-send on every sign-in.';
+  end if;
+
+  -- (c) The refusal is still a skip. A raise here abandons the whole claim.
+  if v_src ~* '\mraise\M' then
+    raise exception 'check (c) FAILED: the claim can raise again. A refusal spelled as an exception abandons every other pending invitation, silently.';
+  end if;
+
+  -- (d) The invitee is addressed as a person, not as a membership.
+  if v_src not like '%notify_profile(%' then
+    raise exception 'check (d) FAILED: the invitee notification is not person-scoped.';
+  end if;
+
+  -- (e) The approved wording, both branches, as stored.
+  if v_src not like '%registered as a marketplace service professional, and department leadership can%' then
+    raise exception 'check (e) FAILED: the provider sentence is not the approved wording.';
+  end if;
+  -- Deliberately a clause the *invitee* sentence alone carries: the
+  -- department's own blocked_reason also says "already manage or supervise
+  -- another community", so a fragment from the shared half would pass even if
+  -- the invitee's message had been lost.
+  if v_src not like '%once your current engagement ends, the invitation can be applied on your next sign-in.%' then
+    raise exception 'check (e) FAILED: the already-leads sentence is not the approved wording.';
+  end if;
+
+  raise notice 'checks (a)-(e) OK: one definition, both notifications, one edge guard, no raise, approved wording.';
+end $$;
+
+-- (f) What the file could not reach: invitations blocked before it was applied.
+--     Their invitees crossed the edge without a message and are not told
+--     retroactively. Correcting or re-issuing the address re-arms it.
+select count(*) as pending_blocked_before_this_file
+  from public.staff_invitations
+ where blocked_at is not null and status = 'pending';
+-- expect: 0. A non-zero count is not a failure -- it is the list of people the
+--         department may want to re-issue an invitation to.
+
+-- (g) The rows this writes are person-scoped and community-less, which is what
+--     keeps them readable through every later membership change. Safe to run
+--     before any exist: it answers 0/0/0.
+select count(*)                                                     as written,
+       count(*) filter (where recipient_profile_id is null)         as unaddressed,
+       count(*) filter (where recipient_membership_id is not null)  as community_scoped
+  from public.notifications
+ where kind = 'staff_invitation.not_applied';
+-- expect: unaddressed = 0 and community_scoped = 0, whatever `written` is.
+```
+
+**Record it in the ledger** (§12 explains why the SQL Editor does not do this for
+you):
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260821170000', 'blocked_invitee_notice')
+on conflict (version) do nothing;
+```
+
+**Functionally, after this file:** invite an address as a supervisor from a
+department's staff panel, have the person behind that address register as a
+service professional, then sign them in. The department's list shows the
+invitation still `pending` with a `blockedReason`, and the person's own
+notification bell now carries *"Your invitation couldn't be applied"* with the
+approved sentence underneath. Signing in again changes neither: the edge has
+passed, and that is the point.
+
+**Until the file is applied**, nothing changes anywhere. There is no Python half
+and no frontend half to this work — the only thing that ships with it is the
+notification the database writes — so an unapplied file means the invitee keeps
+being told nothing, exactly as before. Nothing 500s and nothing degrades.
+
+### What was checked before this section was written
+
+Static only — nothing below was run against any database. The checks are
+automated in `backend/tests/test_blocked_invitee_notice_migration.py` rather than
+done once by hand, so they re-run on every change to the file.
+
+| Check | Result |
+|---|---|
+| The file parses as valid PostgreSQL (`pglast.parse_sql`) | Pass |
+| It sorts after `0041`, `20260812090200`, `20260821113000` and `20260821140000` — and is the last file that declares `claim_staff_invitations` | Pass — "last file in the directory" until §16 was added on 2026-08-21; being last among the files that declare this function was always the property that mattered |
+| The copied body is **purely additive**: every non-blank line of `20260821140000`'s version is still present | Pass — compared line by line against the owning file rather than against a remembered list |
+| The signature and `returns table` are unchanged (`create or replace` cannot change a return type, and a defaulted parameter would create an overload) | Pass |
+| The loop contains no `raise` of any kind, still ends both refusal paths in `continue`, and never writes `status = 'blocked'` | Pass |
+| Both notifications sit inside exactly one `if v_row.blocked_at is null then` guard, and there are exactly two `perform public.notify…` calls in it | Pass |
+| The invitee is addressed with `notify_profile(p_profile_id, …)` under a kind distinct from the department's | Pass |
+| Both approved sentences are stored character for character, each as one uninterrupted `body` string | Pass — apostrophe-unescaped and compared against the frozen text |
+| The payload carries no `url` key, and the kind is in neither `_FALLBACK_URLS` nor `_FALLBACK_TITLES` | Pass — the second half from the API side, `test_api_283` / `test_api_284` |
+| Nothing destructive and nothing else declared: one function, no `drop`, no `alter table`, no policy, no trigger, no view | Pass |
+| The pre-existing-blocked count is a `notice` that runs no `update` | Pass |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted `claim_staff_invitations` is in fact §14's text (this file's copy is
+provably §14's *file*, which is only the same thing if §14 applied cleanly —
+post-check (a)'s department-notification assertion is the probe for that); whether
+any pending invitation on the hosted database is already blocked, which post-check
+(f) counts; and whether `notify_profile` is present and executable by the
+function's owner, which nothing can prove until a refusal actually happens and
+post-check (g) counts a row.
+
+---
+
+## 16. `20260821200000_departure_continuity.sql`
+
+Added 2026-08-21, after §15 and **independent of it**. It does not declare
+`claim_staff_invitations` and reads nothing §15 writes, so the two may be applied
+in either order. **§14 is the real precondition:** this file calls
+`membership_is_live`, which §14 declares, and it leans on §14's roster trigger
+having already settled what a leadership row may be.
+
+**Why it exists.** `work_orders.supervisor_membership_id` (`0036`) is the address
+five notification kinds are delivered to — `work_order.no_candidates`,
+`work_order.resident_accepted` / `_declined`, `work_order.accepted`,
+`work_order.completed` and `work_order.failed` — and nothing anywhere re-pointed
+it when the person it named stopped being a supervisor. After
+`remove_department_member` the roster row is `inactive` and the membership is
+`ended`, and every one of those messages is still written to the departed person;
+§14's `notifications_read_own` policy then hides the row. So a department's live
+jobs report their progress into a mailbox nobody can open. The complaint itself
+is not lost — complaints are department-pooled and the product owner's ruling of
+2026-08-21 keeps them that way — but everything downstream of it goes quiet.
+
+| Object | Change | Owned before this by |
+|---|---|---|
+| `department_supervision_successor(uuid, uuid)` | **new** — the one place "who inherits this department's supervision" is written | — |
+| `restamp_department_supervision(uuid, uuid)` | **new** — re-points one department's live work orders away from a membership that has stopped supervising them | — |
+| `staff_supervised_work_order_count(uuid)` | **new** — the roster count that replaces a constant zero | — |
+| `carry_department_supervision()` | **new** trigger function | — |
+| `staff_assignments_carry_supervision` | **new** trigger, `after update of rank, status, membership_id` | — |
+| `notify_complaint_staff` | replaced; one recipient arm added so a department's **supervisors** are told about its complaints (ruling R18) | `20260812090300` §2b |
+| `department_staff_overview` | dropped and recreated; `active_assignment_count` replaced by `supervised_work_order_count`, every other column carried over | `0045` §12 |
+
+**No column, no table, no policy, no grant revocation, no new SQLSTATE.** Nothing
+in the file refuses anything, so `backend/app/core/pg_errors.py` is untouched —
+and that is asserted rather than assumed
+(`test_it_raises_nothing_so_there_is_no_sqlstate_to_map`).
+
+**Why a trigger and not an edit to `remove_department_member`.** Removal has four
+RPC entry paths — the direct route, an immediate departure approval, the
+timekeeper's dated removal, and a blacklist — and a fifth that is not an RPC at
+all: `staff_assignments_admin_write` is `for all to authenticated` with direct
+grants (`20260812200000`), so an admin can flip `status = 'inactive'` straight
+through PostgREST. All five end at the same `update public.staff_assignments`, so
+one `after update` trigger covers all five where a change to the removal function
+would cover four. §14 made the same choice for the same reason. `after` rather
+than `before` is also deliberate: by then the departing row is already `inactive`
+in the snapshot the successor search reads, so "a remaining active supervisor"
+excludes them by construction.
+
+**The target rule.** In order: the least-loaded remaining **active supervisor** of
+the same department whose membership is still live (ties broken by `created_at`
+then `id`, so a re-run moves nothing); else the department's **manager** — the
+roster row holding `rank = 'manager'`, then a `manager` membership pinned to this
+department, then one pinned to none; else **nobody**, and the work orders are left
+exactly as they are. A wrong address is worse than a stale one. Community admins
+are deliberately not a step — they are not on the department's roster — though
+they are told about the takeover.
+
+**Scope.** Only work orders that are live (not `completed`, `cancelled` or
+`failed`) and only within the department the row belonged to. A completed job
+needs no supervisor and renaming one falsifies a record; and a membership can
+appear on more than one department's work, which re-stamping by membership alone
+would hand entirely to whichever department lost them first.
+
+**The last-supervisor notice.** When the removed row was a `supervisor`, the
+department is `kind = 'service'`, and no active supervisor remains, the file sends
+one `department.supervision_uncovered` through `notify_department_leadership` —
+whose audience, with zero supervisors left, is exactly the community's admins plus
+this department's manager. Its url is `/admin/complaints`, which
+`frontend/src/features/notifications/portalUrl.js` rewrites to
+`/manager/complaints` for a manager reader. Security departments are excluded
+because `/security-manager` has no complaints screen and a link that redirects
+home is the failure that module exists to prevent.
+
+**The backfill.** Section 7 is a `do` block that finds every live work order whose
+`supervisor_membership_id` is not `membership_is_live` and re-stamps it to the
+same rule, then prints a `NOTICE` with three numbers: how many were orphaned, how
+many moved, and how many were left because their department has nobody to inherit
+them. It raises no exception and runs no `update` of its own. **Expect zero or
+close to it** on this database. Re-running the file re-runs the block; the second
+run reports zero, because it only ever selects rows that are still orphaned.
+
+**What to expect.** Six functions, one trigger (dropped first), one view (dropped
+first), the grants, and the `do` block. The SQL Editor **will** show its "Potential
+issue detected" popup — there are two `drop` statements, `drop trigger if exists`
+and `drop view if exists`, both of which this file recreates immediately. Proceed.
+Everything else returns "Success. No rows returned"; the `do` block prints one
+`NOTICE`.
+
+**A Python change ships with this one, and it is not optional.**
+`departments_repository._STAFF_SELECT` and
+`hiring_repository._STAFF_MEMBER_SELECT` now ask PostgREST for
+`supervised_work_order_count`. Until this file is applied, that column does not
+exist and **every roster read is a 400** — the admin's hiring screen, the
+manager's team screen and the employee page. This is the one section in this
+runbook where "not applied yet" is not a no-op, so apply it in the same sitting as
+the deploy rather than leaving it for later.
+
+**Post-check.** Paste the whole block below in one go. Every check either
+self-selects the data it needs or reports that there is nothing to check — there
+is nothing in it to fill in.
+
+```sql
+do $$
+declare
+  v_name  text;
+  v_src   text;
+  v_count integer;
+begin
+  -- (a) One definition of each new function, and the trigger is wired.
+  foreach v_name in array array[
+    'department_supervision_successor',
+    'restamp_department_supervision',
+    'staff_supervised_work_order_count',
+    'carry_department_supervision']
+  loop
+    select count(*) into v_count
+      from pg_proc
+     where pronamespace = 'public'::regnamespace and proname = v_name;
+    if v_count <> 1 then
+      raise exception
+        'check (a) FAILED: % definition(s) of %, expected exactly 1.', v_count, v_name;
+    end if;
+  end loop;
+
+  select count(*) into v_count
+    from pg_trigger
+   where tgrelid = 'public.staff_assignments'::regclass
+     and tgname  = 'staff_assignments_carry_supervision'
+     and not tgisinternal;
+  if v_count <> 1 then
+    raise exception
+      'check (a) FAILED: the continuity trigger is not on staff_assignments. Removals will silently stop re-stamping.';
+  end if;
+
+  select pg_get_triggerdef(oid) into v_src
+    from pg_trigger
+   where tgrelid = 'public.staff_assignments'::regclass
+     and tgname  = 'staff_assignments_carry_supervision';
+  if v_src !~* 'AFTER UPDATE OF' then
+    raise exception
+      'check (a) FAILED: the trigger is not AFTER UPDATE OF. A BEFORE trigger would see the departing row as still active.';
+  end if;
+
+  -- (b) The roster view carries the new column and not the old one. The Python
+  --     projection asks for the first by name, so this is the check that stands
+  --     between the deploy and a 400 on every roster read.
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'department_staff_overview'
+       and column_name = 'supervised_work_order_count') then
+    raise exception
+      'check (b) FAILED: department_staff_overview has no supervised_work_order_count. Every roster read will 400.';
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'department_staff_overview'
+       and column_name = 'active_assignment_count') then
+    raise exception
+      'check (b) FAILED: the old constant column is still there, so an older definition of the view won.';
+  end if;
+
+  -- (c) The complaint audience reaches supervisors (ruling R18), and still
+  --     reaches everybody it reached before.
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace and proname = 'notify_complaint_staff';
+  if v_src not like '%sa.rank in (''manager'', ''supervisor'')%' then
+    raise exception 'check (c) FAILED: supervisors are still not told about complaints.';
+  end if;
+  if v_src not like '%notify_community_roles%' then
+    raise exception 'check (c) FAILED: the admins were lost in the copy.';
+  end if;
+  if v_src not like '%m.department_id = v_complaint.department_id%' then
+    raise exception 'check (c) FAILED: the department manager was lost in the copy.';
+  end if;
+
+  raise notice 'checks (a)-(c) OK: four functions, one AFTER trigger, the view swapped, the complaint audience widened.';
+end $$;
+
+-- (d) What the backfill could not reach: live work orders still addressed to a
+--     membership that has ended. Safe to run on an empty database.
+select count(*) as still_orphaned
+  from public.work_orders w
+ where w.supervisor_membership_id is not null
+   and w.status not in ('completed', 'cancelled', 'failed')
+   and not public.membership_is_live(w.supervisor_membership_id);
+-- expect: 0, or exactly the "left in place" number the file's NOTICE printed.
+--         A non-zero count is not a failure -- it is the list of departments
+--         with no remaining supervisor and no manager to inherit their work.
+
+-- (e) Which departments those are, if any. Answers zero rows when (d) is 0.
+select d.id, d.name, count(*) as jobs
+  from public.work_orders w
+  join public.departments d on d.id = w.department_id
+ where w.supervisor_membership_id is not null
+   and w.status not in ('completed', 'cancelled', 'failed')
+   and not public.membership_is_live(w.supervisor_membership_id)
+ group by d.id, d.name
+ order by jobs desc;
+-- The remedy is a person, not SQL: invite a supervisor or appoint a manager,
+-- and the next removal on that department re-stamps what is left.
+
+-- (f) The new roster count, against real data. Zero rows before anybody is
+--     leading anything, which is the ordinary answer on a young database.
+select s.display_name, s.rank,
+       public.staff_supervised_work_order_count(s.id) as supervises
+  from public.staff_assignments s
+ where s.status = 'active'
+   and s.rank in ('manager', 'supervisor')
+ order by supervises desc, s.display_name
+ limit 20;
+-- expect: no error. Any non-zero row is a number that read 0 before this file.
+```
+
+**Record it in the ledger** (§12 explains why the SQL Editor does not do this for
+you):
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260821200000', 'departure_continuity')
+on conflict (version) do nothing;
+```
+
+**Functionally, after this file:** put two supervisors on a service department,
+raise a complaint and turn it into a work order under one of them, then remove
+that supervisor from the roster tab. The work order's supervisor becomes the
+other one, silently — no resident or worker sees anything, because no
+resident-facing or worker-facing read has ever returned a supervisor's identity.
+Remove the second supervisor and the department's manager gets *"You are covering
+…'s complaint queue"* in their bell, and their Complaints screen carries a banner
+saying the same thing for as long as it stays true. Raise a third complaint and
+every supervisor the department has is notified along with the manager and the
+admins.
+
+**Until the file is applied**, the roster reads 400 (see the Python note above),
+the hiring screen and the employee page cannot load, and removals go on leaking
+notifications to departed people exactly as before.
+
+### What was checked before this section was written
+
+Static only — nothing below was run against any database. The checks are
+automated in `backend/tests/test_departure_continuity_migration.py` rather than
+done once by hand, so they re-run on every change to the file.
+
+| Check | Result |
+|---|---|
+| The file parses as valid PostgreSQL (`pglast.parse_sql`) | Pass |
+| It sorts after `0036`, `0043`, `0045`, `20260812090300` and `20260821140000` | Pass |
+| It declares no `claim_staff_invitations` and mentions no `staff_invitations` — §15's work cannot be reverted by it | Pass |
+| It redeclares none of the eleven names the three sibling static-check files pin, and neither `release_staff_commitments` nor `claim_dispatch_batch` (ruling 9) | Pass |
+| It never writes `complaints.assigned_to_membership_id` or `assignee_label` (ruling 1) | Pass |
+| The successor rule exists exactly once, and both the trigger and the backfill call it rather than searching themselves | Pass |
+| The successor is a live supervisor, then the manager, then **null** — no widening fallback | Pass |
+| The choice is deterministic: load, then `created_at`, then `id` | Pass |
+| Re-stamping touches only live work orders and only within the department | Pass |
+| The trigger is `after update of rank, status, membership_id`, guarded on "was live leadership, now is not", and dropped before being created | Pass |
+| The trigger asks nothing about `auth.uid()`, so the PostgREST bypass path is covered too | Pass |
+| The cover notice has three gates (supervisor, service department, none left), fires once, excludes the departing person, and links to a path `portalUrl.js` can rewrite | Pass |
+| The `notify_complaint_staff` copy keeps the null-community guard, the admin call, the department early return and the manager predicate | Pass — compared fragment by fragment against `20260812090300` rather than against a remembered list |
+| The added arm is `distinct` and excludes admins, so nobody is told twice | Pass |
+| The recreated view keeps every column `0045` gave it except the one being removed, keeps `security_invoker`, and reissues its grant | Pass — column list parsed out of the owning file |
+| The new count is `security definer` and granted to `authenticated`, like `staff_open_commitment_count` beside it | Pass |
+| The Python wire model and both PostgREST projections agree with the view's new column | Pass |
+| The backfill repairs through the shared function, counts what it cannot repair, and raises no exception | Pass |
+| Nothing destructive: no `drop table`/`drop column`/`drop function`/`delete`/`alter table`, exactly one `drop view` recreated in place, exactly one `update` statement and it is the re-stamp | Pass |
+| No custom SQLSTATE is raised, so `pg_errors` needs nothing | Pass |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted `notify_complaint_staff` was in fact `20260812090300`'s text before this
+file replaced it (post-check (c)'s three fragments are the probe); how many live
+work orders on this database are addressed to an ended membership, which the
+file's own `NOTICE` and post-check (d) count; whether any department has neither
+a supervisor nor a manager to inherit work, which post-check (e) lists; and
+whether the trigger actually fires on a real removal, which nothing can prove
+until one happens.
+
+## 17. `20260822090000_hosted_work_order_column_drift.sql`
+
+**What breaks without it:** nobody can raise a work order. `POST
+/api/v1/complaints/{id}/work-orders` — the "Raise it" button on the triage
+screen, supervisor and admin portals alike — answers 422 "Could not raise that
+job." on every attempt. Found live on 2026-08-22; the captured Postgres error
+is 23502, `null value in column "title" of relation "work_orders"`.
+
+**Why:** the same drift `20260820120000` (§12's neighbourhood) reconciled on
+`complaints`. The hosted `work_orders` is the pre-baseline hand-built table;
+it carries legacy columns no repository migration declares, and at least one
+(`title`) is NOT NULL with no default, so the repository's `create_work_order`
+— which rightly writes no such column — can never insert a row.
+
+**What the file does:** drops NOT NULL on every `work_orders` column that the
+repository has never declared *and* that is NOT NULL with no default — the
+exact set that can reject an insert. It is a sweep rather than a named fix
+because these constraints bite one behind the other (the failing row shows
+four legacy values; `title` is merely the first). Widening only: no row
+accepted before is rejected after, nothing is dropped or written, re-running
+is a no-op. Legacy columns that are nullable, or defaulted, are left alone.
+
+**Ordering:** independent of §15 and §16 — apply it before, between, or after
+them. It reasons about nothing later than `20260813101000` (the last file to
+add a `work_orders` column).
+
+**Apply:** paste the whole file into the SQL editor and run it. Expect one
+`NOTICE` per column it loosens (`title` at minimum) — that list is this
+database's inventory of the drift, worth keeping in the deploy log. Zero
+notices means the drift is already reconciled. The file verifies itself in the
+same transaction and fails loudly rather than reporting a half-success.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260822090000', 'hosted_work_order_column_drift')
+on conflict (version) do nothing;
+```
+
+**Post-check, functional:** as a supervisor, open the department's work-orders
+screen, tab "Raise work", pick the test complaint and press **Raise it** with
+everything blank. A draft work order appears in the queue — that exact click
+is the one that answered 422 before this file.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hosted_work_order_drift_migration.py` — the file parses
+(`pglast`), sorts after everything it reasons about, its protected list is
+*derived* from `0001` + `0036` + `20260813101000`'s own text and compared
+exactly (so a repository column can never be loosened by mistake), the only
+DDL shape is the widening, the sweep only NOTICEs and the verification only
+EXCEPTIONs. Not verifiable statically: which legacy columns the hosted table
+actually has — the file's own NOTICEs are that census.
+
+## 18. `20260822120000_supervisor_triage.sql`
+
+Added 2026-08-22, with the supervisor dashboard. **§17 is a real precondition and
+§16 is a hard one.**
+
+* §17 (`20260822090000`) must be applied first *in practice*: until it is, no
+  insert into `work_orders` succeeds at all, so a column added to that table is a
+  column on a table nobody can write. Nothing in this file depends on it
+  syntactically; the ordering is about whether the feature works.
+* §16 (`20260821200000`) is the hard one. This file **redeclares
+  `restamp_department_supervision`**, copied forward whole from §16 to gain one
+  stamp. Applying §16 *after* this one would silently restore the version without
+  it — same name, last write wins — and the "Inherited" badge would stop
+  appearing with nothing anywhere erroring.
+
+**Why it exists.** The supervisor's landing page in the worker portal is being
+rebuilt as four stacked sections — new complaints, taken up by you, assigned but
+not started, being worked right now — and three of the facts those sections need
+had nowhere in the model to live:
+
+* nothing recorded that a supervisor had **picked a complaint up**, so "new" and
+  "mine, not yet dispatched" were the same row;
+* nothing recorded when a worker pressed **Start**. `start_work_order` (`0039`)
+  moved the status and let the instant fall into `updated_at`, which the next
+  write overwrites — so "being worked right now" could show a job and not how
+  long it had been going;
+* §16 re-stamped a departed supervisor's live work onto whoever inherits it and
+  deliberately left **no mark**, so the inheriting supervisor could not tell the
+  work they chose from the work that arrived by somebody else's removal.
+
+The product owner's four rulings behind this are
+`docs/COMPLAINT_ENGINE_HANDOFF.md` §18; the frozen interface both specialists
+built against is `docs/plans/SUPERVISOR_TRIAGE_SPEC.md`.
+
+| Object | Change | Owned before this by |
+|---|---|---|
+| `complaints.taken_up_by_membership_id` | **new column**, `uuid references community_memberships(id) on delete set null` | — |
+| `complaints.taken_up_at` | **new column**, `timestamptz` | — |
+| `work_orders.started_at` | **new column**, `timestamptz` | — |
+| `work_orders.supervision_inherited_at` | **new column**, `timestamptz` | — |
+| `complaints_department_takeup_idx` | **new index** on `(department_id, taken_up_at, created_at desc)` | — |
+| `take_up_complaint(uuid)` | **new** — the only writer of the two take-up columns | — |
+| `supervisor_triage_snapshot(uuid)` | **new** — the dashboard's four sections in one read; a read, it writes nothing | — |
+| `start_work_order(uuid)` | replaced; body copied forward whole, one line added so the moment lands in `started_at` | `0039` §481 |
+| `restamp_department_supervision(uuid, uuid)` | replaced; body copied forward whole, one line added so re-stamped rows carry `supervision_inherited_at` | `20260821200000` §2 |
+
+**No table, no view, no trigger, no policy, and nothing dropped.** Unlike §16,
+this file has no `drop` statement of any kind — so the SQL Editor's "Potential
+issue detected" popup should **not** appear. If it does, something in the file is
+not what shipped.
+
+**Three custom SQLSTATEs, all already mapped.** `HB403`, `HB404` and `HB409` go
+through `backend/app/core/pg_errors.py` unchanged; no new code, so nothing in
+Python needs to learn anything. The `HB409` on take-up **names the person who
+already holds the complaint**, and that sentence reaches the screen — `pg_errors`
+passes a custom code's message through.
+
+**Take-up is triage ownership and not dispatch.** Ruling 1 of 2026-08-21 keeps
+complaints department-pooled and `complaints.assigned_to_membership_id` dead;
+this file writes neither that column nor `assignee_label`, and
+`tests/test_supervisor_triage_migration.py` asserts the absence rather than
+trusting the prose. What is recorded is *who is looking at it*, so two
+supervisors do not both start arranging the same visit.
+
+**`acknowledged` gains a second writer, deliberately.** Take-up moves the storage
+status `open → acknowledged`, which the resident already reads as *In Progress*.
+Until now the only writer was the worker-offer arm of
+`project_complaint_from_jobs` (`20260813102000`). The two cannot race: both move
+`open` and only `open`, so whichever runs second finds nothing to do. Nothing is
+notified — a field changing with no action attached is the passive change
+`ARCHITECTURE.md`'s rule exists to suppress.
+
+**What to expect.** Two `alter table`s, one `create index`, four function
+definitions, three grants, one revoke-and-regrant, and a `do` block. Everything
+returns "Success. No rows returned"; the `do` block prints one `NOTICE` reading
+*"supervisor_triage: four columns, four functions, both stamps in place."* If it
+raises instead, **nothing has been half-applied** — the block runs in the same
+transaction as the statements above it and its exception rolls the file back.
+
+**A Python change ships with this one, and unlike §16's it is not urgent.** The
+two new endpoints (`GET /departments/{id}/triage-snapshot`,
+`POST /complaints/{id}/take-up`) call functions that do not exist until this file
+is applied, so before that they answer with the repository's generic message and
+the dashboard shows nothing. **No existing read breaks** — no projection anywhere
+asks for the new columns by name, so the rest of the app is unaffected either
+way. This is the opposite of §16, where "not applied yet" was a 400 on every
+roster read.
+
+**Post-check.** Paste the whole block below in one go. Every check either
+self-selects the data it needs or reports that there is nothing to check.
+
+```sql
+do $$
+declare
+  v_name  text;
+  v_src   text;
+  v_count integer;
+begin
+  -- (a) The four columns exist, and every one of them is nullable. A NOT NULL
+  --     here would mean somebody added a default, and every row that predates
+  --     this file would be claiming a moment nobody lived through.
+  for v_name in
+    select w.col
+      from (values ('complaints','taken_up_by_membership_id'),
+                   ('complaints','taken_up_at'),
+                   ('work_orders','started_at'),
+                   ('work_orders','supervision_inherited_at')) w(tbl, col)
+     where not exists (
+       select 1 from information_schema.columns c
+        where c.table_schema = 'public' and c.table_name = w.tbl
+          and c.column_name = w.col and c.is_nullable = 'YES')
+  loop
+    raise exception
+      'check (a) FAILED: % is missing, or is NOT NULL when it should be nullable.', v_name;
+  end loop;
+
+  -- (b) One definition of each function.
+  foreach v_name in array array[
+    'take_up_complaint',
+    'supervisor_triage_snapshot',
+    'start_work_order',
+    'restamp_department_supervision']
+  loop
+    select count(*) into v_count
+      from pg_proc
+     where pronamespace = 'public'::regnamespace and proname = v_name;
+    if v_count <> 1 then
+      raise exception
+        'check (b) FAILED: % definition(s) of %, expected exactly 1.', v_count, v_name;
+    end if;
+  end loop;
+
+  -- (c) The two copied bodies carry their stamp AND kept what they had. This is
+  --     the check that stands between the deploy and a dashboard section that is
+  --     permanently empty with nothing erroring.
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace and proname = 'start_work_order';
+  if v_src not like '%started_at = coalesce(started_at, now())%' then
+    raise exception 'check (c) FAILED: start_work_order does not stamp started_at.';
+  end if;
+  if v_src not like '%work_order.started%' then
+    raise exception 'check (c) FAILED: the resident notification was lost in the copy.';
+  end if;
+  if v_src not like '%job_started%' then
+    raise exception 'check (c) FAILED: the timeline event was lost in the copy.';
+  end if;
+
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace
+     and proname = 'restamp_department_supervision';
+  if v_src not like '%supervision_inherited_at%' then
+    raise exception
+      'check (c) FAILED: restamp_department_supervision does not stamp the inheritance. An older definition won — check whether 20260821200000 was applied after this file.';
+  end if;
+  if v_src not like '%department_supervision_successor%' then
+    raise exception 'check (c) FAILED: the successor rule was lost in the copy.';
+  end if;
+
+  -- (d) Ruling 1, still true: nothing new writes the dead column.
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace and proname = 'take_up_complaint';
+  if v_src like '%assigned_to_membership_id%' or v_src like '%assignee_label%' then
+    raise exception 'check (d) FAILED: take_up_complaint writes a dispatch column.';
+  end if;
+
+  raise notice 'checks (a)-(d) OK: four columns, four functions, both stamps, and the dead column still dead.';
+end $$;
+
+-- (e) The snapshot answers for a real department. Four empty arrays is the
+--     ordinary answer on a young database; an error is not.
+select d.name, public.supervisor_triage_snapshot(d.id) as dashboard
+  from public.departments d
+ where d.kind = 'service'
+ order by d.created_at
+ limit 1;
+
+-- (f) The new columns against real data. All zero before anybody presses
+--     anything, which is what a new column looks like.
+select count(*) filter (where taken_up_at is not null) as taken_up,
+       count(*)                                        as complaints
+  from public.complaints;
+select count(*) filter (where started_at is not null)               as started,
+       count(*) filter (where supervision_inherited_at is not null) as inherited,
+       count(*)                                                     as work_orders
+  from public.work_orders;
+```
+
+**Record it in the ledger** (§12 explains why the SQL Editor does not do this for
+you):
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260822120000', 'supervisor_triage')
+on conflict (version) do nothing;
+```
+
+**Functionally, after this file:** sign in as a service department's supervisor
+and open `/worker`. The four sections appear. A complaint routed to that
+department sits in **New complaints**, with its category and priority chips and,
+where it applies, a *Returned to pool* / *Reopened ×N* / *Moved to this
+department* badge. Press **Take up**: it moves to section 2, the resident's own
+screen starts saying *In Progress* within an SSE beat, and the complaint's
+timeline gains *"Taken up by the department"*. Raise a job on it and offer it to
+somebody, and it leaves section 2 and appears in **Assigned, work pending** as
+that job. Have the worker press **Start** in their portal and it moves to **Being
+worked right now** with an elapsed time that keeps counting. Finally, remove the
+supervisor who owns a live job: the job re-stamps onto whoever inherits it,
+exactly as §16 described, and now carries an **Inherited** badge on the new
+holder's dashboard.
+
+**Until the file is applied**, both new endpoints fail with the repository's
+generic message and the dashboard's four sections stay empty. Nothing else
+changes: no existing read asks for any of the four columns.
+
+### What was checked before this section was written
+
+Static only — nothing below was run against any database. The checks are
+automated in `backend/tests/test_supervisor_triage_migration.py` (29 tests) rather
+than done once by hand, so they re-run on every change to the file.
+
+| Check | Result |
+|---|---|
+| The file parses as valid PostgreSQL (`pglast.parse_sql`) | Pass |
+| The 90-line snapshot query parses **on its own** — a function body is one opaque string to the outer parse, so the whole-file check says nothing about it | Pass |
+| It sorts after `0036`, `0039`, `20260812090300`, `20260813102000`, `20260813103000`, `20260821200000` and `20260822090000` | Pass |
+| It is the **last** file in the directory declaring `start_work_order` and `restamp_department_supervision` | Pass — computed from the directory, not from a remembered list |
+| It redeclares none of the fourteen other names the sibling static-check files pin — in particular the trigger that calls the re-stamp, the successor rule, and the status-projection trigger | Pass |
+| It never writes `complaints.assigned_to_membership_id` or `assignee_label` (ruling 1) | Pass |
+| `take_up_complaint` is the only writer of both take-up columns, moves the status only from `open`, writes the timeline row, and notifies nobody | Pass |
+| It refuses three ways — `HB404` unknown, `HB403` not yours, `HB409` naming the holder — locks the row first, and is a no-op for the person who already holds it | Pass |
+| An unrouted complaint is `HB409` and not `HB403`: what is missing is the routing, not a permission | Pass |
+| Both copied bodies are **purely additive** — every non-blank line of the owning file's version is present verbatim | Pass — compared line by line against `0039` and `20260821200000`, not against a remembered list |
+| Neither copy changes its signature or return type, which `create or replace` would refuse | Pass |
+| Each new stamp has exactly one writer, and `started_at` cannot be reset (`coalesce`, never bare `now()`) | Pass |
+| The inheritance stamp is written in the same statement, with the same scope, as the re-stamp it marks | Pass |
+| The snapshot asks `can_supervise_department` and **refuses** rather than answering empty | Pass |
+| The snapshot is `stable` and contains no `insert`, `update`, `delete` or `notify_` | Pass |
+| The four bucket predicates are defined in the RPC and nowhere else, and every section is newest-first | Pass |
+| The snapshot translates no vocabulary — no `'High'`, `'Low'`, `'Pending'` or `'In Progress'` anywhere in it | Pass |
+| `reroutedAt` is derived from `department_assigned` events naming this department, and no column was added for it | Pass |
+| The four columns are added `if not exists`, nullable, with no default | Pass |
+| Nothing destructive: no `drop` of any kind, no `delete`, no `alter column`, exactly two `alter table`s and both `add column if not exists` | Pass |
+| Every SQLSTATE it raises is one `pg_errors` maps | Pass — the set is exactly `{HB403, HB404, HB409}` |
+| It verifies itself in the same transaction, probing both `prosrc` stamps, and writes nothing while doing so | Pass |
+| Every field the two Python DTOs carry is a column the RPC projects | Pass — read out of `TriageComplaint`/`TriageWorkOrder`'s own `model_fields` |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted `start_work_order` and `restamp_department_supervision` were in fact
+`0039`'s and `20260821200000`'s text before this file replaced them (post-check
+(c)'s five fragments are the probe); whether the hosted `complaints` and
+`work_orders` accept the four new columns without colliding with a legacy column
+of the same name, which only the apply will say; and whether the four sections
+bucket a real department's work correctly, which needs rows and is post-check
+(e).
+
+## 19. `20260822150000_taken_up_event_word.sql`
+
+**What breaks without it:** the Take-up button — the whole point of §18's
+migration — answers 422 "Could not take that complaint up." on every press.
+Found live on 2026-08-22, on the very first Take-up press after §18 was
+applied. The captured Postgres error is 23514: `new row for relation
+"complaint_events" violates check constraint "complaint_events_type_check"`.
+
+**Why:** `take_up_complaint` (§18) writes a timeline row with `event_type =
+'taken_up'`, a word `complaint_events_type_check` does not allow. §18's file
+reasoned from `0001_baseline.sql` ("event_type is text with no CHECK") and
+missed that `20260813105000` had bolted an enumerating constraint on later.
+The vocabulary changed, so the constraint is what moves.
+
+**What the file does:** recreates `complaint_events_type_check` with the same
+twenty-five words plus `taken_up` — the same drop-and-recreate shape as the
+file that created the constraint. A guard first proves no stored row is
+outside the new list (an exception there leaves the old constraint standing
+untouched); a verification block then proves the recreated constraint knows
+the new word. Widening only: every row the old constraint accepted, the new
+one accepts. Re-running drops and recreates the same constraint — idempotent.
+
+**Ordering:** after `20260813105000` and `20260822120000` (§18), which it
+sorts after by name. Independent of everything else.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success; it fails loudly rather than reporting a half-success.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260822150000', 'taken_up_event_word')
+on conflict (version) do nothing;
+```
+
+**Post-check, functional:** as a supervisor, press **Take up** on a complaint
+on the dashboard. The card moves to "Taken up by you", and the resident's
+timeline gains "Taken up by the department". That exact press is the one that
+answered 422 before this file.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_taken_up_event_word_migration.py` (6 tests) — the file
+parses (`pglast`), sorts after the constraint's creator and the word's
+writer, its word list is *derived* from `20260813105000`'s own text plus
+exactly `taken_up` (so no allowed word can be dropped by mistake), §18's file
+writes no *other* word outside the old list (so this cure has no hidden
+sibling), the only DDL is the drop-and-add pair on this one constraint, the
+guard runs before the DROP, and the verification probes for `taken_up`
+specifically — a bare existence check would pass against the very constraint
+this file replaces. Not verifiable statically: the hosted constraint's actual
+current word list — the guard and the verification are that probe.
+
+## 20. `20260822170000_supervisor_actions.sql`
+
+Added 2026-08-22 with **amendment 2** of the supervisor dashboard: the buttons on
+the cards. §18 gave the supervisor a screen that reads and one verb; this is the
+rest of the verbs, the chat behind them, and the one correction to the snapshot
+they forced.
+
+**Ordering: after `20260822150000` (§19), which it sorts after by name.** That is
+the tight one — this file recreates the *same* `complaint_events_type_check`, and
+applying §19 afterwards would silently drop `priority_changed` back out of the
+vocabulary and give the Raise-priority button §19's own 23514. It also sorts
+after `0046` (whose `dm_threads_kind_check` it widens), `20260813104000` (whose
+`complaints_on_resolved` trigger it depends on) and `20260822120000` (§18, whose
+snapshot it replaces). Everything it needs is already applied.
+
+**Why it exists.** Four product rulings of 2026-08-22
+(`docs/plans/SUPERVISOR_TRIAGE_SPEC.md`, *Amendment 2*):
+
+* **A1** — the card's chat is a *real thread* in the existing dock, between the
+  resident who raised the complaint and the department that owns it, not a
+  comments panel;
+* **A2** — *Resolved* cancels the unstarted jobs and refuses while one is
+  running;
+* **A3** — an offered job nobody has accepted is an **open request**, not
+  assigned work, which re-buckets the dashboard from four sections into five;
+* **A4** — the supervisor's *Assign* is a true force-assign: no decline.
+
+| Object | Change | Owned before this by |
+|---|---|---|
+| `dm_threads.complaint_id` | **new column**, `uuid references complaints(id) on delete cascade` | — |
+| `dm_threads_kind_check` | **recreated**: `direct`, `work_order`, **`complaint`** | `0046` §1 |
+| `dm_threads_complaint_subject_check` | **new**: `kind = 'complaint'` iff `complaint_id is not null` | — |
+| `dm_threads_one_per_complaint` | **new unique index** on `complaint_id where kind = 'complaint'` | — |
+| `complaint_events_type_check` | **recreated**: §19's twenty-six words plus `priority_changed` | `20260822150000` |
+| `can_supervise_complaint(uuid)` | **new** — the thread's access rule, once, for two policies and one function | — |
+| `lock_complaint_threads()` + `complaints_lock_dm_threads` | **new** trigger: closed/cancelled locks the chat, anything else unlocks it | — |
+| `dm_threads_read`, `dm_messages_read` | **recreated** policies: the department reads its complaint threads | `0046` §6 |
+| `post_dm_message(uuid, text)` | replaced; body copied forward whole, three blocks added so a department supervisor may write in its own complaint thread | `0046` §3 |
+| `supervisor_resolve_complaint(uuid)` | **new** | — |
+| `raise_complaint_priority(uuid)` | **new** | — |
+| `add_complaint_note_internal(uuid, text)` | **new** | — |
+| `open_complaint_thread(uuid)` | **new** | — |
+| `force_assign_work_order(uuid, uuid, timestamptz, timestamptz)` | **new** — `dispatch_force_assign`'s mechanics, with the picking removed and a guard added | — |
+| `supervisor_triage_snapshot(uuid)` | **dropped and recreated**: five sections, `offered_to_name` | `20260822120000` §5 |
+
+**There are four `drop`s and the SQL Editor will warn about them.** Unlike §18,
+this file *does* trip the "Potential issue detected" popup: `drop function` on
+the snapshot (it is being replaced by a different answer, so the old one should
+not be reachable), `drop policy` twice and `drop trigger` once (neither
+`create policy` nor `create trigger` has an `or replace`). Every one is followed
+immediately by its replacement in the same transaction. **Nothing else is
+dropped** — no table, no column, no index, no view — and the static battery
+asserts that by name.
+
+**Four custom SQLSTATEs, all already mapped.** `HB403`, `HB404`, `HB409` and
+`HB422` go through `backend/app/core/pg_errors.py` unchanged. The messages are
+written for a person and reach the screen: *"Somebody is working on this right
+now. Finish or cancel the running job first."*, *"This complaint is already at
+the highest priority."*, *"Ravi Kumar is already booked during that time."*
+
+**One thing this file deliberately does not do, and it is worth knowing before
+you read the code.** `supervisor_resolve_complaint` writes **no** `status_changed`
+event and sends **no** notification to the resident. `complaints_on_resolved`
+(`20260813104000`) is an `after update of status` trigger that already writes
+both and enqueues the 48-hour warning and the 72-hour auto-close; this function
+moves the status, so all four happen in the same transaction. Doing it here as
+well would put two *"Status changed to Resolved"* lines on one timeline and buzz
+one phone twice. **The verification block refuses to apply the file if that
+trigger is missing**, because a Resolve that tells the resident nothing is a
+failure with no symptom.
+
+**What to expect.** One `alter table … add column`, two constraint swaps each
+preceded by its own guard block, one unique index, two policies, one trigger,
+nine function definitions, eight grants and two revokes, and a `do` block.
+Everything returns "Success. No rows returned"; the final `do` block prints one
+`NOTICE` reading *"supervisor_actions: chat kind, five verbs, five sections and
+one new event word in place."* If it raises instead, **nothing has been
+half-applied** — it runs in the same transaction as the statements above it and
+its exception rolls the file back.
+
+**Post-check.** Paste the whole block below in one go.
+
+```sql
+do $$
+declare
+  v_name  text;
+  v_src   text;
+  v_count integer;
+begin
+  -- (a) The chat kind, its column, its index and its subject rule.
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'dm_threads'
+                    and column_name = 'complaint_id') then
+    raise exception 'check (a) FAILED: dm_threads.complaint_id is missing.';
+  end if;
+  if not exists (select 1 from pg_constraint
+                  where conrelid = 'public.dm_threads'::regclass
+                    and conname = 'dm_threads_kind_check'
+                    and pg_get_constraintdef(oid) like '%complaint%') then
+    raise exception 'check (a) FAILED: dm_threads_kind_check does not allow complaint threads.';
+  end if;
+  if not exists (select 1 from pg_indexes
+                  where schemaname = 'public' and indexname = 'dm_threads_one_per_complaint') then
+    raise exception 'check (a) FAILED: the one-thread-per-complaint index is missing.';
+  end if;
+
+  -- (b) The event vocabulary kept BOTH of the last two words added to it. If
+  --     priority_changed is there and taken_up is not, this file was applied
+  --     before 20260822150000 and the Take-up button is broken again.
+  select pg_get_constraintdef(oid) into v_src
+    from pg_constraint
+   where conrelid = 'public.complaint_events'::regclass
+     and conname  = 'complaint_events_type_check';
+  if v_src is null or v_src not like '%priority_changed%' then
+    raise exception 'check (b) FAILED: the event check does not allow priority_changed.';
+  end if;
+  if v_src not like '%taken_up%' then
+    raise exception 'check (b) FAILED: taken_up was lost -- 20260822150000 (section 19) must be applied BEFORE this file.';
+  end if;
+
+  -- (c) One definition of each function.
+  foreach v_name in array array[
+    'supervisor_resolve_complaint',
+    'raise_complaint_priority',
+    'add_complaint_note_internal',
+    'open_complaint_thread',
+    'force_assign_work_order',
+    'can_supervise_complaint',
+    'lock_complaint_threads',
+    'supervisor_triage_snapshot',
+    'post_dm_message']
+  loop
+    select count(*) into v_count
+      from pg_proc
+     where pronamespace = 'public'::regnamespace and proname = v_name;
+    if v_count <> 1 then
+      raise exception 'check (c) FAILED: % definition(s) of %, expected exactly 1.', v_count, v_name;
+    end if;
+  end loop;
+
+  -- (d) The copied body carries its addition AND kept what it had. This is the
+  --     check that stands between the deploy and a chat a second supervisor can
+  --     open, watch, and never answer in.
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace and proname = 'post_dm_message';
+  if v_src not like '%can_supervise_complaint%' then
+    raise exception 'check (d) FAILED: post_dm_message does not admit the department.';
+  end if;
+  if v_src not like '%This conversation is closed.%' then
+    raise exception 'check (d) FAILED: the lock was lost in the copy.';
+  end if;
+  if v_src not like '%notify_profile%' then
+    raise exception 'check (d) FAILED: the counterpart notification was lost in the copy.';
+  end if;
+
+  -- (e) The snapshot is the five-section version, and the trigger Resolve leans
+  --     on is present.
+  select prosrc into v_src
+    from pg_proc
+   where pronamespace = 'public'::regnamespace and proname = 'supervisor_triage_snapshot';
+  if v_src not like '%open_requests%' or v_src not like '%offered_to_name%' then
+    raise exception 'check (e) FAILED: an older snapshot definition won.';
+  end if;
+  if not exists (select 1 from pg_trigger
+                  where tgrelid = 'public.complaints'::regclass
+                    and tgname = 'complaints_on_resolved' and not tgisinternal) then
+    raise exception 'check (e) FAILED: complaints_on_resolved is missing; Resolve would tell the resident nothing.';
+  end if;
+
+  raise notice 'checks (a)-(e) OK: chat kind, both event words, nine functions, the copy intact, five sections.';
+end $$;
+
+-- (f) The snapshot answers, and its keys are the five the frontend renders.
+select jsonb_object_keys(public.supervisor_triage_snapshot(
+  (select id from public.departments where kind = 'service' order by created_at limit 1)));
+-- expect six rows: department_id, new_complaints, taken_up, open_requests,
+--                  assigned_pending, in_progress.
+
+-- (g) No complaint thread exists yet, which is what a new kind looks like.
+select count(*) filter (where kind = 'complaint') as complaint_threads,
+       count(*)                                   as threads
+  from public.dm_threads;
+```
+
+**Record it in the ledger** (§12 explains why the SQL Editor does not do this for
+you):
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260822170000', 'supervisor_actions')
+on conflict (version) do nothing;
+```
+
+**Functionally, after this file — press each new button once.** Sign in as a
+service department's supervisor and open `/worker`.
+
+1. **Note** on any card: type a line, save. It appears on the *staff* timeline
+   with your name; open the same complaint on the resident's portal and it is
+   **not** there. The admin's own *Update from management* notes still are.
+2. **Chat** on any card: it opens the dock on a thread seeded with *"The
+   department opened this chat about '…'."* Send a line. The resident sees it in
+   their ordinary thread list and can answer. Press the button again — the same
+   thread, not a second one.
+3. **Raise priority** on a `Low` complaint: the chip goes amber, the timeline
+   gains *"The department raised the priority to Medium."*, and a live job on the
+   same complaint shows the new urgency. Press it twice more and the third press
+   is a `409` naming the ceiling.
+4. **Assign** from an *Open job requests* card with the force option: the job
+   moves to **Assigned, work pending** immediately, and the worker's own card
+   shows it accepted with no Decline button.
+5. **Mark as resolved** on a complaint with an offered job: the job is cancelled,
+   the offered worker gets *"A job of yours was cancelled"*, the resident's screen
+   says *Resolved* and asks them to confirm or reopen. Then try it on a complaint
+   whose worker has pressed **Start** — that one is refused, in words.
+
+**Until the file is applied**, the four new endpoints fail with their
+repositories' generic messages, `force: true` fails the same way (the default
+offer path is unaffected), and the dashboard's fifth section is empty because the
+applied snapshot does not emit it. **No existing read breaks**: the four sections
+§18 shipped keep working from the old definition until this replaces it.
+
+### What was checked before this section was written
+
+Static only — nothing below was run against any database. The checks are
+automated in `backend/tests/test_supervisor_actions_migration.py` (42 tests) and
+`backend/tests/api/test_supervisor_actions.py` (17 tests) rather than done once by
+hand, so they re-run on every change.
+
+| Check | Result |
+|---|---|
+| The file parses as valid PostgreSQL (`pglast.parse_sql`) | Pass |
+| The five-section snapshot query parses **on its own** — a function body is one opaque string to the outer parse | Pass |
+| It sorts after `0036`, `0046`, `20260813101000`, `20260813104000`, `20260813105000`, `20260822120000` and `20260822150000` | Pass |
+| It is the **last** file in the directory declaring `post_dm_message` and `supervisor_triage_snapshot` | Pass — computed from the directory, not from a remembered list |
+| The new event list is §19's list **plus exactly `priority_changed`** | Pass — derived from `20260822150000`'s own text, so no allowed word can be dropped by mistake |
+| Every event word this file *writes* is one the constraint it recreates allows | Pass — the 2026-08-22 23514, asked before the apply rather than after |
+| The thread-kind list is `0046`'s **plus exactly `complaint`** | Pass — derived the same way |
+| Both constraint swaps run their guard **before** the DROP, so a failure leaves the old constraint standing | Pass |
+| The verification proves `priority_changed` specifically — a bare existence check would pass against the constraint being replaced | Pass |
+| `post_dm_message` is copied forward **purely additively** — every non-blank line of `0046`'s version present verbatim — with an unchanged signature and return type | Pass — compared line by line |
+| Read and write of a complaint thread ask **one** rule (`can_supervise_complaint`), in both policies and the function | Pass |
+| The complaint thread is one row per complaint, cascades, and is written by the opener alone | Pass |
+| The lock mirrors the job thread's and **unlocks** on the way back out, because a complaint can be reopened | Pass |
+| Resolve refuses a running job and a settled complaint, cancels every other live job, withdraws its assignments and notifies their workers with the frozen reason | Pass |
+| Resolve writes **no** `status_changed` and **no** resident notification, and the file refuses to apply without `complaints_on_resolved` | Pass |
+| Priority is one-way, stops at `high`, carries onto live jobs, leaves the SLA promise alone, translates no vocabulary and notifies nobody | Pass |
+| The note is flagged `internal: true`, bounded 1–2000 with `HB422`, and names its author | Pass |
+| All five complaint RPCs ask `can_supervise_department`, and all four verbs refuse an unrouted complaint as `HB409` rather than `HB403` | Pass |
+| Force-assign writes an `is_forced` accepted row, both timeline events and the same notifications as the engine's own, withdraws the previous holder, refuses a terminal job, and neither redeclares nor calls `dispatch_force_assign` | Pass |
+| The five buckets are defined in the RPC and nowhere else; *committed* excludes an unaccepted offer; the two complaint sections exclude **any** live work order | Pass |
+| `assigneeName` and `offeredToName` are read from two different assignment statuses | Pass |
+| The snapshot is still `stable` with no write verb, is re-granted after being dropped, sorts every section newest-first, and translates no vocabulary | Pass |
+| Every field of `TriageComplaint`/`TriageWorkOrder` is a column the RPC projects, and every section key is a `TriageSnapshot` field | Pass — read out of the models' own `model_fields` |
+| Nothing destructive beyond the four named `drop`s; the six `alter table` clauses are exactly the ones listed above | Pass |
+| Every SQLSTATE it raises is one `pg_errors` maps | Pass — `{HB403, HB404, HB409, HB422}` plus `42501`/`22004` from the copied body |
+| Every function it declares is granted to somebody, except the trigger function, which is revoked | Pass |
+
+**Not verifiable statically**, and left for the post-checks above: whether the
+hosted `post_dm_message` was in fact `0046`'s text before this file replaced it
+(post-check (d)'s three fragments are the probe); whether `complaints_on_resolved`
+is present on the hosted database, which decides whether Resolve tells the
+resident anything (the apply itself now refuses without it); whether the hosted
+`complaint_events_type_check` really carries §19's `taken_up` before this file
+rewrites the list (post-check (b) is that probe); and whether the five sections
+bucket a real department's work correctly, which needs rows and is post-check (f)
+plus the five button presses.
+
+---
+
+## 21. `20260817144725_repair_staff_assignment_employment_type.sql`
+
+> ### ALREADY APPLIED AND LEDGERED on hosted (2026-08-17, applied by the services-and-security workstream) — recorded for completeness; **do NOT run**.
+>
+> There is no apply step in this section and no ledger insert to paste. The row
+> for version `20260817144725` is already in
+> `supabase_migrations.schema_migrations`. Everything below is *what happened*,
+> written down because the file only reached this branch on 2026-08-22 and a
+> reader finding a new `.sql` in the directory with no section would reasonably
+> conclude it was outstanding work.
+
+**Where it sits.** By filename it sorts between the addendum files of §10–§12
+(`20260812…`) and §13 (`20260821113000`) — that is, before every section from
+§13 onward, and after every section before it. It was applied in that position
+on the hosted timeline too. Its section number is 21 because this document
+numbers sections in the order they were written, and renumbering would break
+every cross-reference in it and in `docs/CHANGE_LOG.md`.
+
+**What breaks without it:** hiring a worker. `decide_service_application` — the
+one RPC that creates a membership and a roster row in the same transaction
+(`0035`, rewritten by `20260811162409`) — inserts `employment_type = 'staff'`.
+On the hosted database that insert answered **23514**, `new row for relation
+"staff_assignments" violates check constraint
+"staff_assignments_employment_type_check"`, and every hire failed. This is the
+constraint half of issue #33; the other half was RLS on `staff_assignments`,
+which is §11 (`20260812200000`) and was already applied.
+
+**Why:** the hosted `staff_assignments` predates `0001_baseline.sql`. Its
+hand-built `employment_type` check allowed `internal` and `vendor` — the
+vendor-vs-in-house distinction the pre-baseline schema modelled — and knew
+nothing of `staff`, which is the value `0019_departments_on_baseline.sql:216`
+made the column's default and which every hiring path in the repository has
+written since. `0001_baseline.sql:63` declares the column as a bare
+`employment_type text not null` with no check at all, so on a database built
+from the baseline the constraint does not exist until this file makes it, and
+nothing in the repository ever noticed the hosted list was short.
+
+**What the file does:** two statements, and that is the whole file.
+
+```sql
+alter table public.staff_assignments
+  drop constraint if exists staff_assignments_employment_type_check;
+
+alter table public.staff_assignments
+  add constraint staff_assignments_employment_type_check
+  check (employment_type in ('internal', 'vendor', 'staff'));
+```
+
+Widening only: both legacy values are kept, one is added, so every row the old
+constraint accepted the new one accepts. Re-running drops and recreates the same
+constraint — idempotent.
+
+**Provenance, and why it is not rewritten.** The file was written on
+`origin/main` (commit `c0956a2`, Aishik Bandyopadhyay, 2026-08-17), applied to
+hosted that day, and ledgered. It never existed on `live-app-fixes` until
+2026-08-22, when it was copied over **byte for byte** (git blob `52d2f79`,
+unchanged) so that git and the ledger describe the same thing under the same
+version. A file with a ledger row can never be corrected in place: any edit
+makes version `20260817144725` mean one thing on hosted and another in git, and
+nothing downstream can tell which it has. That is the disease §22 is about, in
+miniature.
+
+**One residual defect, recorded for the record only — do not act on it.** The
+file adds the constraint without `not valid` and without a pre-flight scan for
+rows that would violate it. Compare §19's shape
+(`20260822150000_taken_up_event_word.sql:22-40`), which proves no stored row is
+outside the new list *before* it drops anything, so a failure leaves the old
+constraint standing and names what is in the way. Had the hosted
+`staff_assignments` held an `employment_type` outside the three words, this file
+would have failed the `add constraint` with a bare 23514 naming no row. It did
+not — the apply succeeded on 2026-08-17 — so the risk is retired and the file is
+immutable. It is written down here so the next constraint repair copies §19
+rather than this.
+
+**Post-check, if you want to confirm the state you already have:**
+
+```sql
+select pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conname = 'staff_assignments_employment_type_check';
+-- expect: CHECK ((employment_type = ANY (ARRAY['internal'::text,
+--         'vendor'::text, 'staff'::text])))
+```
+
+Functionally: hire a service professional into a department from the hiring tab.
+Before this file that press answered a 23514-shaped failure; it has worked since.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_employment_type_repair_migration.py` (6 tests) — the file
+parses (`pglast`); its only DDL is the drop-and-add pair, both naming this one
+constraint on this one table; the allowed list is *derived* from the file's own
+text and is exactly `{internal, vendor, staff}`; **every `employment_type`
+literal any migration in the directory writes is a member of that list**, the six
+inserts found by lining each `insert into public.staff_assignments` column list
+up with its `values` list positionally, because the column is never named beside
+its value; `0001_baseline.sql` still declares the column with no check of its
+own; and the file sorts after both *apply-time* writes of the column (the
+baseline's declaration and `0019`'s default). Two files that write `staff` —
+`20260821140000` and `20260821170000` — sort *after* this one, which is correct
+and is asserted as such: their write is a line of plpgsql inside
+`claim_staff_invitations` that runs when a manager claims an invitation, not
+when the migration is applied. Membership in the allowed list is what protects
+them; order cannot. **Not verifiable statically:** whether the hosted table held
+a row outside the three words at apply time — the apply itself was that probe,
+and it passed.
+
+---
+
+## 22. Reconciliation record — issue #41, hosted vs `origin/main`
+
+**This is not an apply section.** Nothing in it was run against the hosted
+database except read-only queries, and nothing in it asks you to run anything.
+It was written as the answer to "which of these files is real?", because that
+answer had stopped being obvious. Since 2026-08-23 it is also the answer to
+"what is the hosted schema, then?" — because the first answer turned out to be
+wrong, in the one way this section had pre-registered a stop rule for.
+
+### What is on this branch and on hosted
+
+All six cloud-side migrations named in issue #41, plus
+`20260822120000_supervisor_triage.sql` (§18) and
+`20260822170000_supervisor_actions.sql` (§20), are **committed and pushed on
+`origin/live-app-fixes`** — they arrived with commit `65f852c`. Every one of them
+has a numbered section above, a `docs/CHANGE_LOG.md` entry, and a ledger row.
+`origin/main`'s `20260817144725` is ledgered on hosted and is now mirrored into
+this branch byte for byte (§21). As of the evening of 2026-08-22 the hosted
+database and this branch agree, and **no migration is outstanding** — that
+remains true, and it is a statement about migration *files*. It is not a
+statement about the hosted schema, which the probe campaign below shows diverges
+from this directory in ways no migration will ever close.
+
+### Correction — the probe was run, and it came back the other way
+
+**The 2026-08-22 draft of this section was wrong on a point of fact.** It said
+the snapshot had "no runbook section, no CHANGE_LOG entry, **and no ledger
+row**", and reasoned from the third of those that the file had never been
+applied. The query printed below that claim existed to settle it from the ledger
+rather than from this document. The owner ran it on 2026-08-23 and it returned
+**two rows, not one**:
+
+```
+20260817144725|repair_staff_assignment_employment_type
+20260818141040|remote_schema
+```
+
+The pre-registered stop rule — *if `20260818141040` comes back present, stop and
+do not merge; the question changes from "delete the file" to "what is the hosted
+schema now"* — fired exactly as written, and the rest of this section is that
+investigation.
+
+The withdrawn claim is worth naming precisely, because the same mistake is easy
+to make again: **"no paper trail" was treated as evidence of "never applied".**
+It is not. It is evidence that nobody wrote the paper. Rule 1 in
+`backend/supabase/migrations/README.md` says a file with no runbook section and
+no CHANGE_LOG entry *has not been applied* — that rule describes what the team
+undertakes to do, not what the database will confirm, and this is the case where
+the two came apart. Two of the three legs of the claim stand: there is still no
+runbook section for the snapshot and still no CHANGE_LOG entry for it. Only the
+ledger leg is withdrawn, and everything that was inferred from it is re-derived
+below.
+
+### What the investigation found
+
+**Hosted is not a database this directory built.** `0001_baseline.sql` was never
+applied to the linked project — the project predates it — and everything since
+has been laid on top of a hand-built pre-baseline schema. That is not news and
+it is not damage: `backend/supabase/migrations/README.md` says it in as many
+words, and `dashboard_repository.schema_generation()` exists precisely to detect
+it, probing for one pre-baseline table and running legacy-mode projections when
+it finds one. Hosted is a **deliberate legacy hybrid**, and the repository has
+been written that way on purpose for weeks.
+
+**Which is what the snapshot was a picture of.** `supabase db diff` emits the
+statements that would transform the local shadow database — built by replaying
+this directory from empty — **into** the hosted one. The direction matters and
+explains the whole file: every statement in it describes something hosted really
+had on 2026-08-18 that a from-scratch replay of this directory does not produce.
+The 9,831 lines were not a proposal, an accident, or a plan; they were an
+accurate report of the legacy hybrid, rendered as DDL and committed in the one
+place where DDL is read as an instruction.
+
+**So the ledger row is not the alarm it first looked like.** Nobody applied
+9,831 lines of DDL to hosted. The row says version `20260818141040` was recorded
+against the hosted project; the probes below say the hosted schema is the
+legacy-hybrid it already was, not the schema those statements would have
+produced. The correct reading is a ledger entry written for a file that
+described hosted rather than changed it.
+
+### The probe result set, verbatim
+
+Read-only queries, run by the owner against the linked project on 2026-08-22 and
+2026-08-23. Nothing here writes.
+
+- **(a) The ledger.** `supabase_migrations.schema_migrations` contains **both**
+  `20260817144725|repair_staff_assignment_employment_type` and
+  `20260818141040|remote_schema`.
+- **(b) Issue #33's constraint.**
+  `staff_assignments_employment_type_check` on hosted is
+  `CHECK (employment_type = ANY (ARRAY['internal','vendor','staff']))` — §21's
+  repair is in place and confirmed.
+- **(c) The four "damage" claims, measured.**
+  `to_regclass('public.visitor_access_requests')` → **present**;
+  `dashboard_sse_amenity_bookings` and `dashboard_sse_visitor_requests` triggers
+  → **0**; the seven `0001_baseline.sql` policies (`profiles_self`,
+  `memberships_self`, `communities_member`, `units_member`, `invites_admin`,
+  `access_requests_admin_read`, `access_requests_applicant_read`) → **0**;
+  extension `pg_net` → **0**.
+- **(d) The generated columns.** `communities.location` and
+  `service_providers.location` both have `attgenerated = 's'` on hosted —
+  generated, exactly as this directory declares them. The snapshot's
+  `SET DEFAULT` lines against them are diff-rendering noise, and the theory that
+  hosted holds them as plain columns is **refuted**.
+- **(e) The invite-claim RPC.** Only
+  `claim_resident_invite(p_invite_id uuid, p_profile_id uuid)` exists on hosted.
+  `claim_email_invitation` **does not exist**, and the backend calls that name.
+- **(f) The access-request status type.** `access_requests.status` on hosted is
+  the enum `public.request_status` = `{pending, approved, rejected, cancelled}`.
+  There is no `withdrawn`.
+- **(g) Trigger inventory.** `amenity_bookings` → `amenity_bookings_sse`;
+  `visitor_access_requests` → `dashboard_sse_visitor_access_requests`;
+  `legacy_amenity_booking_series` → `dashboard_sse_amenity_booking_series`;
+  `visitor_requests` → **no trigger**.
+- **(h) Row counts.** `visitor_access_requests` = 0, `visitor_requests` = 3,
+  `legacy_amenity_booking_series` = 0, `amenity_bookings` = 0.
+
+### The fresh-apply analysis stands; the damage framing does not
+
+**Everything the 2026-08-22 draft said about a *fresh* apply is unchanged and
+still true.** Replayed into an empty database — which is what CI's
+`database-browser` job does to this directory on every push — the snapshot dies
+at its own line 1314 on an `ALTER` of a generated column: Postgres refuses
+`set default` on a generated column and refuses `set data type` on a column a
+generated expression reads, and the snapshot emits both for `communities.location`,
+`service_providers.location` and `invoice_line_items.total_amount`. While a file
+of that shape sits in this directory, no branch can go green. And if it *had*
+got past line 1314 on a fresh database it would have done every one of the harms
+listed: recreated the pre-baseline sentinel table that
+`dashboard_repository.schema_generation()` probes for, so a brand-new database
+would report itself as the legacy schema and the dashboard would read
+projections built for another shape; dropped two `dashboard_sse_*` triggers
+without recreating them; dropped seven `0001_baseline.sql` policies it never
+replaces; dropped extension `pg_net`; and brought back most of the twenty tables
+retired by `94556e5`/`76e1b15`.
+
+**What is corrected is the framing of those same lines as damage *to hosted*.**
+Probe (c) measures each of them on the live database and finds the state the
+snapshot describes, because the snapshot describes hosted. Taken one at a time:
+
+- The **sentinel table** is present on hosted, and that is the intended
+  arrangement, not a wound: it is what makes `schema_generation()` return
+  `legacy`, which is the mode the whole dashboard read path was written for.
+- The **two "missing" SSE triggers** fire on tables the legacy branch never
+  reads. Hosted covers realtime through differently-named triggers on the tables
+  it does read — probe (g) lists them. Nothing is silent.
+- The **seven "missing" policies** have renamed hosted equivalents for six of
+  them; the seventh guards a table only the service role reaches. The names
+  differ because hosted's RLS predates the baseline that chose those names.
+- **`pg_net`** has zero references anywhere in this repository. The shadow
+  database has it because the Supabase CLI's default local stack installs it.
+  Its absence on hosted costs nothing.
+
+So the harms are real, and they are real **for a fresh apply and for CI**, which
+is reason enough that the file cannot live in this directory. On hosted they are
+not harms at all: they are a description of a standing, deliberate arrangement
+that predates every file here.
+
+### The remedy — version `20260818141040` is tombstoned
+
+Deletion was the 2026-08-22 plan and it is no longer available: the ledger row
+exists, and a version in `supabase_migrations.schema_migrations` with no file
+behind it reads as a permanently missing migration to `supabase migration list`
+and to anyone auditing the two against each other. The version has to stay.
+What goes is the body.
+
+`backend/supabase/migrations/20260818141040_remote_schema.sql` exists on this
+branch as a **comment-only file** — a tombstone. It contains no SQL at all: what
+the version was, what the original file was, why it could not stay, and a
+pointer back to this section. That single move settles all three readers at once:
+
+- **git** — the directory has a file at that version again, with an explanation
+  a reader will find before they go looking for the 9,831 lines in history;
+- **a fresh `supabase db reset`** — there is nothing to apply, so there is
+  nothing to fail, and the CI replay goes green;
+- **the hosted ledger** — its row still has a file behind it, under the same
+  version, and neither the row nor the hosted schema had to be touched to get
+  there.
+
+**No hosted write is needed and none was made.** The reconciliation merge
+resolves `origin/main`'s snapshot path to this tombstone and proceeds.
+
+`backend/tests/test_migration_directory_is_fresh_appliable.py` is the standing
+guard against the next one: six directory-wide checks, every pattern
+case-insensitive because `db diff` writes uppercase SQL and every pin in this
+repository was lowercase-only until then. The tombstone passes all six for the
+plain reason that a file with no statements in it has nothing for them to catch.
+
+### What is being repaired forward, and where
+
+Three of the probe results are not tolerated divergence — they are live defects
+that the campaign confirmed, and each is being fixed **forward-only**, in the
+shape rule 2 of `backend/supabase/migrations/README.md` prescribes: a targeted
+timestamped migration or code change that names the one thing that is wrong,
+with a derivation-pinned test. They get their own numbered sections from §23
+onward; nothing about them belongs in this one.
+
+- **The invite-claim RPC name** — probe (e). The backend calls
+  `claim_email_invitation`; hosted has only `claim_resident_invite`. Every call
+  on that path fails.
+- **`request_status` has no `withdrawn`** — probe (f). The application believes
+  the value exists.
+- **The admin dashboard's split-brain reads** — probes (g) and (h). The rows
+  live in `visitor_requests` (3) while the legacy read path looks at
+  `visitor_access_requests` (0) and `legacy_amenity_booking_series` (0).
+
+### Version collision — one thing to fix before it is committed
+
+Issue #41's other half. Two different `20260822120000_supervisor_triage.sql`
+files existed at once: the one on this branch (§18, applied and ledgered) and an
+uncommitted one in the services-and-security workstream's tree. Both were written
+the same afternoon and each took "now" as its version; `now` is not unique across
+working trees.
+
+**The uncommitted file at version `20260822120000` must be renamed to a timestamp
+later than `20260822170000` before it is committed or applied anywhere.** Not
+after it is pushed, and certainly not after it is applied: once a version is in
+the ledger, a second file wearing it is invisible to `supabase migration list`
+and will never be replayed on a fresh database. The rule that prevents the next
+one is written down in `backend/supabase/migrations/README.md` — a new migration
+timestamps later than the latest file on **any** shared branch, not just your
+own.
+
+**Resolved 2026-08-23.** The `services-and-security` branch was merged to `main`
+(PR #36, 2026-08-22 17:10 UTC) and deleted by the git manager. The collision
+never reached git: PR #36 carried exactly two commits, and the one holding the
+local fix committed it as `20260817144725_repair_staff_assignment_employment_type.sql`
+— the version the hosted ledger already carried for that repair (§21) — not as
+`20260822120000`. No file wearing the colliding version exists in any commit on
+any ref (`git log --all --full-history` finds only this branch's
+`supervisor_triage`), so the rename this section demanded effectively happened
+before commit, exactly as prescribed. Everything the branch ever merged is
+contained in `live-app-fixes`: after the 2026-08-23 reconciliation merge the
+branch is ahead of `origin/main` and zero behind, and PR #36's surviving files
+are byte-identical here (the third, the db-diff snapshot, is deliberately the
+§22 tombstone). Nothing remains to merge; only work that never left the
+teammate's working tree — none is known — could be outside git.
+
+## 23. `20260823120000_complaint_engine_v2_repairs.sql`
+
+Arrived on this branch from `origin/main` in the reconciliation merge (PR #46,
+2026-08-23) and is the only file in that merge carrying DDL. Unlike §21, this
+one **is** outstanding work: the owner's ledger probe of 2026-08-23 found no row
+for version `20260823120000`, so there is an apply step below and a ledger
+insert to paste.
+
+**What it is.** A forward-only re-authoring of the useful database repairs from
+the `complaint-engine-v2` branch. That branch carried its fixes as two backdated
+migrations, `20260817142354` and `20260817142820` — versions *below*
+`20260817144725`, which hosted has already applied and ledgered (§21). A version
+below the ledger's high-water mark is a version a fresh replay reaches before
+the files that were really applied first, and on hosted it is a file
+`supabase migration list` will never show as pending. Both were therefore
+dropped and their content re-stated here, at a version above everything.
+`backend/supabase/migrations/README.md` records the same decision in its
+after-the-boundary table.
+
+**What it touches.** Six `create or replace function` statements over five
+names, plus the ACL block on the internal dispatch functions and a
+`notify pgrst, 'reload schema'` for the new overload:
+
+| Function | Definition it replaces |
+|---|---|
+| `sync_dispatch_tasks()` | `20260813104000_timers_v2.sql` (originally `0037`, then `0045`) |
+| `project_complaint_from_jobs()` | `20260813102000_status_coupling.sql` |
+| `dispatch_candidates(uuid, integer, boolean)` | new overload — nothing before it |
+| `dispatch_candidates(uuid, integer)` | `0045_departure_scheduling.sql` (originally `0037`, then `0043`) |
+| `work_order_candidates(uuid, boolean)` | `20260813101000_offer_consent_and_force.sql` |
+| `dispatch_force_assign(uuid)` | `20260813101000_offer_consent_and_force.sql` |
+
+**Ordering, and the overlap audit.** By filename it sorts after every other file
+in the directory, which is where a file replacing this many bodies has to be.
+The question worth asking of it is not order but *overlap*: §18
+(`20260822120000_supervisor_triage.sql`) and §20
+(`20260822170000_supervisor_actions.sql`) also rewrote complaint-engine
+functions, and if this file redefined one of theirs it would silently revert a
+day's work the way §19 would have reverted §20's vocabulary. It does not. §18
+defines `take_up_complaint`, `supervisor_triage_snapshot`, `start_work_order`
+and `restamp_department_supervision`; §20 defines `supervisor_resolve_complaint`,
+`raise_complaint_priority`, `add_complaint_note_internal`,
+`force_assign_work_order`, `can_supervise_complaint`, `open_complaint_thread`,
+`post_dm_message` and `lock_complaint_threads`. **The intersection with the six
+above is empty.** The two sets meet only through calls — §20's
+`force_assign_work_order` is the supervisor's hand on the lever and calls
+`dispatch_force_assign` underneath it — and a call is exactly the seam that
+survives one side being replaced.
+
+**The four behaviour changes, and the ruling on them.** All four were put to the
+complaint-engine owner on 2026-08-23 and **accepted as-is**; the ruling is
+recorded in `docs/COMPLAINT_ENGINE_HANDOFF.md` §21 and in `docs/CHANGE_LOG.md`.
+
+1. **The manual-window queue priority is cast.** `sync_dispatch_tasks` passes
+   `case when new.priority = 'high' then 2 else 0 end` to
+   `enqueue_dispatch_task`, which takes a `smallint`; PostgreSQL resolves that
+   `case` as `integer` unless it is told otherwise, and the call did not
+   resolve. Now `::smallint`.
+2. **The assignment trigger resolves its row shape.**
+   `project_complaint_from_jobs` serves two tables, and a
+   `work_order_assignments` row has a `work_order_id` where a `work_orders` row
+   has a `complaint_id`. It now works out which row it has before reading it.
+3. **Declined-worker override becomes explicit.** `dispatch_candidates` gains a
+   three-argument overload whose third argument admits a worker who declined
+   *this* work order. The two-argument form every existing caller uses is
+   unchanged and still strict — one eligibility implementation, two doors.
+4. **Critical force assignment stops failing on authorization.**
+   `dispatch_force_assign` can run inside a *worker's* decline transaction. It
+   used to pick through `work_order_candidates`, the supervisor-facing picker,
+   which re-checks the caller's authorization — under a worker's JWT that check
+   fails before the critical fallback can select anybody. It now picks through
+   `dispatch_candidates(p_work_order_id, 100, true)` instead.
+
+**The one behaviour change inside (4) that is not about authorization, and the
+owner's ruling on it.** The old picker also carried
+`where away_until is null or away_until <= now()`
+(`20260813101000_offer_consent_and_force.sql` 109) — a filter that removed
+anyone *currently* inside a leave block, whatever the job's slot. Swapping the
+picker drops that filter, and the drop is deliberate rather than incidental:
+`dispatch_candidates` already excludes a worker whose unavailability **overlaps
+the slot being scheduled**, which is the question that actually decides whether
+somebody can do the job. A worker on leave today who is free next Tuesday was
+being refused a next-Tuesday critical force-assign for no reason the schedule
+knows about. The complaint-engine owner ruled on 2026-08-23 that this is
+correct: **only slot-overlapping unavailability blocks a critical force
+assignment.** The consent-respecting offer flow is untouched and remains the
+default; force stays an explicit flag.
+
+**Apply:** paste the whole file into the SQL editor and run it. It ends with its
+own verification block, which raises if the new
+`dispatch_candidates(uuid,integer,boolean)` overload is not there afterwards, so
+a half-success reports itself. No other output is expected.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823120000', 'complaint_engine_v2_repairs')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select p.oid::regprocedure as signature
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('dispatch_candidates', 'dispatch_force_assign',
+                     'work_order_candidates', 'sync_dispatch_tasks',
+                     'project_complaint_from_jobs')
+ order by 1;
+-- expect both dispatch_candidates overloads: (uuid,integer) and
+-- (uuid,integer,boolean).
+```
+
+**Post-check, functional:** as a supervisor, raise a complaint's priority to
+high and let every offered worker decline it. Before this file the critical
+fallback selected nobody and the work order sat in `failed`; after it, the last
+decline force-assigns a worker and the complaint timeline gains
+`job_force_assigned`.
+
+**What was checked before this section was written:** the six-check directory
+battery in `backend/tests/test_migration_directory_is_fresh_appliable.py` (the
+file parses, drops no trigger it does not recreate, creates no retired table, no
+unguarded policy or constraint drop), plus the overlap audit above, run as a set
+comparison over the `create or replace function` statements of §18, §20 and this
+file rather than by reading them. **Not verifiable statically:** that hosted's
+current bodies for the five replaced functions are the ones this directory
+declares — every one of them is a `create or replace`, so the apply overwrites
+whatever is there, which is the intent.
+
+## 24. `20260823150000_hosted_invite_claim_names.sql`
+
+**What breaks without it:** claiming a resident email invitation. Every attempt
+on the hosted project answers "This invite could not be claimed." and there is
+nothing wrong with the invitation. Confirmed by probe (e) of §22 on 2026-08-23.
+
+**Why:** `memberships_repository.claim_resident_invite`
+(`backend/app/repositories/memberships_repository.py` 61) calls the RPC named
+`claim_email_invitation`. Hosted has only
+`claim_resident_invite(p_invite_id uuid, p_profile_id uuid)`. PostgREST answers
+PGRST202 for a function it cannot find, and
+`invitation_service.redeem_pending_invitation` (~111) translates every failure on
+that path into the one generic message. The divergence is old: hosted predates
+`0001_baseline.sql`, and `0001_baseline.sql` 98 is where a fresh database gets
+`claim_email_invitation`. The two functions carry the **identical** signature and
+return shape `TABLE(membership_id uuid, community_id uuid, unit_id uuid)`, so
+this is a naming difference and nothing more.
+
+**What the file does on hosted:** creates `claim_email_invitation(uuid, uuid)`
+as a thin wrapper that returns `claim_resident_invite`'s rows unchanged. One
+implementation stays; only the entry point is added. The wrapper is
+`security definer` with `set search_path = public`, revoked from
+`public, anon, authenticated` and granted to `service_role` — `0001`'s exact
+posture, so the new door is the same door. The file ends with
+`notify pgrst, 'reload schema'`, without which PostgREST would keep answering
+PGRST202 from its cache and the fix would look like no fix.
+
+**Why it is a no-op on a fresh database:** the create is guarded on
+`claim_resident_invite` existing **and** `claim_email_invitation` not existing.
+Nothing in this directory creates `claim_resident_invite` — asserted across every
+file in `backend/tests/test_hosted_invite_claim_names_migration.py` — so on a
+fresh database the first half is false, and `0001` has already made the second
+half false too. Re-running on hosted is a no-op for the same reason: the second
+run finds the wrapper the first one made.
+
+**Ordering:** after `20260823120000` (§23), which it sorts after by name.
+Independent of it and of everything else; it touches nothing any other file
+touches.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823150000', 'hosted_invite_claim_names')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select p.oid::regprocedure as signature,
+       p.prosecdef        as security_definer,
+       p.proconfig        as settings
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('claim_email_invitation', 'claim_resident_invite')
+ order by 1;
+-- expect two rows, both (uuid,uuid), both security_definer = t, both
+-- settings = {search_path=public}.
+```
+
+**Post-check, functional:** issue a resident invitation from the admin portal,
+open its link as the invitee, sign in, and redeem. Before this file that press
+answered "This invite could not be claimed."; after it the invitee lands in the
+community with a membership and, where the invite named a unit, a residency.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hosted_invite_claim_names_migration.py` (11 tests) — the file
+parses (`pglast`); it sorts after every file that already existed; the name it
+creates is *derived* from the `.rpc(...)` call in `memberships_repository.py`
+rather than typed in, so the pin follows the code; the signature, return shape,
+`security definer`, `search_path` and both ACL statements are *derived* from
+`0001_baseline.sql`'s own declaration of the function; no later migration
+re-grants execute on it; the create is guarded on both halves of the divergence;
+nothing in the directory creates `claim_resident_invite`; the wrapper body only
+delegates (no insert, update, delete or raise of its own); the file creates
+nothing else and drops nothing; and `notify pgrst, 'reload schema'` is its last
+statement. **Not verifiable statically:** that hosted's `claim_resident_invite`
+does what `0001`'s `claim_email_invitation` does. The probe established the
+identical signature and return shape; the bodies are two databases' business and
+no test in this repository can see either.
+
+## 25. `20260823153000_hosted_request_status_withdrawn.sql`
+
+**What breaks without it:** an applicant withdrawing their own join request.
+`POST /access-requests/{id}/withdraw`
+(`backend/app/api/v1/routers/access_requests.py` 43-51) answers a 22P02-shaped
+failure on hosted: `invalid input value for enum request_status: "withdrawn"`.
+Confirmed by probe (f) of §22 on 2026-08-23.
+
+**Why:** `access_requests_repository.withdraw` (~75-87) writes
+`status = 'withdrawn'`, the service reaches it at `access_request_service` ~251,
+and the list filter already accepts the word (`routers/access_requests.py` 56).
+On hosted `access_requests.status` is not text at all — it is the enum
+`public.request_status`, whose labels are
+`{pending, approved, rejected, cancelled}`. On a fresh database
+`0001_baseline.sql` 57 declares the column as text with
+`check (status in ('pending','approved','rejected','withdrawn'))` and **no enum
+type of that name exists anywhere in this directory**. So `withdrawn` is a value
+the application has always been entitled to write, and the hosted enum is a
+pre-baseline artefact that never learned it.
+
+**What the file does on hosted:** adds the fifth label to the enum. Widening
+only — every value the type accepted before, it accepts after — and one
+catalogue row rather than a table rewrite. Retyping a live
+`access_requests.status` from the enum to text was the alternative and was not
+taken: it rewrites the table, throws away the guarantee the enum is providing,
+and leaves the column's type depending on which database it was built on.
+
+**Why it is a no-op on a fresh database:** the `alter type` runs only where a
+`public.request_status` enum exists, and nothing in this directory creates one —
+asserted across every file in
+`backend/tests/test_hosted_request_status_withdrawn_migration.py`. On hosted the
+`if not exists` makes a second run a no-op as well.
+
+**On the idiom, because it has a version boundary in it.**
+`alter type ... add value` was refused inside a transaction block — and therefore
+inside any `do` body — before PostgreSQL 12. Since 12 it is allowed there, with
+the single remaining rule that the new label may not be *used* until the
+transaction commits. Reading `pg_enum`, which this file's verification block
+does, is a catalogue read and not a use of the value; nothing in the file
+compares, casts or stores the new label. Every Supabase project runs well past
+that boundary, so the guarded `do` block is safe as a single SQL-editor paste,
+and being conditional at all is what keeps the file a no-op on a fresh database.
+**If it ever fails on the `alter type` with "cannot run inside a transaction
+block"** — a pre-12 server, which the linked project is not — the fallback is to
+run this one statement on its own, outside any transaction, and skip the file:
+
+```sql
+alter type public.request_status add value if not exists 'withdrawn';
+```
+
+**Ordering:** after `20260823150000` (§24), which it sorts after by name.
+Independent of it.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success; the verification block at the end raises if the type is
+present and the label still is not.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823153000', 'hosted_request_status_withdrawn')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select e.enumlabel, e.enumsortorder
+  from pg_enum e
+  join pg_type t on t.oid = e.enumtypid
+  join pg_namespace n on n.oid = t.typnamespace
+ where n.nspname = 'public' and t.typname = 'request_status'
+ order by e.enumsortorder;
+-- expect five labels: pending, approved, rejected, cancelled, withdrawn.
+```
+
+**Post-check, functional:** as a resident with a pending join request, press
+**Withdraw**. Before this file that press answered a 22P02-shaped failure; after
+it the request leaves the admin's pending list.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hosted_request_status_withdrawn_migration.py` (10 tests) —
+the file parses (`pglast`); it sorts after every file that already existed; the
+label it adds is *derived* from the literal `access_requests_repository.withdraw`
+actually writes, so a file that added some other word would fail here rather
+than at the next press; that label is one `0001_baseline.sql`'s own check already
+allows, which is what makes this hosted catching up rather than a fifth request
+state being invented; the baseline column is text with a check and names no enum;
+nothing in the directory creates the type; the `alter` is guarded on the type
+existing *as an enum* (`typtype = 'e'`); the file adds and never removes or
+retypes; the new label is never used as a value anywhere in the file, which is
+the PostgreSQL 12 rule stated as an assertion; and the verification block is
+itself conditional so it cannot raise on a fresh database. **Not verifiable
+statically:** hosted's actual current label list — `add value if not exists` is
+correct for any superset of the four the probe reported, and the verification
+block is the only thing that can see the real answer.
+
+## 26. `20260823160000_visitor_requests_sse.sql`
+
+**What breaks without it:** an open admin dashboard never hears that a visitor
+request has arrived. It is half of the split brain probes (g) and (h) of §22
+found on 2026-08-23; the other half is a code change and is described at the end
+of this section.
+
+**Why:** `public.visitor_requests` carries **no trigger at all** on hosted. The
+inventory probe walked the tables: `amenity_bookings` has
+`amenity_bookings_sse`, `visitor_access_requests` has
+`dashboard_sse_visitor_access_requests`, `legacy_amenity_booking_series` has
+`dashboard_sse_amenity_booking_series` — and the one table residents actually
+write has none. It holds the only three real visitor requests in the project,
+and not one of them has ever produced an `sse_events` row.
+
+`0007_dashboard_realtime_outbox.sql` is the file that lays these triggers. Its
+loop names twelve tables, `visitor_requests` among them, and builds
+`dashboard_sse_%I` on each one **that exists**. A fresh database has had the
+trigger since `0007` for that reason, and hosted has not: when `0007` was applied
+there, `visitor_requests` did not yet exist — `0032_visitor_passes.sql` created
+it twenty-five files later — the `to_regclass` guard skipped it, and nothing
+revisited the question.
+
+**What the file does on hosted:** one statement, and it is `0007`'s own statement
+for this table — the same `after insert or update or delete`, the same
+`for each row`, the same `public.emit_dashboard_sse_event()`, under the name
+`0007`'s loop would have produced. This is not a second design; it is the first
+one arriving late. The function itself is untouched: `0028_event_audience.sql` 93
+rewrote it once, to publish `dashboard.refresh` to the `{admin, manager}`
+audience rather than the whole community, and that is the definition both
+databases already carry.
+
+**Why it is idempotent on a fresh database:** `create or replace trigger` rather
+than a drop-and-create pair. On a fresh database it replaces `0007`'s trigger
+with a definition identical to it; on hosted a second run replaces its own.
+Nothing is ever dropped, so there is no window in which the table has no trigger
+— and nothing for `test_migration_directory_is_fresh_appliable.py`'s
+orphaned-trigger check to catch, because the file drops nothing at all.
+
+**Ordering:** after `20260823153000` (§25) by name, and — the ones that matter —
+after `0007` (whose trigger function it names) and after `0032` (which creates
+the table it fires on). Both are long applied on hosted and both sort earlier in
+a fresh replay.
+
+**The other half, which needs no migration.**
+`backend/app/repositories/dashboard_repository.py` was reading the *empty* side
+of the same split: its legacy arms asked `visitor_access_requests` (0 rows) and
+`legacy_amenity_booking_series` (0 rows) while residents wrote `visitor_requests`
+(3) and `amenity_bookings`. Those two arms no longer branch on schema generation
+at all — there was never a second source, only a second name for an empty one —
+and `weekly_new_counts` follows them. The HTTP response shape of
+`GET /dashboard/snapshot` is unchanged, `schema_generation()` is unchanged, and
+every other legacy arm (complaints, amenities, invoices, payments) is untouched,
+because those are genuinely two shapes of one table. **Without this migration the
+dashboard would show the rows but only after a manual reload; without the code
+change the trigger would fire about rows nothing projects.** They ship together.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output
+expected on success; the verification block at the end raises if the trigger is
+not on the table afterwards.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823160000', 'visitor_requests_sse')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select c.relname as table_name,
+       t.tgname  as trigger_name,
+       pg_get_triggerdef(t.oid) as definition
+  from pg_trigger t
+  join pg_class c on c.oid = t.tgrelid
+ where not t.tgisinternal
+   and c.relname in ('visitor_requests', 'amenity_bookings')
+ order by 1, 2;
+-- expect dashboard_sse_visitor_requests on visitor_requests, defined as
+-- AFTER INSERT OR DELETE OR UPDATE ... FOR EACH ROW EXECUTE FUNCTION
+-- public.emit_dashboard_sse_event().
+```
+
+**Post-check, functional:** open the admin dashboard in one browser and, in
+another, create a visitor pass as a resident. The admin's visitor list gains the
+row without a reload. Both halves are being tested at once by that press — the
+trigger for the refresh, the repository change for the row being in the list at
+all.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_visitor_requests_sse_migration.py` (9 tests) — the file
+parses (`pglast`); it sorts after every file that already existed, after `0007`,
+and after every file that creates `public.visitor_requests`; the trigger's name,
+events, row level and function are *derived from `0007`'s own loop template* and
+compared against this file's statement, so the two definitions cannot drift and
+the `delete` arm cannot be quietly dropped; `visitor_requests` is one of the
+tables `0007`'s array already names, so this is `0007` finishing its own job
+rather than a thirteenth table entering the outbox by a side door; every
+definition of `emit_dashboard_sse_event` in the directory sorts before this file;
+the file drops nothing and holds exactly one `create or replace trigger`; and the
+verification names the trigger it made rather than asking whether the table has
+any trigger at all — which would have passed against nothing useful, since the
+table had none. The repository half is pinned by
+`backend/tests/test_realtime.py`, including a cross-check that the table this
+trigger fires on is the table `list_visitors` reads. **Not verifiable
+statically:** whether hosted's `emit_dashboard_sse_event` is the one this
+directory declares. It is a `create or replace` in `0007` and again in `0028`,
+and the apply is the only thing that can settle it.

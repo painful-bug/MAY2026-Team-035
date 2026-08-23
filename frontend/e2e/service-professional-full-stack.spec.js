@@ -98,6 +98,9 @@ test('email login, atomic profile, nearest application, approval, and next login
 
   await expect(page).toHaveURL(/\/worker$/);
   await expect(page.getByRole('heading', { name: 'Register as a service partner' })).toBeVisible();
+  // The LocationPicker keeps the raw coordinate inputs inside a collapsed
+  // <details> fallback; open it before filling, as a keyboard user would.
+  await page.getByText('Enter coordinates manually').click();
   await page.getByLabel('Latitude').fill('22.572645');
   await page.getByLabel('Longitude').fill('88.363892');
   await page.getByRole('button', { name: 'Plumbing' }).click();

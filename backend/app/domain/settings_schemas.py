@@ -56,6 +56,11 @@ class CommunityProfile(CamelModel):
     created_at: datetime | None = None
     latitude: float | None = None
     longitude: float | None = None
+    #: What the pin is called -- "Whitefield, Bengaluru". Suggested by the
+    #: picker and then editable, so it is a label rather than a geocode. Unlike
+    #: ``name`` above it *is* writable, through ``PUT /settings``: the admin who
+    #: moved the pin is the one who knows what to call where it landed.
+    location_label: str | None = None
 
 
 class PreferenceSettings(CamelModel):
@@ -182,6 +187,11 @@ class UpdateSettingsRequest(CamelModel):
     notice_sms_broadcast_enabled: bool | None = None
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+    #: Rides with the coordinate pair rather than travelling alone: the RPC that
+    #: writes it is the one that moves the pin, and a label saved without a pin
+    #: would be a name for a place the community is not. Optional even when the
+    #: pair is sent -- a pin nobody named is still a valid pin.
+    location_label: str | None = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
     def _coordinate_pair(self) -> "UpdateSettingsRequest":
@@ -189,6 +199,14 @@ class UpdateSettingsRequest(CamelModel):
         if coordinates_supplied and (self.latitude is None or self.longitude is None):
             raise ValueError("latitude and longitude must be supplied together")
         return self
+
+    @field_validator("location_label")
+    @classmethod
+    def _trim_location_label(cls, value: str | None) -> str | None:
+        """Whitespace-only is ``None``; the RPC then keeps the stored label."""
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator("timezone")
     @classmethod

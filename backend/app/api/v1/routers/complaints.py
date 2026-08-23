@@ -37,13 +37,29 @@ router = APIRouter(
 @router.get(
     "/staff/complaints/{complaint_id}",
     response_model=StaffComplaintDetail,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(get_active_membership)],
     summary="Staff complaint detail with full timeline",
 )
 async def staff_complaint_detail(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> StaffComplaintDetail:
+    """One complaint with its whole timeline, for whoever may act on it.
+
+    **The router guard is active membership and not `require_admin`**, changed
+    2026-08-22 with the supervisor dashboard's detail popup. It is not a
+    widening of who may read this: `staff_complaint_detail` has decided
+    `is_community_admin(...) OR can_supervise_department(...)` inside Postgres
+    since it was written, and answers `HB404` — not a 403 — to anybody else, so
+    a stranger walking complaint ids learns nothing either way. What
+    `require_admin` was doing was refusing the department's own supervisors at
+    the door, before the rule that admits them could be asked.
+
+    | Status | Code | Cause |
+    |---|---|---|
+    | 403 | `active_membership_required` | The caller belongs to no community |
+    | 404 | `not_found` | No such complaint, or not one the caller may act on |
+    """
     return complaints_service.staff_detail(client, complaint_id=complaint_id)
 
 

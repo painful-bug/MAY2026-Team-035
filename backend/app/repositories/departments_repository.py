@@ -33,7 +33,7 @@ _DEPARTMENT_SELECT = (
 
 _STAFF_SELECT = (
     "id, department_id, membership_id, service_provider_id, display_name,"
-    "phone_e164, job_title, rank, shift, status, active_assignment_count,"
+    "phone_e164, job_title, rank, shift, status, supervised_work_order_count,"
     "open_commitment_count, departure_status, departure_effective_at"
 )
 

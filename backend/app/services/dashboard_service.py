@@ -115,12 +115,22 @@ def _complaints(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *,
     return result
 
 
-def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, legacy: bool) -> list[dict[str, Any]]:
+def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Wire shape for one visitor card. Every key below is frozen -- the admin
+    and resident screens read them by name.
+
+    The `legacy` parameter is gone because its source table is: both schema
+    generations now read `visitor_requests` (see
+    `dashboard_repository.list_visitors`), so the pre-baseline column names
+    `expected_from` / `expected_until` and the `legacy_visitor_events` embed
+    have nothing left to read. `valid_from` / `valid_until` / `visitor_events`
+    are the columns of the table residents write.
+    """
     result = []
     for row in rows:
         requester = users.get(row.get("requested_by_membership_id"), {})
-        starts_at = row.get("expected_from") if legacy else row.get("valid_from")
-        ends_at = row.get("expected_until") if legacy else row.get("valid_until")
+        starts_at = row.get("valid_from")
+        ends_at = row.get("valid_until")
         result.append({
             "id": row["id"], "name": row.get("visitor_name") or "Visitor", "phone": row.get("visitor_phone_e164") or "",
             "purpose": row.get("purpose") or "Guest", "status": _VISITOR_LABELS.get(str(row.get("status")), "Expected"),
@@ -129,11 +139,8 @@ def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, l
             "date": _iso_date(starts_at or row.get("created_at")), "expectedDate": _iso_date(starts_at),
             "expectedTime": _time(starts_at), "eta": _time(starts_at), "validUntil": ends_at,
             "checkedInAt": row.get("checked_in_at"), "checkedOutAt": row.get("checked_out_at"),
-            # The legacy embed key follows the hosted table name: `0032` renamed
-            # the old event log to `legacy_visitor_events` when the baseline
-            # claimed `visitor_events` for `visitor_requests`.
             "createdAt": row.get("created_at"),
-            "events": (row.get("legacy_visitor_events") if legacy else row.get("visitor_events")) or [],
+            "events": row.get("visitor_events") or [],
         })
     return result
 
@@ -165,15 +172,22 @@ def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, An
     return result
 
 
-def _bookings(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]], *, legacy: bool) -> list[dict[str, Any]]:
+def _bookings(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Wire shape for one booking row. Frozen keys, as `_visitors`.
+
+    `legacy` is gone with the series tables it read: `amenity_bookings` is one
+    row per booking with no series above it, so `bookingGroupId` is the row's
+    own id and the booker is on the row. `cancellationReason` stays in the
+    payload and stays `None` -- `amenity_bookings` has no such column, the key
+    is part of the contract, and a cancelled booking carries its reason in the
+    amenity screens' own read rather than here.
+    """
     result = []
     for row in rows:
-        series = row.get("series") or {}
-        member_id = series.get("booked_by_membership_id") if legacy else row.get("booked_by_membership_id")
-        resident = users.get(member_id, {})
+        resident = users.get(row.get("booked_by_membership_id"), {})
         starts_at, ends_at = row.get("starts_at"), row.get("ends_at")
         result.append({
-            "id": row["id"], "bookingGroupId": row.get("booking_series_id") if legacy else row["id"],
+            "id": row["id"], "bookingGroupId": row["id"],
             "amenityId": row["amenity_id"], "residentId": resident.get("id"), "residentName": resident.get("name", "Resident"),
             "residentFlat": resident.get("flat", "—"), "date": _iso_date(starts_at), "startTime": _time(starts_at), "endTime": _time(ends_at),
             "status": str(row.get("status") or "requested").lower(), "state": "booked",
@@ -242,9 +256,13 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="snapshot") as pool:
         member_rows_f = pool.submit(dashboard_repository.list_memberships, client, community_id)
         complaints_f = pool.submit(dashboard_repository.list_complaints, client, community_id, legacy=legacy)
-        visitors_f = pool.submit(dashboard_repository.list_visitors, client, community_id, legacy=legacy)
+        # Visitors and bookings take no `legacy`: both generations read the
+        # tables residents actually write (`visitor_requests`,
+        # `amenity_bookings`). Amenities still do -- the two schemas keep that
+        # one on the same table under different columns.
+        visitors_f = pool.submit(dashboard_repository.list_visitors, client, community_id)
         amenities_f = pool.submit(dashboard_repository.list_amenities, client, community_id, legacy=legacy)
-        bookings_f = pool.submit(dashboard_repository.list_bookings, client, community_id, legacy=legacy)
+        bookings_f = pool.submit(dashboard_repository.list_bookings, client, community_id)
         money_f = pool.submit(_invoices_then_payments)
         notices_f = pool.submit(dashboard_repository.list_notices, client, community_id)
         departments_f = pool.submit(dashboard_repository.list_departments, client, community_id)
@@ -264,7 +282,6 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
         weekly_new = dashboard_repository.weekly_new_counts(
             client,
             community_id,
-            legacy=legacy,
             since_iso=(datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
             executor=pool,
         )
@@ -272,9 +289,9 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
         member_rows = member_rows_f.result()
         users, users_by_membership, _ = _membership_users(member_rows)
         complaints = _complaints(complaints_f.result(), users_by_membership, legacy=legacy)
-        visitors = _visitors(visitors_f.result(), users_by_membership, legacy=legacy)
+        visitors = _visitors(visitors_f.result(), users_by_membership)
         amenities = _amenities(amenities_f.result(), legacy=legacy)
-        bookings = _bookings(bookings_f.result(), users_by_membership, legacy=legacy)
+        bookings = _bookings(bookings_f.result(), users_by_membership)
         invoices, payment_rows = money_f.result()
         payments = _payments(
             invoices,

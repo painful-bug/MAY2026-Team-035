@@ -100,13 +100,31 @@ def csrf_token(access_token: str) -> str:
     ).hexdigest()
 
 
-def establish_session(response: Response, *, access_token: str, refresh_token: str, expires_in: int | None) -> None:
+def establish_session(response: Response, *, access_token: str, refresh_token: str, expires_in: int | None, persist: bool) -> None:
+    """Write the session cookies, honouring the sign-in page's "Remember me".
+
+    ``persist`` False is the default answer: the refresh cookie is written with
+    no ``Max-Age`` so the browser drops it when the window closes, and the login
+    page is there again next time. ``persist`` True keeps today's multi-day
+    refresh window, which is what silently signs a returning visitor back in.
+
+    The companion ``remember`` cookie exists because ``/auth/refresh`` rotates
+    the refresh token and has to re-issue these cookies without the original
+    request's answer in hand. It carries no secret -- the worst a user can do by
+    editing it is change how long their own session survives -- so it is not
+    signed.
+    """
     settings = get_settings()
     max_age = expires_in or 3600
+    remember_max_age = 60 * 60 * 24 * settings.auth_session_idle_days
     common = {"secure": settings.use_secure_cookies, "httponly": True, "samesite": "lax", "path": "/"}
     response.set_cookie(cookie_name("access"), access_token, max_age=max_age, **common)
-    response.set_cookie(cookie_name("refresh"), refresh_token, max_age=60 * 60 * 24 * settings.auth_session_idle_days, **common)
+    response.set_cookie(cookie_name("refresh"), refresh_token, max_age=remember_max_age if persist else None, **common)
     response.set_cookie(cookie_name("csrf"), csrf_token(access_token), max_age=max_age, httponly=False, secure=settings.use_secure_cookies, samesite="strict", path="/")
+    if persist:
+        response.set_cookie(cookie_name("remember"), "1", max_age=remember_max_age, **common)
+    else:
+        clear_cookie(response, cookie_name("remember"))
     clear_cookie(response, PREAUTH_CSRF_COOKIE, httponly=False)
 
 
@@ -128,5 +146,5 @@ def establish_preauth_csrf(response: Response) -> str:
 
 
 def clear_session(response: Response) -> None:
-    for name, http_only in ((cookie_name("access"), True), (cookie_name("refresh"), True), (cookie_name("csrf"), False), (PREAUTH_CSRF_COOKIE, False), (RECOVERY_ACCESS_COOKIE, True), (RECOVERY_REFRESH_COOKIE, True), (RECOVERY_CSRF_COOKIE, False), (OAUTH_COOKIE, True), (INVITATION_COOKIE, True)):
+    for name, http_only in ((cookie_name("access"), True), (cookie_name("refresh"), True), (cookie_name("csrf"), False), (cookie_name("remember"), True), (PREAUTH_CSRF_COOKIE, False), (RECOVERY_ACCESS_COOKIE, True), (RECOVERY_REFRESH_COOKIE, True), (RECOVERY_CSRF_COOKIE, False), (OAUTH_COOKIE, True), (INVITATION_COOKIE, True)):
         clear_cookie(response, name, httponly=http_only)

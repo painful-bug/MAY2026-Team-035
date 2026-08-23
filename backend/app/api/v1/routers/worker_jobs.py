@@ -67,6 +67,15 @@ async def worker_snapshot(
     search" and "show the week" from one response instead of interpreting two
     failures.
 
+    **`communities` is filled independently of `provider`.** `provider: null`
+    with a non-empty `communities` is department leadership: a manager or
+    supervisor an administrator created by email holds a membership and a roster
+    row and no `service_providers` row, because leadership has no registration
+    process. A client must therefore decide the registration form on `provider`
+    **and** `communities[].rank` — an active `manager` or `supervisor`
+    engagement is never sent to it, while `member` and no engagement at all
+    still are, because coordinates and trades are how those people are found.
+
     `todayJobs` and `nextJob` answer different questions and both are needed: at
     six in the evening today's list is history, and what a worker wants then is
     tomorrow morning.

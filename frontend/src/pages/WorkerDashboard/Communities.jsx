@@ -89,10 +89,28 @@ function LeaveControl({ row, onChanged }) {
 
 function Rosters() {
   const queryClient = useQueryClient();
-  const rosters = useQuery({ queryKey: ['worker-communities'], queryFn: workerApi.myCommunities });
-  const rows = rosters.data ?? [];
+  // `GET /worker/communities` is provider-keyed and 404s somebody who never
+  // registered — deliberately, because for a marketplace professional "you have
+  // not registered" and "nobody has hired you" are different answers with
+  // different next steps. A manager or supervisor (`20260812090200`) is neither:
+  // they are employed and they have no provider row, and left to that endpoint
+  // alone this panel told them no society employs them, which is false. The
+  // snapshot carries the same roster rows and does not require registration, so
+  // it is the source when there is no provider profile.
+  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
+  const rosters = useQuery({
+    queryKey: ['worker-communities'],
+    queryFn: workerApi.myCommunities,
+    enabled: snapshot.isSuccess && !noMarketplaceProfile,
+  });
+  const rows = noMarketplaceProfile
+    ? (snapshot.data?.communities ?? [])
+    : (rosters.data ?? []);
 
-  if (rosters.isPending) return <p className="py-10 text-center text-sm font-semibold text-slate-400">Loading…</p>;
+  if (snapshot.isPending || (!noMarketplaceProfile && rosters.isPending)) {
+    return <p className="py-10 text-center text-sm font-semibold text-slate-400">Loading…</p>;
+  }
   if (rows.length === 0) {
     return (
       <p className="rounded-2xl border border-dashed border-slate-300 px-5 py-10 text-center text-sm font-semibold text-slate-500">
@@ -125,7 +143,11 @@ function Rosters() {
                 <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-bold text-slate-700">{row.status}</span>
               )}
             </div>
-            {row.status === 'active' ? (
+            {/* Leaving is the marketplace worker's verb: both RPCs behind it
+                resolve the caller through `my_service_provider_id`, so the
+                button would 404 for department leadership. Somebody an
+                administrator hired leaves through the administrator. */}
+            {row.status === 'active' && !noMarketplaceProfile ? (
               <LeaveControl
                 row={row}
                 onChanged={() => queryClient.invalidateQueries({ queryKey: ['worker-communities'] })}
@@ -134,6 +156,14 @@ function Rosters() {
           </div>
         );
       })}
+      {noMarketplaceProfile && (
+        <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500 sm:col-span-2">
+          You were hired into this department rather than found in the marketplace,
+          so <span className="font-extrabold">Find work</span> and{' '}
+          <span className="font-extrabold">My applications</span> are not yours to
+          use. Ask an administrator to change your posting or end it.
+        </p>
+      )}
     </div>
   );
 }

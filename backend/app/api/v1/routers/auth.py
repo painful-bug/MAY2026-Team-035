@@ -115,12 +115,14 @@ async def csrf(response: Response) -> MessageResponse:
 
 
 @router.get("/oauth/{provider}/start", status_code=307)
-async def oauth_start(provider: str, next: str | None = Query(None)) -> RedirectResponse:
+async def oauth_start(provider: str, next: str | None = Query(None), remember: bool = Query(False)) -> RedirectResponse:
     _require_enabled(provider)
     return_path = auth_service.safe_return_path(next)
     url, transaction = auth_service.start_oauth(provider)
     response = RedirectResponse(url=url, status_code=307)
-    set_transaction_cookie(response, OAUTH_COOKIE, sign_payload({**transaction, "next": return_path}, ttl_seconds=300))
+    # The "Remember me" answer is only known on the sign-in page, so it rides
+    # the signed transaction cookie out to the provider and back.
+    set_transaction_cookie(response, OAUTH_COOKIE, sign_payload({**transaction, "next": return_path, "remember": remember}, ttl_seconds=300))
     return response
 
 
@@ -133,15 +135,15 @@ async def oauth_callback(request: Request, provider: str, code: str | None = Non
     session = await _run_provider_operation(auth_service.exchange_google_code, code, str(transaction["verifier"]))
     destination = f"{get_settings().frontend_base_url.rstrip('/')}{transaction['next']}"
     response = RedirectResponse(destination, status_code=307)
-    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in)
+    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in, persist=bool(transaction.get("remember", False)))
     clear_cookie(response, OAUTH_COOKIE)
     return response
 
 
 # Compatibility routes keep existing bookmarks and Google callbacks working.
 @router.get("/google/start", status_code=307)
-async def google_start(next: str | None = Query(None)) -> RedirectResponse:
-    return await oauth_start("google", next)
+async def google_start(next: str | None = Query(None), remember: bool = Query(False)) -> RedirectResponse:
+    return await oauth_start("google", next, remember)
 
 
 @router.get("/google/callback", status_code=307)
@@ -176,7 +178,7 @@ async def password_sign_in(body: PasswordSignInRequest, response: Response) -> M
     if get_settings().auth_captcha_enabled and not body.captcha_token:
         raise ValidationError("Complete the CAPTCHA challenge.", code="captcha_required")
     session = await _run_provider_operation(auth_service.sign_in_with_password, email=body.email.strip().casefold(), password=body.password, captcha_token=body.captcha_token)
-    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in)
+    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in, persist=body.remember_me)
     return MessageResponse(message="Signed in.")
 
 
@@ -185,7 +187,9 @@ async def verify_email(body: EmailTokenRequest, response: Response) -> MessageRe
     if body.verification_type not in {"email", "signup"}:
         raise ValidationError("Invalid email verification request.", code="verification_invalid")
     session = await _run_provider_operation(auth_service.verify_email_token, body.token_hash, body.verification_type)
-    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in)
+    # The confirmation link never asked whether to stay signed in, so it takes
+    # the safe answer: this session ends with the browser session.
+    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in, persist=False)
     return MessageResponse(message="Email verified.")
 
 
@@ -268,7 +272,9 @@ async def refresh(request: Request, response: Response) -> MessageResponse:
     if not refresh_token:
         raise AuthenticationError("No refresh session is available.")
     session = await _run_provider_operation(auth_service.refresh_session, refresh_token)
-    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in)
+    # Rotation must not silently promote a browser-session sign-in into a
+    # persistent one: the remember cookie carries the original answer forward.
+    establish_session(response, access_token=session.access_token, refresh_token=session.refresh_token, expires_in=session.expires_in, persist=request.cookies.get(cookie_name("remember")) == "1")
     return MessageResponse(message="Session refreshed.")
 
 

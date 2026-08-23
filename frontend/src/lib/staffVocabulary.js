@@ -48,6 +48,65 @@ export const rankLabel = (rank) =>
   || 'Team member';
 
 /**
+ * The two ranks that are *hired into a department* rather than *found in the
+ * marketplace*, and the reason they need a name of their own.
+ *
+ * `staff_invitations_rank_check` (20260812090200:103) admits exactly these two:
+ * an administrator types a name and an email, and that person is a manager or a
+ * supervisor the first time they sign in. `member` is unreachable that way — it
+ * is what a registered service provider becomes when a department hires them.
+ *
+ * So this is the predicate for "does this person's work arrive through a
+ * department". A manager or supervisor never registered, has no
+ * `service_providers` row and never needs one: skills and coordinates exist for
+ * distance matching, and nobody is matching distance to somebody already on the
+ * payroll. The worker portal gates its marketplace registration form on this.
+ */
+export const LEADERSHIP_RANKS = Object.freeze(['manager', 'supervisor']);
+
+export const isLeadershipRank = (rank) =>
+  LEADERSHIP_RANKS.includes(String(rank || '').toLowerCase());
+
+/**
+ * True when any of these engagements is a live leadership posting.
+ *
+ * Takes the `communities[]` of `GET /worker/snapshot`, which carries one row
+ * per roster the caller is on with its `rank` — the only place the session can
+ * learn a rank at all, since nothing on `sessionContext` carries one.
+ */
+export const holdsLeadershipEngagement = (engagements) =>
+  (engagements ?? []).some(
+    (engagement) => engagement?.status === 'active' && isLeadershipRank(engagement?.rank),
+  );
+
+/**
+ * The same question asked for its answer rather than for a yes/no: *which*
+ * roster row makes this person a supervisor.
+ *
+ * `holdsLeadershipEngagement` is enough to decide a nav item; a screen scoped to
+ * a department needs the row, because `departmentId` is on it and nowhere else
+ * the browser can reach — `GET /departments` is admin-only, so a supervisor
+ * cannot look their own department up.
+ *
+ * **The first such row, and that is a decision.** Somebody supervising two
+ * departments in two societies is possible and rare, and a portal-wide
+ * department switcher is a bigger idea than any one screen: it would want
+ * `communities[]` in a shared context that every worker page reads. Recorded
+ * here rather than half-built, and the department id stays in the URL under
+ * every portal, so the second department is reachable by link the day that
+ * switcher exists.
+ *
+ * Lives beside `isLeadershipRank` rather than in the two pages that ask, so the
+ * set of ranks that may supervise is stated once. It was written twice for one
+ * day — `WorkerDashboard/Complaints.jsx` had its own copy — which is the
+ * three-disagreeing-lists failure at the head of this file, in miniature.
+ */
+export const supervisedEngagement = (engagements) =>
+  (engagements ?? []).find(
+    (engagement) => engagement?.status === 'active' && isLeadershipRank(engagement?.rank),
+  ) || null;
+
+/**
  * What somebody does. **Suggestions on a free-text field, not a select.**
  *
  * `job_title` is `text` with no check constraint, so a closed list here would be

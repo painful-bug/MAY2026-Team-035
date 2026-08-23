@@ -30,8 +30,8 @@ _SKILLS = "skills"
 #: column added to the view later does not silently widen this response.
 _PROFILE_SELECT = (
     "id, profile_id, display_name, headline, bio, phone_e164, latitude, "
-    "longitude, service_radius_km, status, is_available, skill_ids, "
-    "skill_names, community_count, created_at, updated_at"
+    "longitude, location_label, service_radius_km, status, is_available, "
+    "skill_ids, skill_names, community_count, created_at, updated_at"
 )
 
 
@@ -58,9 +58,16 @@ def get_by_profile(client: Client, *, profile_id: str) -> dict[str, Any] | None:
 #: ``auth.uid() is not null`` -- which is exactly why the restriction has to be
 #: written down somewhere, and a column list is the only place it survives
 #: somebody adding a field to the schema later.
+#:
+#: ``location_label`` was added on 2026-08-21 and is the exception that proves
+#: the rule rather than a hole in it: a 120-character place name the provider
+#: typed and can edit is a disclosure they made, and it is added *here*, one
+#: column at a time, instead of by widening this list toward ``_PROFILE_SELECT``.
+#: The coordinates it was derived from stay absent.
 _CANDIDATE_SELECT = (
-    "id, display_name, headline, bio, phone_e164, service_radius_km, status, "
-    "is_available, skill_ids, skill_names, community_count, created_at"
+    "id, display_name, headline, bio, phone_e164, location_label, "
+    "service_radius_km, status, is_available, skill_ids, skill_names, "
+    "community_count, created_at"
 )
 
 
@@ -114,6 +121,7 @@ def save_profile(
     latitude: float | None,
     longitude: float | None,
     service_radius_km: float | None,
+    location_label: str | None = None,
 ) -> str:
     """Register or edit the caller's profile (RPC). Returns the provider id.
 
@@ -132,8 +140,23 @@ def save_profile(
                 "p_latitude": latitude,
                 "p_longitude": longitude,
                 "p_service_radius_km": service_radius_km,
+                "p_location_label": location_label,
             },
         ).execute()
+    except APIError as exc:
+        # The eighth argument arrives with `20260821113000`, which drops the
+        # seven-argument function rather than overloading it. Until that file is
+        # applied PostgREST answers PGRST202, and a retry without the label
+        # would save a profile that silently lost the field the person just
+        # typed -- so this reports the rollout gap instead.
+        if exc.code == "PGRST202" and "upsert_service_provider" in exc.message:
+            raise ServiceUnavailableError(
+                "Profile saving is being set up. Please try again shortly.",
+                code="location_label_migration_not_deployed",
+            ) from exc
+        raise translate(
+            exc, default_message="Could not save the service provider profile."
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise translate(
             exc, default_message="Could not save the service provider profile."
@@ -151,6 +174,7 @@ def register_profile(
     longitude: float,
     service_radius_km: float,
     skill_ids: list[str],
+    location_label: str | None = None,
 ) -> str:
     """Atomically create/repair the caller's profile and complete skill set."""
     try:
@@ -164,6 +188,7 @@ def register_profile(
                 "p_longitude": longitude,
                 "p_service_radius_km": service_radius_km,
                 "p_skill_ids": skill_ids,
+                "p_location_label": location_label,
             },
         ).execute()
     except APIError as exc:

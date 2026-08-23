@@ -82,9 +82,18 @@ function Empty({ children }) {
 
 function Failure({ error }) {
   if (!error) return null;
+  // A 422's envelope names the offending fields in `details`; the message
+  // alone ("The request could not be validated.") leaves the person staring
+  // at six inputs with no idea which one the server meant.
+  const details = Array.isArray(error.details) ? error.details : [];
   return (
     <p role="alert" className="text-xs font-semibold text-rose-600">
       {error.message}
+      {details.map((detail) => (
+        <span key={`${detail.field}:${detail.message}`} className="block font-normal">
+          {detail.field ? `${detail.field}: ` : ''}{detail.message}
+        </span>
+      ))}
     </p>
   );
 }
@@ -1068,7 +1077,26 @@ export default function WorkOrderTriage() {
         </div>
       )}
 
-      <Failure error={department.error} />
+      {/* The department read is *context*, and its refusal is not a page
+          failure — it used to render as a bare "You do not have permission for
+          this community action." under the queue, which is both alarming and
+          untrue of the screen it appears on.
+          `GET /departments/{id}` is guarded `require_admin_or_manager`
+          (`departments.py:47`), and a service-department supervisor holds a
+          `worker` membership — so the one population this screen was mounted in
+          the worker portal *for* cannot make this call, while every work-order
+          endpoint admits them. What is lost is the trade list; the roster is
+          not, because the assign box reads
+          `GET /work-orders/{id}/candidates`, which admits them. Said plainly
+          rather than branched on portal: an admin or a manager only reaches
+          this line on a genuine failure, and the sentence is true there too. */}
+      {department.error ? (
+        <p className="rounded-2xl border border-slate-100 bg-white p-4 text-[11px] font-semibold text-slate-500">
+          This department&apos;s trade list could not be read, so the trade box
+          offers nothing to pick and the job takes the trade its complaint
+          category implies. Nothing else on this screen is affected.
+        </p>
+      ) : null}
     </div>
   );
 }

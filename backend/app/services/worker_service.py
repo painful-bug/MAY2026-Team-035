@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.exceptions import NotFoundError
+from app.core.supabase_client import get_service_client
 from app.domain.hiring_schemas import ServiceEngagement
 from app.domain.worker_schemas import (
     AvailabilityRule,
@@ -376,9 +377,16 @@ def snapshot(client: Client, *, profile_id: str) -> WorkerSnapshot:
 
     An unregistered caller gets a snapshot with a null ``provider`` rather than a
     404, and that is the difference that makes this endpoint the whole empty
-    state: null provider means *show the registration form*, empty
-    ``communities`` means *show the community search*, and both are answered
-    without a client interpreting an error.
+    state: null provider means *no marketplace profile*, empty ``communities``
+    means *nobody employs you*, and both are answered without a client
+    interpreting an error.
+
+    **The two are independent, and since 2026-08-21 the code says so.**
+    ``communities`` is filled from the caller's roster rows whether or not they
+    hold a ``service_providers`` row, because leadership provisioned by email
+    (``20260812090200``) holds the second without the first. Null provider plus
+    a ``supervisor`` engagement is a real, ordinary answer -- and it is what
+    keeps a department's supervisor out of the marketplace registration form.
 
     Sequential reads, one honest ``generatedAt``: the offers could be a heartbeat
     older than the notification count. The two other snapshots in this API work
@@ -394,7 +402,27 @@ def snapshot(client: Client, *, profile_id: str) -> WorkerSnapshot:
         # Not an error here, unlike on `GET /service-providers/me`. This endpoint
         # answers "what should I show this person", and "the registration form"
         # is one of its legitimate answers.
-        return WorkerSnapshot(generated_at=now)
+        #
+        # **But it is not the only one, and it used to be.** Until 2026-08-21
+        # this returned an empty snapshot on the spot, which was right for the
+        # population it was written for -- somebody who has not registered
+        # cannot be on a roster -- and wrong for the one `20260812090200`
+        # introduced. A manager or supervisor an administrator created has a
+        # membership and a roster row and **no** `service_providers` row, so the
+        # early return told the portal they were an unregistered marketplace
+        # professional and the layout put them in front of the registration
+        # form. Their rank lives on the roster row, so the Complaints screen
+        # could not find it either.
+        #
+        # `provider: null` still means *no marketplace profile*. What it no
+        # longer means is *no work*: the two questions are now answered
+        # separately, and `communities` answers the second one.
+        return WorkerSnapshot(
+            communities=hiring_service.list_my_staff_engagements(
+                get_service_client(), profile_id=profile_id, active_only=True
+            ),
+            generated_at=now,
+        )
 
     communities = hiring_service.list_my_engagements(
         client, profile_id=profile_id, active_only=True

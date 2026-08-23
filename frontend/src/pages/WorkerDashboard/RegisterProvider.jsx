@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Wrench } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import LocationCoordinatesInput from '../../components/common/LocationCoordinatesInput';
+import LocationPicker from '../../components/common/LocationPicker';
 import { workerApi } from '../../features/worker/workerApi';
 import { useAuthStore } from '../../store/authStore';
 import { recordServiceSignupEvent } from '../../lib/telemetry/serviceSignupTelemetry';
@@ -26,7 +26,9 @@ export default function RegisterProvider({ provider = null }) {
   });
   const [skillIds, setSkillIds] = useState(provider?.skillIds || []);
   const [coords, setCoords] = useState({
-    latitude: provider?.latitude ?? '', longitude: provider?.longitude ?? '',
+    latitude: provider?.latitude ?? '',
+    longitude: provider?.longitude ?? '',
+    locationLabel: provider?.locationLabel ?? '',
   });
   const skills = useQuery({ queryKey: ['skills'], queryFn: workerApi.skills });
 
@@ -49,6 +51,9 @@ export default function RegisterProvider({ provider = null }) {
         serviceRadiusKm: Number(form.serviceRadiusKm) || 15,
         latitude: Number(coords.latitude),
         longitude: Number(coords.longitude),
+        // Optional and never load-bearing: the pair above is what proximity
+        // search reads. This is only what a hiring manager's card can say.
+        locationLabel: coords.locationLabel?.trim() || null,
         skillIds,
       });
     },
@@ -146,7 +151,15 @@ export default function RegisterProvider({ provider = null }) {
           </div>
         </div>
 
-        <LocationCoordinatesInput value={coords} onChange={setCoords} idPrefix="provider" required />
+        <LocationPicker
+          value={coords}
+          onChange={setCoords}
+          idPrefix="provider"
+          required
+          legend="Where you are based"
+          hint="Search for your area, or drop the pin. This is what puts you in front of nearby societies."
+          labelHint="Shown to societies considering you. They never see your coordinates."
+        />
 
         <div>
           <p className="mb-2 text-xs font-extrabold uppercase tracking-wider text-slate-500">Your trades</p>

@@ -48,7 +48,7 @@ def _to_staff(row: dict) -> StaffMember:
         status=row.get("status", "active"),
         membership_id=row.get("membership_id"),
         service_provider_id=row.get("service_provider_id"),
-        active_assignment_count=row.get("active_assignment_count") or 0,
+        supervised_work_order_count=row.get("supervised_work_order_count") or 0,
         open_commitment_count=row.get("open_commitment_count") or 0,
         departure_status=row.get("departure_status"),
         departure_effective_at=row.get("departure_effective_at"),

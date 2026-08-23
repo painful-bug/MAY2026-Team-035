@@ -81,6 +81,7 @@ def _to_profile(row: dict) -> CommunityProfile:
         created_at=_instant(row.get("community_created_at")),
         latitude=row.get("latitude"),
         longitude=row.get("longitude"),
+        location_label=(row.get("location_label") or None),
     )
 
 
@@ -205,7 +206,15 @@ def update_settings(
     if payload:
         repo.save_settings(client, community_id, payload)
     if "latitude" in supplied and "longitude" in supplied:
+        # The label goes with the move, never on its own: `set_my_community_location`
+        # is the RPC that owns both, and it is the coordinates that authorise the
+        # write. A label-only PATCH is silently a no-op rather than a second
+        # write path into `communities` with a weaker check.
         repo.save_location(
-            client, community_id, float(body.latitude), float(body.longitude)
+            client,
+            community_id,
+            float(body.latitude),
+            float(body.longitude),
+            location_label=body.location_label,
         )
     return get_settings_snapshot(client, user_id)
