@@ -37,7 +37,6 @@ _ASSIGNMENT_SELECT = (
     "worker_phone_e164, worker_membership_id, worker_provider_id, "
     "scheduled_start_at, scheduled_end_at, offered_at, responded_at, "
     "decline_reason, is_auto_assigned"
-    ", is_forced"
 )
 
 
