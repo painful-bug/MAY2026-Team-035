@@ -69,11 +69,10 @@ export const createAmenity = async (amenityData) => {
   return (await getAmenityById(created.id));
 };
 
-export const updateAmenity = async (amenityId, amenityData, currentAmenity) => {
-  if (!currentAmenity) {
-    const amenities = await readAmenities();
-    currentAmenity = amenities[findAmenityIndex(amenities, amenityId)];
-  }
+export const updateAmenity = async (amenityId, amenityData) => {
+  const amenities = await readAmenities();
+  const amenityIndex = findAmenityIndex(amenities, amenityId);
+  const currentAmenity = amenities[amenityIndex];
   const isActive = amenityData.isActive ?? currentAmenity.isActive;
   const updatedAmenity = normalizeAmenityRecord({
     ...currentAmenity,
@@ -98,13 +97,18 @@ export const removeAmenity = async (amenityId) => {
   return amenityId;
 };
 
-export const setAmenityActiveStatus = async (currentAmenity) => {
+export const setAmenityActiveStatus = async (amenityId) => {
+  const amenities = await readAmenities();
+  const amenityIndex = findAmenityIndex(amenities, amenityId);
+  const currentAmenity = amenities[amenityIndex];
   const isActive = !currentAmenity.isActive;
-  return updateAmenity(
-    currentAmenity.id,
-    { ...currentAmenity, status: isActive ? 'Active' : 'Inactive', isActive },
-    currentAmenity
-  );
+  const updatedAmenity = {
+    ...currentAmenity,
+    status: isActive ? 'Active' : 'Inactive',
+    isActive,
+  };
+
+  return updateAmenity(amenityId, updatedAmenity);
 };
 
 export const updateAmenitySettings = async (amenityId, settings) => {

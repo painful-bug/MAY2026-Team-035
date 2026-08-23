@@ -146,13 +146,7 @@ export const useAmenitiesStore = create((set) => ({
     set({ error: null });
 
     try {
-      const currentAmenity = useAmenitiesStore
-        .getState()
-        .amenities.find((amenity) => amenity.id === amenityId);
-      if (!currentAmenity) {
-        throw new Error('Amenity not found.');
-      }
-      const amenity = await setAmenityActiveStatus(currentAmenity);
+      const amenity = await setAmenityActiveStatus(amenityId);
       set((state) => ({
         amenities: replaceAmenity(state.amenities, amenity),
         selectedAmenity:
