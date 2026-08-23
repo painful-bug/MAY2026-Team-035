@@ -40,6 +40,7 @@ def insert_invitation(
         "intended_role": Role.RESIDENT.value.lower(),
         "created_by_membership_id": created_by_membership_id,
         "expires_at": expires_at.isoformat(),
+        "legacy_unit_code": "UNKNOWN",
     }
     response = client.table(_TABLE).insert(payload).execute()
     return response.data[0]

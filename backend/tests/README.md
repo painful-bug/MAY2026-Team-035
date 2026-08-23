@@ -57,6 +57,16 @@ parsing it is as close as this suite gets.
 | `test_the_function_the_backend_calls_is_the_function_that_exists` | The argument names are the RPC contract: PostgREST binds by name, so a rename on either side is a 404 at runtime and nothing at import time. |
 
 
+## `test_amenity_dashboard_write.py`
+No description provided.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_dashboard_amenity_keeps_image_and_bookable_hours` | No description provided. |
+
+
 ## `test_amenity_mapping.py`
 Unit tests for the amenity translation layer.
 
@@ -111,8 +121,8 @@ into one approval row.
 | `test_booking_row_reproduces_the_seeded_booking_shape` | No description provided. |
 | `test_resident_id_is_the_membership_id_the_people_endpoint_returns` | So the dashboard's `users.find(u => u.id === booking.residentId)` resolves. Same rule the money endpoints follow. |
 | `test_series_id_is_emitted_as_the_booking_group_too` | The frontend groups multi-day requests by `bookingGroupId`. Our series id IS that group, so it goes out under both names -- one for the code that exists, one that reads correctly. |
-| `test_a_block_is_blocked_on_the_timeline_and_a_booking_is_not` | The timeline colours from `state`, which has four values, while the lifecycle has seven. |
-| `test_completed_is_carried_from_the_view_not_recomputed` | The view derives it from the clock; recomputing here would give two answers that disagree for a booking finishing during the request. |
+| `test_a_block_is_blocked_on_the_timeline_and_a_booking_is_not` | The timeline colours from `state`, which has two values, while the lifecycle has six.  `state` reads `booking_type`, not the status: `block_amenity_slot` stores a block as an APPROVED row wearing `booking_type = 'blocked'` (0023 lines 1104-1105), and 'blocked' is not a value `public.booking_status` can hold. |
+| `test_completed_is_carried_from_the_stored_status_not_the_display_one` | `status` on the wire is the machine value, from `stored_status`.  The view's own `status` column is the same enum initcap'd for display (0023 lines 484-492) -- 'Completed', 'No Show' -- and passing that through made every case-sensitive comparison downstream miss (issue #48 D4). |
 | `test_a_block_has_no_resident_rather_than_a_placeholder` | No description provided. |
 | `test_day_count_travels_with_every_day_of_a_request` | The approvals table needs it to say '3 days' -- one click now decides the whole request. |
 | `test_guests_are_attached_by_series_not_by_day` | A guest list belongs to the request; a three-day booking does not have three copies of the same guests. |
@@ -126,7 +136,7 @@ into one approval row.
 | `test_a_completed_booking_with_a_deposit_can_be_refunded_or_charged` | No description provided. |
 | `test_a_fully_refunded_booking_offers_neither` | `refunded` is financially closed: there is nothing left to return. |
 | `test_a_pending_booking_offers_no_refund` | Nothing has been held yet, and the booking has not happened. |
-| `test_a_future_confirmed_booking_can_be_force_cancelled` | No description provided. |
+| `test_a_future_approved_booking_can_be_force_cancelled` | No description provided. |
 | `test_a_past_booking_cannot_be_force_cancelled` | There is nothing left to prevent. |
 | `test_an_already_force_cancelled_booking_cannot_be_again` | No description provided. |
 | `test_settings_omitted_entirely_is_not_the_same_as_settings_empty` | None means 'do not touch the settings row'; {} means 'a save with no changed fields'. The RPC branches on the difference. |
@@ -624,12 +634,19 @@ Unit tests for the pure invite-redemption decision and token hashing.
 
 
 ## `test_issue48_amenity_repro.py`
-Repro battery for GitHub issue #48 -- the five amenity defects.
+Regression battery for GitHub issue #48 -- the five amenity defects.
 
-Every test here is expected to FAIL against current code and is marked
-``xfail(strict=True)``: the suite stays green while the defect exists, and the
-moment a fix lands the test XPASSes, errors the run, and forces its promotion
-to a normal test. Nothing in this file repairs anything.
+Every test here began as an ``xfail(strict=True)`` repro of a live defect. All
+twelve are fixed and promoted: each one now asserts the repaired behaviour and
+fails the moment the defect comes back. Nothing in this file repairs anything --
+the fixes live in ``app/domain/schemas.py``, ``app/services/amenities_service.py``,
+``app/services/dashboard_service.py`` and the two repositories.
+
+What every one of them is really guarding is a JOIN between two texts that no
+type checker sees across: the SQL that the hosted database runs, and the Python
+that talks to it. A key name, a status spelling or a column list can drift on
+one side and the other keeps running -- silently, and wrongly, which is how all
+five defects shipped.
 
 The SQL side is read out of the migration texts the way
 ``test_migration_directory_is_fresh_appliable.py`` does -- whole-line ``--``
@@ -638,31 +655,47 @@ what the database actually accepts against what the Python service actually
 sends. The Python side is captured by monkeypatching the repository boundary
 and calling the real service functions, never by retyping the payloads here.
 
-Diagnosis key (from the issue-#48 recon):
-  D1  catalogue toggle refetches the snapshot three times (frontend twin suite)
-  D2  image / opening hours cannot be written or projected
-  D3  admin blocks are stored as status='approved' + booking_type='blocked',
-      which the status-driven readers cannot see
-  D4  status vocabulary drift: phantom 'confirmed'/'blocked' statuses,
-      Title-case wire statuses, RPC payload key drift, report KPI key drift
-  D5  resident-facing reads route through the admin-guarded snapshot
+Diagnosis key (from the issue-#48 recon), with what each one is now:
+  D1  catalogue toggle refetched the snapshot three times (frontend twin suite)
+  D2  image / opening hours could not be written or projected -- now three
+      fields on ``AmenityWrite``, four real columns in the legacy read/write,
+      and three more keys on the snapshot projection
+  D3  admin blocks are stored as status='approved' + booking_type='blocked';
+      the timeline reads the TYPE now, so a block paints as one
+  D4  status vocabulary drift: the phantom 'confirmed'/'blocked' statuses are
+      gone, wire statuses are lowercase machine values, every RPC payload uses
+      the keys its function reads, and the report KPIs are the six the
+      aggregate computes
+  D5  resident-facing reads routed through the admin-guarded snapshot
 
-*Total tests in this file: 12*
+*Total tests in this file: 24*
 
 | Test Function | Description |
 |---------------|-------------|
-| `test_timeline_filter_statuses_exist_in_the_enum` | No description provided. |
-| `test_approved_filter_values_exist_in_the_series_vocabulary` | No description provided. |
-| `test_service_booking_types_pass_the_check_constraint` | No description provided. |
-| `test_record_payment_sends_keys_the_rpc_reads` | No description provided. |
-| `test_add_charge_sends_keys_the_rpc_reads` | No description provided. |
-| `test_report_filters_send_keys_the_rpc_reads` | No description provided. |
-| `test_refund_rpc_does_not_require_a_key_python_never_sends` | No description provided. |
-| `test_report_kpi_keys_cover_what_build_report_reads` | No description provided. |
-| `test_a_block_as_stored_paints_blocked_on_the_timeline` | No description provided. |
-| `test_wire_status_is_a_lowercase_machine_value` | No description provided. |
-| `test_amenity_write_accepts_image_and_hours` | No description provided. |
-| `test_snapshot_amenity_projection_carries_image_and_hours` | No description provided. |
+| `test_timeline_filter_statuses_exist_in_the_enum` | ``timeline_only`` filters on statuses a row can actually hold.  It used to name 'confirmed' and 'blocked' beside 'approved', and ``public.booking_status`` has neither: no row can be 'confirmed', and an admin block is an APPROVED row wearing ``booking_type = 'blocked'``. The filter is 'approved' alone now -- which still returns the blocks, because that is what they are stored as, and the timeline paints them from the type. |
+| `test_approved_filter_values_exist_in_the_series_vocabulary` | The 'approved' approvals tab filters on a value the view can emit.  It used to send ('approved', 'confirmed'); 'confirmed' is in neither ``public.booking_status`` nor the view's ``series_status`` case expression, so half of that filter could never match anything. The product ruling is that the tab SET stays as it is -- this is the phantom leaving, not a tab. |
+| `test_service_booking_types_pass_the_check_constraint` | Every type the service will store is one the column accepts.  ``_BOOKING_TYPES`` used to be the admin form's wording -- 'private-event', 'society-event', 'maintenance-reservation' -- and ``amenity_bookings_type_check`` accepts none of the three, so three of the four options the form offered were rejected by Postgres on insert. The form keeps its wording; ``_storage_booking_type`` folds it onto the four legal values before validation (see the test below). |
+| `test_the_event_form_vocabulary_maps_onto_a_legal_booking_type` | The mapping is code-only: no migration, no CHECK change.  Both event kinds are ADMIN bookings as far as the column is concerned, and which kind it was keeps living in the title, notes and department -- where the form already puts it. An unknown type is a 422, not a Postgres error. |
+| `test_record_payment_sends_keys_the_rpc_reads` | The payment reference reaches the key the RPC dedupes on.  ``record_amenity_payment`` reads ``reference``; the service sent ``payment_reference``, so the idempotency lookup saw NULL every time and a replayed gateway callback double-credited. ``charge_type`` and ``method`` have no column on a financial event, so they fold into ``notes`` -- sending them under their own names lost them silently. |
+| `test_add_charge_sends_keys_the_rpc_reads` | The charge description reaches the column it is written into.  ``add_amenity_charge`` inserts ``p_payload ->> 'label'`` into ``amenity_booking_charges.label``; the service sent ``description``, so every added charge landed labelled NULL. The RPC hardcodes the charge_type column to 'additional', so the requested type folds into the note instead -- a late-cancellation fee should still say that it is one. |
+| `test_report_filters_send_keys_the_rpc_reads` | The report window reaches the RPC under the names it reads.  ``amenity_report_totals`` reads ``from_date`` and ``to_date`` and nothing else. The service sent ``start_date``/``end_date`` plus ``amenity_id`` and ``booking_status``, so the RPC fell back to its default window and every KPI described the last 30 days of the whole community whatever the admin picked. The two filters the RPC cannot express are applied Python-side, to the ledger page -- which is where they can be honest about what they narrow. |
+| `test_refund_rpc_does_not_require_a_key_python_never_sends` | The refund carries the amount the RPC inserts.  ``refund_amenity_deposit`` inserts ``p_payload ->> 'amount'``. The service sent no amount at all -- deliberately, because a refund whose size is a request parameter is a refund somebody can ask to be larger -- so every refund inserted NULL and the RPC's own ceiling check passed vacuously.  The amount is still not the caller's to choose: it is ``remaining_refund`` off ``amenity_ledger_overview``, the same aggregate the RPC checks against, read here from the ledger row the service already fetches. |
+| `test_a_refund_with_nothing_left_is_refused_rather_than_recorded` | A zero-amount refund event would be a lie in the ledger, so it is a 4xx.  Before, this inserted a NULL-amount 'refund' onto a booking whose deposit had already been returned -- a transaction that reads as a refund and moves no money. |
+| `test_report_kpi_keys_cover_what_build_report_reads` | Every KPI the report answers with was computed by the aggregate.  ``build_report`` used to read total_amenities / total_active_bookings / pending_approvals / total_revenue / active_amenities / bookings_this_month off a document that returns total_bookings / approved_bookings / cancelled_bookings / total_charged / total_paid / total_refunded. Zero overlap, all six ``.get`` calls defaulting: the reports page rendered six hardcoded 0s that looked like measurements.  The response KPIs are now one per RPC key. The four that named nothing the aggregate computes are gone from the response rather than zeroed -- a KPI with no source is a worse answer than no KPI. |
+| `test_a_block_as_stored_paints_blocked_on_the_timeline` | The timeline reads the booking TYPE, which is where 'blocked' lives.  ``block_amenity_slot`` stores a block as status='approved' + booking_type='blocked' (0023 lines 1104-1105). ``_timeline_state`` keyed on ``stored_status == 'blocked'`` -- a value ``public.booking_status`` cannot hold -- so every admin block painted as an ordinary resident booking. |
+| `test_wire_status_is_a_lowercase_machine_value` | Title-case never crosses the wire.  ``amenity_booking_overview.status`` is the enum rendered for a human -- 'Approved', 'No Show' (0023 lines 484-492) -- and ``_to_booking`` passed it through verbatim, so every case-sensitive comparison downstream missed. The status is derived from ``stored_status``, which is ``amenity_bookings.status::text`` and already the machine value. |
+| `test_a_title_case_display_status_folds_to_its_machine_value` | The view's worst case: two words and a capital in each.  'No Show' is the display rendering of the enum value ``no_show``; a caller handing us a row with only the display column still gets the machine value. |
+| `test_amenity_write_accepts_image_and_hours` | ``AmenityWrite`` has a field for everything the catalogue form collects.  It is the model behind POST/PUT ``/dashboard/amenities``, the only amenity write endpoints in the app, and it is ``extra='forbid'`` -- so a photo and an opening hour with no field here could not even be smuggled through as extra keys. They were silently unsendable. |
+| `test_snapshot_amenity_projection_carries_image_and_hours` | The catalogue the frontend reads out of the snapshot can show both.  The legacy branch is the live one in every environment, hosted and fresh, and it emitted no 'image' key and no 'openingTime' at all -- so however well the write path worked, the read could never show what it stored. |
+| `test_an_https_image_url_is_accepted_and_an_http_one_is_not` | No description provided. |
+| `test_a_base64_image_data_url_is_accepted` | The shape the downscaler produces. Empty normalises to None -- 'no image' and 'the empty string' are the same answer and the column stores NULL. |
+| `test_an_oversized_inline_image_is_refused` | ~100KB of binary is ~140_000 base64 characters. One character over and the request is a 422; the browser is expected to have downscaled already. |
+| `test_opening_hours_take_both_clock_spellings_and_nothing_else` | 'HH:MM' is what an <input type="time"> emits; 'HH:MM:SS' is what Postgres hands back. Both are accepted so a value can round-trip unchanged. |
+| `test_reversed_opening_hours_are_a_422_not_a_500` | `amenities_hours_check` (0023 line 121) refuses this in Postgres, which reaches the admin as a failed save with no explanation. Checked here, the same rule is a field error with a sentence in it. |
+| `test_the_report_status_options_are_all_reachable` | Every option offered must select rows the ledger column can hold.  'confirmed' and 'blocked' used to be offered and neither is a value ``booking_status`` can ever hold -- a block is an APPROVED row wearing ``booking_type = 'blocked'``. Two dropdown entries that always came back empty (issue #48 D4). |
+| `test_the_report_status_filter_reaches_the_ledger_as_the_stored_word` | The wire says 'pending'; the column holds 'requested'.  ``amenity_ledger_overview.booking_status`` is ``amenity_bookings.status`` as text, and the filter is a bare equality against it -- so the one option whose wire word differs from its stored word has to be translated on the way in, or it selects nothing at all. |
+| `test_an_unreachable_report_status_is_refused_rather_than_matching_nothing` | An empty table is indistinguishable from "you have none of those". |
+| `test_the_ledger_wire_status_is_the_wires_word_not_the_enums` | The ledger view exposes the raw enum, so 'requested' arrives here and 'pending' is what every other endpoint calls the same state. |
 
 
 ## `test_leadership_exclusivity_migration.py`
@@ -1622,6 +1655,16 @@ Regression contract for the service-hiring employment type.
 | `test_hiring_employment_type_remains_valid_for_the_hiring_rpc` | No description provided. |
 
 
+## `test_supabase_transport.py`
+Supabase client transport configuration.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_supabase_clients_disable_http2` | No description provided. |
+
+
 ## `test_supervisor_actions_migration.py`
 `20260822170000_supervisor_actions.sql` -- what a static reader can prove
 about a file nobody in this repository runs.
@@ -1708,6 +1751,66 @@ allowed are named one by one, and everything else is forbidden.
 | `test_every_sqlstate_it_raises_is_one_the_api_can_map` | A SQLSTATE `pg_errors` has never heard of surfaces as a 500 with a generic message -- the one failure mode a supervisor cannot act on, because the sentence the RPC wrote never reaches them. |
 | `test_it_verifies_itself_in_the_same_transaction` | `20260822090000` 2's shape: a file that claims to have added something fails rather than reporting success. The two `prosrc` probes are the ones that matter most -- a `create or replace` that lost the department clause from `post_dm_message`, or an older snapshot winning, are both failures with no symptom. |
 | `test_every_new_function_is_granted_to_somebody` | A definer function nobody may execute is a feature that fails with 42501 at the first press. The trigger function is the deliberate exception: it runs as the trigger's owner and has no business being callable. |
+
+
+## `test_supervisor_take_up_migration.py`
+`20260824090000_supervisor_take_up.sql` -- what a static reader can prove
+about the file that reopens the door `20260823190000` closed.
+
+That file made every assignment path member-only (rulings R1-R3), which is what
+the product owner asked for and which leaves a thin department with work nobody
+may hold. The owner's answer (R8) was a **separate deliberate verb**, and the
+hazard of a separate verb is that it becomes a second front door: a
+`p_staff_assignment_id` here, or a rank clause one word looser, and the
+member-only rule is decorative. So the checks below are three suites wearing one
+hat.
+
+**Section 1 widens a closed vocabulary.** `complaint_events.event_type` is an
+enumerating CHECK on a live table, so a new word is a migration -- and a
+drop-and-recreate that retypes the list is one dropped word away from making
+existing rows unwritable. The old list is therefore not reviewed here, it is
+**derived** from `20260822170000`'s own text, and the difference must be exactly
+one word.
+
+**Section 2 is new code**, and everything that matters about it is what it will
+NOT do: name somebody else, admit a caller with no leadership row, notify the
+person who pressed the button, or touch `supervision_inherited_at`.
+
+**Sections 3 and 4 are two copies**, and a copy's hazard is the reverse of new
+code's: not what it adds but what it quietly drops. Each is its predecessor's
+body verbatim except for one ruled diff -- R12's actor on force-assign's two
+timeline rows, R13's sentence on the board's leadership refusal -- so the copies
+are diffed line by line and the removals must be **exactly** the ruled lines and
+nothing else. A `create or replace` that lost an arm on the way through is a
+failure with no symptom: the apply succeeds and the engine quietly becomes
+something nobody wrote.
+
+*Total tests in this file: 22*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_it_reasons_about` | Filename order is apply order. This file must postdate the vocabulary it widens, the two bodies it carries forward, and the pattern it copies -- a `create or replace` that lands *before* its source is silently undone by the source, and a constraint recreated before this one takes the new word back out. |
+| `test_it_is_the_last_word_on_the_functions_it_declares` | Not "it is last in the directory" -- that property expires the day the next migration lands. The property is being last *among the files that declare each function*, which is what decides which body the database ends up holding. |
+| `test_it_declares_no_function_beyond_the_three_it_carries` | The frozen interface: one new function, two re-issued, nothing else. `dispatch_candidates_at`, `worker_open_jobs` and `assign_work_order` are all functions this file plausibly could have touched and all three would be it quietly reopening the member-only rule from a second direction. |
+| `test_the_new_list_is_the_old_list_plus_exactly_one_word` | Held by derivation rather than review. A word dropped here makes rows the hosted table already holds unwritable and fails the guard halfway through the swap; a second word invented here is a vocabulary change nobody ruled. |
+| `test_the_older_take_up_word_is_kept_and_not_reused` | `taken_up` is `take_up_complaint`'s and means a supervisor is looking at a complaint; `job_taken_up` means one is going. Reusing the first for the second would make the two facts indistinguishable on the timeline, and dropping it would break every row already written with it. |
+| `test_the_swap_is_guarded_before_the_drop_and_proved_after_the_add` | The guard runs before the DROP, so its exception leaves the old constraint standing rather than leaving the table with none. The verification may only EXCEPTION, and must prove the NEW word specifically -- a bare existence check would pass against the very constraint being replaced. |
+| `test_the_new_function_takes_the_frozen_signature` | `create or replace` would refuse a changed return type, but there is nothing to refuse on a first apply -- a wrong signature here simply becomes the signature, and the repository's RPC call answers 404 forever. |
+| `test_the_new_function_cannot_name_anybody_but_its_caller` | The whole of R8 in one assertion. A `p_staff_assignment_id` would make this "assign anybody, without the rank check" -- which is `20260823190000`'s rule with a hole in it, reachable by anybody who can call an RPC. The holder is looked up from `auth.uid()` and from nothing else. |
+| `test_the_new_function_stamps_the_caller_on_both_timeline_rows` | R11's actor, and `take_up_complaint`'s assertion with it. A null actor would write two entries from nobody -- and `job_taken_up` exists precisely so that an unattributable take-up cannot happen. |
+| `test_the_taken_up_assignment_is_accepted_and_neither_forced_nor_automatic` | R11's row shape, and both flags are a sentence. Nobody's consent was overridden -- the holder asked for it -- and no engine decided anything. `is_forced` is what the worker's card reads to hide the Decline button, and there is nothing here to decline. |
+| `test_the_new_function_mirrors_force_assigns_refusals_and_nothing_more` | The frozen interface: status gate, slot rule and overlap check all mirror `force_assign_work_order`. Each is a `HB409`, and each is the sentence in front of a constraint that would otherwise answer `23P01` with no name in it. |
+| `test_the_new_function_tells_the_resident_and_the_department_but_not_itself` | The frozen interface's audiences. The resident gets force-assign's own notice, url included, because the fact is the same fact. The department gets `job.taken_up`. The caller gets nothing -- they pressed the button -- and that is done with `notify_complaint_staff`'s exclusion argument rather than a branch, which is how `claim_open_work_order` avoids the same echo. |
+| `test_force_assign_is_verbatim_except_the_actor_it_stamps` | R12, closing R7. The guard, the roster check, the status gate, the slot rule, the named overlap refusal, the withdraw, the insert, the `scheduled` update and all three notifications survive line for line -- the only lines that leave are the two that stamped the department's supervisor of record on work somebody else did. |
+| `test_the_claim_keeps_the_board_shut_and_changes_only_the_sentence` | R13, with R2 standing underneath it. The rank clause, the leadership branch, the roster refusal below it, the trade guard, the exclusion guard, the overlap refusal, the row shape and the `work_order.claimed` notice are all `20260823190000`'s and are reproduced unchanged; one refusal now names the door that IS open. |
+| `test_the_leadership_refusal_reads_as_one_sentence` | Two adjacent literals, which SQL concatenates -- the line stays inside this directory's margin and the supervisor reads one sentence. The joined text is asserted here so that a stray comma or a lost space cannot turn it into two. |
+| `test_every_sqlstate_it_raises_is_one_the_api_can_map` | R13's other half: the whole file raises only the three codes this surface already answers, so `pg_errors.py` gains no entry. A SQLSTATE it has never heard of surfaces as a 500 with a generic message -- and the sentence the RPC wrote never reaches the person it was written for. |
+| `test_no_other_closed_vocabulary_and_no_task_kind_is_touched` | One CHECK is widened and it is named in section 1. Each of the others is a closed list on a live table that a drop-and-recreate would put at risk for nothing: this feature adds no status, no assignment state, no roster rank and no dispatch-task kind. |
+| `test_the_single_writer_of_the_inherited_stamp_is_left_alone` | R11, and the invariant `test_supervisor_triage_migration.py`:371 holds: `supervision_inherited_at` has exactly one writer, `restamp_department_supervision`. A supervisor choosing a job is not a supervisor being handed one, and a stamp with two writers is a dashboard badge that appears for two reasons nobody documented. |
+| `test_the_audiences_are_stated_and_the_catalogue_is_reloaded` | `create or replace` preserves the ACLs of the two carried-forward functions, so those grants are a restatement -- but the new function's is not: a function created without one is callable by nobody, and PostgREST answers 404 for a route that exists until it is told to look again. |
+| `test_the_in_transaction_proof_looks_for_all_three_diffs` | A `create or replace` that silently lost its diff looks exactly like a successful apply -- the button answers HB403, or the timeline names the wrong person, and nothing in the output said so. The file refuses to be one of those. |
+| `test_the_post_checks_are_comment_only_and_guard_free` | Runbook section 28's lesson: the SQL editor has no `auth.uid()` and this deployment's departments carry `kind` NULL, so a post-check that calls a guarded verb answers HB403 or HB404 and proves nothing. The post-checks here inspect structure -- `pg_get_functiondef`, `pg_get_constraintdef`, `pg_proc` -- and are commented out so they never run inside the apply's transaction. |
 
 
 ## `test_supervisor_triage_migration.py`
@@ -1902,7 +2005,7 @@ The stored side has a harder constraint: it must be a member of the baseline's
 Postgres, not a bad row -- so `test_every_stored_status_is_a_baseline_enum_member`
 is the test that actually protects `PATCH /complaints/{id}`.
 
-*Total tests in this file: 29*
+*Total tests in this file: 52*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1935,6 +2038,29 @@ is the test that actually protects `PATCH /complaints/{id}`.
 | `test_every_stored_visibility_satisfies_the_check_constraint[public]` | The test that actually protects `POST /complaints/{id}/comments`.  Its sibling above would still pass if the map returned `resident` for `resident`, which is exactly the bug that shipped. |
 | `test_every_stored_visibility_satisfies_the_check_constraint[internal]` | The test that actually protects `POST /complaints/{id}/comments`.  Its sibling above would still pass if the map returned `resident` for `resident`, which is exactly the bug that shipped. |
 | `test_an_unknown_visibility_is_rejected_rather_than_defaulted` | Not symmetrical with the other unknowns in this module, and deliberately so: guessing `public` here would publish to the resident a comment somebody may have meant to keep internal. |
+| `test_booking_status_to_wire[requested-pending]` | No description provided. |
+| `test_booking_status_to_wire[approved-approved]` | No description provided. |
+| `test_booking_status_to_wire[no_show-no_show]` | No description provided. |
+| `test_booking_status_to_wire[Pending-pending]` | No description provided. |
+| `test_booking_status_to_wire[Approved-approved]` | No description provided. |
+| `test_booking_status_to_wire[No Show-no_show]` | No description provided. |
+| `test_booking_status_to_wire[pending-pending]` | No description provided. |
+| `test_booking_status_to_wire[no-show-no_show]` | No description provided. |
+| `test_booking_status_to_wire[  APPROVED  -approved]` | No description provided. |
+| `test_booking_status_to_wire[None-pending]` | No description provided. |
+| `test_booking_status_to_wire[-pending]` | No description provided. |
+| `test_the_wire_never_carries_the_enums_name_for_the_pending_state` | The test that actually protects the comparison.  Its sibling above would still pass if the map returned 'requested' for 'requested' -- which is precisely what the first fix for this defect did, because the stored value looked like it was already a machine value. |
+| `test_every_stored_status_survives_a_round_trip[approved]` | Wire and back. A filter that cannot make this trip matches no rows. |
+| `test_every_stored_status_survives_a_round_trip[cancelled]` | Wire and back. A filter that cannot make this trip matches no rows. |
+| `test_every_stored_status_survives_a_round_trip[completed]` | Wire and back. A filter that cannot make this trip matches no rows. |
+| `test_every_stored_status_survives_a_round_trip[no_show]` | Wire and back. A filter that cannot make this trip matches no rows. |
+| `test_every_stored_status_survives_a_round_trip[rejected]` | Wire and back. A filter that cannot make this trip matches no rows. |
+| `test_every_stored_status_survives_a_round_trip[requested]` | Wire and back. A filter that cannot make this trip matches no rows. |
+| `test_every_wire_status_maps_onto_a_baseline_enum_member[pending]` | `amenity_ledger_overview.booking_status` is the raw enum, so a filter value outside this set is a filter that silently matches nothing. |
+| `test_every_wire_status_maps_onto_a_baseline_enum_member[approved]` | `amenity_ledger_overview.booking_status` is the raw enum, so a filter value outside this set is a filter that silently matches nothing. |
+| `test_every_wire_status_maps_onto_a_baseline_enum_member[cancelled]` | `amenity_ledger_overview.booking_status` is the raw enum, so a filter value outside this set is a filter that silently matches nothing. |
+| `test_every_wire_status_maps_onto_a_baseline_enum_member[No Show]` | `amenity_ledger_overview.booking_status` is the raw enum, so a filter value outside this set is a filter that silently matches nothing. |
+| `test_an_unknown_booking_status_is_rejected_rather_than_defaulted` | A filter is the one place guessing is worse than refusing: defaulting an unrecognised status to 'pending' would answer a question nobody asked. |
 
 
 ## `test_work_order_notification_urls.py`

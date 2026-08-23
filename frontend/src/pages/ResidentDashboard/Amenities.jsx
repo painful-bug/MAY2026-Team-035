@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -946,9 +947,9 @@ export default function Amenities() {
         </div>
       )}
 
-      {isBookingModalOpen && selectedAmenity && (
+      {isBookingModalOpen && selectedAmenity && createPortal(
         <div
-          className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[999] flex items-start justify-center overflow-y-auto bg-slate-900/60 p-8 backdrop-blur-sm"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
               closeBookingModal();
@@ -959,7 +960,7 @@ export default function Amenities() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="resident-amenity-booking-title"
-            className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-100 bg-white shadow-xl"
+            className="max-h-[calc(100vh-4rem)] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-100 bg-white shadow-xl"
           >
             {selectedAmenity.image && (
               <div className="relative h-44 overflow-hidden rounded-t-3xl">
@@ -1332,7 +1333,8 @@ export default function Amenities() {
               </form>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {managedBookingGroup && (

@@ -133,7 +133,7 @@ function RemovalModal({ member, mode, lastSupervisor, busy, onConfirm, onClose }
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div role="dialog" aria-modal="true" aria-label={handover ? 'Start a handover' : 'Remove from the roster'} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+      <div role="dialog" aria-modal="true" aria-label={handover ? 'Start a handover' : 'Remove from the roster'} className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-extrabold text-slate-900">

@@ -148,23 +148,31 @@ def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]]) -> l
 def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, Any]]:
     """Wire shape for the catalogue card. Frozen keys, as `_visitors`.
 
-    `image`, `openingTime` and `closingTime` are on both arms: the legacy one
-    reads the real `amenities` columns `0023` added, the other reads the jsonb
-    `booking_rules` it writes them into. `description` on the legacy arm is the
-    real column too -- it used to repeat `category`, so every card described
-    itself as "Fitness" (issue #48 D2).
+    `image`, `openingTime` and `closingTime` are on both arms and both read the
+    real `amenities` columns `0023` added -- that migration alters the table
+    unconditionally, so neither arm is short of them. The non-legacy arm keeps
+    `booking_rules` and `amenity_operating_hours` behind them as fallbacks, for
+    rows an older build wrote before those columns were reached for.
+    `description` on the legacy arm is the real column too -- it used to repeat
+    `category`, so every card described itself as "Fitness" (issue #48 D2).
     """
     result = []
     for row in rows:
         if legacy:
             result.append({
+                # `description` is the amenity's own column and nothing else.
+                # Falling back to `category` is the issue #48 D2 defect itself
+                # -- it is what made every card describe itself as "Fitness".
                 "id": row["id"], "name": row["name"], "description": row.get("description") or "",
                 "category": row.get("category") or "Utility", "location": row.get("location") or "",
+                "image": row.get("image_url") or "",
                 "capacity": row.get("capacity"), "bookingMode": str(row.get("booking_mode") or "Exclusive").title(),
                 "requireApproval": bool(row.get("approval_required")), "hourlyRate": row.get("hourly_rate") or 0,
-                "image": row.get("image_url"),
                 "openingTime": str(row.get("opening_time") or ""), "closingTime": str(row.get("closing_time") or ""),
-                "status": str(row.get("status") or "Active").title(), "isActive": str(row.get("status", "active")).lower() == "active",
+                # `sync_amenity_status` (`0023`) keeps `status` and `is_active`
+                # in lockstep, so the real column is read first and the status
+                # string is the answer for a row written before that trigger.
+                "status": str(row.get("status") or "Active").title(), "isActive": bool(row.get("is_active", str(row.get("status", "active")).lower() == "active")),
                 "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             })
         else:
@@ -173,13 +181,20 @@ def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, An
             first_hours = hours[0] if hours else {}
             result.append({
                 "id": row["id"], "name": row["name"], "description": row.get("description") or "",
-                "category": rules.get("category", "Utility"), "capacity": rules.get("capacity"),
-                "bookingMode": rules.get("bookingMode", "Exclusive"), "requireApproval": bool(rules.get("requireApproval")),
-                "image": rules.get("image"),
-                # The operating-hours rows stay the source here: this arm has a
-                # real `amenity_operating_hours` table and a jsonb copy of the
-                # same fact would be a second answer to the same question.
-                "openingTime": str(first_hours.get("opens_at") or ""), "closingTime": str(first_hours.get("closes_at") or ""),
+                # The real columns lead and the jsonb is the fallback: `0023`
+                # alters `public.amenities` unconditionally, so this arm has
+                # `category`, `image_url` and the hours too -- but a row written
+                # by an older build only ever put them in `booking_rules`.
+                "category": row.get("category") or rules.get("category", "Utility"),
+                "location": row.get("location") or rules.get("location", ""),
+                "image": row.get("image_url") or rules.get("image") or "",
+                "capacity": row.get("capacity") if row.get("capacity") is not None else rules.get("capacity"),
+                "bookingMode": str(row.get("booking_mode") or rules.get("bookingMode", "Exclusive")).title(),
+                "requireApproval": bool(row.get("approval_required", rules.get("requireApproval"))),
+                # `amenity_operating_hours` stays a source, third: it is a real
+                # table on this arm and the per-weekday answer when there is one.
+                "openingTime": str(row.get("opening_time") or first_hours.get("opens_at") or rules.get("openingTime") or ""),
+                "closingTime": str(row.get("closing_time") or first_hours.get("closes_at") or rules.get("closingTime") or ""),
                 "status": "Active" if row.get("is_active") else "Inactive", "isActive": bool(row.get("is_active")),
                 "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             })

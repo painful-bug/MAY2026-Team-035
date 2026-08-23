@@ -60,6 +60,10 @@ async def create_amenity(
 ) -> dict:
     return await run_in_threadpool(
         dashboard_service.save_amenity,
+        # Not `exclude_none=True`: `capacity` is legitimately None on an
+        # amenity with no cap, and the repository reads `payload["capacity"]`.
+        # The repository writes the optional columns unconditionally, so a PUT
+        # is the whole record -- which is how a photo gets removed again.
         membership, amenity_id=None, payload=body.model_dump()
     )
 

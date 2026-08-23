@@ -103,7 +103,7 @@ export default function Notices() {
       {/* Post Notice Modal */}
       {modalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl border border-slate-100 max-w-md w-full p-6 space-y-6 animate-slide-up">
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-6 overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 animate-slide-up">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-extrabold text-slate-900">Post New Notice</h3>
               <button 

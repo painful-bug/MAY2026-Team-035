@@ -770,7 +770,7 @@ database**, and **a decline must not be an HTTP error**. Both are asserted
 directly, because a test that reads the fields of a successful response cannot
 notice either one going wrong.
 
-*Total tests in this file: 31*
+*Total tests in this file: 33*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -784,6 +784,8 @@ notice either one going wrong.
 | `test_an_invoice_carries_both_vocabularies` | `Payments.jsx` splits on Unpaid and Paid and has no third branch, so `partially_paid` reads as Unpaid -- which is what it is to whoever owes the balance. The real one travels beside it. |
 | `test_amounts_survive_as_decimals` | Money is never a float in this codebase. `0.1 + 0.2` is the reason. |
 | `test_the_booking_list_is_the_callers_own` | No description provided. |
+| `test_the_booking_status_crosses_the_wire_as_a_machine_value` | `resident_booking_overview.status` is Title-case for a human to read.  Passing it through made this the one booking endpoint whose status could not be compared against any other's -- 'Pending' here, 'pending' from the admin amenity endpoints (issue #48 D4). `storedStatus` survives as a frozen wire key and now agrees, keeping only the enum's own name for this state. |
+| `test_a_two_word_booking_status_folds_to_its_machine_value` | 'No Show' is the display rendering of `no_show`. The worst case for a naive lowercase, and the one a case-sensitive client would miss twice. |
 | `test_a_successful_payment_is_a_200_with_an_outcome` | No description provided. |
 | `test_a_declined_payment_is_also_a_200` | §11.5. The request was well-formed, authorized, processed and produced a durable record; the *payment* failed. A 402 would put an ordinary business outcome in the same client branch as "your session expired". |
 | `test_a_decline_is_still_written_to_the_database` | The difference between this and the admin's `record_payment`. A failed row is what a support conversation is reconstructed from, and it never enters a balance because every recomputation sums `succeeded` only. |

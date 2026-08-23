@@ -111,7 +111,7 @@ function ApproveModal({ departure, busy, onApprove, onClose }) {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-lg font-extrabold text-slate-900">Approve the leave</h2>

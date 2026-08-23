@@ -202,6 +202,16 @@ the whole directory for that file's shape — six checks, every pattern
 case-insensitive, because `db diff` writes uppercase SQL and every pin in this
 repository was lowercase-only until then.
 
+When a hosted ledger version has no recoverable SQL, keep a comment-only
+timestamp-matched tombstone instead of replaying an unknown schema change.
+
+`20260823170000_open_jobs_board.sql` and
+`20260823180000_resident_sets_the_time.sql` were tombstoned on `main` during
+the 2026-08-23 reconciliation on the belief that their SQL was lost. It was
+not: both files were written on `live-app-fixes` and reached `main` only at the
+2026-08-24 merge. The real SQL is authoritative and the tombstones are gone —
+a tombstone is for a version whose SQL nobody holds, and somebody held these.
+
 **3. Every timestamped migration gets a `backend/tests/test_*_migration.py`.**
 Nothing in this repository ever runs these files, so a test is the only reader
 they will have before the owner pastes them into a live database. The house

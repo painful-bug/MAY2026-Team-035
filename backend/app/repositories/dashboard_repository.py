@@ -114,9 +114,9 @@ def list_amenities(client: Client, community_id: str, *, legacy: bool) -> list[d
     # them out of the select is what made the catalogue unable to show a photo
     # or an opening hour (issue #48 D2).
     columns = (
-        "id,name,description,category,location,image_url,opening_time,closing_time,capacity,booking_mode,approval_required,hourly_rate,status,created_at,updated_at"
+        "id,name,description,category,location,image_url,opening_time,closing_time,capacity,booking_mode,approval_required,hourly_rate,status,is_active,created_at,updated_at"
         if legacy
-        else "id,name,description,booking_rules,is_active,created_at,updated_at,amenity_operating_hours(weekday,opens_at,closes_at)"
+        else "id,name,description,category,location,image_url,capacity,booking_mode,approval_required,status,opening_time,closing_time,booking_rules,is_active,created_at,updated_at,amenity_operating_hours(weekday,opens_at,closes_at)"
     )
     return (
         client.table("amenities").select(columns).eq("community_id", community_id)
@@ -281,10 +281,21 @@ def create_amenity(
             "community_id": community_id,
             "name": payload["name"],
             "description": payload["description"],
+            "category": payload["category"],
+            "location": payload["location"] or None,
+            "capacity": payload["capacity"],
+            "booking_mode": payload["booking_mode"].lower(),
+            "approval_required": payload["approval_required"],
             "is_active": payload["is_active"],
-            # The image and the hours ride in the jsonb on this arm: it has no
-            # `image_url`/`opening_time` columns and adding them would be a
-            # migration. Dead in every real environment -- see `list_amenities`.
+            "image_url": payload.get("image"),
+            "opening_time": payload.get("opening_time"),
+            "closing_time": payload.get("closing_time"),
+            # The jsonb keeps its own copy on this arm. `0023` alters
+            # `public.amenities` unconditionally, so `image_url`,
+            # `opening_time` and `closing_time` are real columns in every
+            # environment that has run the migration set -- but the baseline
+            # readers of `booking_rules` predate them and still expect to find
+            # the same facts there.
             "booking_rules": {
                 "category": payload["category"],
                 "location": payload["location"],
@@ -318,7 +329,13 @@ def update_amenity(
     else:
         row = {
             "name": payload["name"], "description": payload["description"],
+            "category": payload["category"], "location": payload["location"] or None,
+            "capacity": payload["capacity"], "booking_mode": payload["booking_mode"].lower(),
+            "approval_required": payload["approval_required"],
             "is_active": payload["is_active"],
+            "image_url": payload.get("image"),
+            "opening_time": payload.get("opening_time"),
+            "closing_time": payload.get("closing_time"),
             "booking_rules": {
                 "category": payload["category"], "location": payload["location"],
                 "capacity": payload["capacity"], "bookingMode": payload["booking_mode"],
