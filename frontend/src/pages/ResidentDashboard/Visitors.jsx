@@ -447,7 +447,7 @@ export default function Visitors() {
             if (event.target === event.currentTarget) setQrModal(null);
           }}
         >
-          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl">
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-extrabold text-slate-900">Visitor QR Pass</h2>
