@@ -1,0 +1,8 @@
+-- Hosted-ledger tombstone.
+--
+-- Version 20260823170000 (`open_jobs_board`) exists in the linked project's
+-- `supabase_migrations.schema_migrations` ledger but its SQL was not retained.
+-- It was discovered during the 2026-08-23 main/hosted reconciliation. This
+-- comment-only file restores filename/ledger parity without replaying unknown
+-- schema changes; see migrations/README.md, "How the hosted project gets
+-- written, and how drift is reconciled".
