@@ -2040,6 +2040,40 @@ Every figure is computed by Postgres in `numeric`, including the reports page's 
 `409` the moment anything has been booked on it, because the cascade would take the bookings, their
 charges and their financial events with it — including deposits residents are still owed.
 
+### `POST /api/v1/dashboard/amenities` · `PUT /api/v1/dashboard/amenities/{amenityId}`
+
+Create or update one row of the catalogue. **Requires `ADMIN` or `MANAGER`.** Body: `AmenityWrite` —
+the one model on this surface with **snake_case field names** rather than the rest of the API's
+camelCase, matching the nine fields it already had: `name`, `description`, `category`, `location`,
+`capacity`, `booking_mode`, `approval_required`, `hourly_rate`, `is_active`. Plus three added
+2026-08-23 to close issue #48 D2, the gap that let the catalogue form collect a photo and a pair of
+opening hours the API had nowhere to put:
+
+| Field | Type | Accepted | 422 when |
+|---|---|---|---|
+| `image` | `string \| null` | An `https://` URL up to 2000 chars, **or** a `data:image/(png\|jpeg\|webp\|gif);base64,...` URL up to 140,000 chars (~100KB of binary — the client downscales to this before it ever submits, so the limit is a backstop, not the normal path). `""` normalises to `null` | Anything else — a `data:` URL over the cap, an unrecognised image type, a bare filename |
+| `opening_time`, `closing_time` | `string \| null` | `"HH:MM"` or `"HH:MM:SS"` — the two shapes an `<input type="time">` emits and the two Postgres `time` accepts. `""` normalises to `null` | Malformed clock string; **or** both are set and `opening_time >= closing_time` |
+
+The hours check mirrors the database's own `amenities_hours_check` (`0023` line ~121) so a reversed
+pair is a `422` here instead of reaching Postgres as a `500`. `image_url`, `opening_time` and
+`closing_time` are real columns on `amenities` since `0023`; before this fix the write handler accepted
+none of the three, `description` on the legacy write path was silently dropped even though the column
+existed, and there was no way to set a photo or hours on an amenity at all.
+
+| Status | Code | Cause |
+|---|---|---|
+| `401` / `403` | | Not authenticated / not an admin or manager |
+| `403` | `csrf_invalid` / `csrf_origin_invalid` | Missing `X-CSRF-Token`, or wrong `Origin` |
+| `404` | `not_found` | `PUT`/`DELETE` — no such amenity |
+| `409` | `conflict` | `DELETE` — the amenity has bookings; the cascade would take their charges and financial events with it |
+| `422` | `request_validation_error` | `name` missing on create, out of length; `image`/`opening_time`/`closing_time` as above |
+
+> **The success response is a known, pre-existing gap, not something this fix touches.** All three
+> operations return the raw DB row as a free-form object rather than a modelled schema — `DELETE`
+> returns `{"id": ...}` — and the shape differs between the `legacy` and non-legacy branches
+> (`api_yaml_mapper.md` §5.1). Resolving that is a separate, larger change than adding three fields to
+> the request; only the request side is documented above.
+
 ### `GET /api/v1/amenities/available`
 
 The bookable catalogue. **Requires an active membership** — any role, not `resident` only, because
@@ -2145,7 +2179,7 @@ The day timeline. **Requires `ADMIN`.**
       "endTime": "09:00",
       "state": "booked",
       "bookingType": "resident",
-      "status": "confirmed",
+      "status": "approved",
       "source": "resident",
       "requiresApproval": false,
       "isPrivateBooking": false,
@@ -2169,10 +2203,17 @@ The day timeline. **Requires `ADMIN`.**
 }
 ```
 
-`state` is the timeline's vocabulary (`booked` | `blocked`); `status` is the lifecycle's. **The
-cleaning buffer is not sent as a block** — the frontend synthesises buffers at render time from the
-booking's end and the amenity's buffer (`amenityTimeline.createCleaningBuffers`), and sending them
-too would give one block two sources.
+`state` is the timeline's vocabulary (`booked` | `blocked`); `status` is the lifecycle's — always one
+of `pending`, `approved`, `rejected`, `cancelled`, `completed`, `no_show`, lowercase, since 2026-08-23
+(issue #48 D4). It never carries Title-case (`"Pending"`, `"No Show"`) and never `confirmed`, which
+is not a value the lifecycle has ever had.
+
+**`state: "blocked"` is now derived from `bookingType == "blocked"`, not from `status`.** A block is
+stored as an ordinary `approved` booking wearing `bookingType: "blocked"` (`block_amenity_slot`, `0023`
+lines 1104-1105) — `public.booking_status` has no `blocked` value at all. Keying the timeline off
+`status` — as it did before this fix — painted every admin block as an ordinary resident booking
+(issue #48 D3); it now paints from the type, so a block is `state: "blocked"` with
+`status: "approved"` on the same row.
 
 `status` may read `completed` for a row stored as `approved`: a booking whose end time has passed is
 completed, and storing that would need a scheduled job to keep it true.
@@ -2219,11 +2260,32 @@ The flat is resolved from the named resident's residency rather than sent, so th
 unit that exists. `chargeOverride` replaces the booking fee and nothing else — a waived fee does not
 waive the deposit, which is coming back.
 
+**`bookingType` is the form's own words, mapped onto the database's before the write** (issue #48 D4).
+`amenity_bookings_type_check` (`0023` lines 289-291) accepts exactly four values —
+`resident` | `admin` | `maintenance` | `blocked` — and the admin booking form offers a different,
+human vocabulary describing the same event. The mapping is code-only, applied at the service boundary,
+and deliberately lossy:
+
+| Sent as `bookingType` | Stored as | Notes |
+|---|---|---|
+| `resident` | `resident` | Unchanged |
+| `admin` | `admin` | Unchanged |
+| `maintenance` | `maintenance` | Unchanged |
+| `blocked` | `blocked` | Unchanged (this endpoint does not normally send it — see `POST .../blocks`) |
+| `private-event` | `admin` | Which kind of event it was keeps living in `bookingTitle`, `notes` and `department`, exactly where the form already puts it |
+| `society-event` | `admin` | Same |
+| `maintenance-reservation` | `maintenance` | Same |
+
+Reads present the **stored** value; the request's wording is never round-tripped back. Before this
+fix the form's vocabulary was sent straight to the `booking_type` column, which the `CHECK` constraint
+rejects for every one of the three aliased words — the failure moved from a clear `422` at the API to
+an opaque `500` from Postgres.
+
 **201** — the created booking.
 
 | Status | Code | Cause |
 |---|---|---|
-| `400` | `validation_error` | End time not after start, unknown booking type |
+| `422` | `validation_error` | End time not after start; `bookingType` outside the table above |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | No such amenity |
 | `409` | `conflict` | The slot is taken or full; the resident has no active flat |
@@ -2321,11 +2383,21 @@ The approvals tab — **one row per request, not per day**. **Requires `ADMIN`.*
 from the maintenance invoices; our invoices attach to the unit and carry no person. Same label,
 different number — `DECISIONS_NEEDED.md` E18.
 
+**The tab set is exactly the five rows above — `all` fans out to the other four, and there is no
+sixth.** `confirmed` sat beside them until 2026-08-23 and matched no row `series_status` could ever
+hold (`0023` lines 537-542 name four values, not five), so the "approved" tab's filter was quietly
+wider than the status it claimed to show. There is still no `confirmed`/`blocked` tab — an admin
+booking staying out of this queue is by design (below), not a gap this fix left open.
+
 | Status | Code | Cause |
 |---|---|---|
-| `400` | `validation_error` | Unknown `status` |
+| `422` | `validation_error` | `status` outside `pending` \| `approved` \| `rejected` \| `cancelled` \| `all` |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | The caller belongs to no community |
+
+> **By design: admin-created bookings do not appear here, and there is no "Confirmed" tab for them**
+> (product ruling, 2026-08-23). `POST /amenities/{amenityId}/bookings` confirms on creation — see
+> above — so it was never a candidate for this queue; nothing about issue #48 changes that.
 
 ### `POST /api/v1/amenity-bookings/{seriesId}/approve`
 
@@ -2552,6 +2624,16 @@ Record money received against one charge. **Requires `ADMIN`.**
 already recorded rather than double-crediting. **Overpayment returns `409` rather than being
 clamped**, because clamping accepts money and then loses it.
 
+> **The idempotency guarantee above was not real before 2026-08-23 (issue #48 D4).**
+> `record_amenity_payment` reads exactly three keys off its payload — `amount`, `reference`, `notes`
+> (`0023` lines 1295-1330) — and this endpoint sent the reference under the name `payment_reference`,
+> which the RPC has never read. A replayed callback therefore recorded a *second* payment instead of
+> returning the first. `paymentReference` now maps onto the RPC's `reference` key, which is the fix.
+> `method` and `chargeType` have no column of their own on a financial event; both are still accepted
+> on the request and are now folded into the stored `notes` text (e.g. `"Charge type: booking; Method:
+> UPI; <whatever the admin typed>"`) rather than being silently dropped, which is what happened to them
+> before this fix.
+
 **201** — the updated ledger transaction, so the caller sees the derived figures rather than the
 request echoed back.
 
@@ -2571,20 +2653,29 @@ Return what is left of the deposit. **Requires `ADMIN`.**
 ```
 
 **The amount is not a parameter.** It is the deposit paid, less damage taken, less anything already
-refunded, computed in Postgres — a refund whose amount the caller chooses is a refund somebody can
-ask to be larger. The frontend already sends nothing (`processDepositRefund` uses
-`normalized.remainingRefund`).
+refunded — `remainingRefund` off `amenity_ledger_overview` — a refund whose amount the caller chooses
+is a refund somebody can ask to be larger. The frontend already sends nothing
+(`processDepositRefund` uses `normalized.remainingRefund`).
 
 A deposit is refundable only once the booking is cancelled or has finished: refunding a booking that
 is still going to happen leaves the amenity unsecured.
+
+> **Fixed 2026-08-23 (issue #48 D4): every refund used to insert with no amount at all.**
+> `refund_amenity_deposit` writes its event from an `amount` key in the payload (`0023` line 1348),
+> and this endpoint never sent one. The ceiling check on the missing amount passed vacuously and the
+> ledger recorded a refund of nothing, every time. The service now reads `remainingRefund` back off the
+> ledger row and sends it explicitly as `amount` — the same figure the response already showed as
+> refundable, now actually paid out. **When there is nothing left, the service refuses before the RPC
+> is ever called** (`422`, below) rather than letting Postgres accept a zero-amount event.
 
 **201** — the updated ledger transaction.
 
 | Status | Code | Cause |
 |---|---|---|
+| `422` | `validation_error` | `remainingRefund` is `0` — "There is nothing left to refund on this booking." Raised by the service, before the RPC runs |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | No such booking |
-| `409` | `conflict` | No deposit; booking still ahead of it; nothing left to refund |
+| `409` | `conflict` | No deposit; booking still ahead of it |
 
 ### `POST /api/v1/amenity-bookings/{occurrenceId}/damage`
 
@@ -2619,6 +2710,14 @@ Bill something after the fact. **Requires `ADMIN`.**
 first**: the ledger has one `additionalCharges` figure, and housekeeping on Monday plus a broken chair
 on Tuesday is two things, not the later one.
 
+> **Fixed 2026-08-23 (issue #48 D4): `description` used to land as a `NULL` label.**
+> `add_amenity_charge` reads `label`, `amount` and `notes` off its payload (`0023` lines 1459-1474) and
+> writes the charge row's `chargeType` itself as `additional`; this endpoint sent the description under
+> its own name, `description`, which the RPC has never read. Every added charge was recorded with no
+> label at all. `description` now maps onto the RPC's `label` key; the requested `chargeType` (e.g.
+> `late_cancellation`) is folded into `notes`, since the RPC hardcodes the stored charge type and a
+> late-cancellation fee should still say so somewhere.
+
 **201** — the updated ledger transaction.
 
 | Status | Code | Cause |
@@ -2633,9 +2732,9 @@ The reports page. **Requires `ADMIN`.**
 
 | Query | Type | Default | Notes |
 |---|---|---|---|
-| `startDate` / `endDate` | date | — | Booking date range |
-| `amenityId` | uuid | — | One amenity |
-| `bookingStatus` | string | — | One lifecycle status |
+| `startDate` / `endDate` | date | — | Booking date range — the **only** filter the KPI aggregate sees (below) |
+| `amenityId` | uuid | — | One amenity — narrows `rows` only |
+| `bookingStatus` | string | — | One of `options.bookingStatuses` (below) — narrows `rows` only |
 | `page` | int ≥ 1 | `1` | |
 | `pageSize` | int 1–200 | `50` | |
 
@@ -2657,33 +2756,55 @@ The reports page. **Requires `ADMIN`.**
     }
   ],
   "kpis": {
-    "totalAmenities": 6,
+    "totalBookings": 6,
     "totalActiveBookings": 4,
-    "pendingApprovals": 2,
+    "cancelledBookings": 1,
+    "totalCharged": 16500.0,
     "totalRevenue": 15300.0,
-    "activeAmenities": 5,
-    "bookingsThisMonth": 9
+    "totalRefunded": 500.0
   },
   "options": {
     "amenities": [{ "value": "5c0b…", "label": "Clubhouse Gym" }],
-    "bookingStatuses": ["pending", "approved", "confirmed", "completed", "cancelled", "rejected", "blocked"]
+    "bookingStatuses": ["pending", "approved", "completed", "cancelled", "rejected"]
   }
 }
 ```
 
 **`rows` is a page; `kpis` is an aggregate over every matching row.** That split is the point: a KPI
 that describes one page is not a KPI, and this one is labelled "Total Revenue". `calculateAmenityReports`
-computes all six in the browser from whatever it has loaded, which is the same failure as the money
+computes figures in the browser from whatever it has loaded, which is the same failure as the money
 tiles (agenda item 11).
 
+**`kpis` carries exactly the six figures `amenity_report_totals` returns, since 2026-08-23 (issue #48
+D4).** The set it replaces — `totalAmenities`, `pendingApprovals`, `activeAmenities`,
+`bookingsThisMonth` — named nothing the RPC has ever returned, so all four rendered a hardcoded `0` on
+the reports page while looking like measurements. A KPI with no source is a worse answer than no KPI,
+so they are gone rather than zeroed. `totalActiveBookings` reads the RPC's `approved_bookings` and
+`totalRevenue` reads its `total_paid` — both keep the name the label on the card always promised, even
+though it differs from the RPC's own column name.
+
+**The RPC's whole filter vocabulary is `from_date`/`to_date` — it has never read `amenityId` or
+`bookingStatus`.** Before this fix the endpoint sent them anyway, so every KPI silently described the
+last 30 days of the *whole community* no matter which amenity or status the admin had picked. There is
+still no RPC that applies those two filters to an aggregate, so `kpis` continues to reflect the date
+range only; `amenityId` and `bookingStatus` now narrow `rows` **honestly**, in Python, against the same
+ledger query the table renders, rather than being sent to an aggregate that silently ignored them.
+
+`bookingStatus` arrives in the wire's vocabulary and is translated to the stored enum before it filters
+`rows` (`amenity_ledger_overview.booking_status` is the raw enum — `'requested'`, not `'pending'`).
+
 `options.bookingStatuses` is the lifecycle's fixed vocabulary rather than the statuses that happen to
-be present, so the filter does not lose an option the moment nothing currently has that status.
+be present, so the filter does not lose an option the moment nothing currently has that status. It
+used to also list `confirmed` and `blocked`, and neither is a value `booking_status` can hold — a block
+is an `approved` row wearing `bookingType: "blocked"` — so both were always-empty options; removed as
+of 2026-08-23 alongside the fix to the `approved` tab that had the same phantom (above).
 
 A block is excluded from every count but not from the revenue — it is not a booking anybody made, but
 its money would still be money.
 
 | Status | Code | Cause |
 |---|---|---|
+| `422` | `validation_error` | `bookingStatus` outside `options.bookingStatuses` |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | The caller belongs to no community |
 
@@ -3389,6 +3510,18 @@ The caller's own bookings and what is still owed on each. `?view=upcoming|past`.
 > records what residents were charged and that is not a community-wide fact. Correct about the
 > community and wrong about the resident: the one person entitled to know what a booking costs is the
 > person being asked to pay for it. The policy now has an own-booking clause and nothing more.
+
+| Response field | Notes |
+|---|---|
+| `status` | `pending` \| `approved` \| `rejected` \| `cancelled` \| `completed` \| `no_show` — the lowercase machine vocabulary, the same one every admin amenity endpoint in §10 emits |
+| `storedStatus` | The stored enum, which **agrees with `status` on every row** except that it keeps the enum's own `requested` where `status` says `pending` |
+
+**Unlike `GET /invoices/mine` above, `storedStatus` here is not a second, truer answer — it is the
+same fact under the enum's own name for one state.** Fixed 2026-08-23 (issue #48 D4):
+`resident_booking_overview.status` is Title-case (`"Pending"`, `"No Show"`), and this endpoint used to
+pass it straight through, which made it the one booking surface in the product whose status could not
+be compared against any other's — not the admin timeline, not the ledger, not the reports page. It now
+runs through the same `booking_status_to_wire` translation they do.
 
 ### `POST /api/v1/amenity-bookings/{bookingId}/pay`
 

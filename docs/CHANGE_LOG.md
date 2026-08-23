@@ -17,7 +17,132 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — the resident sets the time, and the system books what nobody schedules
+## 2026-08-23 (latest) — issue #48: amenity catalogue photos, hours, and four wire-vocabulary defects
+
+**The by-design answer and two mapping rulings.** `PO` (three rulings recorded 2026-08-23, one of
+them a confirmation rather than a change):
+
+1. **Approvals tabs are unchanged — by design, not an oversight.** An admin-created booking stays
+   out of the resident approvals queue; there is no new "Confirmed" tab and none is coming. Live
+   testing surfaced this as a question worth asking explicitly rather than assuming; the answer is no.
+2. **Booking types are fixed by code-only mapping, not a schema change.** `amenity_bookings_type_check`
+   stays exactly `('resident','admin','maintenance','blocked')` — no migration, no widened `CHECK`. The
+   admin booking form's own words (`private-event`, `society-event`, `maintenance-reservation`) are
+   translated onto the four stored values at the service boundary instead.
+3. **Amenity images ship as capped base64 data URLs in the existing `amenities.image_url` text
+   column.** The client downscales to under ~100KB before it ever submits; the backend 422s as a
+   backstop, not the normal path. A Supabase Storage bucket for amenity photos is recorded as
+   **backlog**, not built — this column already existed and needed no migration, and a bucket is a
+   separate, larger piece of infrastructure this fix does not need to unblock.
+
+**The method: a five-defect repro battery, then sixteen promotions.** `DERIVED` (backend and frontend
+specialists, orchestrator-verified 2026-08-23). Two implementation specialists worked from one frozen
+wire contract. Every fix started life as a *failing* repro test — twelve `xfail(strict=True)` cases in
+`backend/tests/test_issue48_amenity_repro.py`, four `it.fails` cases across three
+`*.issue48.test.js` files on the frontend — written against the issue's own diagnosis key (D1–D5, see
+that file's docstring), so a fix could not be called done until its own repro flipped from red to
+green. All sixteen are now normal, passing tests with their markers removed and their docstrings
+rewritten to describe the repaired behaviour, not the defect. Nothing else changed production
+behaviour outside the frozen contract.
+
+**D2 — the catalogue form had nowhere to put a photo or opening hours.** `DERIVED`. `AmenityWrite`
+(`backend/app/domain/schemas.py`) gains `image`, `opening_time`, `closing_time`: an `image` is an
+`https://` URL (≤2000 chars) or a `data:image/(png|jpeg|webp|gif);base64,...` URL (≤140,000 chars,
+~100KB of binary); the two times are `"HH:MM"`/`"HH:MM:SS"`, and a model validator 422s a reversed
+pair the same way `amenities_hours_check` (`0023`) would 500 it in Postgres. The legacy
+`list_amenities`/create/update paths in `dashboard_repository.py` now select and write
+`description`, `image_url`, `opening_time`, `closing_time` — all four were real columns since `0023`
+that the legacy `SELECT` simply never named, so the catalogue card's `description` had been silently
+repeating `category` (every amenity described itself as `"Fitness"`) and a photo or an hour could
+never round-trip at all. `dashboard_service._amenities` now projects the real `description` plus
+`image`/`openingTime`/`closingTime` on the wire; documented in `docs/API.md` §5 (the snapshot
+projection) and §10 (the new `POST`/`PUT /dashboard/amenities` reference section — this pair of
+operations had no dedicated heading in `API.md` before this pass at all, a gap this fix closed rather
+than one it introduced).
+
+**D3 — an admin's block painted as a resident's booking.** `DERIVED`. A block is stored as an ordinary
+`approved` booking wearing `booking_type = 'blocked'` (`block_amenity_slot`, `0023` lines 1104-1105);
+the timeline was keying its `blocked`/`booked` split off `status`, a column that has never held the
+value `'blocked'` at all. `_timeline_state` in `amenities_service.py` now keys off `booking_type`
+instead, so a block reads `state: "blocked"` with `status: "approved"` on the same row, honestly.
+
+**D4 — the wire's status vocabulary drifted from what the database and the RPCs actually hold**, five
+separate ways, all under one root cause: a name that existed on one side of the JOIN and not the
+other.
+  - Booking `status` is now always the lowercase machine vocabulary
+    (`pending`/`approved`/`rejected`/`cancelled`/`completed`/`no_show`); Title-case display strings
+    (`"Pending"`, `"No Show"`) never cross the wire again. The stored enum's `requested` folds onto
+    the wire's `pending` — `booking_status_to_wire`/`_to_storage` in
+    `backend/app/domain/vocabularies.py` are the one place this mapping lives, in both directions.
+    This reaches every amenity admin surface **and** `GET /amenity-bookings/mine`
+    (`resident_money_service.py`/`resident_money.py`): its `storedStatus` now agrees with `status` on
+    every row except that it keeps the enum's own `requested` name for the pending state — before this
+    fix it was the one booking surface whose status could not be compared against any other's. The
+    invoice list's own Title-case `status` (`Unpaid`/`Paid`/`Cancelled`) is a different, deliberate
+    vocabulary and was left alone, per the frozen contract.
+  - The phantom statuses `confirmed` and `blocked` — values `public.booking_status` and
+    `amenity_booking_overview.series_status` have never held — are gone from the timeline's
+    `stored_status` filter, `_APPROVAL_FILTERS`, `_FORCE_CANCELLABLE_STATUSES` (now exactly
+    `('approved',)`), and the reports page's `booking_statuses` filter options (now exactly `pending`,
+    `approved`, `completed`, `cancelled`, `rejected` — `_REPORT_BOOKING_STATUSES`).
+  - Admin booking types now accept the form's own vocabulary and store the four DB-legal values via a
+    code-only alias table (`private-event`→`admin`, `society-event`→`admin`,
+    `maintenance-reservation`→`maintenance`, `resident`→`resident`) — an unmapped value 422s instead of
+    reaching Postgres as a `CHECK` violation (a 500).
+  - **The money RPCs were being sent keys their functions do not read.** `record_payment` now sends
+    exactly `{amount, reference, notes}` — `payment_reference` maps onto `reference` (idempotency was
+    not real before this: a replayed callback recorded a second payment, because the RPC never saw the
+    reference it was meant to match on); `method`/`charge_type` have no column of their own and are now
+    folded into `notes` rather than silently dropped. `add_charge` now sends `{amount, label, notes}` —
+    `description` maps onto `label` (every added charge had been landing with a `NULL` label).
+    `refund_deposit` now sends `amount` = the ledger's own `remainingRefund`, read back before the
+    call — every refund had been inserting with no amount at all, which passed the ceiling check
+    vacuously and recorded a refund of nothing; when nothing is left, the service now refuses with a
+    `422` before the RPC is ever called, rather than letting Postgres accept a zero-amount event.
+  - **The reports page's KPIs described the wrong thing, or nothing.** `build_report` now sends the RPC
+    only `{from_date, to_date}` — its whole filter vocabulary — and applies the `amenityId`/
+    `bookingStatus` filters Python-side against the ledger rows the table already lists; before this
+    fix those two filters were sent to an RPC that has never read them, so every KPI silently described
+    the last 30 days of the *whole community* no matter what the admin had picked. `ReportKpis` now
+    carries exactly the six fields `amenity_report_totals` returns — `totalBookings`,
+    `totalActiveBookings` (← `approved_bookings`), `cancelledBookings`, `totalCharged`, `totalRevenue`
+    (← `total_paid`), `totalRefunded`. The four fields it replaces — `totalAmenities`,
+    `pendingApprovals`, `activeAmenities`, `bookingsThisMonth` — named nothing the RPC has ever
+    returned and rendered a hardcoded `0` on the reports page while looking like measurements; they are
+    **gone from the response**, not zeroed, because a KPI with no source is a worse answer than no KPI.
+
+**D1 and D5 — frontend defects, fixed on the frontend.** `DERIVED`. D1 (the catalogue's active/inactive
+toggle re-read the whole dashboard snapshot up to three times per click): `setAmenityActiveStatus`/
+`updateAmenity` now issue at most one snapshot read per operation, building a single `PUT` from state
+already in hand. D5 (the resident availability check called an admin-guarded endpoint and hung on the
+403 it got back): `validateBookingSlot` no longer rejects on an `ApiError` — any failure, 403 included,
+resolves to an optimistic `true`, since the booking RPC remains the authority at submit time; the
+resident `Amenities.jsx` availability effect gained the `try`/`catch` that was missing. Also landed in
+this pass: client-side canvas downscale of an uploaded image to ≤100KB before submit
+(`downscaleImage.js`), so the backend's 422 ceiling is a backstop and not the normal path;
+`BlockTimeModal`'s `getInitialBlockTime` now returns usable `HH:MM` defaults; `AmenityDashboardPage`'s
+date picker defaults to local-timezone today rather than UTC; the reports page was rebuilt around the
+six real KPIs above; and the resident cancellable-booking list dropped the phantom `confirmed` status
+alongside the backend's own removal of it.
+
+**Docs.** `DERIVED`. `docs/API.md`: new §10 reference section for `POST`/`PUT /dashboard/amenities`
+(the pair had none before — request body, the three new fields, 422 conditions; the response's
+free-form-object gap is called out as pre-existing and explicitly not addressed here); the §5 snapshot
+projection gains an `amenities[]` field table; the timeline, admin-booking, approvals, money and
+reports sections in §10 are corrected for the lowercase status vocabulary, the booking-type alias
+table, the block-by-type painting rule, and the six real report KPIs; `GET /amenity-bookings/mine`
+gains a `status`/`storedStatus` field table contrasting it with the invoice list's deliberately
+different Title-case vocabulary. `docs/api_yaml_mapper.md`: §3's operation tables were regenerated
+with `scripts/regen_mapper.py` against the already-regenerated `openapi.yaml` (179 paths, 210
+operations, unchanged by this pass — no route was added or removed), which resynced roughly ninety
+`API.md` line references this pass's own additions had pushed down; §5.1/§5.2 updated to record that
+`PUT`/`DELETE /dashboard/amenities/{id}` gained a real reference section (nine uncovered operations
+becomes seven) while their shared response-body gap remains open; `api_map_scan.py` now reports **18**
+findings, not 20.
+
+---
+
+## 2026-08-23 — the resident sets the time, and the system books what nobody schedules
 
 **`docs/COMPLAINT_ENGINE_HANDOFF.md` §23 — the scheduling-inversion rulings.**
 `PO` (three rulings, 2026-08-23). Live testing continued past the board build
