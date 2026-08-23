@@ -17,7 +17,26 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — the supervisor's chrome sheds the marketplace, and ended work gets an archive
+## 2026-08-23 (latest) — hosted catches up: runbook §23–§26 applied and ledgered
+
+**`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §23–§26 — executed on the hosted
+project.** `PO` (owner hand-apply via SQL editor, 2026-08-23). The owner applied
+the four outstanding migrations in section order — `20260823120000`
+(complaint-engine v2 repairs), `20260823150000` (invite-claim wrapper),
+`20260823153000` (`withdrawn` request-status label), `20260823160000`
+(visitor-requests SSE trigger) — each followed by its ledger insert. Every
+read-only post-check returned exactly what its section predicted: all six
+dispatch signatures including both `dispatch_candidates` overloads; both claim
+functions `(uuid,uuid)`, security definer, `search_path=public`; five enum
+labels with `withdrawn` at sort order 5; `dashboard_sse_visitor_requests` on
+`visitor_requests` under `0007`'s exact template. With this, the hosted ledger's
+high-water mark is `20260823160000` and nothing in the migrations directory is
+outstanding; the drift issue #41 triaged is repaired on both databases, not just
+in git. The functional post-checks (critical force-assign fallback, invite
+redeem, withdraw press, live visitor-row refresh) remain available as live
+smoke tests but are not prerequisites.
+
+## 2026-08-23 — the supervisor's chrome sheds the marketplace, and ended work gets an archive
 
 **`docs/plans/SUPERVISOR_TRIAGE_SPEC.md` — Amendment 3 appended, with post-build
 adjudications.** `PO` (AskUserQuestion, 2026-08-23). Live testing moved from the
