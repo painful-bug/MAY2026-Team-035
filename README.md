@@ -93,7 +93,7 @@ Supabase project.
 Clone the repository and enter its root directory:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/painful-bug/MAY2026-Team-035
 cd MAY2026-Team-035
 ```
 
@@ -360,22 +360,3 @@ enabled, and server-side protection of the service-role key and other secrets.
 - **A development port is already in use:** stop an earlier Vite/Uvicorn
   process or start the affected service on another port and update the related
   origin configuration.
-
-## Documentation
-
-- [Architecture and data flow](docs/ARCHITECTURE.md)
-- [Human-readable API catalogue and user-story traceability](docs/API.md)
-- [Generated OpenAPI 3.1 contract](docs/openapi.yaml)
-- [Frontend implementation record](docs/FRONTEND_CHANGES.md)
-- [Backend implementation record](docs/BACKEND_CHANGES.md)
-- [Supabase migration rules](backend/supabase/migrations/README.md)
-- [Authentication setup](docs/SUPABASE_AUTH_SETUP.md)
-
-## Scope notes
-
-HomeBandhu is an academic project and should not be represented as a
-production-ready financial or access-control system. Payment actions are
-simulated or administrator-recorded, optional delivery providers require real
-environment configuration, and deferred or partially served user stories are
-identified in the API traceability documentation. No real credentials are
-included in this repository.
