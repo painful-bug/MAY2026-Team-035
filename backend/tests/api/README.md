@@ -543,6 +543,17 @@ by whoever used the browser last.
 | `test_oauth_callback_honours_the_remembered_transaction` | No description provided. |
 
 
+## `test_request_timing.py`
+Privacy-safe request timing and session cache-control contracts.
+
+*Total tests in this file: 2*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_request_timing_uses_the_route_template_not_query_values` | No description provided. |
+| `test_session_responses_are_never_cacheable` | No description provided. |
+
+
 ## `test_resident_amenities.py`
 `GET /amenities/available` -- the resident amenity catalogue.
 

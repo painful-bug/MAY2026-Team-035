@@ -239,6 +239,33 @@ parsing it is as close as this suite gets. The rest is in
 | `test_the_pre_existing_blocked_rows_are_counted_and_left_alone` | `20260821140000` 9's argument at a smaller scale: an invitation blocked before this file was applied has already crossed the edge, and re-arming it would mean writing `blocked_at` backwards. The count goes in the deploy log; nothing is repaired. |
 
 
+## `test_complaint_engine_v2_repair_migration.py`
+Static contracts for the forward-only Complaint Engine v2 repair.
+
+*Total tests in this file: 8*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_repair_is_forward_only_and_parses_as_postgresql` | No description provided. |
+| `test_manual_window_priority_matches_the_smallint_queue_contract` | No description provided. |
+| `test_projector_resolves_each_trigger_row_shape_before_field_access` | No description provided. |
+| `test_decline_override_is_internal_and_normal_dispatch_stays_strict` | No description provided. |
+| `test_supervisor_picker_can_show_declined_workers_as_excluded` | No description provided. |
+| `test_force_assignment_bypasses_the_supervisor_rpc_but_keeps_eligibility` | No description provided. |
+| `test_worker_notification_and_postgrest_cache_use_current_main_behavior` | No description provided. |
+| `test_repaired_execution_privileges_are_explicit` | No description provided. |
+
+
+## `test_complaint_engine_v2_supabase.py`
+Real-JWT coverage for the repaired Complaint Engine v2 database flow.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_complaint_engine_v2_real_jwt_rpcs_and_triggers` | No description provided. |
+
+
 ## `test_department_mapping.py`
 The department wire/storage seams.
 
@@ -395,6 +422,43 @@ They complement, rather than replace, applying the migrations to Supabase.
 | `test_registration_baseline_has_search_and_atomic_request_workflows` | No description provided. |
 
 
+## `test_employment_type_repair_migration.py`
+`20260817144725_repair_staff_assignment_employment_type.sql` -- what a static
+reader can prove about a file that was applied before it was ours.
+
+The file entered this branch from `origin/main` (commit `c0956a2`, 2026-08-17)
+byte for byte, because it is **already applied and ledgered** on the hosted
+project under exactly this version. Nothing below asks the file to be different;
+editing it here would put git and the ledger out of step under one version,
+which is the disease issue #41 is about. What the tests ask is the only question
+still open: whether the constraint the hosted database now carries admits every
+`employment_type` this repository writes.
+
+The hosted `staff_assignments` predates `0001_baseline.sql`. Its hand-built
+`staff_assignments_employment_type_check` allowed `internal` and `vendor` only,
+while every hiring path in this directory has written `staff` since `0019` gave
+the column that default. Worker hiring answered 23514 on every attempt until
+this file widened the list (issue #33).
+
+The hazard of an enumerating constraint is a missing word: a value some
+migration inserts that the list does not name blocks that insert forever, and
+the symptom appears at the first hire rather than at the apply. So the allowed
+list is not reviewed here -- it is **derived** from the file's own text, and
+every `employment_type` literal any migration writes is required to be a member
+of it.
+
+*Total tests in this file: 6*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_the_only_ddl_is_the_constraint_swap` | One drop and one add, both naming the same constraint on the same table. A file that is already ledgered on hosted can never be corrected in place, so what it does has to be exactly what its name says. |
+| `test_the_allowed_list_is_the_two_legacy_words_plus_staff` | Derived from the file, then compared: the legacy pair the hosted constraint already carried, and the one word the repository writes. |
+| `test_every_employment_type_any_migration_writes_is_allowed` | The whole point of the file, held by derivation rather than review.  A value written by some hiring path and missing from the list is a 23514 at that path's first use -- which is exactly how issue #33 was found, on the `staff` this file adds. Order does not enter into it: the inserts live in function bodies and run long after every migration is applied. |
+| `test_the_baseline_declares_the_column_with_no_check_of_its_own` | On a fresh database the constraint does not exist until this file makes it. `0001_baseline.sql` declares a bare `text not null`, which is why the repair is a `drop ... if exists` before the add rather than a plain add, and why nothing before 2026-08-17 ever noticed the hosted list was short. |
+| `test_it_sorts_after_every_apply_time_declaration_of_the_column` | Filename order is apply order, and only apply-time writes have an order to keep: the column's declaration and the default `0019` sets. Two files that write `staff` (`20260821140000`, `20260821170000`) sort *after* this one and that is correct -- their write is a line of plpgsql inside `claim_staff_invitations`, which runs when a manager claims an invitation, not when the migration is applied. Membership in the allowed list, asserted above, is what protects them; order cannot. |
+
+
 ## `test_formatting.py`
 Server-side display formatting.
 
@@ -420,6 +484,96 @@ from frontend/src/data/complaints.js and notices.js.
 | `test_long_date_has_no_zero_padded_day` | 'July 8, 2026', never 'July 08, 2026' -- %-d is unavailable on Windows. |
 | `test_parse_instant_accepts_both_postgrest_shapes` | No description provided. |
 | `test_naive_datetimes_are_treated_as_utc` | No description provided. |
+
+
+## `test_hosted_invite_claim_names_migration.py`
+`20260823150000_hosted_invite_claim_names.sql` -- the name the backend calls
+must be a name the database has, on both databases at once.
+
+The hosted project has only `claim_resident_invite(uuid, uuid)`; a fresh one has
+only `claim_email_invitation(uuid, uuid)`, from `0001_baseline.sql`. The backend
+calls the second name, so every resident email-invite redemption on hosted
+answers PGRST202 and the invitee reads "This invite could not be claimed."
+(owner probe 2026-08-23, runbook §22 probe (e), §24).
+
+The file creates the missing *name* as a wrapper over the function hosted
+already has, under a condition that is false on any database that already has
+the name. Three things have to hold for that to be honest, and none of them is
+reviewed here -- each is derived:
+
+* the name created is the name the backend's `.rpc(...)` call actually passes,
+  read out of `memberships_repository.py`;
+* the wrapper's signature, return shape and security posture are
+  `0001_baseline.sql`'s, read out of `0001_baseline.sql`;
+* the condition cannot fire on a fresh database, because nothing in this
+  directory creates `claim_resident_invite` -- which is checked across every
+  file rather than asserted.
+
+**Not verifiable statically:** that hosted's `claim_resident_invite` does what
+`0001`'s `claim_email_invitation` does. The owner's probe established the
+identical signature and return shape `TABLE(membership_id uuid, community_id
+uuid, unit_id uuid)`; the bodies are two databases' business and no test here
+can see either.
+
+*Total tests in this file: 11*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | The floor: CI replays this directory into an empty database. |
+| `test_it_sorts_after_every_file_that_already_existed` | Forward-only. A version below the latest on a shared branch is invisible to a fresh replay that has already passed it. |
+| `test_the_name_it_creates_is_the_name_the_backend_calls` | The whole point of the file. If the repository is ever rewritten to call `claim_resident_invite` directly this fails, and it should: the wrapper would then be dead weight on hosted and the fresh databases would break. |
+| `test_the_wrapper_declares_the_baselines_signature_and_return_shape` | Derived from `0001_baseline.sql`, not typed in. PostgREST resolves an RPC by name *and* argument names, and the service layer unpacks the result by column name, so a wrapper that differs in either is a different function wearing the right name. |
+| `test_the_wrapper_keeps_the_baselines_security_posture` | `security definer` with a pinned `search_path`, exactly as `0001` wrote it. A definer function without the pin is the classic search-path escalation, and this one is reachable from an unauthenticated redeem. |
+| `test_the_wrapper_keeps_the_baselines_acl` | `0001` revokes from `public, anon, authenticated` and grants only to `service_role`; nothing later in this directory touches that ACL. Only the backend's service client may claim an invite, and creating a second entry point must not be a second door. |
+| `test_the_create_is_guarded_on_both_halves_of_the_divergence` | Conditional both ways: the delegate must exist and the wrapper must not. The first half keeps it off a database that has no `claim_resident_invite`; the second makes it idempotent and keeps it from replacing `0001`'s real implementation with a wrapper over a function that is not there. |
+| `test_nothing_in_this_directory_creates_the_delegate` | Which is what makes the file a no-op on a fresh database, and it is checked rather than assumed: `claim_resident_invite` is a hosted-only function with no declaration anywhere in this repository, so the guard's first half is false on every database built from these files. |
+| `test_the_body_only_delegates` | One statement in the wrapper, and it is a select from the delegate. A wrapper that reimplemented the claim would be the second copy of a transaction this project deliberately has one of. |
+| `test_it_creates_nothing_else_and_drops_nothing` | A targeted file, in the shape rule 2 of the migrations README asks for. |
+| `test_it_reloads_the_postgrest_schema_cache_last` | A function PostgREST has never seen still answers PGRST202 until the cache turns over, so the fix would look like no fix at all for a while. |
+
+
+## `test_hosted_request_status_withdrawn_migration.py`
+`20260823153000_hosted_request_status_withdrawn.sql` -- a value the
+application has always been entitled to write, and one database that never
+learned it.
+
+`0001_baseline.sql` declares `access_requests.status` as text with a check
+naming four words, `withdrawn` among them. Hosted predates that file and holds
+the column as the enum `public.request_status`, whose four labels are
+`{pending, approved, rejected, cancelled}` -- probed 2026-08-23, runbook §22
+probe (f), §25. So `POST /access-requests/{id}/withdraw` answers 22P02 there and
+an applicant cannot take their own request back.
+
+The derivations that make this file honest rather than plausible:
+
+* the label added is the literal the withdraw path actually writes, read out of
+  `access_requests_repository.py`;
+* that literal is one `0001_baseline.sql`'s own check already allows, so this
+  is hosted catching up with the baseline rather than a fifth state being
+  invented;
+* nothing in this directory creates a type named `request_status`, so the guard
+  is false on a fresh database and the file is a no-op there -- checked across
+  every file, not assumed.
+
+**Not verifiable statically:** that hosted's enum has exactly the four labels
+the probe reported. `add value if not exists` is correct for any superset of
+them, and the verification block at the end of the file is the only thing that
+can see the real answer.
+
+*Total tests in this file: 10*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_that_already_existed` | No description provided. |
+| `test_the_label_added_is_the_one_the_application_writes` | The defect, stated as a derivation. A file that added some other word would leave the 22P02 exactly where it was. |
+| `test_the_label_is_one_the_baseline_check_already_allows` | This is hosted catching up with `0001_baseline.sql`, not a fifth request state being invented. If the two ever disagreed, the fix would belong on whichever side is wrong -- not here. |
+| `test_the_baseline_column_is_text_with_a_check_and_no_enum` | Why the file is a no-op on a fresh database, read off the baseline: the column is text, the four words live in a check constraint, and no type of this name is ever created. |
+| `test_nothing_in_this_directory_creates_the_enum_type` | The guard's condition, proved false on any database built from these files. `public.request_status` is a pre-baseline artefact of the hosted project and exists nowhere in this repository. |
+| `test_the_alter_runs_only_where_the_enum_exists` | Guarded on the type's presence in `pg_type` as an enum (`typtype = 'e'`), not merely on a name being taken -- and executed dynamically, which is what lets the statement be conditional at all. |
+| `test_it_adds_and_never_removes_or_retypes` | Widening only. Retyping a live column or dropping the enum would be a table rewrite and a lost guarantee; neither is in the file. |
+| `test_the_new_label_is_never_used_as_a_value_in_this_file` | PostgreSQL 12+ allows `add value` inside a transaction block on the one condition that the new label is not *used* until the commit. The file's only other statement reads `pg_enum`, which is a catalogue read and not a use of the value -- so the paste is safe as one transaction. This is the check that keeps it that way. |
+| `test_the_verification_is_itself_conditional` | The end-of-file check must not raise on a fresh database, where the type it asks about does not exist. It fires only where the enum is present and the label is still missing. |
 
 
 ## `test_hosted_work_order_drift_migration.py`
@@ -675,6 +829,51 @@ evidence offered with that review request.
 | `test_require_community_role_refuses_a_community_the_caller_is_not_in` | The point of the helper. A community id arriving on a resource -- a job, an application, a department -- must never be an authorization decision by itself. |
 | `test_require_community_role_refuses_the_right_community_with_the_wrong_role` | Being in the community is not being entitled in it. |
 | `test_require_community_role_allows_any_role_when_none_is_named` | "Are you in this community at all" is a real question, asked by every read a member of it may make. |
+
+
+## `test_migration_directory_is_fresh_appliable.py`
+`backend/supabase/migrations/` as a whole -- can a database that has never
+seen this project apply the directory from the top?
+
+**This is the first suite in this repository whose subject is the directory
+rather than one file.** Every other `test_*_migration.py` pins one migration and
+sweeps its siblings only to prove nothing later overrides it. Nothing has ever
+asked whether the set, replayed from empty, still lands -- which is how issue
+#41 happened: `20260818141040_remote_schema.sql`, a 9,831-line
+`supabase db diff` snapshot, was committed to `origin/main` as a migration. It
+fails a fresh apply at the first generated-column `ALTER`, and on the way there
+it recreates a legacy sentinel table, drops two SSE triggers without recreating
+them, and swaps RLS policies. CI's `database-browser` job is the thing that
+replays this directory into an empty database, so a file like that stops every
+branch, not just its own. (The version carries a row in the hosted ledger --
+probed 2026-08-23 -- so the file could not simply be deleted; it survives as a
+comment-only tombstone, which this suite is blind to because every check below
+strips whole-line `--` comments first. Runbook section 22.)
+
+**Every SQL pattern here is case-insensitive, and that is the point of the
+file.**
+`supabase db diff` writes uppercase SQL. The repository's hand-written
+migrations are lowercase, so are the pins that guard them, and an uppercase
+`CREATE TABLE "public"."visitor_access_requests"` is invisible to every one of
+them. The hazard did not slip past a weak rule; it slipped past a rule that
+could not see it.
+
+The expected sets are derived from the migration texts and from the application
+code they protect, not typed in from a reviewer's notes. The one exception is
+the retired-table list in `test_no_migration_recreates_a_retired_table`, which
+names twenty tables that no longer exist anywhere to be derived from -- it cites
+the commits that removed them instead.
+
+*Total tests in this file: 6*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_every_migration_parses_as_postgresql` | (a) The floor. A file that does not parse cannot apply, and the whole directory is replayed into an empty database by CI's `database-browser` job on every push. |
+| `test_no_migration_alters_a_generated_column_or_one_it_depends_on` | (b) The statement `20260818141040_remote_schema.sql` dies on, at its own line 1314.  Postgres refuses `set default` on a generated column and refuses `set data type` on any column a generated expression reads. A `db diff` snapshot emits both, because it re-states every column of every table it saw. Both sides are derived: the generated columns from the `generated always as (...) stored` declarations, the columns they depend on from the identifiers inside those expressions. |
+| `test_no_migration_creates_the_legacy_sentinel_table` | (c) `schema_generation()` decides which schema the backend is talking to by asking whether one table exists. Create that table in a migration and every fresh database reports itself as the pre-baseline legacy schema, and the dashboard reads projections that were never built for it.  The name is read out of `dashboard_repository.py` rather than typed here, so this test tracks the code it protects: if the probe ever changes table, the guard follows it instead of quietly protecting the wrong name. |
+| `test_no_migration_drops_a_trigger_the_directory_never_recreates` | (d) The `db diff` snapshot drops `dashboard_sse_amenity_bookings` and `dashboard_sse_visitor_requests` and recreates neither, so the dashboard's realtime feed goes silent with nothing in the apply output to say so.  Recreation is looked for across the whole directory, not just the dropping file, because `0045` legitimately re-lays two of `0043`'s triggers. The dynamic `dashboard_sse_%I` loops are expanded from their own table arrays. |
+| `test_every_unguarded_drop_is_followed_by_its_own_recreation` | (e) A `drop policy` or `drop constraint` that neither says `if exists` nor puts the object back is a silent removal: the apply succeeds and the rule the repository thought it had is gone. That is how the `db diff` snapshot swaps RLS policies -- it drops names `0033` and `0043` created and re-adds its own reading of them, or nothing at all.  Only names the directory itself creates are in scope; a hand-applied file may legitimately drop a hosted-only legacy object it did not make. The five unguarded drops here are all inside `if exists (select 1 from pg_constraint ...)` blocks and all re-add the same name a few lines later, which is the other way to be safe. |
+| `test_no_migration_recreates_a_retired_table` | (f) Twenty tables were deleted from this project's schema by `origin/main` @ `94556e5` and `76e1b15`, the pair of commits that replaced `0001_init.sql`/`0002_rls.sql`/`0003_access_token_hook.sql` with `0001_baseline.sql`. Nothing in the repository declares them any more, so unlike every other check in this file the list cannot be derived -- it is written out, with its provenance, and it is the one hardcoded set here.  A `db diff` snapshot taken against a database whose history includes them brings them back, and a fresh database then carries tables the code reads only in its `legacy=True` branch.  Three tracked migrations **rename** a pre-baseline table into this namespace -- `0023` parks four `amenity_*` tables as `legacy_*`, `0030` renames `notifications`, `0032` renames `visitor_events`. Those renames are house-approved and conditional, and only `create table` is checked here so that they cannot trip it. |
 
 
 ## `test_money_mapping.py`
@@ -1001,7 +1200,7 @@ repository functions, so the tests substitute those and drive the rest for real
 -- including the asyncio queues, so the concurrency being asserted is the
 concurrency that ships.
 
-*Total tests in this file: 43*
+*Total tests in this file: 44*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1039,12 +1238,13 @@ concurrency that ships.
 | `test_a_security_guard_does_not_receive_them_either` | The gate is an allowlist on 'admin', not a denylist on 'resident' -- so every other role is excluded too. |
 | `test_the_snapshot_always_carries_the_four_weekly_new_counts` | The frontend replaces its hardcoded '+2 this week' chips with exactly this object, so the field name and its four keys are load-bearing. |
 | `test_weekly_new_defaults_to_zeroes_never_to_absence` | `0` when nothing was created; the key itself must never be missing. |
-| `test_the_legacy_visitor_projection_embeds_the_renamed_event_log` | `visitor_events` now names the baseline table, which has no FK to `visitor_access_requests` -- embedding it is the PGRST200 this pins out. |
-| `test_the_baseline_visitor_projection_still_embeds_visitor_events` | No description provided. |
-| `test_the_legacy_booking_projection_reads_the_renamed_series_tables` | No description provided. |
-| `test_the_service_reads_events_from_the_key_each_schema_embeds` | The repository's embed key and the service's `.get` must move together; this is the pair that drifted apart when `0032` took the old name. |
-| `test_weekly_new_counts_ask_the_tables_the_deployed_schema_has` | Head-only counts, filtered to the window -- and pointed at the renamed legacy tables, not the names the rename freed up. |
-| `test_weekly_new_counts_on_the_baseline_schema` | No description provided. |
+| `test_the_visitor_projection_reads_the_table_residents_write` | One source, on every schema generation. Reading `visitor_access_requests` was reading the empty half of a split brain: the rows are in `visitor_requests` and have been since `0032`. |
+| `test_the_visitor_projection_takes_no_schema_generation_argument` | The branch is gone, not defaulted. A `legacy=` keyword left in place would let a caller reintroduce the pre-baseline read by passing True. |
+| `test_the_booking_projection_reads_amenity_bookings_not_the_series_tables` | `0023` moved the booking RPCs onto `amenity_bookings` and parked the old tables under `legacy_` names. Nothing has written a series row since -- hosted holds none -- so the two-query series read answered 0 forever. |
+| `test_the_service_reads_events_from_the_key_the_projection_embeds` | The repository's embed key and the service's `.get` must move together; this is the pair that drifted apart when `0032` took the old name. |
+| `test_the_visitor_card_keeps_every_key_the_frozen_shape_promises` | Collapsing the branch must not move the wire contract by one key. The window comes from `valid_from`/`valid_until` now, and nothing else about the card changes. |
+| `test_the_booking_row_keeps_every_key_the_frozen_shape_promises` | `bookingGroupId` was the series id on the legacy arm and is the row's own id now, because `amenity_bookings` has no series above it. `cancellationReason` stays in the payload as `None` -- the key is part of the contract even where the column is not. |
+| `test_weekly_new_counts_ask_the_tables_residents_write` | Head-only counts, filtered to the window -- and pointed at the tables the rows are actually in. Counting `visitor_access_requests` and `legacy_amenity_booking_series` made both chips read `+0 this week` on a project where requests were arriving. |
 | `test_weekly_new_counts_on_an_executor_ask_the_same_four_tables` | The snapshot hands its pool down so the counts join the concurrent batch; the executor path must be the sequential path, only faster. |
 | `test_the_snapshot_assembles_correctly_when_reads_finish_out_of_order` | The earliest-submitted reads finish last here, so any assembly that depended on completion order (rather than on which future is which) would scramble the payload. |
 | `test_a_failing_read_fails_the_snapshot_with_its_own_exception` | Concurrency must not soften errors into a partial payload: the read's own exception type propagates, exactly as it did sequentially. |
@@ -1182,7 +1382,7 @@ a fact about the account.
 |---------------|-------------|
 | `test_an_admin_who_lives_here_is_also_a_resident` | Both capabilities, and the residency is what earns the second one. |
 | `test_an_admin_who_lives_nowhere_is_only_an_admin` | The defect this module exists for.  A committee member who owns no flat is an ordinary account, not an edge case. The session used to hand them the resident portal on the strength of their role, and `require_resident_capability` would then refuse every write inside it -- so the menu item was real and everything behind it was a 403. |
-| `test_the_answer_comes_from_the_residency_table` | Same table `require_resident_capability` asks, which is the whole point: one source, so the session and the per-request guard cannot drift. |
+| `test_the_embedded_residency_needs_no_supplemental_query` | The membership projection embeds the authoritative residency relation. |
 | `test_a_resident_is_not_given_a_second_copy_of_their_own_capability` | The grant is admin-only. A resident's capability is their role, and the predicate must not have turned into "anyone with a residency". |
 | `test_a_manager_with_a_flat_is_still_only_a_manager` | The ruling is about admins specifically, and widening it here would be a product decision wearing the clothes of a consistency fix. A manager who lives in the society reaches the resident portal the same way anybody else does -- by holding a `resident` membership -- and that is not this row. |
 
@@ -1208,7 +1408,7 @@ The seam under test is `_portal_for`, called with a membership row exactly as
 last assertion in each case -- *which tables were read* -- is available, and it
 is worth having: the roster read must not fire for a resident.
 
-*Total tests in this file: 7*
+*Total tests in this file: 8*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1219,6 +1419,19 @@ is worth having: the roster read must not fire for a resident.
 | `test_manager_of_a_security_department_still_resolves` | Unreachable today, and kept: `manager` is a real `membership_role`. |
 | `test_manager_of_a_service_department_is_not_a_gate_manager` | The `departments.kind` question is the reason that branch exists. |
 | `test_manager_without_a_department_reads_nothing` | No description provided. |
+| `test_embedded_rank_and_department_kind_need_no_portal_query` | No description provided. |
+
+
+## `test_session_restoration.py`
+Regression checks for the bounded, uncached session restoration path.
+
+*Total tests in this file: 3*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_established_member_session_uses_two_database_reads` | No description provided. |
+| `test_request_dependencies_decode_and_build_the_user_client_once` | No description provided. |
+| `test_only_a_present_refresh_cookie_marks_a_missing_access_as_expired` | No description provided. |
 
 
 ## `test_settings_mapping.py`
@@ -1277,6 +1490,26 @@ is a test failure and not a quiet behaviour change:
 | `test_omitting_a_field_is_distinct_from_sending_null` | The whole basis of the patch: null clears the unit-label override and returns to deriving it; an absent key leaves it as it was. |
 | `test_an_invite_ttl_beyond_thirty_days_is_rejected` | An invite that outlives a month is not a second factor, it is a credential sitting in an inbox. The database CHECK agrees; this is the earlier of the two. |
 | `test_visitor_code_ttl_bounds` | No description provided. |
+
+
+## `test_staff_assignment_employment_type_migration.py`
+Regression contract for the service-hiring employment type.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_hiring_employment_type_remains_valid_for_the_hiring_rpc` | No description provided. |
+
+
+## `test_supabase_transport.py`
+Supabase client transport configuration.
+
+*Total tests in this file: 1*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_supabase_clients_disable_http2` | No description provided. |
 
 
 ## `test_supervisor_actions_migration.py`
@@ -1504,6 +1737,48 @@ incompatible representations of a flat -- see app/domain/units.py.
 | `test_normalize_unit_code[C-None-None]` | No description provided. |
 | `test_normalize_unit_code[D-12B-D-12B]` | No description provided. |
 | `test_normalisation_is_idempotent` | Applying it twice must not double the prefix -- the bug's exact shape. |
+
+
+## `test_visitor_requests_sse_migration.py`
+`20260823160000_visitor_requests_sse.sql` -- `0007`'s own trigger for
+`visitor_requests`, arriving twenty-five files late.
+
+`0007_dashboard_realtime_outbox.sql` loops twelve table names and builds
+`dashboard_sse_%I` on each one that exists. `visitor_requests` is in that array,
+so a fresh database has had the trigger since `0007`. Hosted has not: when
+`0007` was applied there the baseline table did not yet exist -- `0032` created
+it -- the `to_regclass` guard skipped it, and nothing revisited the question.
+The owner's probe of 2026-08-23 found `visitor_requests` carrying no trigger at
+all while holding the only three real visitor requests in the project (runbook
+§22 probes (g) and (h), §26).
+
+So the file must not invent a trigger; it must reproduce the one `0007` would
+have made. That is the derivation this suite is built on: the name, the events,
+the row/statement level and the function are all read out of `0007`'s own loop
+template and compared against the statement in this file. If `0007` is ever
+edited, these tests fail rather than letting the two definitions drift.
+
+The other end is pinned too: the table this trigger fires on is read out of
+`dashboard_repository.list_visitors`, because a realtime signal on a table the
+dashboard does not read would be a refresh that shows nothing new.
+
+**Not verifiable statically:** whether hosted's `emit_dashboard_sse_event` is
+`0007`'s. It is a `create or replace` in `0007` and no later file touches it,
+which is checked below; the rest is the apply's business.
+
+*Total tests in this file: 9*
+
+| Test Function | Description |
+|---------------|-------------|
+| `test_the_migration_parses_as_postgresql` | No description provided. |
+| `test_it_sorts_after_every_file_that_already_existed` | No description provided. |
+| `test_it_sorts_after_the_outbox_and_after_the_table_it_triggers` | The trigger function comes from `0007` and the table from `0032`; a fresh replay must have both before this file runs. |
+| `test_the_trigger_is_the_one_0007_would_have_built` | Name and definition both derived from `0007`'s loop template, so the trigger a fresh database gets from `0007` and the trigger hosted gets from here are the same trigger -- including the `delete` arm, which the outbox fires on and a hand-written pair might have left out. |
+| `test_the_table_is_one_0007_already_names` | This is `0007` finishing its own job, not a thirteenth table being added to the outbox by a side door. `visitor_requests` has been in that array since the file was written; it was skipped by the `to_regclass` guard on a database where the table did not exist yet. |
+| `test_the_table_is_the_one_the_dashboard_reads` | The realtime half and the read half of the split-brain fix must point at the same table, or the refresh arrives about rows nobody projects. |
+| `test_every_definition_of_the_trigger_function_is_already_applied` | `emit_dashboard_sse_event` is written by `0007` and rewritten once, by `0028_event_audience.sql`, which retargets `dashboard.refresh` at the `{admin, manager}` audience. Both sort before this file, which is what makes "the same trigger a fresh database has" a settled statement: whichever database this runs on, the function the trigger names is already in its final form. A future rewrite sorting *after* this file would be fine for the trigger and is still worth being told about -- the emitted audience is the thing that decides whether an admin's dashboard hears about a visitor at all. |
+| `test_it_drops_nothing_and_is_idempotent` | `create or replace trigger` rather than a drop-and-create pair: there is no window in which the table has no trigger, and a second run replaces the file's own work rather than removing somebody else's. |
+| `test_it_verifies_the_trigger_it_claims_to_have_made` | A named check rather than a bare existence one: the table already had no trigger, so 'some trigger is present' would pass against nothing useful. |
 
 
 ## `test_vocabularies.py`
