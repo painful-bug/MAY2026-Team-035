@@ -109,8 +109,12 @@ def list_visitors(client: Client, community_id: str) -> list[dict[str, Any]]:
 
 
 def list_amenities(client: Client, community_id: str, *, legacy: bool) -> list[dict[str, Any]]:
+    # `description`, `image_url`, `opening_time` and `closing_time` are real
+    # columns on the legacy arm too -- `0023` added them (lines 49-89). Leaving
+    # them out of the select is what made the catalogue unable to show a photo
+    # or an opening hour (issue #48 D2).
     columns = (
-        "id,name,category,location,capacity,booking_mode,approval_required,hourly_rate,status,created_at,updated_at"
+        "id,name,description,category,location,image_url,opening_time,closing_time,capacity,booking_mode,approval_required,hourly_rate,status,created_at,updated_at"
         if legacy
         else "id,name,description,booking_rules,is_active,created_at,updated_at,amenity_operating_hours(weekday,opens_at,closes_at)"
     )
@@ -257,8 +261,15 @@ def create_amenity(
         row = {
             "community_id": community_id,
             "name": payload["name"],
+            # Written at last: the column has existed since `0023` and the form
+            # has always collected a description, but the legacy arm dropped it
+            # between the two (issue #48 D2).
+            "description": payload["description"] or None,
             "category": payload["category"],
             "location": payload["location"] or None,
+            "image_url": payload.get("image"),
+            "opening_time": payload.get("opening_time"),
+            "closing_time": payload.get("closing_time"),
             "capacity": payload["capacity"],
             "booking_mode": payload["booking_mode"].lower(),
             "approval_required": payload["approval_required"],
@@ -271,6 +282,9 @@ def create_amenity(
             "name": payload["name"],
             "description": payload["description"],
             "is_active": payload["is_active"],
+            # The image and the hours ride in the jsonb on this arm: it has no
+            # `image_url`/`opening_time` columns and adding them would be a
+            # migration. Dead in every real environment -- see `list_amenities`.
             "booking_rules": {
                 "category": payload["category"],
                 "location": payload["location"],
@@ -278,6 +292,9 @@ def create_amenity(
                 "bookingMode": payload["booking_mode"],
                 "requireApproval": payload["approval_required"],
                 "hourlyRate": payload["hourly_rate"],
+                "image": payload.get("image"),
+                "openingTime": payload.get("opening_time"),
+                "closingTime": payload.get("closing_time"),
             },
         }
     return client.table("amenities").insert(row).execute().data[0]
@@ -288,8 +305,12 @@ def update_amenity(
 ) -> dict[str, Any] | None:
     if legacy:
         row = {
-            "name": payload["name"], "category": payload["category"],
+            "name": payload["name"], "description": payload["description"] or None,
+            "category": payload["category"],
             "location": payload["location"] or None, "capacity": payload["capacity"],
+            "image_url": payload.get("image"),
+            "opening_time": payload.get("opening_time"),
+            "closing_time": payload.get("closing_time"),
             "booking_mode": payload["booking_mode"].lower(),
             "approval_required": payload["approval_required"], "hourly_rate": payload["hourly_rate"],
             "status": "active" if payload["is_active"] else "inactive",
@@ -302,6 +323,8 @@ def update_amenity(
                 "category": payload["category"], "location": payload["location"],
                 "capacity": payload["capacity"], "bookingMode": payload["booking_mode"],
                 "requireApproval": payload["approval_required"], "hourlyRate": payload["hourly_rate"],
+                "image": payload.get("image"), "openingTime": payload.get("opening_time"),
+                "closingTime": payload.get("closing_time"),
             },
         }
     rows = (

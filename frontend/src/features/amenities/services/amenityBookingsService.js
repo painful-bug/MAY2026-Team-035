@@ -51,30 +51,46 @@ const assertValidTimeRange = (startTime, endTime) => {
   }
 };
 
-// The one remaining demo read on this page, and it is a known defect rather
-// than a design.
+// The slot picker's hint, and it is a HINT — never an answer the UI may
+// present as verified.
 //
-// `validateBookingSlot` greys out slots the resident cannot have, and it works
-// that out from `GET /dashboard/snapshot` — which is ADMIN/MANAGER-guarded and
-// therefore `403`s for the person looking at the form. There is no resident
+// It greys out slots the resident probably cannot have, working that out from
+// `GET /dashboard/snapshot`, which is ADMIN/MANAGER-guarded and therefore
+// `403`s for the very person looking at the booking form. There is no resident
 // read that would answer it either: §10 of docs/API.md is explicit that **no
 // availability check happens in the API**, because a read describing which
-// slots are free is describing a moment that has already passed. Availability
-// is decided on write, under an advisory lock.
+// slots are free describes a moment that has already passed. Availability is
+// decided on write, under an advisory lock, and a `409` is the real answer.
 //
-// It is left in place rather than half-replaced: the slot picker is not this
-// task's fence, and the honest fix is a UI that submits and reads the `409`
-// rather than a second guard here. Reported to the orchestrator.
+// So the failure is no longer allowed to be fatal (issue #48 D5). A snapshot
+// the caller may not read leaves the conflict cache empty and the check
+// UNVERIFIED: the opening-hours window — which is local arithmetic and needs
+// no server — is still applied, everything else resolves optimistically, and
+// `checkBookingSlotAvailability` reports `verified: false` so the screen can
+// say so rather than claim a check it did not perform. What it must never do
+// again is reject: a rejected promise here left "Checking availability..." on
+// screen for good.
 let bookingCache = [];
 
 const refreshBookings = async () => {
-  bookingCache = (await getDashboardSnapshot()).bookings.map(cloneBooking);
-  return bookingCache;
+  try {
+    bookingCache = ((await getDashboardSnapshot()).bookings ?? []).map(
+      cloneBooking
+    );
+    return true;
+  } catch {
+    bookingCache = [];
+    return false;
+  }
 };
 
 const getAllBookings = () => bookingCache.map(cloneBooking);
 
-export const validateBookingSlot = async ({
+// Pure, over whatever `refreshBookings` managed to cache. With an empty cache
+// — the caller was forbidden the snapshot — every conflict test below finds
+// nothing to conflict with and the answer collapses to the opening-hours
+// window, which is the optimistic half of the contract.
+const evaluateBookingSlot = ({
   amenityId,
   date,
   startTime,
@@ -88,7 +104,6 @@ export const validateBookingSlot = async ({
   guestCount = 0,
   capacity = null,
 }) => {
-  await refreshBookings();
   assertValidTimeRange(startTime, endTime);
 
   const proposedStart = timeToMinutes(startTime);
@@ -177,6 +192,29 @@ export const validateBookingSlot = async ({
     )
   );
 };
+
+/**
+ * `{ available, verified }` — whether the slot looks bookable, and whether
+ * anything beyond the amenity's own opening hours was actually checked.
+ *
+ * `verified: false` means the conflict read was refused (the resident cannot
+ * read the admin snapshot) and `available` is the optimistic answer. Screens
+ * that show the difference must not describe an unverified slot as free.
+ */
+export const checkBookingSlotAvailability = async (params) => {
+  const verified = await refreshBookings();
+  return { available: evaluateBookingSlot(params), verified };
+};
+
+/**
+ * The boolean half, for callers that only grey out a slot.
+ *
+ * It resolves for every API outcome, 403 included — the backend decides
+ * availability on write and answers with a `409` there, so a failed hint is
+ * never a reason to fail a form.
+ */
+export const validateBookingSlot = async (params) =>
+  (await checkBookingSlotAvailability(params)).available;
 
 /**
  * `POST /amenities/{id}/bookings/request` — one or more days of the same slot.

@@ -316,3 +316,29 @@ def respond_to_schedule(
         raise translate(
             exc, default_message="Could not record your answer."
         ) from exc
+
+
+def set_resident_schedule(
+    client: Client, *, work_order_id: str, start_at: str, end_at: str
+) -> None:
+    """The hour the resident chose for a visit to their own home (RPC).
+
+    The second write in this module a resident may make, and separate from
+    ``respond_to_schedule`` for the reason the RPC gives: confirming is agreeing
+    to a time somebody else chose, and this is choosing one. The same
+    ``is_own_membership`` check guards it, so a neighbour holding this complaint
+    id gets a 403 rather than an hour booked in somebody else's name.
+    """
+    try:
+        client.rpc(
+            "resident_set_work_order_schedule",
+            {
+                "p_work_order_id": work_order_id,
+                "p_start": start_at,
+                "p_end": end_at,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not set that time."
+        ) from exc

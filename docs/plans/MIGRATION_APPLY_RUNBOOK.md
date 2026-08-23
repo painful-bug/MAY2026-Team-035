@@ -25,6 +25,20 @@ competence with Postgres and Supabase, but no context on this branch's work.
 > queue that §15–§20 describe is closed; those sections are now history in the
 > same sense §1–§7 are, and are kept for their post-checks.
 >
+> **That "nothing" expired the next day.** Six sections have been written since —
+> §23 through §28, all dated 2026-08-23 — each a file in
+> `backend/supabase/migrations/`. **Whichever of them are still outstanding,
+> apply in filename order**, which is section order here: §23 `20260823120000`,
+> §24 `20260823150000`, §25 `20260823153000`, §26 `20260823160000`, §27
+> `20260823170000`, §28 `20260823180000`. §27 and §28 each state a dependency on
+> the section before them; the rest are independent, and filename order satisfies
+> all of it, as it always does. Each section carries its own ledger insert and
+> its own post-checks, and each says for itself what the last ledger probe found
+> — this paragraph deliberately does not restate that, because a second copy of
+> an apply status is the copy that goes stale. **§28 is outstanding as of
+> 2026-08-23** and is the newest. If the section numbers below run past §28, this
+> paragraph is what needs updating.
+>
 > So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
 > it should be. Read it as a description of the boundary §1–§7 started from, not
@@ -3149,3 +3163,357 @@ trigger fires on is the table `list_visitors` reads. **Not verifiable
 statically:** whether hosted's `emit_dashboard_sse_event` is the one this
 directory declares. It is a `create or replace` in `0007` and again in `0028`,
 and the apply is the only thing that can settle it.
+
+## 27. `20260823170000_open_jobs_board.sql`
+
+**What breaks without it:** the open-jobs board. The product rulings of
+2026-08-23 (`docs/COMPLAINT_ENGINE_HANDOFF.md` §22, C1–C3) give department
+roster technicians who hold the job's trade a board of their department's
+unclaimed work and an instant first-come claim; without this file both backend
+endpoints (`GET /worker/open-jobs`, `POST /worker/jobs/{id}/claim`) answer 500
+on an RPC that does not exist, and the new "Open jobs" tab in the worker portal
+renders its error state. The build spec, adjudications D1–D7 included, is
+`docs/plans/OPEN_JOBS_BOARD_SPEC.md`.
+
+**What it does:** two new SECURITY DEFINER functions and one widened trigger.
+
+1. `worker_open_jobs()` — the board read. No arguments; identity is
+   `auth.uid()`. Every job with `status in ('draft','offered')` and **no live
+   assignment** (D1: uncommitted and unpromised) in every department where the
+   caller holds an active roster row, filtered by `dispatch_candidates`' own
+   trade clause (D2) and by `complaint_excluded_staff` (D7). A SECURITY DEFINER
+   RPC rather than a view because `work_orders_read` correctly hides unheld
+   jobs from workers — a board of jobs nobody holds yet is invisible to
+   everybody it is for under RLS.
+2. `claim_open_work_order(uuid)` — the claim. `accept_work_order_offer`'s
+   shapes — the row lock first, the overlap refusal in words, the
+   withdrawn-not-deleted sweep, the `job_assigned` event, the resident's
+   `work_order.assigned` — minus the demands that assume an offer exists. New
+   guards in their place: D1 re-checked under the lock (HB409 "Somebody has
+   already taken this job."), active roster row in the job's department
+   (HB403), the engine's trade rule (HB403), the complaint's exclusion history
+   (HB409). A job with no slot is claimed with no slot (C3) and still moves to
+   `scheduled` — the shape `force_assign_work_order` already writes. The
+   supervisor is told with a new notification kind, `work_order.claimed`
+   (`notifications.kind` is unconstrained by design, `0030`), skipped when the
+   claimer is that supervisor. No new complaint-event word: the payload carries
+   `claimed: true` inside `job_assigned`, because a new word costs a
+   `complaint_events_type_check` rebuild (§19's rule) and this does not.
+3. `project_complaint_from_jobs()` re-issued with one branch widened, and
+   `work_order_assignments_project_complaint` dropped and recreated with
+   `when (new.status in ('offered', 'accepted'))` (D5). On the offer path the
+   complaint moved `open → acknowledged` when the *offer* was inserted; a claim
+   inserts `accepted` directly, and without this the complaint would sit at
+   `open` with a committed job — violating C2's "the same status movements".
+   **This knowingly also closes the identical pre-existing hole in
+   `force_assign_work_order` and `dispatch_force_assign`**, whose accepted
+   inserts never acknowledged either; flagged to the product owner as an engine
+   lifecycle change made under C2's authority. The body is `20260823120000`'s —
+   the row-shape resolution is kept exactly — so applying this after §23
+   overwrites nothing but the one branch.
+
+**Ordering:** after `20260823160000` (§26, the hosted high-water mark) by name.
+The bodies it re-issues or reads all sort earlier: `project_complaint_from_jobs`
+was last written by §23, `complaint_excluded_staff` by `20260813101000`, and
+the trade clause mirrors §23's `dispatch_candidates` without replacing it. The
+overlap audit against §18, §20 and §23 is empty — nothing here redefines any
+function those files own except `project_complaint_from_jobs`, which §23 wrote
+and whose diff is the one widened branch.
+
+**Apply:** paste the whole file into the SQL editor and run it. It ends with
+its own verification block, which raises if either function is missing, if the
+trigger body was not widened, or if the recreated trigger's WHEN clause does
+not name `accepted` — so a half-success reports itself. No other output is
+expected.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823170000', 'open_jobs_board')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+select p.oid::regprocedure as signature,
+       p.prosecdef         as security_definer
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('worker_open_jobs', 'claim_open_work_order')
+ order by 1;
+-- expect worker_open_jobs() and claim_open_work_order(uuid), both with
+-- security_definer = true.
+
+select pg_get_triggerdef(oid)
+  from pg_trigger
+ where tgname = 'work_order_assignments_project_complaint';
+-- expect ... AFTER INSERT ... WHEN ((new.status = ANY (ARRAY['offered'::text,
+-- 'accepted'::text]))) ... EXECUTE FUNCTION public.project_complaint_from_jobs().
+```
+
+**Post-check, functional:** as a technician on a department roster, open the
+worker portal's new "Open jobs" tab: a `draft` job of the department with no
+assignment rows appears, an unscheduled one with a "Time to be set" marker.
+Claim it. The job moves to `scheduled` and onto the worker's dashboard, the
+complaint's timeline gains `job_assigned` with `claimed: true`, the complaint —
+if it was `open` — reads `acknowledged`, and the supervisor's bell gains
+"<worker> took up <job>". A second claim of the same job from another account
+answers 409 "Somebody has already taken this job."
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_open_jobs_board_migration.py` (11 tests) — the file parses
+(`pglast`) and sorts after the hosted high-water mark; D1's both-halves
+predicate appears in both functions; the trade clause is the engine's own,
+short-circuit included, in both; `complaint_excluded_staff` filters the read
+and guards the claim; the claim locks before it reads, skips the slot checks
+without a slot, and copies the accept path's exact row shape; no event word or
+constraint is touched; the supervisor's `work_order.claimed` is present and
+self-notification is skipped; the trigger is dropped before it is recreated
+with the widened WHEN and the §23 row-shape repair survives the re-issue; and
+the grants are explicit with the PostgREST reload at the end. Plus the
+directory battery in `test_migration_directory_is_fresh_appliable.py`.
+**Not verifiable statically:** that hosted's `project_complaint_from_jobs` is
+§23's body before this overwrites it — it is a `create or replace`, so the
+apply overwrites whatever is there, which is the intent; and the D5 behaviour
+change itself, which only the functional post-check above can show.
+
+## 28. `20260823180000_resident_sets_the_time.sql`
+
+**Apply this AFTER §27.** It sorts after `20260823170000_open_jobs_board.sql`
+by name and reads two things §27 established — the board predicate it
+deliberately does not change, and `project_complaint_from_jobs`' widened
+accepted-insert branch, which is what makes an auto-assigned job acknowledge
+its complaint. Applying this first would leave the second half of that
+sentence untrue for every job the dispatcher books.
+
+**What breaks without it:** the 2026-08-23 product rulings
+(`docs/COMPLAINT_ENGINE_HANDOFF.md` §23, F1–F3). The raise form has already
+lost its date and time fields on the frontend, so **without this file every UI
+raise creates a `draft` that nobody is asked about and nothing books** — a
+resident job that reaches no resident and a facility job that reaches no
+queue. `POST /complaints/{id}/schedule-time` answers 500 on an RPC that does
+not exist, the resident's card cannot leave pick-mode, and the supervisor
+dashboard's new "Awaiting resident response" section renders empty because the
+snapshot emits no such key. The build spec, adjudications G1–G11 included, is
+`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`.
+
+**What it does:** one widened constraint, four new functions, and five
+redefinitions — in ten numbered sections.
+
+1. **`dispatch_tasks_kind_check` widened** with `facility_auto_assign`. The one
+   constraint this build touches. It proves no existing row falls outside the
+   new list *before* it drops anything (§20's shape), then drops, adds, and
+   proves the new word specifically — a bare existence check would pass against
+   the very constraint being replaced. Widening only: every kind
+   `20260813104000` accepted is in the new list, and
+   `tests/test_resident_sets_the_time_migration.py` derives that list from
+   `20260813104000`'s own text rather than reviewing it by eye.
+2. **`dispatch_candidates_at(uuid, timestamptz, timestamptz, integer, boolean)`**
+   — `20260823120000`'s eligibility body, parameterised by a **hypothetical**
+   hour instead of the job's stored one. The three-argument
+   `dispatch_candidates` becomes a delegate that passes the job's own slot:
+   same signature, same return table, same ordering (`adjacent desc, load asc,
+   km asc nulls last, display_name`), same grants, and the two-argument wrapper
+   untouched. A refactor and not a fork — a second copy would be a second answer
+   to *who may take this job*, and the one that drifts is always the one nobody
+   is testing. Null-slot behaviour is preserved exactly: the guard moved from
+   the columns onto the parameters, so a job with no hour still has no
+   candidates.
+3. **`find_first_available_slot(uuid, timestamptz)`** — the first top-of-hour at
+   or after `p_from` where the job has an eligible candidate, with that
+   candidate. **Two-hour** visits, **fourteen-day** horizon, hardcoded in the
+   engine's style like the 24-hour deadline, each with a comment saying what it
+   is. It writes nothing: probing by storing a trial hour on `work_orders`
+   would fire six triggers per probe.
+4. **`create_work_order` redefined.** The API still accepts a slot and a slotted
+   raise keeps today's semantics byte for byte. What is new is the slotless
+   raise: `resident` → `awaiting_resident` with a **null slot** and
+   `resident_deadline_at = now() + 24h` (pick-mode), notifying the resident
+   `work_order.schedule_requested` with `mode: 'pick'`; `facility` → `draft`,
+   unchanged, with the trigger in §7 arming its task. Nothing is enqueued
+   inside `create_work_order` — the status change already says everything the
+   queue needs, which is `0037` §2's rule.
+5. **`resident_set_work_order_schedule(uuid, timestamptz, timestamptz)`** — the
+   resident's write, complaint-scoped like its siblings and granted to
+   `authenticated`. Guards in order: `is_own_membership` against the raiser
+   (HB403), status `awaiting_resident` (HB409 *"There is nothing to schedule on
+   this complaint right now."*), null slot (HB409 *"The association proposed
+   this visit's time — answer that instead."*), and a future hour that ends
+   after it starts (HB409). Writes the slot, `status = 'offered'` — the open
+   pile — and clears the deadline; event `job_scheduled` with
+   `resident_set: true`; supervisor told with the new kind
+   `work_order.resident_scheduled`. **No decline** (F3).
+6. **`dispatch_resident_timeout` redefined**, branching on the discriminator.
+   Slot present: `0037` §5's body unchanged, proceeding to `offered` with the
+   same event and the same `work_order.proceeding` notification. Slot null
+   (pick-mode expired, F2): `find_first_available_slot(now())`; on a hit the
+   stray `offered` rows are withdrawn, an `accepted` row is inserted
+   (`is_auto_assigned = true`, `is_forced = false`, `offered_at = responded_at =
+   now()`), the found slot is written with `status = 'scheduled'`, the event is
+   `job_assigned` with `auto_assigned: true`, and worker, resident and
+   supervisor are notified (`work_order.assigned` twice, plus the new
+   `work_order.auto_assigned`). No hit inside the horizon: `status = 'draft'`,
+   deadline cleared, supervisor told `work_order.no_candidates` — the job lands
+   back on the open board, claimable, rather than stranding in
+   `awaiting_resident` with a dead timer.
+7. **`dispatch_facility_auto_assign(uuid)`**, plus **`sync_dispatch_tasks`** and
+   **`fire_dispatch_task` redefined**. The handler bails (completing the task)
+   unless the job is still a `draft` facility job with no live assignment — a
+   board claim winning the race is the outcome it exists to make unnecessary,
+   not one to fight. **The courtesy gate:** if any work order in the same
+   department is `subject_kind = 'resident'`, `priority = 'high'`, status in
+   `('draft','awaiting_resident','offered')` and has no live
+   (`offered|accepted`) assignment, the task completes and re-arms an hour
+   later; the job stays claimable on the open board the whole time, so a gated
+   job is never stranded. Gate clear: assign exactly as §6's hit branch; no
+   candidate: notify `work_order.no_candidates` **once** and complete, leaving
+   the job on the board. The trigger is re-issued with every existing arm
+   carried forward — the `resident_timeout` re-arm, the `manual_window` enqueue
+   with §23's smallint cast, the failed-visit escalation, and the final `else`
+   that cancels timers on an unrecognised status — with `draft` lifted out of
+   that `else` into an arm that still closes the job's timers and, **on INSERT
+   of a facility draft only**, arms the new task. `fire_dispatch_task` gains
+   the `when 'facility_auto_assign'` arm, which **completes its own row before
+   calling the handler**: the handler's hourly re-arm would otherwise be folded
+   into the firing row by `dispatch_tasks_one_open_per_kind` and then completed
+   by the update at the bottom, silently cancelling the retry.
+8. **`supervisor_triage_snapshot` redefined** with a sixth bucket.
+   `awaiting_resident` (uncommitted, status `awaiting_resident`, newest first)
+   is new; `open_requests` narrows to `draft`/`offered`. `TriageSnapshot` gains
+   `awaitingResident` on the wire, additively.
+9. **Grants**, each function's existing audience restated: the dispatch
+   internals revoked from `public, anon, authenticated` with no `service_role`
+   grant (`0037` §8's posture — only definer callers reach them, and
+   `fire_dispatch_task` is the one door the Python dispatcher uses);
+   `resident_set_work_order_schedule` to `authenticated`; then
+   `notify pgrst, 'reload schema';`, because new functions and a new overload
+   change the PostgREST function catalogue.
+10. **In-transaction `do $$` proofs**, §23 and §27's shape: `to_regprocedure`
+    for the four new signatures and the two surviving `dispatch_candidates`
+    entry points, body-string probes proving each of the five redefinitions is
+    the one the database now holds, and the widened kind CHECK.
+
+**What it does NOT do, and each absence is deliberate.** No new
+`work_orders` status (pick-mode is `awaiting_resident` + null slot); no new
+`complaint_events` word (`job_scheduled` / `job_assigned`, distinctions in the
+payload — §19's rule); no change to the board predicate, to
+`respond_to_work_order_schedule`, to `reschedule_work_order`, or to the
+supervisor's offer and force-assign paths.
+
+**Ordering:** after §27 by name, as above. The bodies it re-issues all sort
+earlier — `create_work_order` was last written by `0036`,
+`dispatch_resident_timeout` by `0037`, `sync_dispatch_tasks` and
+`dispatch_candidates` by §23, `fire_dispatch_task` by `20260813104000`, and
+`supervisor_triage_snapshot` by §20. The overlap audit against §20, §23 and §27
+is: this file is now the last word on those five, which
+`tests/test_resident_sets_the_time_migration.py` asserts by scanning the
+directory rather than by memory, and `tests/test_supervisor_actions_migration.py`
+was re-pointed to say so about the snapshot.
+
+**Apply:** paste the whole file into the SQL editor and run it. It ends with its
+own verification block, which raises if any of the four new functions is
+missing, if either `dispatch_candidates` entry point was lost, if the
+three-argument one is not the delegate, if any of the five redefinitions is not
+the live body, or if the widened CHECK does not accept `facility_auto_assign`.
+On success it raises one `notice`; no other output is expected.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823180000', 'resident_sets_the_time')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) Six sections, and the new key among them. This inspects the function
+--     body rather than calling it: the SQL editor has no auth.uid(), so the
+--     supervisor guard would HB403 any direct call -- and on this deployment
+--     departments carry kind NULL (the backend defaults NULL to "service" on
+--     read and only stores a kind the admin form supplied), so the old
+--     `where kind = 'service'` helper found no department and drew HB404.
+--     The real six-key call is proven by the app: the supervisor dashboard's
+--     GET /triage-snapshot renders the "Awaiting resident response" section.
+select pg_get_functiondef(
+         'public.supervisor_triage_snapshot(uuid)'::regprocedure)
+       like '%''awaiting_resident'', v_awaiting%' as has_sixth_bucket;
+-- expect: one row, true.
+
+-- (b) The four new functions, all SECURITY DEFINER, and both older
+--     dispatch_candidates entry points still there.
+select p.oid::regprocedure as signature, p.prosecdef as security_definer
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('dispatch_candidates', 'dispatch_candidates_at',
+                     'find_first_available_slot',
+                     'resident_set_work_order_schedule',
+                     'dispatch_facility_auto_assign')
+ order by 1;
+-- expect six rows, every one security_definer = true.
+
+-- (c) The one widened constraint knows the new kind, and nothing else moved.
+select pg_get_constraintdef(oid) like '%facility_auto_assign%' as knows_it
+  from pg_constraint
+ where conrelid = 'public.dispatch_tasks'::regclass
+   and conname  = 'dispatch_tasks_kind_check';
+-- expect: one row, true.
+
+-- (d) Who may execute the resident's verb, and who may not the internals.
+select p.oid::regprocedure as signature, p.proacl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('resident_set_work_order_schedule',
+                     'find_first_available_slot',
+                     'dispatch_facility_auto_assign');
+-- expect: `authenticated=X` on the first only; the other two carry the owner's
+-- entry and nothing else.
+```
+
+**Post-check, functional:** as a department supervisor, raise a job against a
+resident's complaint with **no time**. The resident's bell gains *"Pick a time
+for this visit"*, their complaint card shows a time picker, and the supervisor
+dashboard shows the job under **"Awaiting resident response"** and *not* under
+open requests. Set a time as the resident: the job moves to `offered`, appears
+on the open-jobs board, the timeline gains `job_scheduled` with
+`resident_set: true`, and the supervisor's bell gains *"The resident picked a
+time"*. Then raise a **facility** job with no time in a department with no
+outstanding urgent resident work: within one dispatcher tick (15s) it should be
+`scheduled` with a worker on it, the timeline carrying `job_assigned` with
+`auto_assigned: true` — or, with no eligible worker, stay a `draft` on the board
+with *"Nobody could be assigned"* in the supervisor's bell. Raise the same
+facility job while an urgent (`High`) resident job in that department has nobody
+on it, and check `dispatch_tasks` instead: the row's `due_at` should move an
+hour out and `completed_at` on the previous one be set.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_resident_sets_the_time_migration.py` (26 tests) — the file
+parses (`pglast`), sorts after §27, and is the last declaration of all five
+functions it re-issues; the only constraint it drops or adds is the dispatch
+kind check, and the widened list is a strict superset of `20260813104000`'s
+derived from that file's own text; no `work_orders` status outside the closed
+vocabulary is ever written; `worker_open_jobs` and `claim_open_work_order` are
+not mentioned; the finder writes nothing and carries the frozen 2h/1h/14d
+constants; the three-argument `dispatch_candidates` re-implements no
+eligibility clause and the parameterised body keeps every clause and the exact
+ordering; the raise's two slotless branches; the resident verb's guard order,
+its four HB409s and its `offered` write; no decline anywhere; both timeout
+branches including the no-candidate return to `draft`; the facility handler's
+bail conditions, its gate and its hourly re-arm; every arm of both re-issued
+dispatch functions plus the complete-before-handler ordering; the sixth bucket,
+the narrowed `open_requests` and the DTO agreement; the grants and the
+PostgREST reload; the self-verification block; and that every SQLSTATE it
+raises is one `pg_errors` can map. Plus the directory battery in
+`test_migration_directory_is_fresh_appliable.py` and the 210-operation
+`test_openapi_spec.py`. **Not verifiable statically:** that the hourly gate
+retry actually produces a *new* `dispatch_tasks` row rather than re-arming the
+one being fired — the reasoning is in the `fire_dispatch_task` comment and the
+ordering is pinned, but only the functional check above shows it; and the
+finder's cost, which walks up to 336 hypothetical hours per expired pick and has
+never been run against a real roster.

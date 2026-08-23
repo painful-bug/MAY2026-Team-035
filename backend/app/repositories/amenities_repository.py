@@ -204,6 +204,12 @@ def list_bookings(
     rejected and cancelled -- matching ``isTimelineVisibleBooking``. It is a
     separate flag rather than a default because the approvals tab and the ledger
     both want exactly the rows it would hide.
+
+    Approved is the whole of that set. The filter used to name 'confirmed' and
+    'blocked' beside it, and ``public.booking_status`` has neither: 'confirmed'
+    is a value no row can hold, and an admin block is an APPROVED row wearing
+    ``booking_type = 'blocked'`` (0023 lines 1104-1105), so it arrives through
+    'approved' and the timeline paints it from its type (issue #48 D3/D4).
     """
     query = (
         client.table(_BOOKINGS)
@@ -226,7 +232,7 @@ def list_bookings(
     if statuses:
         query = query.in_("stored_status", list(statuses))
     if timeline_only:
-        query = query.in_("stored_status", ["approved", "confirmed", "blocked"])
+        query = query.in_("stored_status", ["approved"])
     if search:
         safe = _safe_search(search)
         if safe:
@@ -545,6 +551,14 @@ def fetch_report_totals(client: Client, community_id: str, payload: dict) -> dic
     An RPC rather than a view because the filters have to apply BEFORE the
     aggregate, and rather than a Python sum because summing a page of rows gives
     the revenue of the page.
+
+    ``amenity_report_totals`` returns one document -- ``kpis``, ``rows``,
+    ``options``, and the resolved window -- and this returns the ``kpis`` object
+    out of it, which is what the name has always promised. The service used to
+    read the KPI names straight off the envelope, where none of them are, so
+    every figure came back 0 (issue #48 D4). The RPC's per-amenity ``rows`` and
+    its ``options`` are not returned because the service builds both from the
+    ledger page and the catalogue it already lists.
     """
     try:
         response = client.rpc(
@@ -554,10 +568,10 @@ def fetch_report_totals(client: Client, community_id: str, payload: dict) -> dic
     except Exception as exc:  # noqa: BLE001
         raise translate(exc, default_message="Could not build the report.") from exc
 
-    rows = response.data
-    if isinstance(rows, list):
-        rows = rows[0] if rows else None
-    return rows or {}
+    document = response.data
+    if isinstance(document, list):
+        document = document[0] if document else None
+    return (document or {}).get("kpis") or {}
 
 
 def fetch_ledger_summary(

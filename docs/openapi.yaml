@@ -590,6 +590,22 @@ components:
       type: object
     AmenityWrite:
       additionalProperties: false
+      description: 'The body of POST/PUT `/dashboard/amenities` -- the only amenity write
+
+        endpoints the app has, so anything the catalogue form collects has to fit
+
+        here or it is dropped on the floor (issue #48 D2).
+
+
+        `image`, `openingTime` and `closingTime` are columns on `amenities` since
+
+        `0023` (`image_url`, `opening_time`, `closing_time`); the model carries them
+
+        so the form can reach them. The hours are checked against each other here
+
+        for the same reason `amenities_hours_check` exists in `0023` -- with the
+
+        check only in Postgres a reversed pair is a 500, and it is a 422.'
       properties:
         approval_required:
           default: false
@@ -612,6 +628,11 @@ components:
           maxLength: 120
           title: Category
           type: string
+        closing_time:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Closing Time
         description:
           default: ''
           maxLength: 2000
@@ -622,6 +643,11 @@ components:
           minimum: 0.0
           title: Hourly Rate
           type: number
+        image:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image
         is_active:
           default: true
           title: Is Active
@@ -636,6 +662,11 @@ components:
           minLength: 2
           title: Name
           type: string
+        opening_time:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Opening Time
       required:
       - name
       title: AmenityWrite
@@ -1402,11 +1433,22 @@ components:
         ``users.find(u => u.id === booking.residentId)`` resolves.
 
 
-        ``status`` may read ``completed`` for a row whose stored status is
+        ``status`` is always a lowercase machine value out of
 
-        ``approved``: a booking that has finished is completed, and storing that
+        ``public.booking_status`` -- pending, approved, rejected, cancelled,
 
-        would need a scheduled job to keep it true.'
+        completed, no_show. ``amenity_booking_overview`` also exposes the same enum
+
+        initcap''d for display (''Approved'', ''No Show''); that spelling is for a human
+
+        to read and never crosses the wire (issue #48 D4).
+
+
+        ``state`` comes from ``booking_type``, not from ``status``: an admin block
+
+        is an APPROVED row whose type is ''blocked'', which is the only place that
+
+        fact is recorded.'
       properties:
         amenityId:
           title: Amenityid
@@ -5639,6 +5681,105 @@ components:
       - serviceProviderId
       title: OpenConversationRequest
       type: object
+    OpenJob:
+      description: 'One unclaimed job on the open-jobs board.
+
+
+        Keyed on the **work order**, not an assignment: the whole point of the
+
+        board is that nobody holds one yet. ``staffAssignmentId`` is the caller''s
+
+        own roster row for the job''s department, returned by the RPC so a client
+
+        never has to guess which of a multi-community worker''s rows a claim would
+
+        ride on.
+
+
+        A null slot is not missing data, it is ruling C3: an unscheduled job is on
+
+        the board with a "time to be set" marker, claimable, and the hour is set
+
+        afterwards in the supervisor''s queue.'
+      properties:
+        communityId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Communityid
+        communityName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Communityname
+        complaintId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complaintid
+        complaintTitle:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complainttitle
+        createdAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Createdat
+        departmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Departmentid
+        departmentName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Departmentname
+        priority:
+          default: medium
+          title: Priority
+          type: string
+        scheduledEndAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduledendat
+        scheduledStartAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduledstartat
+        skillId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillid
+        skillName:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Skillname
+        staffAssignmentId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Staffassignmentid
+        subjectKind:
+          default: resident
+          title: Subjectkind
+          type: string
+        workOrderId:
+          title: Workorderid
+          type: string
+      required:
+      - workOrderId
+      title: OpenJob
+      type: object
     OpenThreadRequest:
       description: 'Open (or return) a thread.
 
@@ -7013,32 +7154,53 @@ components:
       title: ReportJobFailureRequest
       type: object
     ReportKpis:
+      description: 'The six figures ``amenity_report_totals`` actually computes.
+
+
+        One field per RPC key, and no field without one. The previous set --
+
+        ``totalAmenities``, ``pendingApprovals``, ``activeAmenities``,
+
+        ``bookingsThisMonth`` -- named nothing the RPC returns, so all four rendered
+
+        a hardcoded 0 on the reports page while looking like measurements (issue #48
+
+        D4). A KPI with no source is a worse answer than no KPI, so they are gone
+
+        rather than zeroed.
+
+
+        ``totalActiveBookings`` is the approved count and ``totalRevenue`` is the
+
+        money actually received in the window; both keep their names because the
+
+        number underneath them is the one the label always promised.'
       properties:
-        activeAmenities:
-          title: Activeamenities
-          type: integer
-        bookingsThisMonth:
-          title: Bookingsthismonth
-          type: integer
-        pendingApprovals:
-          title: Pendingapprovals
+        cancelledBookings:
+          title: Cancelledbookings
           type: integer
         totalActiveBookings:
           title: Totalactivebookings
           type: integer
-        totalAmenities:
-          title: Totalamenities
+        totalBookings:
+          title: Totalbookings
           type: integer
+        totalCharged:
+          title: Totalcharged
+          type: number
+        totalRefunded:
+          title: Totalrefunded
+          type: number
         totalRevenue:
           title: Totalrevenue
           type: number
       required:
-      - totalAmenities
+      - totalBookings
       - totalActiveBookings
-      - pendingApprovals
+      - cancelledBookings
+      - totalCharged
       - totalRevenue
-      - activeAmenities
-      - bookingsThisMonth
+      - totalRefunded
       title: ReportKpis
       type: object
     ReportOption:
@@ -7180,7 +7342,29 @@ components:
       title: RescheduleWorkOrderRequest
       type: object
     ResidentBooking:
-      description: One of the caller's amenity bookings, and what is still owed on it.
+      description: 'One of the caller''s amenity bookings, and what is still owed on it.
+
+
+        ``status`` is the lowercase machine value, the same vocabulary the admin
+
+        amenity endpoints emit -- one word per state across the whole app. It used
+
+        to be the view''s Title-case display string (''Pending'', ''No Show''), which
+
+        made this the one booking endpoint whose status could not be compared
+
+        against any other''s (issue #48 D4).
+
+
+        ``storedStatus`` therefore now AGREES with ``status`` on every row, with the
+
+        single exception that it keeps the enum''s own name for the pending state --
+
+        ``requested`` where the wire says ``pending``. The key stays because the
+
+        wire keys are frozen and because that one distinction is still real; no
+
+        caller needs it to tell the states apart any more.'
       properties:
         amenityId:
           title: Amenityid
@@ -7700,6 +7884,10 @@ components:
           - type: string
           - type: 'null'
           title: Locationtext
+        mode:
+          default: approve
+          title: Mode
+          type: string
         respondBy:
           anyOf:
           - format: date-time
@@ -7749,6 +7937,38 @@ components:
       required:
       - response
       title: ScheduleResponseRequest
+      type: object
+    ScheduleTimeRequest:
+      description: 'The hour the resident chose for a visit to their own home.
+
+
+        Both ends required -- this is not a partial edit, and a half-slot is the
+
+        shape that silently disables ``work_order_assignments_no_overlap``, which is
+
+        checked on ``(start, end)`` and does nothing when start is null.
+
+
+        **There is no ``response`` field and no note.** Pick-mode is not a proposal,
+
+        so there is nothing to decline (ruling F3): the decline button stays on the
+
+        supervisor-proposed reschedule flow, and twenty-four hours of silence is
+
+        answered by the dispatcher booking the first free hour.'
+      properties:
+        endAt:
+          format: date-time
+          title: Endat
+          type: string
+        startAt:
+          format: date-time
+          title: Startat
+          type: string
+      required:
+      - startAt
+      - endAt
+      title: ScheduleTimeRequest
       type: object
     SecurityIncident:
       description: Something worth a record.
@@ -9194,6 +9414,12 @@ components:
           items:
             $ref: '#/components/schemas/TriageWorkOrder'
           title: Assignedpending
+          type: array
+        awaitingResident:
+          default: []
+          items:
+            $ref: '#/components/schemas/TriageWorkOrder'
+          title: Awaitingresident
           type: array
         departmentId:
           title: Departmentid
@@ -12203,7 +12429,18 @@ paths:
 
         charged for a booking and had no endpoint that would tell them so. They can
 
-        now see their own, and nobody else''s.'
+        now see their own, and nobody else''s.
+
+
+        `status` is the lowercase machine value — `pending`, `approved`, `rejected`,
+
+        `cancelled`, `completed`, `no_show` — the same vocabulary the admin amenity
+
+        endpoints emit. Unlike the invoice list above, `storedStatus` is not a
+
+        second, truer answer here: it agrees with `status` on every row except that
+
+        it keeps the enum''s own `requested` for the pending state.'
       operationId: list_my_bookings_api_v1_amenity_bookings_mine_get
       parameters:
       - description: '`upcoming` | `past`. Omitted returns both.'
@@ -15180,6 +15417,21 @@ paths:
         the first screen rather than arriving as a surprise.
 
 
+        **`mode` says which question is being asked** (ruling F1, 2026-08-23).
+
+        `approve` — the association proposed an hour, answer it with `POST
+
+        …/schedule`. `pick` — nobody has chosen one, and the hour is yours to set
+
+        with `POST …/schedule-time`; the proposed times are `null`. Both are
+
+        `awaiting_resident`, because `work_orders_status_check` is a closed list and
+
+        a new word there costs a constraint rebuild — the slot is the discriminator,
+
+        and `mode` is that derivation made once, here, instead of on every screen.
+
+
         | Status | Code | Cause |
 
         |---|---|---|
@@ -15221,6 +15473,106 @@ paths:
         id: US-2.8
         role: '''When to expect action'', answered with an hour and a name instead of an SLA estimate
           -- and `respondBy` says when the association will stop waiting for the resident'
+        title: Complaint accountability
+  /api/v1/complaints/{complaint_id}/schedule-time:
+    post:
+      description: 'The resident says when. `startAt` and `endAt`, both required.
+
+
+        The 2026-08-23 ruling F1: a job at somebody''s home no longer arrives with an
+
+        hour a supervisor guessed for them. It arrives as a request, like a hiring
+
+        application reaching a manager, and the resident''s answer is the hour
+
+        itself. Setting it moves the job to `offered` — the open pile — and the
+
+        supervisor is notified.
+
+
+        **There is no decline here** (ruling F3). Pick-mode was never a proposal, so
+
+        there is nothing to refuse; the decline button stays on the
+
+        supervisor-proposed reschedule, which is what `POST …/schedule` answers. If
+
+        twenty-four hours pass with no answer the dispatcher books the first hour a
+
+        serviceman can take and assigns them, which is what the card says it will.
+
+
+        **The two write routes are not interchangeable and refuse each other''s
+
+        jobs.** A job the association gave an hour returns a `409` here — answer
+
+        that proposal instead — and a job with no hour cannot be `confirmed`.
+
+        Sending the wrong one is a mistake with a sentence, not a silent overwrite
+
+        of somebody else''s intention.
+
+
+        Responds `200` with the same body as `GET …/schedule-request`, re-read, so
+
+        a screen sees the booking land rather than assuming it.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | This visit is not yours to schedule |
+
+        | 404 | `schedule_request_not_found` | No live job on this complaint |
+
+        | 409 | `conflict` | Nothing to schedule; the association proposed the time; or the hour is in
+        the past |
+
+        | 422 | `validation_error` | A missing end, or an end before its start |'
+      operationId: set_schedule_time_api_v1_complaints__complaint_id__schedule_time_post
+      parameters:
+      - description: Complaint id, scoped to the caller's community.
+        in: path
+        name: complaint_id
+        required: true
+        schema:
+          title: Complaint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleTimeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleRequest'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Pick the time for a visit to my home
+      tags:
+      - resident-scheduling
+      x-user-stories:
+      - coverage: served
+        id: US-2.8
+        role: '''When to expect action'' answered by the resident themselves: the visit happens when they
+          said it could, instead of at an hour a supervisor guessed and they had to ring up to move'
         title: Complaint accountability
   /api/v1/complaints/{complaint_id}/take-up:
     post:
@@ -18161,16 +18513,18 @@ paths:
       x-user-stories: []
   /api/v1/departments/{department_id}/triage-snapshot:
     get:
-      description: "Five sections, bucketed server-side, newest first within each.\n\n* `newComplaints`\
+      description: "Six sections, bucketed server-side, newest first within each.\n\n* `newComplaints`\
         \ — storage status `open`, no take-up stamp, no live job.\n* `takenUp` — a supervisor pressed\
-        \ *Take up* and no job exists yet.\n* `openRequests` — a job is raised and nobody has committed\
-        \ to it:\n  `draft`, `awaiting_resident` or `offered`.\n* `assignedPending` — a worker **accepted**\
+        \ *Take up* and no job exists yet.\n* `awaitingResident` — the resident has been asked and has\
+        \ not answered:\n  `awaiting_resident`, uncommitted. Nothing here is the supervisor's to\n  move,\
+        \ which is why it stopped being an open request on 2026-08-23.\n* `openRequests` — a job is raised\
+        \ and nobody has committed to it: `draft`\n  or `offered`.\n* `assignedPending` — a worker **accepted**\
         \ it (or it is booked) and has not\n  started.\n* `inProgress` — the worker pressed *Start*; `startedAt`\
         \ says when.\n\n**The bucketing is the server's and the client never re-derives it.** *Live*\n\
         (not completed, cancelled or failed) and *committed* (an `accepted`\nassignment, or work-order\
-        \ status `scheduled`) are defined once, in\n`supervisor_triage_snapshot`. Five definitions that\
-        \ must agree are one\ndefinition or they are five answers.\n\n**Furthest stage wins**, so a complaint\
-        \ appears exactly once across the five:\nas a complaint until a job exists, and as that job afterwards.\
+        \ status `scheduled`) are defined once, in\n`supervisor_triage_snapshot`. Six definitions that\
+        \ must agree are one\ndefinition or they are six answers.\n\n**Furthest stage wins**, so a complaint\
+        \ appears exactly once across the six:\nas a complaint until a job exists, and as that job afterwards.\
         \ An offered but\nunaccepted job is an *open request* and not assigned work — the 2026-08-22\n\
         ruling A3, and the reason `offeredToName` exists beside `assigneeName`.\n\nOne call rather than\
         \ the N+1 the triage screen makes today — a department\nread followed by a work-order read per\
@@ -23776,6 +24130,63 @@ paths:
         id: US-2.7
         role: The resident is told who is coming, by name, without asking
         title: Complaint lifecycle notifications
+  /api/v1/worker/jobs/{work_order_id}/claim:
+    post:
+      description: "Claim, instantly. First come, first served — there is no approval step.\n\nRuling\
+        \ C2: taking a job from the board commits the worker on the spot with\naccept-an-offer mechanics\
+        \ — an `accepted` assignment, the job moved to\n`scheduled`, the resident and the supervisor notified.\
+        \ Unlike `/accept`\nthere is no offer underneath: the RPC checks the roster, the trade and the\n\
+        complaint's exclusion history itself, under the same row lock that settles\nthe race, so the loser\
+        \ of a same-second double-claim is told *somebody has\nalready taken this job* rather than shown\
+        \ a constraint violation.\n\nA job with no slot is claimed with no slot (C3): the overlap check\
+        \ is\nskipped because there is nothing to overlap, the job still moves to\n`scheduled`, and the\
+        \ hour is set afterwards in the supervisor's queue.\n\n| Status | Code | Cause |\n|---|---|---|\n\
+        | 403 | `forbidden` | Not on this department's roster, or the wrong trade |\n| 404 | `not_found`\
+        \ | No such job |\n| 409 | `conflict` | Somebody took it · the complaint's history rules you\n\
+        \  out · you are booked during its slot |"
+      operationId: claim_job_api_v1_worker_jobs__work_order_id__claim_post
+      parameters:
+      - in: path
+        name: work_order_id
+        required: true
+        schema:
+          title: Work Order Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerJob'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Take an unclaimed job off the board
+      tags:
+      - worker-jobs
+      x-user-stories:
+      - coverage: served
+        id: US-2.8
+        role: '''Who is responsible'' acquires an answer that came from the responsible person -- here
+          before any supervisor asked, because the worker took the job off the board themselves'
+        title: Complaint accountability
+      - coverage: served
+        id: US-2.7
+        role: The resident is told who is coming, by name, without asking -- the claim notifies exactly
+          as accepting an offer does
+        title: Complaint lifecycle notifications
   /api/v1/worker/jobs/{work_order_id}/complete:
     post:
       description: 'Close the job. **The complaint stays open.**
@@ -24059,6 +24470,75 @@ paths:
         role: 'Accountability in the direction nobody designs for: the visit that failed is counted, and
           two hours later somebody senior is told it has not been rebooked'
         title: Complaint accountability
+  /api/v1/worker/open-jobs:
+    get:
+      description: 'Every unclaimed job on the caller''s department rosters, claimable now.
+
+
+        The product ruling of 2026-08-23 (C1): a department roster technician who
+
+        holds the job''s trade sees the department''s open work, not only what a
+
+        supervisor has offered them. "Open" is adjudicated as *uncommitted and
+
+        unpromised* — `draft` or `offered` with no live assignment — so a job with
+
+        an offer out to somebody else is off the board, and a decline returns it.
+
+
+        An unscheduled job appears with a null slot (C3): it is claimable, and its
+
+        hour is set afterwards in the supervisor''s queue.
+
+
+        **The list is exclusion-aware.** A job whose complaint history rules the
+
+        caller out — a decline on it, a resident cancellation, a reopen after
+
+        their completed visit — is not shown, because it is not actionable; the
+
+        claim re-checks it anyway, because the list and the click are seconds
+
+        apart.
+
+
+        An empty list is the ordinary answer, not an error: no roster rows, no
+
+        matching trades, or simply nothing waiting all look the same here, and
+
+        `communities` on the snapshot is what distinguishes them for a client.'
+      operationId: list_open_jobs_api_v1_worker_open_jobs_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/OpenJob'
+                title: Response List Open Jobs Api V1 Worker Open Jobs Get
+                type: array
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: The open-jobs board
+      tags:
+      - worker-jobs
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'The service person''s own screens: their job list, the detail they need in order to
+          turn up, and the dashboard aggregate behind all of it. Four operations on this surface DO serve
+          stories -- accepting, starting, completing and reporting a failed visit all reach the resident
+          -- and these do not, which is the distinction worth keeping. A worker reading their own queue
+          is nobody''s user story: the interviews were with residents and committee members, and the plumber
+          was never in the room. See `service_provider` for the same structural gap stated at registration.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/worker/snapshot:
     get:
       description: 'Everything the worker''s dashboard renders, in one call.

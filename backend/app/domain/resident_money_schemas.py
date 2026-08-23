@@ -68,7 +68,20 @@ class ResidentInvoice(CamelModel):
 
 
 class ResidentBooking(CamelModel):
-    """One of the caller's amenity bookings, and what is still owed on it."""
+    """One of the caller's amenity bookings, and what is still owed on it.
+
+    ``status`` is the lowercase machine value, the same vocabulary the admin
+    amenity endpoints emit -- one word per state across the whole app. It used
+    to be the view's Title-case display string ('Pending', 'No Show'), which
+    made this the one booking endpoint whose status could not be compared
+    against any other's (issue #48 D4).
+
+    ``storedStatus`` therefore now AGREES with ``status`` on every row, with the
+    single exception that it keeps the enum's own name for the pending state --
+    ``requested`` where the wire says ``pending``. The key stays because the
+    wire keys are frozen and because that one distinction is still real; no
+    caller needs it to tell the states apart any more.
+    """
 
     id: str
     booking_series_id: str
@@ -78,8 +91,9 @@ class ResidentBooking(CamelModel):
     booking_date: date | None = None
     starts_at: datetime
     ends_at: datetime
-    #: `Pending` | `Approved` | `Rejected` | `Cancelled` | `Completed` | `No Show`.
+    #: `pending` | `approved` | `rejected` | `cancelled` | `completed` | `no_show`.
     status: str
+    #: The stored enum: as above, but `requested` for `pending`.
     stored_status: str
     guest_count: int = 0
     is_private: bool = False

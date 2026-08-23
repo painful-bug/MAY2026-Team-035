@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AMENITY_CATEGORIES } from '../constants/amenityCategories.js';
 import { BOOKING_MODE } from '../constants/bookingModes.js';
+import { downscaleImageFile } from '../utils/downscaleImage.js';
 import { validateAmenityForm } from '../utils/validateAmenityForm.js';
 
 const createInitialValues = () => ({
@@ -22,13 +23,12 @@ const createInitialValues = () => ({
 export const useAmenityForm = (onSubmit) => {
   const [values, setValues] = useState(createInitialValues);
   const [errors, setErrors] = useState({});
-  const imageReaderRef = useRef(null);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const isMountedRef = useRef(true);
 
   useEffect(
     () => () => {
-      if (imageReaderRef.current?.readyState === FileReader.LOADING) {
-        imageReaderRef.current.abort();
-      }
+      isMountedRef.current = false;
     },
     []
   );
@@ -46,31 +46,40 @@ export const useAmenityForm = (onSubmit) => {
     });
   };
 
-  const selectImage = (file) => {
+  // The picture is downscaled HERE rather than at submit time, because what
+  // the admin previews has to be what is stored: the amenity image ships as a
+  // base64 data URL inside `amenities.image_url` and the write endpoint refuses
+  // anything over ~100KB, so a full-size camera photo has to lose its pixels
+  // before it can be part of the form's value at all. `downscaleImageFile`
+  // throws a sentence written for the admin; it is shown as the field's error.
+  const selectImage = async (file) => {
     if (!file) {
       return;
     }
 
-    if (!file.type.startsWith('image/')) {
-      setErrors((currentErrors) => ({
-        ...currentErrors,
-        image: 'Choose a valid image file.',
-      }));
-      return;
-    }
+    setIsProcessingImage(true);
 
-    const reader = new FileReader();
-    imageReaderRef.current = reader;
-    reader.addEventListener('load', () => {
-      updateField('image', String(reader.result));
-    });
-    reader.addEventListener('error', () => {
-      setErrors((currentErrors) => ({
-        ...currentErrors,
-        image: 'The image could not be previewed.',
-      }));
-    });
-    reader.readAsDataURL(file);
+    try {
+      const image = await downscaleImageFile(file);
+
+      if (isMountedRef.current) {
+        updateField('image', image);
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        setErrors((currentErrors) => ({
+          ...currentErrors,
+          image:
+            error instanceof Error
+              ? error.message
+              : 'The image could not be prepared.',
+        }));
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsProcessingImage(false);
+      }
+    }
   };
 
   const removeImage = () => {
@@ -100,6 +109,13 @@ export const useAmenityForm = (onSubmit) => {
 
   const submitForm = async (event) => {
     event.preventDefault();
+
+    // The picture is still being resized; submitting now would save the
+    // amenity without it and give no hint why.
+    if (isProcessingImage) {
+      return false;
+    }
+
     const validationErrors = validateAmenityForm(values);
     setErrors(validationErrors);
 
@@ -131,6 +147,7 @@ export const useAmenityForm = (onSubmit) => {
 
   return {
     errors,
+    isProcessingImage,
     values,
     removeImage,
     selectImage,

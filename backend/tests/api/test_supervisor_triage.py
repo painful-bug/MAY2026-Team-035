@@ -523,3 +523,48 @@ def test_api_352_a_malformed_section_empties_itself_and_not_the_screen(
     }
 
     assert actual_output == expected_output, endpoint
+
+
+def test_api_379_the_sixth_section_carries_the_jobs_waiting_on_a_resident(
+    supervisor: TestClient, triage: dict
+) -> None:
+    """The 2026-08-23 ruling F1's dashboard half: a job the resident has been
+    asked to put an hour on is not an *open request*. Nothing on it is the
+    supervisor's to move -- they cannot pick the time and they are not meant to
+    -- so listing it beside the work they can take up was showing them a queue
+    that was not theirs.
+
+    `openRequests` narrows to `draft` and `offered` in the same change, and the
+    split is the RPC's: this asserts only that the seventh key is read and
+    rendered as its own array, because a service that dropped it would leave the
+    new section permanently and silently empty."""
+    endpoint = "GET /api/v1/departments/department-id/triage-snapshot"
+    expected_output = {
+        "status_code": 200,
+        "awaitingResident": ["w-awaiting"],
+        "openRequests": ["w-open"],
+        "awaiting_status": "awaiting_resident",
+    }
+
+    triage["payload"] = snapshot_payload(
+        awaiting_resident=[
+            work_order_row(
+                id="w-awaiting",
+                status="awaiting_resident",
+                assignee_name=None,
+                scheduled_start_at=None,
+                scheduled_end_at=None,
+            )
+        ],
+        open_requests=[work_order_row(id="w-open", status="draft")],
+    )
+    response = supervisor.get(SNAPSHOT)
+    body = response.json()
+    actual_output = {
+        "status_code": response.status_code,
+        "awaitingResident": [row["id"] for row in body["awaitingResident"]],
+        "openRequests": [row["id"] for row in body["openRequests"]],
+        "awaiting_status": body["awaitingResident"][0]["status"],
+    }
+
+    assert actual_output == expected_output, endpoint

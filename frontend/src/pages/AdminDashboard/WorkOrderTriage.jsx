@@ -677,33 +677,34 @@ function CreateForm({ complaintId, skills, onCreated }) {
   const [skillId, setSkillId] = useState('');
   const [locationText, setLocationText] = useState('');
   const [note, setNote] = useState('');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
 
   const create = useMutation({
     mutationFn: (payload) => workOrdersApi.create(complaintId, payload),
     onSuccess: onCreated,
   });
 
-  const halfASlot = Boolean(start) !== Boolean(end);
-
   return (
     <form
       className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (halfASlot) return;
         // `departmentId` is deliberately not sent. It is derived from the
         // complaint, and every complaint on this screen was listed *because*
         // it is already routed to this department — sending it again would be
         // this screen re-deciding routing it does not own.
+        //
+        // Neither is the slot, and that is ruling F1 rather than an omission:
+        // nobody on this side of the screen picks the hour any more. A
+        // resident-subject job asks the resident for it; a common-area job is
+        // booked by the system into the first hour somebody can take. The API
+        // still *accepts* `scheduledStartAt`/`scheduledEndAt` for older
+        // callers (adjudication G1), which is exactly why this one has to be
+        // deliberate about sending neither.
         create.mutate({
           subjectKind,
           skillId: skillId || null,
           locationText: locationText.trim() || null,
           note: note.trim() || null,
-          scheduledStartAt: isoFrom(start),
-          scheduledEndAt: isoFrom(end),
         });
       }}
     >
@@ -743,32 +744,6 @@ function CreateForm({ complaintId, skills, onCreated }) {
         onChange={(event) => setLocationText(event.target.value)}
       />
 
-      {/* The fork this whole feature turns on. Leaving both blank raises a
-          draft and nothing is proposed and nobody is notified — the supervisor
-          wants to ask the resident something first, and that conversation
-          carries on in the complaint's comments. Filling them in proposes a
-          visit. */}
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block space-y-1.5">
-          <span className="text-[11px] font-bold text-slate-500">Start (optional)</span>
-          <input
-            type="datetime-local"
-            className={inputClass}
-            value={start}
-            onChange={(event) => setStart(event.target.value)}
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-[11px] font-bold text-slate-500">End (optional)</span>
-          <input
-            type="datetime-local"
-            className={inputClass}
-            value={end}
-            onChange={(event) => setEnd(event.target.value)}
-          />
-        </label>
-      </div>
-
       <input
         className={inputClass}
         value={note}
@@ -776,19 +751,20 @@ function CreateForm({ complaintId, skills, onCreated }) {
         onChange={(event) => setNote(event.target.value)}
       />
 
+      {/* There used to be a start and an end here, and the fork the whole
+          screen turned on was whether they were filled in. Ruling F1 took the
+          question away from this form for everyone: who answers "when" is
+          decided by *who the job is about*, and the two answers are the two
+          sentences below. */}
       <p className="text-[11px] font-semibold text-slate-500">
-        {halfASlot
-          ? 'A proposed time needs both a start and an end.'
-          : start
-            ? subjectKind === 'facility'
-              ? 'A common-area job goes straight to “time settled” — there is nobody whose door is being knocked on.'
-              : 'The resident is asked to confirm this hour.'
-            : 'With no time this stays a draft: nothing is proposed and nobody is notified.'}
+        {subjectKind === 'facility'
+          ? 'Nobody confirms a common-area job — the system books the first free hour a serviceman can take, once urgent home visits are covered.'
+          : 'The resident picks the visit time — this sends them the request. If they have not answered in 24 hours, the system books the first free hour a serviceman can take.'}
       </p>
 
       <button
         type="submit"
-        disabled={create.isPending || halfASlot}
+        disabled={create.isPending}
         className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60"
       >
         <Plus className="h-4 w-4" />Raise it

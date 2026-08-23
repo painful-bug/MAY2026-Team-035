@@ -443,18 +443,39 @@ def test_series_id_is_emitted_as_the_booking_group_too() -> None:
 
 
 def test_a_block_is_blocked_on_the_timeline_and_a_booking_is_not() -> None:
-    """The timeline colours from `state`, which has four values, while the
-    lifecycle has seven."""
-    assert _timeline_state(_booking_row(stored_status="blocked")) == "blocked"
-    assert _timeline_state(_booking_row(stored_status="pending")) == "booked"
-    assert _timeline_state(_booking_row(stored_status="confirmed")) == "booked"
+    """The timeline colours from `state`, which has two values, while the
+    lifecycle has six.
+
+    `state` reads `booking_type`, not the status: `block_amenity_slot` stores a
+    block as an APPROVED row wearing `booking_type = 'blocked'` (0023 lines
+    1104-1105), and 'blocked' is not a value `public.booking_status` can hold.
+    """
+    assert _timeline_state(_booking_row(booking_type="blocked")) == "blocked"
+    assert _timeline_state(_booking_row(booking_type="resident")) == "booked"
+    assert _timeline_state(_booking_row(booking_type="admin")) == "booked"
+    # A block is stored approved; the status is not what distinguishes it.
+    assert (
+        _timeline_state(_booking_row(stored_status="approved", booking_type="blocked"))
+        == "blocked"
+    )
+    assert (
+        _timeline_state(_booking_row(stored_status="approved", booking_type="resident"))
+        == "booked"
+    )
 
 
-def test_completed_is_carried_from_the_view_not_recomputed() -> None:
-    """The view derives it from the clock; recomputing here would give two
-    answers that disagree for a booking finishing during the request."""
-    booking = _to_booking(_booking_row(status="completed", stored_status="approved"))
+def test_completed_is_carried_from_the_stored_status_not_the_display_one() -> None:
+    """`status` on the wire is the machine value, from `stored_status`.
+
+    The view's own `status` column is the same enum initcap'd for display
+    (0023 lines 484-492) -- 'Completed', 'No Show' -- and passing that through
+    made every case-sensitive comparison downstream miss (issue #48 D4).
+    """
+    booking = _to_booking(_booking_row(status="Completed", stored_status="completed"))
     assert booking.status == "completed"
+    assert _to_booking(_booking_row(status="No Show", stored_status="no_show")).status == (
+        "no_show"
+    )
 
 
 def test_a_block_has_no_resident_rather_than_a_placeholder() -> None:
@@ -465,13 +486,16 @@ def test_a_block_has_no_resident_rather_than_a_placeholder() -> None:
             unit_id=None,
             unit_code=None,
             tower=None,
-            stored_status="blocked",
-            status="blocked",
-            booking_type="maintenance-reservation",
+            # A block, exactly as `block_amenity_slot` stores one.
+            stored_status="approved",
+            status="Approved",
+            booking_type="blocked",
+            source="admin",
             title="Deep clean",
             department="Cleaning",
         )
     )
+    assert booking.state == "blocked"
     assert booking.resident_id is None
     assert booking.resident_name is None
     assert booking.resident_flat is None
@@ -671,10 +695,10 @@ def test_a_pending_booking_offers_no_refund() -> None:
     assert "damage" not in actions
 
 
-def test_a_future_confirmed_booking_can_be_force_cancelled() -> None:
+def test_a_future_approved_booking_can_be_force_cancelled() -> None:
     actions = _available_actions(
         _ledger_row(
-            booking_status="confirmed",
+            booking_status="approved",
             booking_date=str(date.today() + timedelta(days=1)),
             payment_status="paid",
             remaining_refund="0.00",
@@ -687,7 +711,7 @@ def test_a_past_booking_cannot_be_force_cancelled() -> None:
     """There is nothing left to prevent."""
     actions = _available_actions(
         _ledger_row(
-            booking_status="confirmed",
+            booking_status="approved",
             booking_date=str(date.today() - timedelta(days=1)),
             payment_status="paid",
             remaining_refund="0.00",
@@ -699,7 +723,7 @@ def test_a_past_booking_cannot_be_force_cancelled() -> None:
 def test_an_already_force_cancelled_booking_cannot_be_again() -> None:
     actions = _available_actions(
         _ledger_row(
-            booking_status="confirmed",
+            booking_status="approved",
             booking_date=str(date.today() + timedelta(days=1)),
             force_cancelled=True,
             payment_status="paid",

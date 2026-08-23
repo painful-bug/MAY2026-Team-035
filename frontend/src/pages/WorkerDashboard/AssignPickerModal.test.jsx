@@ -141,10 +141,13 @@ describe('assigning a job outright', () => {
     serve({ candidates: [] });
     renderPicker();
 
-    expect(await screen.findByText(/Nobody in this department holds the trade/)).toBeVisible();
+    // The empty list has several causes the server does not distinguish —
+    // trade, leave, clashing bookings — so the copy must not pick one.
+    expect(await screen.findByText(/Nobody on this department's roster is eligible/)).toBeVisible();
+    expect(screen.getByText(/lack the trade, be on leave, or already be booked/)).toBeVisible();
   });
 
-  it('warns before the fact when the job has no hour on it', async () => {
+  it('explains the missing hour instead of asking a question whose answer is fixed', async () => {
     serve();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -152,8 +155,14 @@ describe('assigning a job outright', () => {
       </QueryClientProvider>,
     );
 
-    // `assign_work_order` refuses a booking with no hour anywhere on it, and
-    // that refusal reads as arbitrary if the screen never mentioned the hour.
+    // `dispatch_candidates` structurally returns nobody for an unscheduled
+    // job, so an empty roster here used to read as "nobody holds the trade" —
+    // a wrong diagnosis. The screen now names the hour as the reason, points
+    // at the queue, and never fetches the list at all.
     expect(screen.getByText(/no hour on it yet/)).toBeVisible();
+    expect(screen.getByText(/Set a time in the work-order queue first/)).toBeVisible();
+    expect(screen.queryByText(/Nobody on this department's roster/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reading the roster/)).not.toBeInTheDocument();
+    expect(mocks.api).not.toHaveBeenCalled();
   });
 });

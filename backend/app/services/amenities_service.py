@@ -62,6 +62,8 @@ from app.domain.vocabularies import (
     amenity_status_to_wire,
     booking_mode_to_storage,
     booking_mode_to_wire,
+    booking_status_to_storage,
+    booking_status_to_wire,
     weekdays_to_storage,
     weekdays_to_wire,
 )
@@ -71,23 +73,47 @@ from supabase import Client
 
 _CATEGORIES = ("Sports", "Fitness", "Recreation", "Events", "Utility")
 _MAINTENANCE_INTERVALS = ("Weekly", "Monthly", "Quarterly", "As Needed")
-_BOOKING_TYPES = (
-    "resident",
-    "private-event",
-    "society-event",
-    "maintenance-reservation",
-)
+# Exactly the values `amenity_bookings_type_check` accepts (0023 lines 289-291).
+# Anything else is refused by Postgres on insert, so offering it here only moves
+# the failure from the form to the database (issue #48 D4).
+_BOOKING_TYPES = ("resident", "admin", "maintenance", "blocked")
+# The admin booking form's own vocabulary, folded onto the four the column holds
+# before validation. The event's human meaning keeps living in the title, the
+# notes and the department -- which is where the form already puts it -- rather
+# than in a `booking_type` the CHECK constraint would reject. Reads present the
+# stored value; the UI wording is not round-tripped.
+_BOOKING_TYPE_ALIASES = {
+    "private-event": "admin",
+    "society-event": "admin",
+    "maintenance-reservation": "maintenance",
+}
 _CHARGE_TYPES = ("booking", "deposit", "additional", "late_cancellation")
+# `series_status` in `amenity_booking_overview` is one of four values (0023
+# lines 537-542); `confirmed` was a fifth that no row could ever carry, so the
+# 'approved' tab filtered on a phantom alongside the real one.
 _APPROVAL_FILTERS = {
     "pending": ("pending",),
-    "approved": ("approved", "confirmed"),
+    "approved": ("approved",),
     "rejected": ("rejected",),
     "cancelled": ("cancelled",),
-    "all": ("pending", "approved", "confirmed", "rejected", "cancelled"),
+    "all": ("pending", "approved", "rejected", "cancelled"),
 }
 # Statuses the ledger treats as money still in play, for `availableActions`.
+# The report's booking-status filter options, in the wire's vocabulary. One
+# list, so the options the screen offers and the values the filter accepts
+# cannot drift apart.
+_REPORT_BOOKING_STATUSES = (
+    "pending",
+    "approved",
+    "completed",
+    "cancelled",
+    "rejected",
+)
 _REFUNDABLE_STATUSES = ("completed", "cancelled")
-_FORCE_CANCELLABLE_STATUSES = ("approved", "confirmed")
+# `amenity_ledger_overview.booking_status` is `amenity_bookings.status::text`,
+# so 'approved' is the whole of it: 'confirmed' stood beside it here as a value
+# no row could ever hold (issue #48 D4).
+_FORCE_CANCELLABLE_STATUSES = ("approved",)
 
 
 def _community(client: Client, user_id: str) -> str:
@@ -435,15 +461,33 @@ def delete_amenity(client: Client, amenity_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _wire_status(row: dict) -> str:
+    """The booking's lifecycle status as a machine value.
+
+    ``stored_status`` is ``amenity_bookings.status::text`` -- the enum itself --
+    so it is the source when present. The view's display ``status`` is the same
+    fact initcap'd for a human, and is the fallback for any caller handing us a
+    row that carries only that one. Either way it goes through
+    ``booking_status_to_wire``, which is where 'requested' becomes the 'pending'
+    the frontend is built on.
+    """
+    return booking_status_to_wire(row.get("stored_status") or row.get("status"))
+
+
 def _timeline_state(row: dict) -> str:
-    """The timeline's four-value vocabulary, from the lifecycle's seven.
+    """The timeline's two-value vocabulary, from the lifecycle's six.
+
+    A block is ``booking_type = 'blocked'``: ``block_amenity_slot`` stores it as
+    an ordinary APPROVED booking wearing that type (0023 lines 1104-1105), and
+    'blocked' is not a value ``public.booking_status`` has. Keying on the status
+    -- as this did -- painted every admin block as a resident booking (D3).
 
     The cleaning buffer is deliberately not a state here: the frontend synthesises
     buffer blocks at render time from the booking's end and the amenity's buffer
     (``amenityTimeline.createCleaningBuffers``), and duplicating that on the wire
     would give the timeline two sources for the same block.
     """
-    return "blocked" if row.get("stored_status") == "blocked" else "booked"
+    return "blocked" if row.get("booking_type") == "blocked" else "booked"
 
 
 def _to_booking(
@@ -471,7 +515,7 @@ def _to_booking(
         end_time=_clock(row.get("ends_at")),
         state=_timeline_state(row),
         booking_type=row.get("booking_type") or "resident",
-        status=row.get("status") or "pending",
+        status=_wire_status(row),
         source=row.get("source") or "resident",
         requires_approval=bool(row.get("requires_approval")),
         is_private_booking=bool(row.get("is_private")),
@@ -659,24 +703,35 @@ def request_booking(
     return _series_page(client, community_id, series_id)
 
 
+def _storage_booking_type(value: str) -> str:
+    """The booking type the column can hold, from the one the form offers.
+
+    The mapping is code-only and deliberately lossy: 'private-event' and
+    'society-event' are both ADMIN bookings as far as `amenity_bookings` is
+    concerned, and which kind of event it was is recorded where the form already
+    records it -- the title, the notes and the department.
+    """
+    mapped = _BOOKING_TYPE_ALIASES.get(value, value)
+    if mapped not in _BOOKING_TYPES:
+        accepted = sorted(set(_BOOKING_TYPES) | set(_BOOKING_TYPE_ALIASES))
+        raise ValidationError("Booking type must be one of: " + ", ".join(accepted) + ".")
+    return mapped
+
+
 def create_admin_booking(
     client: Client,
     user_id: str,
     amenity_id: str,
     request: AdminBookingRequest,
 ) -> BookingSummary:
-    """An admin booking on a resident's behalf. Confirmed on creation."""
+    """An admin booking on a resident's behalf. Approved on creation."""
     community_id = _community(client, user_id)
     _assert_time_range(request.start_time, request.end_time)
-    if request.booking_type not in _BOOKING_TYPES:
-        raise ValidationError(
-            "Booking type must be one of: " + ", ".join(_BOOKING_TYPES) + "."
-        )
 
     payload = {
         "membership_id": request.membership_id,
         "title": request.booking_title,
-        "booking_type": request.booking_type,
+        "booking_type": _storage_booking_type(request.booking_type),
         "booking_date": str(request.date),
         "starts_at": request.start_time,
         "ends_at": request.end_time,
@@ -964,7 +1019,9 @@ def _to_transaction(row: dict, events: list[dict]) -> LedgerTransaction:
         outstanding_deposit=_amount(row.get("outstanding_deposit")),
         remaining_refund=_amount(row.get("remaining_refund")),
         payment_status=row.get("payment_status") or "pending",
-        booking_status=row.get("booking_status") or "pending",
+        # The ledger view exposes the raw enum, so 'requested' reaches us here
+        # and 'pending' is what the wire says (contract C / issue #48 D4).
+        booking_status=booking_status_to_wire(row.get("booking_status")),
         payment_reference=row.get("payment_reference"),
         internal_notes=row.get("notes"),
         refund_date=last_refund["created_at"] if last_refund else None,
@@ -1047,13 +1104,35 @@ def get_ledger_summary(
     )
 
 
+def _fold_notes(notes: str | None, *labelled: tuple[str, object]) -> str | None:
+    """Fold fields the RPC has nowhere to put into the note it does read.
+
+    The financial-event row has ``amount``, ``payment_reference``, ``reason`` and
+    ``notes`` and nothing else. Sending a key the RPC never reads loses the value
+    silently; folding it into the note keeps what the admin typed on the record.
+    """
+    parts = [f"{label}: {value}" for label, value in labelled if value]
+    if notes and notes.strip():
+        parts.append(notes.strip())
+    return "; ".join(parts) or None
+
+
 def record_payment(
     client: Client,
     user_id: str,
     occurrence_id: str,
     request: RecordAmenityPaymentRequest,
 ) -> LedgerTransaction:
-    """Record money received. Refused if it exceeds what the charge still owes."""
+    """Record money received. Refused if it exceeds what the charge still owes.
+
+    ``record_amenity_payment`` reads three keys off ``p_payload``: ``amount``,
+    ``reference`` and ``notes`` (0023 lines 1295-1330). The idempotency
+    reference used to be sent as ``payment_reference``, which the RPC never
+    looks for, so a replayed gateway callback recorded a second payment instead
+    of returning the first (issue #48 D4). The charge type and the method have
+    no column of their own on a financial event, so they are folded into the
+    notes rather than dropped.
+    """
     community_id = _community(client, user_id)
     if request.charge_type not in _CHARGE_TYPES:
         raise ValidationError(
@@ -1065,10 +1144,12 @@ def record_payment(
         occurrence_id,
         {
             "amount": request.amount,
-            "charge_type": request.charge_type,
-            "method": request.method,
-            "payment_reference": request.payment_reference,
-            "notes": request.notes,
+            "reference": request.payment_reference,
+            "notes": _fold_notes(
+                request.notes,
+                ("Charge type", request.charge_type),
+                ("Method", request.method),
+            ),
         },
     )
     return _read_transaction(client, community_id, occurrence_id)
@@ -1080,12 +1161,32 @@ def refund_deposit(
     occurrence_id: str,
     request: RefundDepositRequest,
 ) -> LedgerTransaction:
-    """Return what is left of the deposit. The amount is computed in Postgres."""
+    """Return what is left of the deposit.
+
+    The amount is still not a request parameter -- a refund somebody can ask to
+    be larger is not a refund. It is read off ``amenity_ledger_overview``, the
+    same aggregate the RPC checks it against, and sent as ``amount`` because
+    that is the key ``refund_amenity_deposit`` inserts from (0023 line 1348).
+    Not sending it made every refund a NULL-amount event: the ceiling check
+    passed vacuously and the ledger recorded a refund of nothing (issue #48 D4).
+    """
     community_id = _community(client, user_id)
+    remaining = _amount(
+        repo.get_ledger_row(client, community_id, occurrence_id).get(
+            "remaining_refund"
+        )
+    )
+    if remaining <= 0:
+        raise ValidationError("There is nothing left to refund on this booking.")
+
     repo.refund_deposit(
         client,
         occurrence_id,
-        {"reason": request.reason, "notes": request.notes},
+        {
+            "amount": remaining,
+            "reason": request.reason,
+            "notes": request.notes,
+        },
     )
     return _read_transaction(client, community_id, occurrence_id)
 
@@ -1113,7 +1214,15 @@ def deduct_damage(
 def add_charge(
     client: Client, user_id: str, occurrence_id: str, request: AddChargeRequest
 ) -> LedgerTransaction:
-    """Add an extra charge after the fact."""
+    """Add an extra charge after the fact.
+
+    ``add_amenity_charge`` reads ``label``, ``amount`` and ``notes`` (0023 lines
+    1459-1474) and writes the charge row's ``charge_type`` itself, as
+    'additional'. The description used to be sent under its own name, which the
+    RPC never reads, so every added charge landed with a NULL label (issue #48
+    D4). The requested charge type is folded into the note, because the RPC
+    hardcodes the column and a late-cancellation fee should still say so.
+    """
     community_id = _community(client, user_id)
     if request.charge_type not in ("additional", "late_cancellation"):
         raise ValidationError(
@@ -1125,8 +1234,8 @@ def add_charge(
         occurrence_id,
         {
             "amount": request.amount,
-            "charge_type": request.charge_type,
-            "description": request.description,
+            "label": request.description,
+            "notes": _fold_notes(None, ("Charge type", request.charge_type)),
         },
     )
     return _read_transaction(client, community_id, occurrence_id)
@@ -1172,12 +1281,26 @@ def build_report(
     Revenue".
     """
     community_id = _community(client, user_id)
+    # The RPC's whole filter vocabulary is `from_date`/`to_date` (0023 lines
+    # 1496-1497). It used to be sent `start_date`/`end_date`/`amenity_id`/
+    # `booking_status`, none of which it reads, so every KPI silently described
+    # the last 30 days of the whole community whatever the admin had picked
+    # (issue #48 D4). The amenity and status filters have no RPC to apply them
+    # in; they narrow the ledger page below, which is where they can be honest.
     filters = {
-        "start_date": str(start_date) if start_date else None,
-        "end_date": str(end_date) if end_date else None,
-        "amenity_id": amenity_id,
-        "booking_status": booking_status,
+        "from_date": str(start_date) if start_date else None,
+        "to_date": str(end_date) if end_date else None,
     }
+
+    # The filter arrives in the wire's vocabulary and is compared against the
+    # raw enum in `amenity_ledger_overview`, so it has to be translated back:
+    # filtering that column on the wire's 'pending' matches nothing, because the
+    # stored word for that state is 'requested'.
+    stored_status = booking_status_to_storage(booking_status)
+    if booking_status and stored_status is None:
+        raise ValidationError(
+            "Booking status must be one of: " + ", ".join(_REPORT_BOOKING_STATUSES) + "."
+        )
 
     offset = (page - 1) * page_size
     rows, _total = repo.list_ledger(
@@ -1188,7 +1311,7 @@ def build_report(
         limit=page_size,
         date_from=str(start_date) if start_date else None,
         date_to=str(end_date) if end_date else None,
-        booking_status=booking_status,
+        booking_status=stored_status,
     )
     totals = repo.fetch_report_totals(client, community_id, filters)
     catalogue, _ = repo.list_amenities(
@@ -1209,19 +1332,21 @@ def build_report(
                 resident_name=row.get("resident_name") or "Administration",
                 resident_flat=row.get("unit_code"),
                 booking_date=_as_date(row.get("booking_date")) or date.today(),
-                booking_status=row.get("booking_status") or "pending",
+                booking_status=booking_status_to_wire(row.get("booking_status")),
                 payment_status=row.get("payment_status"),
                 amount_paid=_amount(row.get("amount_paid")),
             )
             for row in rows
         ],
+        # One field per key the RPC returns, read under the name it returns it
+        # under. Nothing here invents a figure the aggregate did not compute.
         kpis=ReportKpis(
-            total_amenities=int(totals.get("total_amenities") or 0),
-            total_active_bookings=int(totals.get("total_active_bookings") or 0),
-            pending_approvals=int(totals.get("pending_approvals") or 0),
-            total_revenue=_amount(totals.get("total_revenue")),
-            active_amenities=int(totals.get("active_amenities") or 0),
-            bookings_this_month=int(totals.get("bookings_this_month") or 0),
+            total_bookings=int(totals.get("total_bookings") or 0),
+            total_active_bookings=int(totals.get("approved_bookings") or 0),
+            cancelled_bookings=int(totals.get("cancelled_bookings") or 0),
+            total_charged=_amount(totals.get("total_charged")),
+            total_revenue=_amount(totals.get("total_paid")),
+            total_refunded=_amount(totals.get("total_refunded")),
         ),
         options=ReportOptions(
             amenities=[
@@ -1230,14 +1355,13 @@ def build_report(
             # The lifecycle's fixed vocabulary rather than the statuses that
             # happen to be present: a filter whose options shrink as the data
             # changes is a filter that cannot be used to find an empty result.
-            booking_statuses=[
-                "pending",
-                "approved",
-                "confirmed",
-                "completed",
-                "cancelled",
-                "rejected",
-                "blocked",
-            ],
+            #
+            # Fixed, but not invented. 'confirmed' and 'blocked' used to sit in
+            # this list and neither is a value `booking_status` can hold -- a
+            # block is an APPROVED row wearing `booking_type = 'blocked'`. They
+            # were two options that always returned nothing, which is exactly
+            # the failure the comment above is about, from the other direction
+            # (issue #48 D4).
+            booking_statuses=list(_REPORT_BOOKING_STATUSES),
         ),
     )

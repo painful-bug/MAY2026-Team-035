@@ -154,6 +154,38 @@ def list_availability_rules(client: Client) -> list[dict[str, Any]]:
     )
 
 
+def list_open_jobs(client: Client) -> list[dict[str, Any]]:
+    """The open-jobs board (RPC). Every claimable job on the caller's rosters.
+
+    An RPC rather than a view because RLS is *correctly* in the way:
+    ``work_orders_read`` asks ``can_read_work_order``, and a board of jobs
+    nobody holds yet is by definition invisible to everybody it is for. The
+    function decides eligibility itself -- roster, trade, exclusion -- from
+    ``auth.uid()``, so as everywhere on this surface there is nothing to pass.
+    """
+    try:
+        response = client.rpc("worker_open_jobs", {}).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not read the board.") from exc
+    return response.data or []
+
+
+def claim_job(client: Client, *, work_order_id: str) -> str:
+    """Take an unclaimed job from the board (RPC). Returns the assignment id.
+
+    First come, first served: the RPC locks the work order before it reads
+    anything, so the loser of a race is told *somebody has already taken this
+    job* rather than shown an exclusion-constraint violation.
+    """
+    try:
+        response = client.rpc(
+            "claim_open_work_order", {"p_work_order_id": work_order_id}
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(exc, default_message="Could not claim that job.") from exc
+    return str(response.data or "")
+
+
 def accept_offer(client: Client, *, work_order_id: str) -> str:
     """Take an offered job (RPC). Returns the assignment id.
 

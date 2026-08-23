@@ -23,6 +23,20 @@ same pass, which moved roughly a hundred `API.md` line references that the new �
 pushed down: that is [`regen_mapper.py`](../backend/scripts/regen_mapper.py) doing the job it was
 written for, and not a change to any row's meaning.)*
 
+*(**Re-counted 2026-08-23 on `live-app-fixes`: 209 operations across 178 paths**, all 209 in the
+spec, `api_map_scan.py` still reporting the same **20** findings and all 24 stories agreeing — the
+open-jobs board pair (`GET /worker/open-jobs`, `POST /worker/jobs/{id}/claim`) added neither a
+finding nor a story gap. §3's tables were regenerated in the same pass, which moved the `API.md`
+line references the two new endpoint sections had pushed down.)*
+
+*(**Re-counted 2026-08-23 on `live-app-fixes`, second pass: 210 operations across 179 paths**, all
+210 in the spec, `api_map_scan.py` still reporting the same **20** findings and all 24 stories
+agreeing — `POST /complaints/{id}/schedule-time` (ruling F1, the resident sets the time) added
+neither a finding nor a story gap; it tags `US-2.8`, which was already served. §3's tables were
+**not** regenerated in this pass: the one new row sits under a `####` heading, which
+[`regen_mapper.py`](../backend/scripts/regen_mapper.py) does not auto-link, so it was hand-filled
+beside its two siblings rather than moving a hundred unrelated `API.md` line references to add one.)*
+
 This file answers one question in one place: **for a given backend source file, which endpoints does
 it implement, and where does each one live in the spec and in the reference docs?** It is the third
 leg of the documentation set —
@@ -89,7 +103,7 @@ one route inline.
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /health` | `health` :95 | `health_health_get` | 200 inline | § `GET /health` (API.md:353) |
+| `GET /health` | `health` :108 | `health_health_get` | 200 inline | § `GET /health` (API.md:353) |
 
 ### `backend/app/api/v1/routers/access_requests.py`
 
@@ -152,22 +166,22 @@ cookie's `Max-Age` is decided. See API.md § 1.2 for the cookie contract.
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/auth/csrf` | `csrf` :102 | `csrf_api_v1_auth_csrf_get` | 200 MessageResponse | mention only — § 3.1 (API.md:374) |
-| `POST /api/v1/auth/email/resend` | `resend_email` :187 | `resend_email_api_v1_auth_email_resend_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
-| `POST /api/v1/auth/email/verify` | `verify_email` :176 | `verify_email_api_v1_auth_email_verify_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
-| `GET /api/v1/auth/google/callback` | `google_callback` :140 | `google_callback_api_v1_auth_google_callback_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
-| `GET /api/v1/auth/google/start` | `google_start` :135 | `google_start_api_v1_auth_google_start_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
-| `POST /api/v1/auth/logout` | `logout` :253 | `logout_api_v1_auth_logout_post` | 200 MessageResponse | mention only — § 3.5 Session lifecycle (API.md:442) |
-| `GET /api/v1/auth/methods` | `auth_methods` :93 | `auth_methods_api_v1_auth_methods_get` | **200 free-form object** | mention only — § 3. Authentication (API.md:364) |
-| `GET /api/v1/auth/oauth/{provider}/callback` | `oauth_callback` :120 | `oauth_callback_api_v1_auth_oauth__provider__callback_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
-| `GET /api/v1/auth/oauth/{provider}/start` | `oauth_start` :108 | `oauth_start_api_v1_auth_oauth__provider__start_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
-| `POST /api/v1/auth/password/reset/complete` | `password_reset_complete` :225 | `password_reset_complete_api_v1_auth_password_reset_complete_post` | 200 MessageResponse | mention only — § 3.4 Password recovery (API.md:429) |
-| `POST /api/v1/auth/password/reset/request` | `password_reset_request` :209 | `password_reset_request_api_v1_auth_password_reset_request_post` | 200 MessageResponse | mention only — § 3.4 Password recovery (API.md:429) |
-| `POST /api/v1/auth/password/reset/verify` | `password_reset_verify` :218 | `password_reset_verify_api_v1_auth_password_reset_verify_post` | 200 MessageResponse | mention only — § 3.4 Password recovery (API.md:429) |
-| `POST /api/v1/auth/password/sign-in` | `password_sign_in` :166 | `password_sign_in_api_v1_auth_password_sign_in_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
-| `POST /api/v1/auth/password/sign-up` | `password_sign_up` :145 | `password_sign_up_api_v1_auth_password_sign_up_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
-| `POST /api/v1/auth/refresh` | `refresh` :241 | `refresh_api_v1_auth_refresh_post` | 200 MessageResponse | mention only — § 3.5 Session lifecycle (API.md:442) |
-| `GET /api/v1/auth/session` | `session` :236 | `session_api_v1_auth_session_get` | 200 SessionContext | mention only — § 3.5 Session lifecycle (API.md:442) |
+| `GET /api/v1/auth/csrf` | `csrf` :111 | `csrf_api_v1_auth_csrf_get` | 200 MessageResponse | mention only — § 3.1 (API.md:374) |
+| `POST /api/v1/auth/email/resend` | `resend_email` :196 | `resend_email_api_v1_auth_email_resend_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
+| `POST /api/v1/auth/email/verify` | `verify_email` :185 | `verify_email_api_v1_auth_email_verify_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
+| `GET /api/v1/auth/google/callback` | `google_callback` :149 | `google_callback_api_v1_auth_google_callback_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
+| `GET /api/v1/auth/google/start` | `google_start` :144 | `google_start_api_v1_auth_google_start_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
+| `POST /api/v1/auth/logout` | `logout` :281 | `logout_api_v1_auth_logout_post` | 200 MessageResponse | mention only — § 3.5 Session lifecycle (API.md:442) |
+| `GET /api/v1/auth/methods` | `auth_methods` :102 | `auth_methods_api_v1_auth_methods_get` | **200 free-form object** | mention only — § 3. Authentication (API.md:364) |
+| `GET /api/v1/auth/oauth/{provider}/callback` | `oauth_callback` :129 | `oauth_callback_api_v1_auth_oauth__provider__callback_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
+| `GET /api/v1/auth/oauth/{provider}/start` | `oauth_start` :117 | `oauth_start_api_v1_auth_oauth__provider__start_get` | 307 free-form object | mention only — § 3.2 Google OAuth (API.md:381) |
+| `POST /api/v1/auth/password/reset/complete` | `password_reset_complete` :234 | `password_reset_complete_api_v1_auth_password_reset_complete_post` | 200 MessageResponse | mention only — § 3.4 Password recovery (API.md:429) |
+| `POST /api/v1/auth/password/reset/request` | `password_reset_request` :218 | `password_reset_request_api_v1_auth_password_reset_request_post` | 200 MessageResponse | mention only — § 3.4 Password recovery (API.md:429) |
+| `POST /api/v1/auth/password/reset/verify` | `password_reset_verify` :227 | `password_reset_verify_api_v1_auth_password_reset_verify_post` | 200 MessageResponse | mention only — § 3.4 Password recovery (API.md:429) |
+| `POST /api/v1/auth/password/sign-in` | `password_sign_in` :175 | `password_sign_in_api_v1_auth_password_sign_in_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
+| `POST /api/v1/auth/password/sign-up` | `password_sign_up` :154 | `password_sign_up_api_v1_auth_password_sign_up_post` | 200 MessageResponse | mention only — § 3.3 Email and password (API.md:398) |
+| `POST /api/v1/auth/refresh` | `refresh` :269 | `refresh_api_v1_auth_refresh_post` | 200 MessageResponse | mention only — § 3.5 Session lifecycle (API.md:442) |
+| `GET /api/v1/auth/session` | `session` :245 | `session_api_v1_auth_session_get` | 200 SessionContext | mention only — § 3.5 Session lifecycle (API.md:442) |
 
 ### `backend/app/api/v1/routers/communities.py`
 
@@ -188,7 +202,7 @@ cookie's `Max-Age` is decided. See API.md § 1.2 for the cookie contract.
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
 | `POST /api/v1/complaints/admin-raise` | `admin_raise_complaint` :66 | `admin_raise_complaint_api_v1_complaints_admin_raise_post` | 201 AdminComplaintRaised | § `POST /api/v1/complaints/admin-raise` (API.md:1173) |
-| `GET /api/v1/complaints/staff/complaints/{complaint_id}` | `staff_complaint_detail` :37 | `staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get` | 200 StaffComplaintDetail | § `GET /api/v1/complaints/staff/complaints/{complaintId}` (API.md:7360) |
+| `GET /api/v1/complaints/staff/complaints/{complaint_id}` | `staff_complaint_detail` :37 | `staff_complaint_detail_api_v1_complaints_staff_complaints__complaint_id__get` | 200 StaffComplaintDetail | § `GET /api/v1/complaints/staff/complaints/{complaintId}` |
 | `PATCH /api/v1/complaints/{complaint_id}` | `update_complaint` :124 | `update_complaint_api_v1_complaints__complaint_id__patch` | 200 MessageResult | § `PATCH /api/v1/complaints/{complaintId}` (API.md:1256) |
 | `POST /api/v1/complaints/{complaint_id}/comments` | `add_comment` :151 | `add_comment_api_v1_complaints__complaint_id__comments_post` | 201 MessageResult | § `POST /api/v1/complaints/{complaintId}/comments` (API.md:1288) |
 
@@ -212,7 +226,7 @@ cookie's `Max-Age` is decided. See API.md § 1.2 for the cookie contract.
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/dashboard/amenities` | `create_amenity` :54 | `create_amenity_api_v1_dashboard_amenities_post` | **200 free-form object** | mention only — § 16.6 (API.md:4240) |
+| `POST /api/v1/dashboard/amenities` | `create_amenity` :54 | `create_amenity_api_v1_dashboard_amenities_post` | **200 free-form object** | mention only — § 16.6 (API.md:4245) |
 | `PUT /api/v1/dashboard/amenities/{amenity_id}` | `update_amenity` :67 | `update_amenity_api_v1_dashboard_amenities__amenity_id__put` | **200 free-form object** | **missing** |
 | `DELETE /api/v1/dashboard/amenities/{amenity_id}` | `delete_amenity` :81 | `delete_amenity_api_v1_dashboard_amenities__amenity_id__delete` | **200 free-form object** | **missing** |
 | `GET /api/v1/dashboard/events` | `dashboard_events` :32 | `dashboard_events_api_v1_dashboard_events_get` | 200 `text/event-stream` | mention only — § 5.1 (API.md:684) |
@@ -225,8 +239,8 @@ and the source is an external HTTP API* · schemas `domain/geo_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/geo/reverse` | `reverse_place` :70 | `reverse_place_api_v1_geo_reverse_get` | 200 GeoPlace | § `GET /api/v1/geo/reverse` (API.md:7952) |
-| `GET /api/v1/geo/search` | `search_places` :31 | `search_places_api_v1_geo_search_get` | 200 array of GeoPlace | § `GET /api/v1/geo/search` (API.md:7923) |
+| `GET /api/v1/geo/reverse` | `reverse_place` :70 | `reverse_place_api_v1_geo_reverse_get` | 200 GeoPlace | § `GET /api/v1/geo/reverse` (API.md:8211) |
+| `GET /api/v1/geo/search` | `search_places` :31 | `search_places_api_v1_geo_search_get` | 200 array of GeoPlace | § `GET /api/v1/geo/search` (API.md:8182) |
 
 ### `backend/app/api/v1/routers/departments.py`
 
@@ -304,7 +318,7 @@ schemas `domain/schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/onboarding/community` | `create_community` :12 | `create_community_api_v1_onboarding_community_post` | 200 CommunityOnboardingResponse | mention only — § 16.6 (API.md:4240) |
+| `POST /api/v1/onboarding/community` | `create_community` :12 | `create_community_api_v1_onboarding_community_post` | 200 CommunityOnboardingResponse | mention only — § 16.6 (API.md:4245) |
 
 ### `backend/app/api/v1/routers/people.py`
 
@@ -425,13 +439,13 @@ schemas `domain/service_provider_schemas.py`, `domain/common_schemas.py`, `domai
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/service-providers` | `register` :100 | `register_api_v1_service_providers_post` | 201 ServiceProviderProfile | § `POST /api/v1/service-providers` (API.md:4733) |
-| `GET /api/v1/service-providers/me` | `get_mine` :126 | `get_mine_api_v1_service_providers_me_get` | 200 ServiceProviderProfile | § `GET /api/v1/service-providers/me` (API.md:4782) |
-| `PATCH /api/v1/service-providers/me` | `update_mine` :149 | `update_mine_api_v1_service_providers_me_patch` | 200 ServiceProviderProfile | § `PATCH /api/v1/service-providers/me` (API.md:4814) |
+| `POST /api/v1/service-providers` | `register` :100 | `register_api_v1_service_providers_post` | 201 ServiceProviderProfile | § `POST /api/v1/service-providers` (API.md:4739) |
+| `GET /api/v1/service-providers/me` | `get_mine` :126 | `get_mine_api_v1_service_providers_me_get` | 200 ServiceProviderProfile | § `GET /api/v1/service-providers/me` (API.md:4788) |
+| `PATCH /api/v1/service-providers/me` | `update_mine` :149 | `update_mine_api_v1_service_providers_me_patch` | 200 ServiceProviderProfile | § `PATCH /api/v1/service-providers/me` (API.md:4820) |
 | `PATCH /api/v1/service-providers/me/availability` | `set_availability` :255 | `set_availability_api_v1_service_providers_me_availability_patch` | 200 AvailabilityResult | § `PATCH …/availability` |
-| `PUT /api/v1/service-providers/me/skills` | `set_skills` :230 | `set_skills_api_v1_service_providers_me_skills_put` | 200 SkillsSavedResult | § `PUT /api/v1/service-providers/me/skills` (API.md:4840) |
+| `PUT /api/v1/service-providers/me/skills` | `set_skills` :230 | `set_skills_api_v1_service_providers_me_skills_put` | 200 SkillsSavedResult | § `PUT /api/v1/service-providers/me/skills` (API.md:4846) |
 | `GET /api/v1/service-providers/{provider_id}` | `get_candidate` :194 | `get_candidate_api_v1_service_providers__provider_id__get` | 200 CandidateProfile | **missing** |
-| `GET /api/v1/skills` | `list_skills` :46 | `list_skills_api_v1_skills_get` | 200 array of Skill | § `GET /api/v1/skills` (API.md:4552) |
+| `GET /api/v1/skills` | `list_skills` :46 | `list_skills_api_v1_skills_get` | 200 array of Skill | § `GET /api/v1/skills` (API.md:4558) |
 
 > **The only router in this table that declares no membership dependency.** Every other row in this
 > document resolves an active `community_memberships` row before the handler runs. A service person
@@ -451,11 +465,11 @@ schemas `domain/service_provider_schemas.py`, `domain/common_schemas.py`, `domai
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/worker/applications` | `list_my_applications` :97 | `list_my_applications_api_v1_worker_applications_get` | 200 array of ServiceApplication | § `GET /api/v1/worker/applications` (API.md:5054) |
-| `POST /api/v1/worker/applications` | `apply` :125 | `apply_api_v1_worker_applications_post` | 201 ServiceApplication | § `POST /api/v1/worker/applications` (API.md:5070) |
+| `GET /api/v1/worker/applications` | `list_my_applications` :97 | `list_my_applications_api_v1_worker_applications_get` | 200 array of ServiceApplication | § `GET /api/v1/worker/applications` (API.md:5060) |
+| `POST /api/v1/worker/applications` | `apply` :125 | `apply_api_v1_worker_applications_post` | 201 ServiceApplication | § `POST /api/v1/worker/applications` (API.md:5076) |
 | `DELETE /api/v1/worker/applications/{application_id}` | `withdraw` :151 | `withdraw_api_v1_worker_applications__application_id__delete` | 200 ServiceApplication | § `DELETE …/{applicationId}` |
 | `POST /api/v1/worker/applications/{application_id}/decision` | `decide_invitation` :175 | `decide_invitation_api_v1_worker_applications__application_id__decision_post` | 200 ServiceApplication | § `POST …/{applicationId}/decision` |
-| `GET /api/v1/worker/communities` | `list_my_communities` :43 | `list_my_communities_api_v1_worker_communities_get` | 200 array of ServiceEngagement | § `GET /api/v1/worker/communities` (API.md:4990) |
+| `GET /api/v1/worker/communities` | `list_my_communities` :43 | `list_my_communities_api_v1_worker_communities_get` | 200 array of ServiceEngagement | § `GET /api/v1/worker/communities` (API.md:4996) |
 | `GET /api/v1/worker/communities/search` | `search_communities` :69 | `search_communities_api_v1_worker_communities_search_get` | 200 array of ServiceableCommunity | § `GET …/communities/search` |
 | `POST /api/v1/worker/communities/{staff_id}/departure` | `request_departure` :203 | `request_departure_api_v1_worker_communities__staff_id__departure_post` | 201 StaffDeparture | § `POST …/{staffId}/departure` |
 | `DELETE /api/v1/worker/communities/{staff_id}/departure` | `cancel_departure` :246 | `cancel_departure_api_v1_worker_communities__staff_id__departure_delete` | 200 MessageResult | § `DELETE …/{staffId}/departure` |
@@ -479,14 +493,16 @@ schemas `domain/worker_schemas.py`, `domain/hiring_schemas.py`,
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/worker/jobs` | `list_jobs` :94 | `list_jobs_api_v1_worker_jobs_get` | 200 array of WorkerJob | § `GET /api/v1/worker/jobs` (API.md:6787) |
-| `GET /api/v1/worker/jobs/{work_order_id}` | `get_job` :130 | `get_job_api_v1_worker_jobs__work_order_id__get` | 200 WorkerJobDetail | § `GET …/jobs/{workOrderId}` |
-| `POST /api/v1/worker/jobs/{work_order_id}/accept` | `accept_job` :156 | `accept_job_api_v1_worker_jobs__work_order_id__accept_post` | 200 WorkerJob | § `POST …/accept` |
-| `POST /api/v1/worker/jobs/{work_order_id}/complete` | `complete_job` :244 | `complete_job_api_v1_worker_jobs__work_order_id__complete_post` | 200 WorkerJob | § `POST …/complete` |
-| `POST /api/v1/worker/jobs/{work_order_id}/decline` | `decline_job` :189 | `decline_job_api_v1_worker_jobs__work_order_id__decline_post` | 200 WorkerJob | § `POST …/decline` |
-| `POST /api/v1/worker/jobs/{work_order_id}/start` | `start_job` :223 | `start_job_api_v1_worker_jobs__work_order_id__start_post` | 200 WorkerJob | § `POST …/start` |
-| `POST /api/v1/worker/jobs/{work_order_id}/unable` | `report_job_failure` :273 | `report_job_failure_api_v1_worker_jobs__work_order_id__unable_post` | 200 WorkerJob | § `POST …/unable` |
-| `GET /api/v1/worker/snapshot` | `worker_snapshot` :52 | `worker_snapshot_api_v1_worker_snapshot_get` | 200 WorkerSnapshot | § `GET /api/v1/worker/snapshot` (API.md:6729) |
+| `GET /api/v1/worker/jobs` | `list_jobs` :128 | `list_jobs_api_v1_worker_jobs_get` | 200 array of WorkerJob | § `GET /api/v1/worker/jobs` (API.md:6808) |
+| `GET /api/v1/worker/jobs/{work_order_id}` | `get_job` :164 | `get_job_api_v1_worker_jobs__work_order_id__get` | 200 WorkerJobDetail | § `GET …/jobs/{workOrderId}` |
+| `POST /api/v1/worker/jobs/{work_order_id}/accept` | `accept_job` :190 | `accept_job_api_v1_worker_jobs__work_order_id__accept_post` | 200 WorkerJob | § `POST …/accept` |
+| `POST /api/v1/worker/jobs/{work_order_id}/claim` | `claim_job` :223 | `claim_job_api_v1_worker_jobs__work_order_id__claim_post` | 200 WorkerJob | § `POST …/claim` |
+| `POST /api/v1/worker/jobs/{work_order_id}/complete` | `complete_job` :312 | `complete_job_api_v1_worker_jobs__work_order_id__complete_post` | 200 WorkerJob | § `POST …/complete` |
+| `POST /api/v1/worker/jobs/{work_order_id}/decline` | `decline_job` :257 | `decline_job_api_v1_worker_jobs__work_order_id__decline_post` | 200 WorkerJob | § `POST …/decline` |
+| `POST /api/v1/worker/jobs/{work_order_id}/start` | `start_job` :291 | `start_job_api_v1_worker_jobs__work_order_id__start_post` | 200 WorkerJob | § `POST …/start` |
+| `POST /api/v1/worker/jobs/{work_order_id}/unable` | `report_job_failure` :341 | `report_job_failure_api_v1_worker_jobs__work_order_id__unable_post` | 200 WorkerJob | § `POST …/unable` |
+| `GET /api/v1/worker/open-jobs` | `list_open_jobs` :95 | `list_open_jobs_api_v1_worker_open_jobs_get` | 200 array of OpenJob | § `GET /api/v1/worker/open-jobs` (API.md:6857) |
+| `GET /api/v1/worker/snapshot` | `worker_snapshot` :53 | `worker_snapshot_api_v1_worker_snapshot_get` | 200 WorkerSnapshot | § `GET /api/v1/worker/snapshot` (API.md:6750) |
 
 > **The third router declaring no membership dependency, and the first where that is a correction
 > rather than a convenience.** `require_membership_role` reads the role off the caller's *default*
@@ -511,7 +527,7 @@ schemas `domain/worker_schemas.py`
 |---|---|---|---|---|
 | `GET /api/v1/worker/availability-rules` | `list_availability_rules` :152 | `list_availability_rules_api_v1_worker_availability_rules_get` | 200 array of AvailabilityRule | § `GET …/availability-rules` |
 | `PUT /api/v1/worker/availability-rules` | `set_availability_rules` :174 | `set_availability_rules_api_v1_worker_availability_rules_put` | 200 array of AvailabilityRule | § `GET …/availability-rules` |
-| `GET /api/v1/worker/calendar` | `get_calendar` :40 | `get_calendar_api_v1_worker_calendar_get` | 200 array of CalendarEntry | § `GET /api/v1/worker/calendar` (API.md:6972) |
+| `GET /api/v1/worker/calendar` | `get_calendar` :40 | `get_calendar_api_v1_worker_calendar_get` | 200 array of CalendarEntry | § `GET /api/v1/worker/calendar` (API.md:7068) |
 | `GET /api/v1/worker/unavailability` | `list_unavailability` :72 | `list_unavailability_api_v1_worker_unavailability_get` | 200 array of UnavailabilityBlock | § `GET …/unavailability` |
 | `POST /api/v1/worker/unavailability` | `add_unavailability` :100 | `add_unavailability_api_v1_worker_unavailability_post` | 201 UnavailabilityBlock | § `GET …/unavailability` |
 | `DELETE /api/v1/worker/unavailability/{block_id}` | `delete_unavailability` :130 | `delete_unavailability_api_v1_worker_unavailability__block_id__delete` | 204 no body | § `GET …/unavailability` |
@@ -570,8 +586,8 @@ schemas `domain/conversation_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/conversations` | `list_conversations` :41 | `list_conversations_api_v1_conversations_get` | 200 array of Conversation | § `GET /api/v1/conversations` (API.md:6083) |
-| `POST /api/v1/conversations` | `open_conversation` :69 | `open_conversation_api_v1_conversations_post` | 201 ConversationThread | § `POST /api/v1/conversations` (API.md:6116) |
+| `GET /api/v1/conversations` | `list_conversations` :41 | `list_conversations_api_v1_conversations_get` | 200 array of Conversation | § `GET /api/v1/conversations` (API.md:6089) |
+| `POST /api/v1/conversations` | `open_conversation` :69 | `open_conversation_api_v1_conversations_post` | 201 ConversationThread | § `POST /api/v1/conversations` (API.md:6122) |
 | `GET /api/v1/conversations/{conversation_id}` | `get_conversation` :99 | `get_conversation_api_v1_conversations__conversation_id__get` | 200 ConversationThread | § `GET …/{conversationId}` |
 | `POST /api/v1/conversations/{conversation_id}/messages` | `post_message` :124 | `post_message_api_v1_conversations__conversation_id__messages_post` | 201 ConversationMessage | § `POST …/messages` |
 
@@ -604,11 +620,11 @@ schemas `domain/message_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/messages/recipients` | `list_recipients` :33 | `list_recipients_api_v1_messages_recipients_get` | 200 array of DmRecipient | §20 `GET /api/v1/messages/recipients` (API.md:7777) |
-| `GET /api/v1/messages/threads` | `list_threads` :59 | `list_threads_api_v1_messages_threads_get` | 200 array of DmThread | §20 `GET /api/v1/messages/threads` (API.md:7777) |
-| `POST /api/v1/messages/threads` | `open_thread` :78 | `open_thread_api_v1_messages_threads_post` | 201 DmThreadDetail | §20 `POST /api/v1/messages/threads` (API.md:7777) |
-| `GET /api/v1/messages/threads/{thread_id}` | `get_thread` :104 | `get_thread_api_v1_messages_threads__thread_id__get` | 200 DmThreadDetail | §20 `GET …/{threadId}` (API.md:7777) |
-| `POST /api/v1/messages/threads/{thread_id}/messages` | `post_message` :128 | `post_message_api_v1_messages_threads__thread_id__messages_post` | 201 DmMessage | §20 `POST …/messages` (API.md:7777) |
+| `GET /api/v1/messages/recipients` | `list_recipients` :33 | `list_recipients_api_v1_messages_recipients_get` | 200 array of DmRecipient | §20 `GET /api/v1/messages/recipients` (API.md:8036) |
+| `GET /api/v1/messages/threads` | `list_threads` :59 | `list_threads_api_v1_messages_threads_get` | 200 array of DmThread | §20 `GET /api/v1/messages/threads` (API.md:8036) |
+| `POST /api/v1/messages/threads` | `open_thread` :78 | `open_thread_api_v1_messages_threads_post` | 201 DmThreadDetail | §20 `POST /api/v1/messages/threads` (API.md:8036) |
+| `GET /api/v1/messages/threads/{thread_id}` | `get_thread` :104 | `get_thread_api_v1_messages_threads__thread_id__get` | 200 DmThreadDetail | §20 `GET …/{threadId}` (API.md:8036) |
+| `POST /api/v1/messages/threads/{thread_id}/messages` | `post_message` :128 | `post_message_api_v1_messages_threads__thread_id__messages_post` | 201 DmMessage | §20 `POST …/messages` (API.md:8036) |
 
 > **Identity-only, the `conversations.py` posture, for the widened reason:** the chat dock mounts on
 > every portal (the 2026-08-10 ruling), so there is no role a router could check. `dm_pair_allowed`
@@ -625,9 +641,9 @@ schemas `domain/work_order_schemas.py`
 |---|---|---|---|---|
 | `GET /api/v1/complaints/{complaint_id}/work-orders` | `list_complaint_work_orders` :100 | `list_complaint_work_orders_api_v1_complaints__complaint_id__work_orders_get` | 200 array of WorkOrder | § `GET …/work-orders` |
 | `POST /api/v1/complaints/{complaint_id}/work-orders` | `create_work_order` :56 | `create_work_order_api_v1_complaints__complaint_id__work_orders_post` | 201 WorkOrder | § `POST …/work-orders` |
-| `GET /api/v1/departments/{department_id}/work-orders` | `list_department_work_orders` :118 | `list_department_work_orders_api_v1_departments__department_id__work_orders_get` | 200 array of WorkOrder | § `GET /api/v1/departments/{departmentId}/work-orders` (API.md:6373) |
-| `GET /api/v1/work-orders/{work_order_id}` | `get_work_order` :142 | `get_work_order_api_v1_work_orders__work_order_id__get` | 200 WorkOrderDetail | § `GET /api/v1/work-orders/{workOrderId}` (API.md:6391) |
-| `PATCH /api/v1/work-orders/{work_order_id}` | `update_work_order` :182 | `update_work_order_api_v1_work_orders__work_order_id__patch` | 200 WorkOrder | § `PATCH /api/v1/work-orders/{workOrderId}` (API.md:6434) |
+| `GET /api/v1/departments/{department_id}/work-orders` | `list_department_work_orders` :118 | `list_department_work_orders_api_v1_departments__department_id__work_orders_get` | 200 array of WorkOrder | § `GET /api/v1/departments/{departmentId}/work-orders` (API.md:6379) |
+| `GET /api/v1/work-orders/{work_order_id}` | `get_work_order` :142 | `get_work_order_api_v1_work_orders__work_order_id__get` | 200 WorkOrderDetail | § `GET /api/v1/work-orders/{workOrderId}` (API.md:6397) |
+| `PATCH /api/v1/work-orders/{work_order_id}` | `update_work_order` :182 | `update_work_order_api_v1_work_orders__work_order_id__patch` | 200 WorkOrder | § `PATCH /api/v1/work-orders/{workOrderId}` (API.md:6440) |
 | `POST /api/v1/work-orders/{work_order_id}/assign` | `assign_work_order` :208 | `assign_work_order_api_v1_work_orders__work_order_id__assign_post` | 200 WorkOrderDetail | § `POST …/assign` |
 | `POST /api/v1/work-orders/{work_order_id}/cancel` | `cancel_work_order` :280 | `cancel_work_order_api_v1_work_orders__work_order_id__cancel_post` | 200 WorkOrder | § `POST …/cancel` |
 | `GET /api/v1/work-orders/{work_order_id}/candidates` | `work_order_candidates` :167 | `work_order_candidates_api_v1_work_orders__work_order_id__candidates_get` | 200 array of Candidate | § Complaint Engine v2 additions (API.md:55) |
@@ -671,8 +687,15 @@ repository `work_orders_repository` · schemas `domain/work_order_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/complaints/{complaint_id}/schedule` | `respond_to_schedule` :85 | `respond_to_schedule_api_v1_complaints__complaint_id__schedule_post` | 200 ScheduleRequest | § `POST …/schedule` |
-| `GET /api/v1/complaints/{complaint_id}/schedule-request` | `get_schedule_request` :52 | `get_schedule_request_api_v1_complaints__complaint_id__schedule_request_get` | 200 ScheduleRequest | § `GET …/schedule-request` |
+| `POST /api/v1/complaints/{complaint_id}/schedule` | `respond_to_schedule` :97 | `respond_to_schedule_api_v1_complaints__complaint_id__schedule_post` | 200 ScheduleRequest | § `POST …/schedule` |
+| `POST /api/v1/complaints/{complaint_id}/schedule-time` | `set_schedule_time` :137 | `set_schedule_time_api_v1_complaints__complaint_id__schedule_time_post` | 200 ScheduleRequest | § `POST …/schedule-time` |
+| `GET /api/v1/complaints/{complaint_id}/schedule-request` | `get_schedule_request` :56 | `get_schedule_request_api_v1_complaints__complaint_id__schedule_request_get` | 200 ScheduleRequest | § `GET …/schedule-request` |
+
+> **Three routes now, and the third is the 2026-08-23 ruling F1.** `schedule` answers a question the
+> association asked; `schedule-time` answers one it did not ask, because it stopped guessing an hour
+> for somebody else's home. The two are not interchangeable and each refuses the other's jobs in
+> words — the discriminator is `scheduled_start_at`, surfaced on the read as `mode`, and both modes
+> are `awaiting_resident` because the status vocabulary is a closed CHECK.
 
 > **Two routers, one service, and that is deliberate.** Splitting the service would put the two sides
 > of one state machine in two files, and the transition `awaiting_resident → offered` would be
@@ -704,7 +727,7 @@ schemas `domain/security_schemas.py`, `domain/vocabularies.py`
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
 | `GET /api/v1/security/exports/{dataset}` | `export_dataset` :671 | `export_dataset_api_v1_security_exports__dataset__get` | 200 `text/csv` | § `GET …/exports/{dataset}` |
-| `POST /api/v1/security/gate/verify` | `verify_credential` :547 | `verify_credential_api_v1_security_gate_verify_post` | 200 GateVerification | § `POST /api/v1/security/gate/verify` (API.md:7594) |
+| `POST /api/v1/security/gate/verify` | `verify_credential` :547 | `verify_credential_api_v1_security_gate_verify_post` | 200 GateVerification | § `POST /api/v1/security/gate/verify` (API.md:7853) |
 | `GET /api/v1/security/incidents` | `list_incidents` :458 | `list_incidents_api_v1_security_incidents_get` | 200 array of SecurityIncident | § `GET …/incidents` |
 | `POST /api/v1/security/incidents` | `record_incident` :479 | `record_incident_api_v1_security_incidents_post` | 201 SecurityIncident | § `POST …/incidents` |
 | `PATCH /api/v1/security/incidents/{incident_id}` | `update_incident` :516 | `update_incident_api_v1_security_incidents__incident_id__patch` | 200 SecurityIncident | § `PATCH …/incidents/{incidentId}` |
@@ -713,12 +736,12 @@ schemas `domain/security_schemas.py`, `domain/vocabularies.py`
 | `POST /api/v1/security/material-movements/{movement_id}/return` | `return_movement` :352 | `return_movement_api_v1_security_material_movements__movement_id__return_post` | 200 MaterialMovement | § `POST …/{movementId}/return` |
 | `GET /api/v1/security/offline-bundle` | `offline_bundle` :588 | `offline_bundle_api_v1_security_offline_bundle_get` | 200 OfflineBundle | § `GET …/offline-bundle` |
 | `POST /api/v1/security/offline-reconcile` | `offline_reconcile` :629 | `offline_reconcile_api_v1_security_offline_reconcile_post` | 200 OfflineReconcileResult | § `POST …/offline-reconcile` |
-| `GET /api/v1/security/posts` | `list_posts` :99 | `list_posts_api_v1_security_posts_get` | 200 array of SecurityPost | § `GET /api/v1/security/posts` (API.md:7268) |
-| `POST /api/v1/security/posts` | `create_post` :114 | `create_post_api_v1_security_posts_post` | 201 SecurityPost | § `POST /api/v1/security/posts` (API.md:7287) |
+| `GET /api/v1/security/posts` | `list_posts` :99 | `list_posts_api_v1_security_posts_get` | 200 array of SecurityPost | § `GET /api/v1/security/posts` (API.md:7527) |
+| `POST /api/v1/security/posts` | `create_post` :114 | `create_post_api_v1_security_posts_post` | 201 SecurityPost | § `POST /api/v1/security/posts` (API.md:7546) |
 | `PATCH /api/v1/security/posts/{post_id}` | `update_post` :136 | `update_post_api_v1_security_posts__post_id__patch` | 200 SecurityPost | § `PATCH …/posts/{postId}` |
-| `GET /api/v1/security/roster` | `list_roster` :262 | `list_roster_api_v1_security_roster_get` | 200 array of RosterEntry | § `GET /api/v1/security/roster` (API.md:7389) |
-| `GET /api/v1/security/shifts` | `list_shifts` :166 | `list_shifts_api_v1_security_shifts_get` | 200 array of SecurityShift | § `GET /api/v1/security/shifts` (API.md:7316) |
-| `POST /api/v1/security/shifts` | `create_shift` :204 | `create_shift_api_v1_security_shifts_post` | 201 SecurityShift | § `POST /api/v1/security/shifts` (API.md:7343) |
+| `GET /api/v1/security/roster` | `list_roster` :262 | `list_roster_api_v1_security_roster_get` | 200 array of RosterEntry | § `GET /api/v1/security/roster` (API.md:7648) |
+| `GET /api/v1/security/shifts` | `list_shifts` :166 | `list_shifts_api_v1_security_shifts_get` | 200 array of SecurityShift | § `GET /api/v1/security/shifts` (API.md:7575) |
+| `POST /api/v1/security/shifts` | `create_shift` :204 | `create_shift_api_v1_security_shifts_post` | 201 SecurityShift | § `POST /api/v1/security/shifts` (API.md:7602) |
 | `PATCH /api/v1/security/shifts/{shift_id}` | `update_shift` :233 | `update_shift_api_v1_security_shifts__shift_id__patch` | 200 SecurityShift | § `PATCH …/shifts/{shiftId}` |
 | `GET /api/v1/security/water-tankers` | `list_tankers` :384 | `list_tankers_api_v1_security_water_tankers_get` | 200 array of WaterTankerLog | § `GET …/water-tankers` |
 | `POST /api/v1/security/water-tankers` | `record_tanker` :402 | `record_tanker_api_v1_security_water_tankers_post` | 201 WaterTankerLog | § `POST …/water-tankers` |
@@ -751,12 +774,12 @@ schemas `domain/skill_schemas.py`, `domain/department_schemas.py`,
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `GET /api/v1/complaint-categories` | `list_categories` :79 | `list_categories_api_v1_complaint_categories_get` | 200 array of ComplaintCategory | § `GET /api/v1/complaint-categories` (API.md:4618) |
-| `GET /api/v1/departments/{department_id}/skills` | `list_department_skills` :102 | `list_department_skills_api_v1_departments__department_id__skills_get` | 200 array of Skill | § `GET /api/v1/departments/{departmentId}/skills` (API.md:4648) |
-| `POST /api/v1/departments/{department_id}/skills` | `add_department_skill` :145 | `add_department_skill_api_v1_departments__department_id__skills_post` | 201 SkillCreated | § `POST /api/v1/departments/{departmentId}/skills` (API.md:4693) |
-| `PUT /api/v1/departments/{department_id}/skills` | `set_department_skills` :121 | `set_department_skills_api_v1_departments__department_id__skills_put` | 200 array of Skill | § `PUT /api/v1/departments/{departmentId}/skills` (API.md:4667) |
-| `DELETE /api/v1/departments/{department_id}/skills/{skill_id}` | `remove_department_skill` :176 | `remove_department_skill_api_v1_departments__department_id__skills__skill_id__delete` | 200 MessageResult | § `DELETE /api/v1/departments/{departmentId}/skills/{skillId}` (API.md:4718) |
-| `POST /api/v1/skills` | `create_skill` :47 | `create_skill_api_v1_skills_post` | 201 SkillCreated | § `GET /api/v1/skills` (API.md:4552) |
+| `GET /api/v1/complaint-categories` | `list_categories` :79 | `list_categories_api_v1_complaint_categories_get` | 200 array of ComplaintCategory | § `GET /api/v1/complaint-categories` (API.md:4624) |
+| `GET /api/v1/departments/{department_id}/skills` | `list_department_skills` :102 | `list_department_skills_api_v1_departments__department_id__skills_get` | 200 array of Skill | § `GET /api/v1/departments/{departmentId}/skills` (API.md:4654) |
+| `POST /api/v1/departments/{department_id}/skills` | `add_department_skill` :145 | `add_department_skill_api_v1_departments__department_id__skills_post` | 201 SkillCreated | § `POST /api/v1/departments/{departmentId}/skills` (API.md:4699) |
+| `PUT /api/v1/departments/{department_id}/skills` | `set_department_skills` :121 | `set_department_skills_api_v1_departments__department_id__skills_put` | 200 array of Skill | § `PUT /api/v1/departments/{departmentId}/skills` (API.md:4673) |
+| `DELETE /api/v1/departments/{department_id}/skills/{skill_id}` | `remove_department_skill` :176 | `remove_department_skill_api_v1_departments__department_id__skills__skill_id__delete` | 200 MessageResult | § `DELETE /api/v1/departments/{departmentId}/skills/{skillId}` (API.md:4724) |
+| `POST /api/v1/skills` | `create_skill` :47 | `create_skill_api_v1_skills_post` | 201 SkillCreated | § `GET /api/v1/skills` (API.md:4558) |
 
 > **The skill surface is split across two routers on purpose, and this is the half with a guard.**
 > `GET /api/v1/skills` is in `service_providers.py` above, because it exists for the service
@@ -810,12 +833,12 @@ schemas `domain/supervisor_triage_schemas.py`, `domain/common_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/complaints/{complaint_id}/take-up` | `take_up_complaint` :102 | `take_up_complaint_api_v1_complaints__complaint_id__take_up_post` | 200 MessageResult | § `POST /api/v1/complaints/{complaintId}/take-up` (API.md:7185) |
-| `POST /api/v1/complaints/{complaint_id}/resolve` | `resolve_complaint` :145 | `resolve_complaint_api_v1_complaints__complaint_id__resolve_post` | 200 MessageResult | § `POST /api/v1/complaints/{complaintId}/resolve` (API.md:7250) |
-| `POST /api/v1/complaints/{complaint_id}/priority-raise` | `raise_complaint_priority` :183 | `raise_complaint_priority_api_v1_complaints__complaint_id__priority_raise_post` | 200 MessageResult | § `POST /api/v1/complaints/{complaintId}/priority-raise` (API.md:7278) |
-| `POST /api/v1/complaints/{complaint_id}/notes` | `add_complaint_note` :223 | `add_complaint_note_api_v1_complaints__complaint_id__notes_post` | 201 MessageResult | § `POST /api/v1/complaints/{complaintId}/notes` (API.md:7308) |
-| `POST /api/v1/complaints/{complaint_id}/chat` | `open_complaint_chat` :256 | `open_complaint_chat_api_v1_complaints__complaint_id__chat_post` | 200 ComplaintThreadOpened | § `POST /api/v1/complaints/{complaintId}/chat` (API.md:7329) |
-| `GET /api/v1/departments/{department_id}/triage-snapshot` | `triage_snapshot` :60 | `triage_snapshot_api_v1_departments__department_id__triage_snapshot_get` | 200 TriageSnapshot | § `GET /api/v1/departments/{departmentId}/triage-snapshot` (API.md:7130) |
+| `POST /api/v1/complaints/{complaint_id}/chat` | `open_complaint_chat` :256 | `open_complaint_chat_api_v1_complaints__complaint_id__chat_post` | 200 ComplaintThreadOpened | § `POST /api/v1/complaints/{complaintId}/chat` (API.md:7407) |
+| `POST /api/v1/complaints/{complaint_id}/notes` | `add_complaint_note` :223 | `add_complaint_note_api_v1_complaints__complaint_id__notes_post` | 201 MessageResult | § `POST /api/v1/complaints/{complaintId}/notes` (API.md:7386) |
+| `POST /api/v1/complaints/{complaint_id}/priority-raise` | `raise_complaint_priority` :183 | `raise_complaint_priority_api_v1_complaints__complaint_id__priority_raise_post` | 200 MessageResult | § `POST /api/v1/complaints/{complaintId}/priority-raise` (API.md:7356) |
+| `POST /api/v1/complaints/{complaint_id}/resolve` | `resolve_complaint` :145 | `resolve_complaint_api_v1_complaints__complaint_id__resolve_post` | 200 MessageResult | § `POST /api/v1/complaints/{complaintId}/resolve` (API.md:7328) |
+| `POST /api/v1/complaints/{complaint_id}/take-up` | `take_up_complaint` :102 | `take_up_complaint_api_v1_complaints__complaint_id__take_up_post` | 200 MessageResult | § `POST /api/v1/complaints/{complaintId}/take-up` (API.md:7263) |
+| `GET /api/v1/departments/{department_id}/triage-snapshot` | `triage_snapshot` :60 | `triage_snapshot_api_v1_departments__department_id__triage_snapshot_get` | 200 TriageSnapshot | § `GET /api/v1/departments/{departmentId}/triage-snapshot` (API.md:7208) |
 
 > **A router of its own rather than routes bolted onto a neighbour.** They straddle both: the
 > snapshot answers with complaints *and* work orders, and take-up, resolve, priority, notes and chat
@@ -848,7 +871,7 @@ schemas `domain/supervisor_triage_schemas.py`, `domain/common_schemas.py`
 
 | Operation | Handler | `operationId` (yaml anchor) | Success schema | API.md |
 |---|---|---|---|---|
-| `POST /api/v1/telemetry/service-signup` | `record_service_signup_event` :16 | `record_service_signup_event_api_v1_telemetry_service_signup_post` | 200 MessageResponse | § `POST /api/v1/telemetry/service-signup` (API.md:5139) |
+| `POST /api/v1/telemetry/service-signup` | `record_service_signup_event` :16 | `record_service_signup_event_api_v1_telemetry_service_signup_post` | 200 MessageResponse | § `POST /api/v1/telemetry/service-signup` (API.md:5145) |
 
 > **The narrowest router here, deliberately.** One write, five permitted event names, and a random
 > visitor id — no generic analytics surface and no experiment framework. Rows are deduplicated per

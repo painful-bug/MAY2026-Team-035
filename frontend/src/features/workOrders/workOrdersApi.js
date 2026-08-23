@@ -48,12 +48,17 @@ export const workOrdersApi = {
    * Triage. `{ departmentId?, skillId?, subjectKind, locationText?, note?,
    * scheduledStartAt?, scheduledEndAt? }`.
    *
-   * **Sending no slot is the other half of the fork, not an incomplete
-   * request.** No slot creates a `draft` — the supervisor wants to ask the
-   * resident something first and the conversation carries on in the complaint's
-   * comments. A slot proposes a visit: `awaiting_resident` on a `resident` job,
-   * straight to `offered` on a `facility` one, because there is nobody whose
-   * door is being knocked on.
+   * **The UI sends no slot, and that is the feature** (ruling F1). Slotless, a
+   * `resident` job goes to `awaiting_resident` with no time on it — the
+   * *resident* is asked to pick one, and has 24 hours before the system books
+   * the first free hour instead; a `facility` job goes to `draft` and the
+   * system books it, once the department's urgent home visits have been
+   * allotted.
+   *
+   * The slot fields survive on the request model for backward compatibility
+   * (adjudication G1) and keep the older semantics exactly — resident+slot
+   * proposes a visit for the resident to approve, facility+slot goes straight
+   * to `offered`. Nothing in this app sends them any more.
    *
    * `departmentId` and `skillId` are both derived when omitted, and `priority`
    * is not a field at all — a job's urgency *is* the complaint's.

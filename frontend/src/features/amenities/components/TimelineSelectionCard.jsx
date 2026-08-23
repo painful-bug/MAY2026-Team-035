@@ -1,6 +1,6 @@
 import React from 'react';
 import { MousePointer2 } from 'lucide-react';
-import { BOOKING_STATUS_LABELS } from '../constants/bookingStatuses.js';
+import { bookingStatusLabel } from '../constants/bookingStatuses.js';
 import { BOOKING_TIMELINE_STATE } from '../constants/bookingTimelineStates.js';
 import { formatTimelineTimeRange } from '../utils/amenityTimeline.js';
 
@@ -95,10 +95,7 @@ export default function TimelineSelectionCard({
           />
           <SelectionDetail
             label="Status"
-            value={
-              BOOKING_STATUS_LABELS[selectedBooking.status] ??
-              humanizeValue(selectedBooking.status)
-            }
+            value={bookingStatusLabel(selectedBooking.status) || '—'}
           />
         </div>
       )}

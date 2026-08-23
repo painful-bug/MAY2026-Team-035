@@ -1369,3 +1369,67 @@ standing.
 
 Nothing here is a new judgement call being taken from you; it is the ruling on
 four you were asked for, in one place, dated.
+
+## 22. Ruled 2026-08-23 — the open-jobs board: workers get eyes, and hands
+
+Live testing surfaced the gap from the worker's side of the counter: a freshly
+hired plumber opened their portal and saw nothing, because in the model on
+record a worker sees only what a supervisor has offered them. The product owner
+ruled that this changes. Three rulings, taken 2026-08-23:
+
+- **C1 — visibility.** Department roster technicians who hold the job's trade
+  see the open-jobs board for their department. Not the whole roster, and not
+  the marketplace: hiring remains the gate to a department's work, and the
+  trade filter matches the one the offer path already applies.
+- **C2 — claim is instant.** Taking a job from the board commits the worker on
+  the spot, with the same mechanics as accepting an offer: an `accepted`
+  assignment, the same status movements, the supervisor notified. First to
+  claim gets it; there is no approval step.
+- **C3 — unscheduled jobs are on the board.** A job with no hour on it appears
+  with a "time to be set" marker and is claimable; the claim skips the
+  slot-dependent eligibility checks (leave, windows, clashes — none of which
+  can run without a slot) and the hour is set afterwards in the queue. This is
+  deliberate: the alternative would have hidden exactly the job the owner
+  raised in testing.
+
+What counts as "open" (a job with a live offer out to somebody else, say) was
+left to the orchestrator to adjudicate and log in the build spec. The board is
+new read+claim surface only — the supervisor's offer and force-assign paths
+are untouched by these rulings.
+
+Related fix, same day: the force-assign picker's empty state blamed trades for
+every empty candidate list, when `dispatch_candidates` returns nobody for any
+job without a scheduled hour (its `job` CTE requires `scheduled_start_at is
+not null` — 20260823120000, and by inheritance every earlier version). The
+modal now names the missing hour and skips the fetch instead of misdiagnosing.
+
+## §23. Ruled 2026-08-23 — the resident sets the time, and the system books what nobody schedules
+
+Ruled by the product owner (live session, 2026-08-23), superseding the
+raise-time model recorded in §12's era:
+
+- **F1 — the raise form carries no date/time, for anyone.** A
+  resident-subject job sends the RESIDENT a request to pick the date and
+  time (a dashboard request, like a hiring application reaching a manager);
+  only when they set it does the job reach the open pile. A facility job is
+  auto-assigned by the system into the first available slot — but only
+  after all urgent (priority `high`) resident complaints in the department
+  have been allotted.
+- **F2 — 24 hours of resident silence, then the system books.** If the
+  resident has not picked within 24 hours of the raise, the system sets the
+  first available time after the 24-hour mark that has a serviceman
+  available, and assigns that serviceman automatically.
+- **F3 — pick-mode has no decline.** The resident's card offers a time
+  picker only; the decline button stays on the supervisor-proposed
+  reschedule (approve-mode) flow. Silence is answered by F2.
+- A new **"Awaiting resident response"** section on the supervisor
+  dashboard surfaces the waiting jobs.
+
+Orchestrator adjudications under these rulings (G1–G11), the frozen
+interface, and the two-specialist split are in
+`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`. Engine-lifecycle notes for the
+record: the supervisor-proposed approve flow survives untouched on the
+reschedule path (awaiting_resident WITH a slot); pick-mode is
+awaiting_resident with a NULL slot; the timeout handler branches on that
+discriminator; and the facility gate re-checks hourly so a gated job is
+never stranded (it stays claimable on the board throughout).

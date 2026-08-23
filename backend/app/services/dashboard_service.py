@@ -146,14 +146,24 @@ def _visitors(rows: list[dict[str, Any]], users: dict[str, dict[str, Any]]) -> l
 
 
 def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, Any]]:
+    """Wire shape for the catalogue card. Frozen keys, as `_visitors`.
+
+    `image`, `openingTime` and `closingTime` are on both arms: the legacy one
+    reads the real `amenities` columns `0023` added, the other reads the jsonb
+    `booking_rules` it writes them into. `description` on the legacy arm is the
+    real column too -- it used to repeat `category`, so every card described
+    itself as "Fitness" (issue #48 D2).
+    """
     result = []
     for row in rows:
         if legacy:
             result.append({
-                "id": row["id"], "name": row["name"], "description": row.get("category") or "",
+                "id": row["id"], "name": row["name"], "description": row.get("description") or "",
                 "category": row.get("category") or "Utility", "location": row.get("location") or "",
                 "capacity": row.get("capacity"), "bookingMode": str(row.get("booking_mode") or "Exclusive").title(),
                 "requireApproval": bool(row.get("approval_required")), "hourlyRate": row.get("hourly_rate") or 0,
+                "image": row.get("image_url"),
+                "openingTime": str(row.get("opening_time") or ""), "closingTime": str(row.get("closing_time") or ""),
                 "status": str(row.get("status") or "Active").title(), "isActive": str(row.get("status", "active")).lower() == "active",
                 "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             })
@@ -165,6 +175,10 @@ def _amenities(rows: list[dict[str, Any]], *, legacy: bool) -> list[dict[str, An
                 "id": row["id"], "name": row["name"], "description": row.get("description") or "",
                 "category": rules.get("category", "Utility"), "capacity": rules.get("capacity"),
                 "bookingMode": rules.get("bookingMode", "Exclusive"), "requireApproval": bool(rules.get("requireApproval")),
+                "image": rules.get("image"),
+                # The operating-hours rows stay the source here: this arm has a
+                # real `amenity_operating_hours` table and a jsonb copy of the
+                # same fact would be a second answer to the same question.
                 "openingTime": str(first_hours.get("opens_at") or ""), "closingTime": str(first_hours.get("closes_at") or ""),
                 "status": "Active" if row.get("is_active") else "Inactive", "isActive": bool(row.get("is_active")),
                 "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),

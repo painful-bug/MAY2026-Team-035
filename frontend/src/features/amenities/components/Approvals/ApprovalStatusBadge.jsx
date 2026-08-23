@@ -1,7 +1,8 @@
 import React from 'react';
 import {
   BOOKING_STATUS,
-  BOOKING_STATUS_LABELS,
+  bookingStatusLabel,
+  normalizeBookingStatus,
 } from '../../constants/bookingStatuses.js';
 
 const STATUS_CLASSES = {
@@ -14,8 +15,8 @@ const STATUS_CLASSES = {
 };
 
 export default function ApprovalStatusBadge({ status }) {
-  const label = BOOKING_STATUS_LABELS[status];
-  const classes = STATUS_CLASSES[status];
+  const label = bookingStatusLabel(status);
+  const classes = STATUS_CLASSES[normalizeBookingStatus(status)];
 
   if (!label || !classes) {
     return null;

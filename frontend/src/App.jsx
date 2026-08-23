@@ -79,6 +79,7 @@ import AdminSecurityIncidents from './pages/AdminDashboard/SecurityIncidents';
 
 // Service Partner Pages
 import WorkerLanding from './pages/WorkerDashboard/WorkerLanding';
+import WorkerOpenJobs from './pages/WorkerDashboard/OpenJobs';
 import WorkerCalendar from './pages/WorkerDashboard/Calendar';
 import WorkerAvailability from './pages/WorkerDashboard/Availability';
 import WorkerCommunities from './pages/WorkerDashboard/Communities';
@@ -468,6 +469,12 @@ export default function App() {
                 `WorkerLanding` and is four lines long; neither page knows
                 about the other. */}
             <Route index element={<WorkerLanding />} />
+            {/* The open-jobs board (product ruling 2026-08-23): unclaimed work
+                on the caller's rosters, claimable first-come. A technician's
+                surface — leadership has the queue — but the route is not
+                gated: the backend RPC decides eligibility per job, and an
+                empty board explains itself. */}
+            <Route path="open-jobs" element={<WorkerOpenJobs />} />
             <Route path="calendar" element={<WorkerCalendar />} />
             <Route path="availability" element={<WorkerAvailability />} />
             <Route path="communities" element={<WorkerCommunities />} />

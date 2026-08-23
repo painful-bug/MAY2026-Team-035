@@ -35,7 +35,11 @@ from fastapi import APIRouter, Depends, Path
 
 from app.api.admin_deps import require_csrf_unsafe
 from app.api.deps import get_request_client, require_resident_capability
-from app.domain.work_order_schemas import ScheduleRequest, ScheduleResponseRequest
+from app.domain.work_order_schemas import (
+    ScheduleRequest,
+    ScheduleResponseRequest,
+    ScheduleTimeRequest,
+)
 from app.services import work_orders_service as service
 from supabase import Client
 
@@ -74,6 +78,14 @@ async def get_schedule_request(
     `respondBy` is when the association stops waiting and schedules anyway. It
     is populated the moment a time is proposed, so the deadline is visible from
     the first screen rather than arriving as a surprise.
+
+    **`mode` says which question is being asked** (ruling F1, 2026-08-23).
+    `approve` — the association proposed an hour, answer it with `POST
+    …/schedule`. `pick` — nobody has chosen one, and the hour is yours to set
+    with `POST …/schedule-time`; the proposed times are `null`. Both are
+    `awaiting_resident`, because `work_orders_status_check` is a closed list and
+    a new word there costs a constraint rebuild — the slot is the discriminator,
+    and `mode` is that derivation made once, here, instead of on every screen.
 
     | Status | Code | Cause |
     |---|---|---|
@@ -120,3 +132,46 @@ async def respond_to_schedule(
     | 422 | `validation_error` | `response` was not `confirmed` or `declined` |
     """
     return service.respond(client, complaint_id=complaint_id, body=body)
+
+
+@router.post(
+    "/complaints/{complaint_id}/schedule-time",
+    response_model=ScheduleRequest,
+    summary="Pick the time for a visit to my home",
+)
+async def set_schedule_time(
+    body: ScheduleTimeRequest,
+    complaint_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> ScheduleRequest:
+    """The resident says when. `startAt` and `endAt`, both required.
+
+    The 2026-08-23 ruling F1: a job at somebody's home no longer arrives with an
+    hour a supervisor guessed for them. It arrives as a request, like a hiring
+    application reaching a manager, and the resident's answer is the hour
+    itself. Setting it moves the job to `offered` — the open pile — and the
+    supervisor is notified.
+
+    **There is no decline here** (ruling F3). Pick-mode was never a proposal, so
+    there is nothing to refuse; the decline button stays on the
+    supervisor-proposed reschedule, which is what `POST …/schedule` answers. If
+    twenty-four hours pass with no answer the dispatcher books the first hour a
+    serviceman can take and assigns them, which is what the card says it will.
+
+    **The two write routes are not interchangeable and refuse each other's
+    jobs.** A job the association gave an hour returns a `409` here — answer
+    that proposal instead — and a job with no hour cannot be `confirmed`.
+    Sending the wrong one is a mistake with a sentence, not a silent overwrite
+    of somebody else's intention.
+
+    Responds `200` with the same body as `GET …/schedule-request`, re-read, so
+    a screen sees the booking land rather than assuming it.
+
+    | Status | Code | Cause |
+    |---|---|---|
+    | 403 | `forbidden` | This visit is not yours to schedule |
+    | 404 | `schedule_request_not_found` | No live job on this complaint |
+    | 409 | `conflict` | Nothing to schedule; the association proposed the time; or the hour is in the past |
+    | 422 | `validation_error` | A missing end, or an end before its start |
+    """
+    return service.set_time(client, complaint_id=complaint_id, body=body)

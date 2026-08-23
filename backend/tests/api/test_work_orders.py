@@ -192,10 +192,17 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
 def test_api_160_triage_without_a_slot_is_a_request_not_an_omission(
     supervisor: TestClient, jobs: dict, csrf_headers: dict[str, str]
 ) -> None:
-    """The fork the whole feature turns on. A supervisor who wants to ask the
-    resident something first sends no time, and both slot fields reach the RPC
-    as `None` -- which is what produces a `draft` and notifies nobody. A request
-    that silently substituted `now()` would propose a visit no human chose."""
+    """The fork the whole feature turns on, and since the 2026-08-23 ruling F1
+    it is the only path the UI takes: the raise form carries no date or time for
+    anyone, so both slot fields reach the RPC as `None` and `create_work_order`
+    decides from the subject. A resident job becomes a request for the resident
+    to name the hour; a facility job becomes a `draft` the queue books for
+    itself. A request that silently substituted `now()` would propose a visit no
+    human chose -- which is the whole defect the ruling removed.
+
+    **The field is still accepted** (adjudication G1). A slotted raise keeps
+    today's semantics exactly, which is what the three tests below exercise;
+    what changed is what a *slotless* one means."""
     endpoint = "POST /api/v1/complaints/complaint-id/work-orders"
     expected_output = {"status_code": 201, "start": None, "end": None}
 

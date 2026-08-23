@@ -225,6 +225,14 @@ class ScheduleRequest(CamelModel):
     #: Whether this is still waiting on them. False once they have answered, so
     #: the screen can show the outcome without re-deriving it from ``status``.
     awaiting_response: bool = False
+    #: Which question is being asked. ``approve`` -- the association proposed an
+    #: hour and wants a yes or no -- or ``pick``, where nobody has chosen one and
+    #: the resident is being asked to (ruling F1, 2026-08-23). The discriminator
+    #: is the slot, not a status: both modes are ``awaiting_resident``, because
+    #: ``work_orders_status_check`` is a closed list and a new word there costs a
+    #: constraint rebuild. Sent on every response, ``approve`` when nothing is
+    #: being asked at all, so a screen never has to branch on ``null``.
+    mode: str = "approve"
     assignee_name: str | None = None
 
 
@@ -234,3 +242,26 @@ class ScheduleResponseRequest(CamelModel):
     #: ``confirmed`` or ``declined``.
     response: str
     note: str | None = Field(default=None, max_length=500)
+
+
+class ScheduleTimeRequest(CamelModel):
+    """The hour the resident chose for a visit to their own home.
+
+    Both ends required -- this is not a partial edit, and a half-slot is the
+    shape that silently disables ``work_order_assignments_no_overlap``, which is
+    checked on ``(start, end)`` and does nothing when start is null.
+
+    **There is no ``response`` field and no note.** Pick-mode is not a proposal,
+    so there is nothing to decline (ruling F3): the decline button stays on the
+    supervisor-proposed reschedule flow, and twenty-four hours of silence is
+    answered by the dispatcher booking the first free hour.
+    """
+
+    start_at: datetime
+    end_at: datetime
+
+    @model_validator(mode="after")
+    def _check_order(self) -> ScheduleTimeRequest:
+        if self.end_at <= self.start_at:
+            raise ValueError("endAt must be after startAt.")
+        return self

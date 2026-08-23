@@ -131,8 +131,15 @@ class TriageSnapshot(CamelModel):
     new_complaints: list[TriageComplaint] = []
     #: Taken up, and no live work order yet.
     taken_up: list[TriageComplaint] = []
-    #: Raised, live, and nobody has committed: ``draft``, ``awaiting_resident``
-    #: or ``offered``.
+    #: Waiting on the resident: ``awaiting_resident`` and uncommitted. The sixth
+    #: section, added by the 2026-08-23 ruling F1, and a split out of
+    #: ``openRequests`` rather than a new fact -- a job the resident has not
+    #: answered is not something the supervisor can act on, and listing it among
+    #: the work they can pick up was showing them a queue that was not theirs.
+    awaiting_resident: list[TriageWorkOrder] = []
+    #: Raised, live, and nobody has committed: ``draft`` or ``offered``. Since
+    #: 2026-08-23 this no longer carries ``awaiting_resident``, which has the
+    #: section above.
     open_requests: list[TriageWorkOrder] = []
     #: A worker has accepted it (or it is booked) and has not started.
     assigned_pending: list[TriageWorkOrder] = []

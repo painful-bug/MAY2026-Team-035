@@ -162,12 +162,28 @@ def test_it_sorts_after_every_file_whose_work_it_builds_on() -> None:
         assert ACTIONS.name > earlier.name
 
 
+#: Function -> the file whose body the database ends up holding. `ACTIONS` for
+#: `post_dm_message`, which nothing has touched since. **Not** for
+#: `supervisor_triage_snapshot`: the 2026-08-23 ruling F1 gave the dashboard a
+#: sixth section ("Awaiting resident response"), and
+#: `20260823180000_resident_sets_the_time.sql` re-issued the snapshot to bucket
+#: it -- so this file is no longer the last word on that one, and saying so is
+#: the point of the check rather than a failure of it. The narrowing that came
+#: with it is real: `open_requests` is `draft|offered` now, and the assertions
+#: further down still read *this* file's five-section body, which is what was
+#: applied here.
+LAST_WORD = {
+    "post_dm_message": ACTIONS.name,
+    "supervisor_triage_snapshot": "20260823180000_resident_sets_the_time.sql",
+}
+
+
 def test_it_is_the_last_word_on_both_functions_it_replaces() -> None:
     """Not "it is last in the directory" -- that property has expired five times
     in this directory already. The property is being last *among the files that
     declare this function*, which is what decides which body the database holds.
     """
-    for function in ("post_dm_message", "supervisor_triage_snapshot"):
+    for function, owner in LAST_WORD.items():
         declares = sorted(
             path.name
             for path in MIGRATIONS.glob("*.sql")
@@ -178,7 +194,7 @@ def test_it_is_the_last_word_on_both_functions_it_replaces() -> None:
             )
         )
         assert declares, f"nothing declares {function} at all"
-        assert declares[-1] == ACTIONS.name, function
+        assert declares[-1] == owner, function
 
 
 def test_it_redeclares_nothing_else_the_sibling_files_pin() -> None:

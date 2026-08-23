@@ -66,12 +66,15 @@ async def triage_snapshot(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> TriageSnapshot:
-    """Five sections, bucketed server-side, newest first within each.
+    """Six sections, bucketed server-side, newest first within each.
 
     * `newComplaints` — storage status `open`, no take-up stamp, no live job.
     * `takenUp` — a supervisor pressed *Take up* and no job exists yet.
-    * `openRequests` — a job is raised and nobody has committed to it:
-      `draft`, `awaiting_resident` or `offered`.
+    * `awaitingResident` — the resident has been asked and has not answered:
+      `awaiting_resident`, uncommitted. Nothing here is the supervisor's to
+      move, which is why it stopped being an open request on 2026-08-23.
+    * `openRequests` — a job is raised and nobody has committed to it: `draft`
+      or `offered`.
     * `assignedPending` — a worker **accepted** it (or it is booked) and has not
       started.
     * `inProgress` — the worker pressed *Start*; `startedAt` says when.
@@ -79,10 +82,10 @@ async def triage_snapshot(
     **The bucketing is the server's and the client never re-derives it.** *Live*
     (not completed, cancelled or failed) and *committed* (an `accepted`
     assignment, or work-order status `scheduled`) are defined once, in
-    `supervisor_triage_snapshot`. Five definitions that must agree are one
-    definition or they are five answers.
+    `supervisor_triage_snapshot`. Six definitions that must agree are one
+    definition or they are six answers.
 
-    **Furthest stage wins**, so a complaint appears exactly once across the five:
+    **Furthest stage wins**, so a complaint appears exactly once across the six:
     as a complaint until a job exists, and as that job afterwards. An offered but
     unaccepted job is an *open request* and not assigned work — the 2026-08-22
     ruling A3, and the reason `offeredToName` exists beside `assigneeName`.

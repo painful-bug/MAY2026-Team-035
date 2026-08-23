@@ -14,11 +14,23 @@ from __future__ import annotations
 import pytest
 
 from app.domain.vocabularies import (
+    booking_status_to_storage,
+    booking_status_to_wire,
     comment_visibility_to_storage,
     complaint_status_filter,
     complaint_status_to_wire,
     status_to_storage,
 )
+
+# public.booking_status, as created by 0001_baseline.sql:16.
+BASELINE_BOOKING_STATUS = {
+    "requested",
+    "approved",
+    "rejected",
+    "cancelled",
+    "completed",
+    "no_show",
+}
 
 # public.complaint_status, as created by 0001_baseline.sql:14.
 BASELINE_COMPLAINT_STATUS = {
@@ -165,3 +177,70 @@ def test_an_unknown_visibility_is_rejected_rather_than_defaulted():
     assert comment_visibility_to_storage("admins") is None
     assert comment_visibility_to_storage("") is None
     assert comment_visibility_to_storage(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Booking status -- three spellings of one fact
+#
+# `amenity_bookings.status` is the enum ('requested'); the overview views also
+# expose it initcap'd for display ('Pending', 'No Show'); and the app's own word
+# for that first state is 'pending', which is what `bookingStatuses.js` and
+# `_APPROVAL_FILTERS` are built on. One wire word per state, or every
+# case-sensitive comparison downstream is a coin flip (issue #48 D4).
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # The stored enum.
+        ("requested", "pending"),
+        ("approved", "approved"),
+        ("no_show", "no_show"),
+        # The views' display spelling, including the two-word one.
+        ("Pending", "pending"),
+        ("Approved", "approved"),
+        ("No Show", "no_show"),
+        # Already normalised, and the hyphenated spelling a client might send.
+        ("pending", "pending"),
+        ("no-show", "no_show"),
+        ("  APPROVED  ", "approved"),
+        # Absent is pending: an unsaved booking has been asked for, not decided.
+        (None, "pending"),
+        ("", "pending"),
+    ],
+)
+def test_booking_status_to_wire(value, expected):
+    assert booking_status_to_wire(value) == expected
+
+
+def test_the_wire_never_carries_the_enums_name_for_the_pending_state():
+    """The test that actually protects the comparison.
+
+    Its sibling above would still pass if the map returned 'requested' for
+    'requested' -- which is precisely what the first fix for this defect did,
+    because the stored value looked like it was already a machine value.
+    """
+    assert "requested" not in {
+        booking_status_to_wire(stored) for stored in BASELINE_BOOKING_STATUS
+    }
+
+
+@pytest.mark.parametrize("stored", sorted(BASELINE_BOOKING_STATUS))
+def test_every_stored_status_survives_a_round_trip(stored):
+    """Wire and back. A filter that cannot make this trip matches no rows."""
+    assert booking_status_to_storage(booking_status_to_wire(stored)) == stored
+
+
+@pytest.mark.parametrize("wire", ["pending", "approved", "cancelled", "No Show"])
+def test_every_wire_status_maps_onto_a_baseline_enum_member(wire):
+    """`amenity_ledger_overview.booking_status` is the raw enum, so a filter
+    value outside this set is a filter that silently matches nothing."""
+    assert booking_status_to_storage(wire) in BASELINE_BOOKING_STATUS
+
+
+def test_an_unknown_booking_status_is_rejected_rather_than_defaulted():
+    """A filter is the one place guessing is worse than refusing: defaulting an
+    unrecognised status to 'pending' would answer a question nobody asked."""
+    assert booking_status_to_storage("confirmed") is None
+    assert booking_status_to_storage("blocked") is None
+    assert booking_status_to_storage("") is None
+    assert booking_status_to_storage(None) is None

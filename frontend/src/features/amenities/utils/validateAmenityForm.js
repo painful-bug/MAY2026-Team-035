@@ -20,6 +20,12 @@ export const validateAmenityForm = (values) => {
 
   if (!values.closingTime) {
     errors.closingTime = 'Closing time is required.';
+  } else if (values.openingTime && values.closingTime <= values.openingTime) {
+    // The hours are persisted now, and both the write model and the
+    // `amenities_hours_check` constraint behind it refuse closing <= opening.
+    // Saying so here beats a 422 that arrives after the form is filled in.
+    // `HH:MM` strings compare correctly as strings.
+    errors.closingTime = 'Closing time must be later than opening time.';
   }
 
   const validBookingModes = BOOKING_MODE_OPTIONS.map((option) => option.value);

@@ -1,7 +1,12 @@
 import React, { useId, useRef } from 'react';
 import { ImagePlus, Trash2 } from 'lucide-react';
 
-export default function AmenityImagePicker({ image, onSelect, onRemove }) {
+export default function AmenityImagePicker({
+  image,
+  isProcessing = false,
+  onSelect,
+  onRemove,
+}) {
   const inputId = useId();
   const inputRef = useRef(null);
 
@@ -31,24 +36,36 @@ export default function AmenityImagePicker({ image, onSelect, onRemove }) {
       )}
 
       <div className="space-y-2">
+        {/* The picture is stored with the amenity, and it is resized in the
+            browser first — the API keeps it inside the amenity row rather than
+            in a bucket, so a camera-sized photo has to lose its pixels here or
+            it cannot be saved at all. */}
         <p className="text-xs font-medium text-slate-400">
-          Preview an image locally. Nothing will be uploaded yet.
+          {isProcessing
+            ? 'Resizing image...'
+            : 'Saved with the amenity. Large photos are resized automatically.'}
         </p>
         <div className="flex flex-wrap gap-2">
           <input
             ref={inputRef}
             id={inputId}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            disabled={isProcessing}
             onChange={handleImageChange}
             className="sr-only"
           />
           <label
             htmlFor={inputId}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors hover:border-indigo-200 hover:text-indigo-600"
+            aria-disabled={isProcessing}
+            className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition-colors ${
+              isProcessing
+                ? 'cursor-not-allowed opacity-60'
+                : 'cursor-pointer hover:border-indigo-200 hover:text-indigo-600'
+            }`}
           >
             <ImagePlus className="h-4 w-4" />
-            Choose Image
+            {isProcessing ? 'Resizing...' : 'Choose Image'}
           </label>
           {image && (
             <button

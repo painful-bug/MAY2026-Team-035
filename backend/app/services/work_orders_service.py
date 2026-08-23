@@ -33,6 +33,7 @@ from app.domain.work_order_schemas import (
     RescheduleWorkOrderRequest,
     ScheduleRequest,
     ScheduleResponseRequest,
+    ScheduleTimeRequest,
     UpdateWorkOrderRequest,
     WorkOrder,
     WorkOrderAssignment,
@@ -124,6 +125,11 @@ def _to_work_order(row: dict[str, Any]) -> WorkOrder:
 
 def _to_schedule_request(row: dict[str, Any]) -> ScheduleRequest:
     status = str(row.get("status") or "draft")
+    awaiting = status == "awaiting_resident"
+    # The discriminator is the slot, not the status (ruling G2): both modes are
+    # `awaiting_resident`, because `work_orders_status_check` is a closed list.
+    # No slot means nobody has chosen an hour and the resident is being asked to.
+    pick = awaiting and row.get("scheduled_start_at") in (None, "")
     return ScheduleRequest(
         work_order_id=row["id"],
         complaint_id=_text(row.get("complaint_id")),
@@ -134,7 +140,8 @@ def _to_schedule_request(row: dict[str, Any]) -> ScheduleRequest:
         scheduled_start_at=row.get("scheduled_start_at"),
         scheduled_end_at=row.get("scheduled_end_at"),
         respond_by=row.get("resident_deadline_at"),
-        awaiting_response=status == "awaiting_resident",
+        awaiting_response=awaiting,
+        mode="pick" if pick else "approve",
         assignee_name=_text(row.get("assignee_name")),
     )
 
@@ -374,6 +381,30 @@ def respond(
     row = _live_work_order(client, complaint_id=complaint_id)
     repo.respond_to_schedule(
         client, work_order_id=str(row["id"]), response=answer, note=body.note
+    )
+    return _to_schedule_request(
+        _live_work_order(client, complaint_id=complaint_id)
+    )
+
+
+def set_time(
+    client: Client, *, complaint_id: str, body: ScheduleTimeRequest
+) -> ScheduleRequest:
+    """The resident choosing the hour for a visit to their own home.
+
+    The same resolution as every other resident route -- newest live job on this
+    complaint -- and no pre-read of its status. Whether the job is still in
+    pick-mode is a question about a row, and by the time this process had read
+    it and decided, the dispatcher could have booked it: the check belongs
+    inside the transaction that does the write, and
+    ``resident_set_work_order_schedule`` is where it is.
+    """
+    row = _live_work_order(client, complaint_id=complaint_id)
+    repo.set_resident_schedule(
+        client,
+        work_order_id=str(row["id"]),
+        start_at=_iso(body.start_at) or "",
+        end_at=_iso(body.end_at) or "",
     )
     return _to_schedule_request(
         _live_work_order(client, complaint_id=complaint_id)

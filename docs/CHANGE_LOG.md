@@ -17,7 +17,123 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — hosted catches up: runbook §23–§26 applied and ledgered
+## 2026-08-23 (latest) — the resident sets the time, and the system books what nobody schedules
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §23 — the scheduling-inversion rulings.**
+`PO` (three rulings, 2026-08-23). Live testing continued past the board build
+and the owner re-cut the raise flow: the supervisor's raise form loses its
+date/time fields entirely (**F1**); a resident-subject job asks the resident
+to pick the visit time from their dashboard, and only that answer puts the
+job on the open pile; a facility job is auto-assigned into the first
+available slot once urgent resident complaints in the department are
+allotted (F1's second half); 24 hours of resident silence means the system
+books the first available time with an available serviceman and assigns them
+automatically (**F2**); the resident card is a picker only, with no decline
+(**F3** — decline stays on the supervisor-proposed reschedule flow). This
+explicitly overturns the raise-with-a-slot consent model recorded when
+0036's `awaiting_resident` flow was built: the resident now names the time
+instead of approving one. A new "Awaiting resident response" section
+surfaces the waiting jobs on the supervisor dashboard. Orchestrator
+adjudications (G1–G11) and the frozen two-specialist interface:
+`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`.
+
+**The build.** `DERIVED` (two parallel specialists, orchestrator-verified
+2026-08-23). One hand-apply migration,
+`backend/supabase/migrations/20260823180000_resident_sets_the_time.sql`
+(runbook §28, apply AFTER §27): pick-mode is `awaiting_resident` with a
+NULL slot (no new status, no new event word; the ONE widened constraint is
+`dispatch_tasks_kind_check`, + `facility_auto_assign`);
+`dispatch_candidates` refactored into a delegate over the new
+`dispatch_candidates_at` so `find_first_available_slot` can probe
+hypothetical hours (2h visits, 14-day horizon) without writing to
+`work_orders`; `create_work_order` forks on slot presence (G1);
+`resident_set_work_order_schedule` moves a pick-mode job to `offered` — the
+open pile; `dispatch_resident_timeout` branches on the discriminator
+(approve-mode unchanged, expired pick-mode auto-books and assigns, no
+candidate → open board + supervisor told);
+`dispatch_facility_auto_assign` books facility drafts behind an hourly
+re-checked urgent-residents gate; `supervisor_triage_snapshot` grows the
+sixth `awaiting_resident` bucket. Backend: `mode` on the schedule-request
+read, new `POST /complaints/{id}/schedule-time`, `awaitingResident` on
+`TriageSnapshot` (defaults `[]`, so the API is safe against a pre-migration
+hosted database). Frontend: the raise form's date/time fields are gone; the
+resident card branches approve/pick; the supervisor dashboard renders
+"Awaiting resident response". Orchestrator's own verification: backend
+1375 passed / 5 skipped / 12 xfailed (baseline 1342/5/12; +33 all
+accounted), frontend 47 files / 312 passed + 4 expected-fail (baseline
+46/298+4), oxlint 0; migration reviewed line-by-line with
+carried-forward-verbatim claims spot-checked against 0036/0037/20260823120000.
+Post-build adjudications H1–H6 and the backlog are in the spec.
+
+**Runbook §28 post-check (a) repaired after the live apply.** `DERIVED`
+(apply session, 2026-08-23). §27 and §28 both applied clean on hosted, but
+post-check (a) as written could never pass in the SQL editor: it called
+`supervisor_triage_snapshot` (no `auth.uid()` in the editor → the guard
+HB403s any direct call) via a `where kind = 'service'` department lookup
+that finds nothing on this deployment (the backend stores `kind` NULL
+unless the admin form supplies one and defaults NULL to "service" on read
+— `departments_service.py:81`), so the function's null-guard drew HB404.
+Replaced in the runbook and the migration's comment-only §11 with a
+guard-free `pg_get_functiondef` inspection for the sixth bucket; the
+in-transaction §10 proofs had already verified the same structure at apply
+time. Earlier runbook sections (§22, §26) share the flawed helper but are
+already applied and past; left as history.
+
+## 2026-08-23 — the worker gets an open-jobs board, and the assign picker stops blaming trades
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §22 — the open-jobs board rulings.** `PO`
+(three rulings, 2026-08-23). Live testing from the worker's side found the gap:
+a freshly hired plumber sees nothing, because workers only see what a
+supervisor offers them. The owner ruled that department roster technicians
+holding a job's trade see an open-jobs board for their department (C1 — not
+the whole roster, not the marketplace; hiring stays the gate); that taking a
+job from the board is an instant claim with accept-an-offer mechanics, first
+come first served, supervisor notified (C2); and that unscheduled jobs appear
+on the board with a "time to be set" marker and are claimable, slot checks
+deferred until an hour exists (C3). This *extends* the consent-by-offer
+dispatch model rather than overturning it — the supervisor's offer and
+force-assign paths are untouched. Build spec and implementation to follow;
+"open" versus "offered to somebody else" is an orchestrator adjudication to be
+logged in the spec.
+
+**`docs/plans/OPEN_JOBS_BOARD_SPEC.md` + the board build.** `DERIVED` (from
+rulings C1–C3, built same day). The spec froze seven adjudications (D1–D7)
+before launch — most notably D1, "open" means *uncommitted and unpromised*
+(a job with a live offer out to somebody else is off the board and returns on
+decline), and D5, the projection trigger widened so a direct-to-`accepted`
+insert moves the complaint `open → acknowledged`, knowingly closing the
+identical pre-existing hole in both force-assign paths (an engine lifecycle
+change made under C2's "same status movements" authority — flagged to the PO).
+The build: migration `20260823170000_open_jobs_board.sql` (`worker_open_jobs()`
+board read as SECURITY DEFINER because RLS correctly hides unheld jobs from
+workers; `claim_open_work_order(uuid)` with a row-lock-settled race; the D5
+trigger widening; runbook §27 for the owner's hand-apply), endpoints
+`GET /worker/open-jobs` and `POST /worker/jobs/{id}/claim`, and the worker
+portal's "Open jobs" page and nav item (hidden from leadership — the queue is
+theirs). No new event word (`job_assigned` + `claimed: true` payload, per the
+runbook §19 cost rule); new notification kind `work_order.claimed` (kinds are
+unconstrained by design). Verification re-run by the orchestrator, not taken
+from the agent report: frontend 298 tests passing / oxlint 0; backend
+1342 passed / 5 skipped / 12 xfailed (the xfails are a concurrent
+workstream's untracked repro file, not this build's — up from the 1328/5
+pre-build baseline by exactly this build's 14 new tests, zero failures).
+Post-build adjudications E1–E3 (the frozen filename falsified three
+hardcoded-set migration-ordering tests — specialist's minimal test edit
+accepted; mapper cells hand-filled under a `####`-heading generator
+limitation) are logged in the spec.
+
+**Frontend `AssignPickerModal` — the empty state stops lying.** `DERIVED`
+(orchestrator fix, 2026-08-23). The force-assign picker's only empty-state
+message blamed missing trades, but `dispatch_candidates` returns nobody for
+*any* job without a scheduled hour — its eligibility checks (leave, windows,
+clashes) are slot-dependent, so the unscheduled case answered "nobody" and the
+screen misdiagnosed it, live, in front of the owner. The modal now skips the
+fetch entirely when the job has no hour and says "set a time in the work-order
+queue first"; the genuinely-empty-roster copy now names all three causes
+(trade, leave, clashing bookings) instead of picking one. Tests pin both
+messages (7/7, lint clean).
+
+## 2026-08-23 — hosted catches up: runbook §23–§26 applied and ledgered
 
 **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §23–§26 — executed on the hosted
 project.** `PO` (owner hand-apply via SQL editor, 2026-08-23). The owner applied

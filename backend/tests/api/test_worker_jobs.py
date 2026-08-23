@@ -25,12 +25,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user, get_request_client
+from app.core.exceptions import ConflictError
 from app.domain.schemas import Principal
 from app.services import worker_service
 
 SNAPSHOT = "/api/v1/worker/snapshot"
 JOBS = "/api/v1/worker/jobs"
 JOB = "/api/v1/worker/jobs/work-order-id"
+OPEN_JOBS = "/api/v1/worker/open-jobs"
 
 PROFILE_ID = "worker-profile-id"
 PROVIDER_ID = "provider-id"
@@ -67,6 +69,31 @@ def job_row(**overrides: Any) -> dict[str, Any]:
         "resident_name": "Asha Menon",
         "resident_phone_e164": "+919812345678",
         "resident_unit_code": "B-204",
+    }
+    base.update(overrides)
+    return base
+
+
+def open_job_row(**overrides: Any) -> dict[str, Any]:
+    """One board row as `worker_open_jobs` returns it: keyed on the work
+    order, with the caller's own roster row alongside so the client never
+    guesses it."""
+    base: dict[str, Any] = {
+        "work_order_id": "work-order-id",
+        "complaint_id": "complaint-id",
+        "complaint_title": "Leaking tap",
+        "department_id": "department-id",
+        "department_name": "Plumbing",
+        "community_id": "community-id",
+        "community_name": "Green Meadows",
+        "skill_id": "skill-id",
+        "skill_name": "Plumbing",
+        "priority": "medium",
+        "subject_kind": "resident",
+        "scheduled_start_at": None,
+        "scheduled_end_at": None,
+        "created_at": "2026-08-22T09:00:00Z",
+        "staff_assignment_id": "staff-id",
     }
     base.update(overrides)
     return base
@@ -136,6 +163,8 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     """Replace the repositories under the live service."""
     captured: dict = {
         "rows": [job_row()],
+        "open_rows": [open_job_row()],
+        "claim_error": None,
         "detail": job_row(),
         "provider_row": provider_row(),
         "engagements": [engagement_row()],
@@ -158,6 +187,16 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
 
     def fake_accept(client: Any, *, work_order_id: str) -> str:
         captured["calls"].append(("accept", work_order_id))
+        return "assignment-id"
+
+    def fake_list_open_jobs(client: Any) -> list[dict[str, Any]]:
+        captured["calls"].append(("open-jobs", None))
+        return captured["open_rows"]
+
+    def fake_claim(client: Any, *, work_order_id: str) -> str:
+        captured["calls"].append(("claim", work_order_id))
+        if captured["claim_error"] is not None:
+            raise captured["claim_error"]
         return "assignment-id"
 
     def fake_decline(client: Any, *, work_order_id: str, reason: str | None) -> str:
@@ -201,6 +240,8 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
     monkeypatch.setattr(repo, "list_jobs", fake_list_jobs)
     monkeypatch.setattr(repo, "get_job", fake_get_job)
     monkeypatch.setattr(repo, "accept_offer", fake_accept)
+    monkeypatch.setattr(repo, "list_open_jobs", fake_list_open_jobs)
+    monkeypatch.setattr(repo, "claim_job", fake_claim)
     monkeypatch.setattr(repo, "decline_offer", fake_decline)
     monkeypatch.setattr(repo, "start_job", fake_start)
     monkeypatch.setattr(repo, "complete_job", fake_complete)
@@ -398,6 +439,95 @@ def test_an_invited_supervisor_gets_their_engagement_with_no_provider_row(
         "ranks": [row["rank"] for row in body["communities"]],
         "department_names": [row["departmentName"] for row in body["communities"]],
         "asked_about": jobs["staff_engagements_for"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_370_the_board_names_the_roster_row_and_keeps_the_null_slot(
+    worker_client: TestClient, jobs: dict
+) -> None:
+    """Two promises the frozen interface makes. `staffAssignmentId` is the
+    caller's own roster row, returned so the frontend never guesses which of a
+    multi-community worker's rows a claim rides on. And a null slot passes
+    through as null rather than being dropped or defaulted -- ruling C3 says
+    an unscheduled job is on the board with a "time to be set" marker, and the
+    marker is the client's to draw from exactly this null."""
+    endpoint = "GET /api/v1/worker/open-jobs"
+    expected_output = {
+        "status_code": 200,
+        "staff_assignment_id": "staff-id",
+        "scheduled_start_at": None,
+        "complaint_title": "Leaking tap",
+    }
+
+    response = worker_client.get(OPEN_JOBS)
+    listed = response.json()[0]
+    actual_output = {
+        "status_code": response.status_code,
+        "staff_assignment_id": listed["staffAssignmentId"],
+        "scheduled_start_at": listed["scheduledStartAt"],
+        "complaint_title": listed["complaintTitle"],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_371_claiming_answers_with_the_row_the_database_settled_on(
+    worker_client: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """The same contract as accepting, and it matters more here: the claim is
+    the race the board creates on purpose, and only the re-read knows the job
+    the caller now holds is `scheduled` -- possibly with no slot yet, which is
+    C3's shape rather than an error."""
+    endpoint = "POST /api/v1/worker/jobs/{id}/claim"
+    expected_output = {
+        "status_code": 200,
+        "work_order_status": "scheduled",
+        "scheduled_start_at": None,
+        "claimed_first": ("claim", "work-order-id"),
+    }
+
+    jobs["detail"] = job_row(
+        assignment_status="accepted",
+        work_order_status="scheduled",
+        scheduled_start_at=None,
+        scheduled_end_at=None,
+    )
+    response = worker_client.post(f"{JOB}/claim", headers=csrf_headers)
+    actual_output = {
+        "status_code": response.status_code,
+        "work_order_status": response.json()["workOrderStatus"],
+        "scheduled_start_at": response.json()["scheduledStartAt"],
+        "claimed_first": jobs["calls"][0],
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_372_losing_the_claim_race_is_a_409_in_the_servers_words(
+    worker_client: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """First come, first served (C2) means somebody loses, ordinarily. The RPC
+    locks the work order before it reads anything, so the loser is told
+    *somebody has already taken this job* -- a sentence the card can print --
+    rather than shown an exclusion-constraint violation."""
+    endpoint = "POST /api/v1/worker/jobs/{id}/claim"
+    expected_output = {
+        "status_code": 409,
+        "code": "conflict",
+        "message": "Somebody has already taken this job.",
+    }
+
+    jobs["claim_error"] = ConflictError(
+        "Somebody has already taken this job.", code="conflict"
+    )
+    response = worker_client.post(f"{JOB}/claim", headers=csrf_headers)
+    body = response.json()["error"]
+    actual_output = {
+        "status_code": response.status_code,
+        "code": body["code"],
+        "message": body["message"],
     }
 
     assert actual_output == expected_output, endpoint
