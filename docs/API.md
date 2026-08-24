@@ -681,6 +681,24 @@ present, `0` when none. They are computed as head-only Postgres count queries
 (`dashboard_repository.weekly_new_counts`), never by tallying the capped lists elsewhere in the same
 response — so the chips stay honest even when a list is truncated at its row limit.
 
+**`GET /dashboard/snapshot` → `amenities[]`** — the catalogue card projection, fixed 2026-08-23
+(issue #48 D2). Every real deployment runs the `legacy=True` branch (`dashboard_repository.list_amenities`
+/ `dashboard_service._amenities`), which reads the `amenities` table directly:
+
+| Key | Notes |
+|---|---|
+| `description` | The real `description` column. It used to repeat `category` — every card described itself as `"Fitness"` — because the legacy `SELECT` never asked for the column at all |
+| `image` | `amenities.image_url` — a `https://` URL or a capped base64 `data:image/...` URL (below). `null`/absent when unset |
+| `openingTime`, `closingTime` | `amenities.opening_time` / `closing_time`, as `"HH:MM:SS"` text (`""` when unset) |
+| `bookingMode`, `status` | Title-cased for display (`Exclusive`, `Active`) — **not** the lowercase machine vocabulary bookings use (below); this projection was not touched by the booking-status fix |
+
+Before this fix the `SELECT` powering this projection did not name `description`, `image_url`,
+`opening_time` or `closing_time` at all, even though `0023` had added all four columns — so the admin
+catalogue card could never show a photo or an opening hour no matter what the write endpoint accepted.
+The non-legacy branch (dead in every environment this product runs in — there is no deployment with
+`schema_generation() != "legacy"`) keeps its `image`/hours inside the `booking_rules` jsonb it has
+always used; no DDL was added for it.
+
 ### 5.1 Live updates — `GET /events`
 
 One stream for every portal. It is how every write in §7–§12 reaches an open screen without a matching read
@@ -2022,6 +2040,40 @@ Every figure is computed by Postgres in `numeric`, including the reports page's 
 `409` the moment anything has been booked on it, because the cascade would take the bookings, their
 charges and their financial events with it — including deposits residents are still owed.
 
+### `POST /api/v1/dashboard/amenities` · `PUT /api/v1/dashboard/amenities/{amenityId}`
+
+Create or update one row of the catalogue. **Requires `ADMIN` or `MANAGER`.** Body: `AmenityWrite` —
+the one model on this surface with **snake_case field names** rather than the rest of the API's
+camelCase, matching the nine fields it already had: `name`, `description`, `category`, `location`,
+`capacity`, `booking_mode`, `approval_required`, `hourly_rate`, `is_active`. Plus three added
+2026-08-23 to close issue #48 D2, the gap that let the catalogue form collect a photo and a pair of
+opening hours the API had nowhere to put:
+
+| Field | Type | Accepted | 422 when |
+|---|---|---|---|
+| `image` | `string \| null` | An `https://` URL up to 2000 chars, **or** a `data:image/(png\|jpeg\|webp\|gif);base64,...` URL up to 140,000 chars (~100KB of binary — the client downscales to this before it ever submits, so the limit is a backstop, not the normal path). `""` normalises to `null` | Anything else — a `data:` URL over the cap, an unrecognised image type, a bare filename |
+| `opening_time`, `closing_time` | `string \| null` | `"HH:MM"` or `"HH:MM:SS"` — the two shapes an `<input type="time">` emits and the two Postgres `time` accepts. `""` normalises to `null` | Malformed clock string; **or** both are set and `opening_time >= closing_time` |
+
+The hours check mirrors the database's own `amenities_hours_check` (`0023` line ~121) so a reversed
+pair is a `422` here instead of reaching Postgres as a `500`. `image_url`, `opening_time` and
+`closing_time` are real columns on `amenities` since `0023`; before this fix the write handler accepted
+none of the three, `description` on the legacy write path was silently dropped even though the column
+existed, and there was no way to set a photo or hours on an amenity at all.
+
+| Status | Code | Cause |
+|---|---|---|
+| `401` / `403` | | Not authenticated / not an admin or manager |
+| `403` | `csrf_invalid` / `csrf_origin_invalid` | Missing `X-CSRF-Token`, or wrong `Origin` |
+| `404` | `not_found` | `PUT`/`DELETE` — no such amenity |
+| `409` | `conflict` | `DELETE` — the amenity has bookings; the cascade would take their charges and financial events with it |
+| `422` | `request_validation_error` | `name` missing on create, out of length; `image`/`opening_time`/`closing_time` as above |
+
+> **The success response is a known, pre-existing gap, not something this fix touches.** All three
+> operations return the raw DB row as a free-form object rather than a modelled schema — `DELETE`
+> returns `{"id": ...}` — and the shape differs between the `legacy` and non-legacy branches
+> (`api_yaml_mapper.md` §5.1). Resolving that is a separate, larger change than adding three fields to
+> the request; only the request side is documented above.
+
 ### `GET /api/v1/amenities/available`
 
 The bookable catalogue. **Requires an active membership** — any role, not `resident` only, because
@@ -2127,7 +2179,7 @@ The day timeline. **Requires `ADMIN`.**
       "endTime": "09:00",
       "state": "booked",
       "bookingType": "resident",
-      "status": "confirmed",
+      "status": "approved",
       "source": "resident",
       "requiresApproval": false,
       "isPrivateBooking": false,
@@ -2151,10 +2203,17 @@ The day timeline. **Requires `ADMIN`.**
 }
 ```
 
-`state` is the timeline's vocabulary (`booked` | `blocked`); `status` is the lifecycle's. **The
-cleaning buffer is not sent as a block** — the frontend synthesises buffers at render time from the
-booking's end and the amenity's buffer (`amenityTimeline.createCleaningBuffers`), and sending them
-too would give one block two sources.
+`state` is the timeline's vocabulary (`booked` | `blocked`); `status` is the lifecycle's — always one
+of `pending`, `approved`, `rejected`, `cancelled`, `completed`, `no_show`, lowercase, since 2026-08-23
+(issue #48 D4). It never carries Title-case (`"Pending"`, `"No Show"`) and never `confirmed`, which
+is not a value the lifecycle has ever had.
+
+**`state: "blocked"` is now derived from `bookingType == "blocked"`, not from `status`.** A block is
+stored as an ordinary `approved` booking wearing `bookingType: "blocked"` (`block_amenity_slot`, `0023`
+lines 1104-1105) — `public.booking_status` has no `blocked` value at all. Keying the timeline off
+`status` — as it did before this fix — painted every admin block as an ordinary resident booking
+(issue #48 D3); it now paints from the type, so a block is `state: "blocked"` with
+`status: "approved"` on the same row.
 
 `status` may read `completed` for a row stored as `approved`: a booking whose end time has passed is
 completed, and storing that would need a scheduled job to keep it true.
@@ -2201,11 +2260,32 @@ The flat is resolved from the named resident's residency rather than sent, so th
 unit that exists. `chargeOverride` replaces the booking fee and nothing else — a waived fee does not
 waive the deposit, which is coming back.
 
+**`bookingType` is the form's own words, mapped onto the database's before the write** (issue #48 D4).
+`amenity_bookings_type_check` (`0023` lines 289-291) accepts exactly four values —
+`resident` | `admin` | `maintenance` | `blocked` — and the admin booking form offers a different,
+human vocabulary describing the same event. The mapping is code-only, applied at the service boundary,
+and deliberately lossy:
+
+| Sent as `bookingType` | Stored as | Notes |
+|---|---|---|
+| `resident` | `resident` | Unchanged |
+| `admin` | `admin` | Unchanged |
+| `maintenance` | `maintenance` | Unchanged |
+| `blocked` | `blocked` | Unchanged (this endpoint does not normally send it — see `POST .../blocks`) |
+| `private-event` | `admin` | Which kind of event it was keeps living in `bookingTitle`, `notes` and `department`, exactly where the form already puts it |
+| `society-event` | `admin` | Same |
+| `maintenance-reservation` | `maintenance` | Same |
+
+Reads present the **stored** value; the request's wording is never round-tripped back. Before this
+fix the form's vocabulary was sent straight to the `booking_type` column, which the `CHECK` constraint
+rejects for every one of the three aliased words — the failure moved from a clear `422` at the API to
+an opaque `500` from Postgres.
+
 **201** — the created booking.
 
 | Status | Code | Cause |
 |---|---|---|
-| `400` | `validation_error` | End time not after start, unknown booking type |
+| `422` | `validation_error` | End time not after start; `bookingType` outside the table above |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | No such amenity |
 | `409` | `conflict` | The slot is taken or full; the resident has no active flat |
@@ -2303,11 +2383,21 @@ The approvals tab — **one row per request, not per day**. **Requires `ADMIN`.*
 from the maintenance invoices; our invoices attach to the unit and carry no person. Same label,
 different number — `DECISIONS_NEEDED.md` E18.
 
+**The tab set is exactly the five rows above — `all` fans out to the other four, and there is no
+sixth.** `confirmed` sat beside them until 2026-08-23 and matched no row `series_status` could ever
+hold (`0023` lines 537-542 name four values, not five), so the "approved" tab's filter was quietly
+wider than the status it claimed to show. There is still no `confirmed`/`blocked` tab — an admin
+booking staying out of this queue is by design (below), not a gap this fix left open.
+
 | Status | Code | Cause |
 |---|---|---|
-| `400` | `validation_error` | Unknown `status` |
+| `422` | `validation_error` | `status` outside `pending` \| `approved` \| `rejected` \| `cancelled` \| `all` |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | The caller belongs to no community |
+
+> **By design: admin-created bookings do not appear here, and there is no "Confirmed" tab for them**
+> (product ruling, 2026-08-23). `POST /amenities/{amenityId}/bookings` confirms on creation — see
+> above — so it was never a candidate for this queue; nothing about issue #48 changes that.
 
 ### `POST /api/v1/amenity-bookings/{seriesId}/approve`
 
@@ -2534,6 +2624,16 @@ Record money received against one charge. **Requires `ADMIN`.**
 already recorded rather than double-crediting. **Overpayment returns `409` rather than being
 clamped**, because clamping accepts money and then loses it.
 
+> **The idempotency guarantee above was not real before 2026-08-23 (issue #48 D4).**
+> `record_amenity_payment` reads exactly three keys off its payload — `amount`, `reference`, `notes`
+> (`0023` lines 1295-1330) — and this endpoint sent the reference under the name `payment_reference`,
+> which the RPC has never read. A replayed callback therefore recorded a *second* payment instead of
+> returning the first. `paymentReference` now maps onto the RPC's `reference` key, which is the fix.
+> `method` and `chargeType` have no column of their own on a financial event; both are still accepted
+> on the request and are now folded into the stored `notes` text (e.g. `"Charge type: booking; Method:
+> UPI; <whatever the admin typed>"`) rather than being silently dropped, which is what happened to them
+> before this fix.
+
 **201** — the updated ledger transaction, so the caller sees the derived figures rather than the
 request echoed back.
 
@@ -2553,20 +2653,29 @@ Return what is left of the deposit. **Requires `ADMIN`.**
 ```
 
 **The amount is not a parameter.** It is the deposit paid, less damage taken, less anything already
-refunded, computed in Postgres — a refund whose amount the caller chooses is a refund somebody can
-ask to be larger. The frontend already sends nothing (`processDepositRefund` uses
-`normalized.remainingRefund`).
+refunded — `remainingRefund` off `amenity_ledger_overview` — a refund whose amount the caller chooses
+is a refund somebody can ask to be larger. The frontend already sends nothing
+(`processDepositRefund` uses `normalized.remainingRefund`).
 
 A deposit is refundable only once the booking is cancelled or has finished: refunding a booking that
 is still going to happen leaves the amenity unsecured.
+
+> **Fixed 2026-08-23 (issue #48 D4): every refund used to insert with no amount at all.**
+> `refund_amenity_deposit` writes its event from an `amount` key in the payload (`0023` line 1348),
+> and this endpoint never sent one. The ceiling check on the missing amount passed vacuously and the
+> ledger recorded a refund of nothing, every time. The service now reads `remainingRefund` back off the
+> ledger row and sends it explicitly as `amount` — the same figure the response already showed as
+> refundable, now actually paid out. **When there is nothing left, the service refuses before the RPC
+> is ever called** (`422`, below) rather than letting Postgres accept a zero-amount event.
 
 **201** — the updated ledger transaction.
 
 | Status | Code | Cause |
 |---|---|---|
+| `422` | `validation_error` | `remainingRefund` is `0` — "There is nothing left to refund on this booking." Raised by the service, before the RPC runs |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | No such booking |
-| `409` | `conflict` | No deposit; booking still ahead of it; nothing left to refund |
+| `409` | `conflict` | No deposit; booking still ahead of it |
 
 ### `POST /api/v1/amenity-bookings/{occurrenceId}/damage`
 
@@ -2601,6 +2710,14 @@ Bill something after the fact. **Requires `ADMIN`.**
 first**: the ledger has one `additionalCharges` figure, and housekeeping on Monday plus a broken chair
 on Tuesday is two things, not the later one.
 
+> **Fixed 2026-08-23 (issue #48 D4): `description` used to land as a `NULL` label.**
+> `add_amenity_charge` reads `label`, `amount` and `notes` off its payload (`0023` lines 1459-1474) and
+> writes the charge row's `chargeType` itself as `additional`; this endpoint sent the description under
+> its own name, `description`, which the RPC has never read. Every added charge was recorded with no
+> label at all. `description` now maps onto the RPC's `label` key; the requested `chargeType` (e.g.
+> `late_cancellation`) is folded into `notes`, since the RPC hardcodes the stored charge type and a
+> late-cancellation fee should still say so somewhere.
+
 **201** — the updated ledger transaction.
 
 | Status | Code | Cause |
@@ -2615,9 +2732,9 @@ The reports page. **Requires `ADMIN`.**
 
 | Query | Type | Default | Notes |
 |---|---|---|---|
-| `startDate` / `endDate` | date | — | Booking date range |
-| `amenityId` | uuid | — | One amenity |
-| `bookingStatus` | string | — | One lifecycle status |
+| `startDate` / `endDate` | date | — | Booking date range — the **only** filter the KPI aggregate sees (below) |
+| `amenityId` | uuid | — | One amenity — narrows `rows` only |
+| `bookingStatus` | string | — | One of `options.bookingStatuses` (below) — narrows `rows` only |
 | `page` | int ≥ 1 | `1` | |
 | `pageSize` | int 1–200 | `50` | |
 
@@ -2639,33 +2756,55 @@ The reports page. **Requires `ADMIN`.**
     }
   ],
   "kpis": {
-    "totalAmenities": 6,
+    "totalBookings": 6,
     "totalActiveBookings": 4,
-    "pendingApprovals": 2,
+    "cancelledBookings": 1,
+    "totalCharged": 16500.0,
     "totalRevenue": 15300.0,
-    "activeAmenities": 5,
-    "bookingsThisMonth": 9
+    "totalRefunded": 500.0
   },
   "options": {
     "amenities": [{ "value": "5c0b…", "label": "Clubhouse Gym" }],
-    "bookingStatuses": ["pending", "approved", "confirmed", "completed", "cancelled", "rejected", "blocked"]
+    "bookingStatuses": ["pending", "approved", "completed", "cancelled", "rejected"]
   }
 }
 ```
 
 **`rows` is a page; `kpis` is an aggregate over every matching row.** That split is the point: a KPI
 that describes one page is not a KPI, and this one is labelled "Total Revenue". `calculateAmenityReports`
-computes all six in the browser from whatever it has loaded, which is the same failure as the money
+computes figures in the browser from whatever it has loaded, which is the same failure as the money
 tiles (agenda item 11).
 
+**`kpis` carries exactly the six figures `amenity_report_totals` returns, since 2026-08-23 (issue #48
+D4).** The set it replaces — `totalAmenities`, `pendingApprovals`, `activeAmenities`,
+`bookingsThisMonth` — named nothing the RPC has ever returned, so all four rendered a hardcoded `0` on
+the reports page while looking like measurements. A KPI with no source is a worse answer than no KPI,
+so they are gone rather than zeroed. `totalActiveBookings` reads the RPC's `approved_bookings` and
+`totalRevenue` reads its `total_paid` — both keep the name the label on the card always promised, even
+though it differs from the RPC's own column name.
+
+**The RPC's whole filter vocabulary is `from_date`/`to_date` — it has never read `amenityId` or
+`bookingStatus`.** Before this fix the endpoint sent them anyway, so every KPI silently described the
+last 30 days of the *whole community* no matter which amenity or status the admin had picked. There is
+still no RPC that applies those two filters to an aggregate, so `kpis` continues to reflect the date
+range only; `amenityId` and `bookingStatus` now narrow `rows` **honestly**, in Python, against the same
+ledger query the table renders, rather than being sent to an aggregate that silently ignored them.
+
+`bookingStatus` arrives in the wire's vocabulary and is translated to the stored enum before it filters
+`rows` (`amenity_ledger_overview.booking_status` is the raw enum — `'requested'`, not `'pending'`).
+
 `options.bookingStatuses` is the lifecycle's fixed vocabulary rather than the statuses that happen to
-be present, so the filter does not lose an option the moment nothing currently has that status.
+be present, so the filter does not lose an option the moment nothing currently has that status. It
+used to also list `confirmed` and `blocked`, and neither is a value `booking_status` can hold — a block
+is an `approved` row wearing `bookingType: "blocked"` — so both were always-empty options; removed as
+of 2026-08-23 alongside the fix to the `approved` tab that had the same phantom (above).
 
 A block is excluded from every count but not from the revenue — it is not a booking anybody made, but
 its money would still be money.
 
 | Status | Code | Cause |
 |---|---|---|
+| `422` | `validation_error` | `bookingStatus` outside `options.bookingStatuses` |
 | `401` / `403` | | Not authenticated / not an admin |
 | `404` | `not_found` | The caller belongs to no community |
 
@@ -3372,6 +3511,18 @@ The caller's own bookings and what is still owed on each. `?view=upcoming|past`.
 > community and wrong about the resident: the one person entitled to know what a booking costs is the
 > person being asked to pay for it. The policy now has an own-booking clause and nothing more.
 
+| Response field | Notes |
+|---|---|
+| `status` | `pending` \| `approved` \| `rejected` \| `cancelled` \| `completed` \| `no_show` — the lowercase machine vocabulary, the same one every admin amenity endpoint in §10 emits |
+| `storedStatus` | The stored enum, which **agrees with `status` on every row** except that it keeps the enum's own `requested` where `status` says `pending` |
+
+**Unlike `GET /invoices/mine` above, `storedStatus` here is not a second, truer answer — it is the
+same fact under the enum's own name for one state.** Fixed 2026-08-23 (issue #48 D4):
+`resident_booking_overview.status` is Title-case (`"Pending"`, `"No Show"`), and this endpoint used to
+pass it straight through, which made it the one booking surface in the product whose status could not
+be compared against any other's — not the admin timeline, not the ledger, not the reports page. It now
+runs through the same `booking_status_to_wire` translation they do.
+
 ### `POST /api/v1/amenity-bookings/{bookingId}/pay`
 
 **This is the endpoint `US-2.12` asks for**, and the story is not about the gateway. The pain point is
@@ -4004,6 +4155,7 @@ can report progress without faking a status change.
 |---|---|
 | [`PATCH /complaints/{complaintId}`](#patch-apiv1complaintscomplaintid) | The transition itself. Acknowledged, updated and resolved all pass through here, and each writes its notification inside the same transaction |
 | [`GET /notifications`](#get-apiv1notifications) | Where the resident reads it in-app — the half of this story that works end to end today |
+| `POST /worker/jobs/{workOrderId}/claim` | Added 2026-08-23 with the open-jobs board: a claim tells the resident who is coming, by name, exactly as accepting an offer does |
 
 Every transition the story names — acknowledged, updated, reassigned, resolved — writes a
 `complaint_events` row (`0020`), and `complaints` is one of the 12 tables on the `dashboard.refresh`
@@ -4036,6 +4188,10 @@ transition it describes.
 |---|---|
 | [`GET /complaints`](#get-apiv1complaints) | `assignee`, `expectedResolutionAt` and `isOverdue` reach the resident here |
 | [`POST /complaints`](#post-apiv1complaints) | The expected resolution is computed on insert, so it exists before anyone asks |
+| `POST /worker/jobs/{workOrderId}/claim` | Added 2026-08-23 with the open-jobs board: "who is responsible" acquires an answer that came from the responsible person — here before any supervisor asked |
+| [`GET /complaints/{complaintId}/schedule-request`](#get-apiv1complaintscomplaintidschedule-request) | *When to expect action*, answered with an hour and a name rather than an SLA estimate — and `respondBy` says when the association stops waiting |
+| [`POST /work-orders/{workOrderId}/take-up`](#post-apiv1work-ordersworkorderidtake-up) | Added 2026-08-24 with ruling R8: the department's manual valve. When the member-only eligibility rule leaves nobody able to hold a job, a supervisor puts themselves on it — and the resident is still told who is coming and when, which is the whole of what this story asks |
+| [`POST /complaints/{complaintId}/schedule-time`](#post-apiv1complaintscomplaintidschedule-time) | Added 2026-08-23 with ruling F1: *when to expect action* becomes the resident's own answer, so the visit happens when they said it could instead of at an hour a supervisor guessed and they had to ring up to move |
 
 > **Closed, 2026-08-04, by `0031`.** All three things the story asks for — who is responsible, when to
 > expect action, and overdue flagging — now reach the person who raised the complaint. `isOverdue` is
@@ -4280,7 +4436,7 @@ about pain points in an existing product, not about the plumbing every product n
 | `/service-providers*` | 5 | Feature | A service person registering themselves. The stories were collected from residents and committee members; **nobody interviewed the plumber** |
 | `/conversations/*` | 4 | Feature | The chat between a department and a service person. Every hiring decision is made after somebody asked a question; today that happens on a phone nobody logs |
 | `/departments/{id}/staff-invitations*` | 4 | Master data | Creating the manager who runs a department and the supervisor who helps — hiring needs somebody to do the hiring. Leadership has **no** registration flow by ruling: an administrator types a name and an email. Nobody described appointing their own manager, because in every society interviewed the manager was already there |
-| `/worker/jobs*`, `/worker/snapshot` | 4 | Feature | The worker's own queue and the aggregate behind it. **Four operations on this surface *do* map** — accepting, starting, completing and reporting a failed visit all reach the resident |
+| `/worker/jobs*`, `/worker/open-jobs`, `/worker/snapshot` | 5 | Feature | The worker's own queue, the open-jobs board (2026-08-23) and the aggregate behind them. **Five operations on this surface *do* map** — accepting, claiming off the board, starting, completing and reporting a failed visit all reach the resident; the board's *read* is the worker's own screen and maps to nobody's story, like the job list |
 | `/communities/*`, `/onboarding/community` | 3 | Feature | Founding a community — a once-per-community act |
 | `/complaints/{id}/department-requests*`, `/departments/{id}/complaint-department-requests` | 3 | Feature | A supervisor telling their manager a complaint belongs to another department, and the manager's answer. Entirely inside the staff side of the wall — no resident ever sees it, and the complaint stories are about what happens to *their* complaint, not who ends up holding it |
 | `/dashboard/amenities` `POST` · `PUT` · `DELETE` | 3 | Master data | Amenity catalogue upkeep; the stories assume amenities already exist |
@@ -4453,6 +4609,8 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-24 | **Supervisor take-up — the manual valve behind the member-only rule.** One operation added — `POST /work-orders/{workOrderId}/take-up` (surface **210 → 211 across 180 paths**) — backed by `20260824090000_supervisor_take_up.sql` and frozen in [`plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`](plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md)'s *Addendum 2026-08-24*, under rulings R8–R13. The 2026-08-23 eligibility repair made every assignment path member-only, which leaves a thin department with work nobody may hold; ruling R8 answers it with **a separate deliberate verb**, not an exception inside the rule — the candidate list, the ping, the auto-book and the open board are all still member-only. The request carries **no `staffAssignmentId`**: the holder is the caller's own active `manager`/`supervisor` roster row on the job's department, resolved from the session inside Postgres, so the route cannot put anybody else on a job and refuses a community admin, who holds no roster row. Everything after the pick is `assign`'s — optional slot, withdraw-not-delete, `scheduled`, the resident told by name, the same double-booking `409`. The timeline gains **two** entries and one new `complaint_events` word, `job_taken_up` (distinct from `taken_up`, which is complaint triage ownership); the department hears `job.taken_up` minus the person who pressed the button. Two functions were re-issued verbatim beside it: `force_assign_work_order` now stamps the **acting caller** on its two timeline rows instead of the department's supervisor of record (ruling R12, closing the backlogged R7 — an attribution defect, no shape change), and `claim_open_work_order`'s leadership refusal now points at the new verb (R13). No new SQLSTATE: the whole migration raises only HB403/HB404/HB409, so `pg_errors.py` is unchanged. |
+| 2026-08-23 | **The resident sets the time, and the system books what nobody schedules.** One operation added — `POST /complaints/{complaintId}/schedule-time` (surface **209 → 210 across 179 paths**) — plus `mode` on `GET /complaints/{id}/schedule-request` and `awaitingResident` on `TriageSnapshot`, both additive. Backed by `20260823180000_resident_sets_the_time.sql` and frozen in [`plans/RESIDENT_SETS_THE_TIME_SPEC.md`](plans/RESIDENT_SETS_THE_TIME_SPEC.md) under the 2026-08-23 rulings F1–F3. **The raise form loses its date and time for everyone.** A resident-subject job now arrives as a request to the resident to name the hour, and only their answer puts it on the open pile; a facility job is booked by the system into the first free slot, but only after every urgent (`high`) resident job in the department has somebody on it. Twenty-four hours of resident silence and the dispatcher books the first hour a serviceman can take and assigns them — the existing `resident_timeout` timer, which the deadline already armed, branching on whether a slot exists. **No new work-order status and no new event word**: pick-mode is `awaiting_resident` with a **null slot**, approve-mode is the same status with one, and the distinctions ride in payloads (`mode`, `resident_set`, `auto_assigned`) because both vocabularies are closed CHECKs on live tables. The one constraint widened is `dispatch_tasks_kind_check`, for the new `facility_auto_assign` task. `dispatch_candidates` was **refactored, not forked**: the body moved to `dispatch_candidates_at`, parameterised by a hypothetical hour so `find_first_available_slot` can walk the calendar without writing trial slots to `work_orders` — six triggers fire on that table — and the three-argument entry point became a delegate with the same signature, ordering and grants. The triage snapshot gains a **sixth** array, `awaitingResident`, and `openRequests` narrows to `draft`/`offered`: a job waiting on a resident is not work the supervisor can pick up. `US-2.8` gains two rows; the board predicate, the supervisor's offer and force-assign paths, and `respond_to_work_order_schedule` are untouched. |
 | 2026-08-22 | **The supervisor's card actions — amendment 2, four operations and one flag.** `POST /complaints/{complaintId}/resolve`, `/priority-raise`, `/notes` and `/chat` (surface **203 → 207 across 176 paths**), plus `force` on `POST /work-orders/{workOrderId}/assign` and a guard widening on `GET /complaints/staff/complaints/{complaintId}` — backed by `20260822170000_supervisor_actions.sql` and frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md)'s *Amendment 2*, under four product rulings. **Resolve** cancels every other live job with its workers told why and refuses while one is `in_progress`; it moves the complaint to `resolved` and leaves the timeline entry, the resident's notification and both auto-close timers to `complaints_on_resolved`, which already writes them. **Priority** is one-way `Low → Medium → High`, carried onto the complaint's live jobs because a job's urgency *is* its complaint's, and it is the one new `complaint_events` word this amendment cost (`priority_changed` — an enumerating CHECK means a word is a migration, the lesson of `20260822150000`). **Notes** are internal by a payload flag, invisible to the resident and untouched for the admin's resident-visible ones. **Chat** is a real `dm_threads` thread of a third kind, one per complaint, shared by the raiser and the whole department, locked when the complaint closes and unlocked when it reopens. `force: true` on assign routes to `force_assign_work_order` — the dispatch engine's own forced mechanics with the picking removed and a supervisor's guard added — while `false` is the offer flow byte for byte. The snapshot was **re-bucketed into five arrays**: *engaged* became *committed* (an unaccepted offer no longer counts, ruling A3), `openRequests` was added, and the two complaint sections now exclude **any** live work order, so a complaint appears exactly once across the five. `TriageWorkOrder` gains `offeredToName`, additively. |
 | 2026-08-22 | **The supervisor's dashboard — two operations, and three facts the model could not state.** `GET /departments/{departmentId}/triage-snapshot` and `POST /complaints/{complaintId}/take-up` (surface **201 → 203 across 172 paths**), backed by `20260822120000_supervisor_triage.sql` and interface-frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md), against which the screen was built in parallel. The snapshot answers the dashboard's four sections — new, taken up, assigned-but-not-started, being-worked-right-now — in **one read**, and **buckets them server-side**: *live* and *engaged* are defined once, in the RPC, because four definitions that must agree are one definition or they are four answers. Three new columns exist because three facts had nowhere to live: `complaints.taken_up_at` (+ `taken_up_by_membership_id`), so "new" and "mine, not yet dispatched" stop being the same row; `work_orders.started_at`, because `start_work_order` let the moment fall into `updated_at` and the next write overwrote it; and `work_orders.supervision_inherited_at`, which is §16 of the handoff's "no new column" **partially reversed** so an inheriting supervisor can tell the work they chose from the work that arrived by somebody else's removal. Take-up is **triage ownership and never dispatch** — `assigned_to_membership_id` stays the dead column the 2026-08-21 ruling made it — and it gives `acknowledged` a deliberate second writer beside the worker-offer trigger; both move `open` and only `open`, so they cannot race. It notifies nobody, by ARCHITECTURE.md's passive-change rule: the resident reads the same fact as *In Progress* on the next SSE re-snapshot. `US-2.6`'s new row is take-up only; the dashboard read traces to no story, on the standing verdict that a screen only the department can open must not claim a story about what a resident sees. |
 | 2026-08-20 | **`POST /complaints/admin-raise`, and "resident" stops meaning the role column.** One operation added (surface **195 → 199 across 168 paths**, three of the four having arrived unremarked before today). The endpoint files a complaint from the admin portal in two modes decided by one optional `forMembershipId`: **on a resident's behalf**, owned by their membership and appearing on their portal with every resident verb intact, or **attached to no flat**, owned by the admin and admin-portal-only. Provenance lives in the `raised` event — the actor is always the admin, `"on_behalf": true` in the payload — never in the complaint row, so it cannot move a complaint off the list of the person whose home the problem is in. New column `complaints.raised_via` (`'resident'`\|`'admin'`, `20260820150000_admin_raised_complaints.sql`) says which portal owns the raiser-side view; `complaint_overview` exposes it; `GET /complaints` and `GET /complaints/{id}` filter to `'resident'`; the snapshot's complaint rows carry `raisedVia` and print `flat` as `"—"` for `'admin'`. **Six routes widened and one narrowed** by the new `require_resident_capability` (§7.2): resident-ness is an active `unit_residencies` row, so an admin who owns a flat gets the verbs on their own home, while `POST /complaints` — previously any active membership — now refuses a flat-less `worker`, `security` or `manager` with the same `403` `community_role_required` it always used. `GET /auth/session` grants an admin the `resident` capability only with a residency, so the session and the per-request guard stop disagreeing. **`US-2.5`'s new row is the on-behalf mode only** and §16.4 says so; the unattached mode serves no story. |
@@ -6329,11 +6487,28 @@ supervise the department.
 
 Responds `201` with the work order.
 
-**Omitting the slot is the other half of the fork, not an incomplete request.** A supervisor who
-wants to ask the resident something first creates a `draft` and the conversation carries on in `POST
-/complaints/{id}/comments` exactly as it does today. Nothing is proposed and nobody is notified.
-Supplying a slot proposes a visit — `awaiting_resident` plus a notification on a `resident` job, and
-straight to `offered` on a `facility` one, because there is nobody whose door is being knocked on.
+**Omitting the slot is the other half of the fork, not an incomplete request.** Supplying a slot
+proposes a visit — `awaiting_resident` plus a notification on a `resident` job, and straight to
+`offered` on a `facility` one, because there is nobody whose door is being knocked on.
+
+> **What a slotless raise means changed on 2026-08-23** (ruling F1,
+> [`plans/RESIDENT_SETS_THE_TIME_SPEC.md`](plans/RESIDENT_SETS_THE_TIME_SPEC.md) G1). The raise form
+> carries no date or time for anyone now, so this is the path every UI raise takes, and
+> `create_work_order` decides from the subject:
+>
+> * **`resident`, no slot** — `awaiting_resident` with a **null slot** and `respondBy` set 24 hours
+>   out. The resident is asked *when*, not *whether*, and answers with
+>   [`POST /complaints/{id}/schedule-time`](#post-apiv1complaintscomplaintidschedule-time). Only their
+>   answer puts the job on the open pile. Twenty-four hours of silence and the dispatcher books the
+>   first hour a serviceman can take and assigns them.
+> * **`facility`, no slot** — `draft`, unchanged, plus a `facility_auto_assign` task due now. Nobody
+>   confirms a common-area job, so the system books it — after every urgent (`high`) resident job in
+>   the department has somebody on it. The draft is claimable from the open-jobs board throughout.
+>
+> **The fields stay on this request** for backward compatibility, and a slotted raise keeps today's
+> semantics exactly. **There is no new status**: pick-mode is `awaiting_resident` with a null slot and
+> approve-mode is the same status with one, because `work_orders_status_check` is a closed list and a
+> new word there costs a constraint rebuild on a live table.
 
 **`departmentId` and `skillId` are both derived when omitted** — the department from the complaint,
 the skill from the category. `0034` gave `complaint_categories` a `skill_id` precisely so nobody has
@@ -6511,6 +6686,65 @@ This is the `409` **this step exists to produce**. `0036` refuses a double-booki
 | 422 | `validation_error` | A backwards slot |
 | 500 | `internal_error` | Unhandled |
 
+#### `POST /api/v1/work-orders/{workOrderId}/take-up`
+
+Take the job yourself. **Requires ADMIN, MANAGER, WORKER or SECURITY** at the door, and an active
+`manager` or `supervisor` roster row on the job's own department underneath it.
+
+```json
+{ "scheduledStartAt": "2026-08-24T10:00:00Z", "scheduledEndAt": "2026-08-24T11:00:00Z" }
+```
+
+Responds `200` with the job and its assignment history. The body is optional in full: sending `{}`
+takes the job up at its own hour.
+
+**Added 2026-08-24, ruling R8** — *"yes, include an option where a super can take up work … it
+sholdnt be something seen in normal routine workflow … it is available at any time though but as a
+seperate button orsomething like that."* Since 2026-08-23 a job may only be offered, auto-booked,
+pinged or claimed by staff hired from the servicemen pool — rank `member` (§18, the eligibility
+amendment). That is the rule the product owner asked for, and it leaves one gap: a thin department,
+on the day its technician is away, has work nobody in the system may hold. This route is the way
+out, and it is deliberately **a separate verb rather than a relaxation** — the candidate list, the
+ping, the auto-book and the open board are all still member-only, and none of them has an exception
+in it.
+
+**There is no `staffAssignmentId`, and there will not be one.** A parameter naming somebody would
+make this *"assign anybody, without the rank check"*, which is the member-only rule with a door in
+it, reachable by anyone who can call an RPC. The holder is the caller's own leadership roster row,
+resolved inside Postgres from the session. A caller holding none is a `403` — **including a
+community admin**, who has no roster row, no calendar and no trade, and whose booking nobody could
+keep. The most this route can do is give the caller work.
+
+**Everything after the pick is `assign`'s.** The slot is optional and defaults to the job's own; any
+previous holder is **withdrawn, not deleted**; the job moves to `scheduled`; the resident is told
+somebody is coming, with a name. The double-booking `409` is the same one — taking a job up
+overrides nobody's consent, and certainly not physics.
+
+**The assignment row is `accepted`, with `isForced` and `isAutoAssigned` both false**, and each flag
+is a sentence: nobody's consent was overridden — the holder asked for it — and no engine decided
+anything.
+
+**Two timeline entries, not one.** `job_assigned`, because from the resident's side the fact is the
+same fact — somebody is now coming, and their name is this — and `job_taken_up` beside it, because
+from the department's side it is not: this job did not go through the pool, and the record says so
+without anybody having to infer it from a rank. Both name the caller. `job_taken_up` is the one new
+`complaint_events` word this feature cost, and it is distinct from `taken_up`
+(`POST /complaints/{id}/take-up`), which means a supervisor is *looking at* a complaint rather than
+*going*.
+
+**The department hears it; the caller does not.** `job.taken_up` reaches the community's admins, the
+department's manager and its supervisors, minus whoever pressed the button — a fact arriving
+unprompted reads differently from an echo of your own action.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or you hold no active supervisor or manager row on this department |
+| 404 | `not_found` | No such work order |
+| 409 | `conflict` | The job is closed · a backwards slot · you are already booked across that hour |
+| 422 | `validation_error` | Half a slot, or a backwards one |
+| 500 | `internal_error` | Unhandled |
+
 #### `POST /api/v1/work-orders/{workOrderId}/reschedule`
 
 Move the visit. **Requires ADMIN, MANAGER, WORKER or SECURITY.**
@@ -6586,9 +6820,19 @@ alone, which refused an administrator the answer to a question about their own f
   "scheduledEndAt": "2026-08-12T11:00:00Z",
   "respondBy": "2026-08-11T10:00:00Z",
   "awaitingResponse": true,
+  "mode": "approve",
   "assigneeName": null
 }
 ```
+
+**`mode` says which question is being asked**, and it arrived with ruling F1 on 2026-08-23.
+`approve` — the association proposed an hour, answer it with `POST …/schedule`. `pick` — nobody has
+chosen one, `scheduledStartAt` and `scheduledEndAt` are `null`, and the hour is the resident's to set
+with [`POST …/schedule-time`](#post-apiv1complaintscomplaintidschedule-time). Both are
+`awaiting_resident`: the slot is the discriminator, because the status vocabulary is a closed CHECK.
+The derivation is made **once, here**, rather than on every screen that renders the card — a client
+that got it wrong would show two buttons where a time picker belongs. `approve` is sent even when
+nothing is being asked at all, so a reader never has to branch on `null`.
 
 **Not only the visits awaiting an answer.** A resident who has already confirmed still needs to see
 the time and, once somebody is booked, the name — and a screen that had to call a second endpoint for
@@ -6657,6 +6901,50 @@ assigned somebody rather than keep waiting — this is a `409`.
 | 422 | `validation_error` | `response` was not `confirmed` or `declined` |
 | 500 | `internal_error` | Unhandled |
 
+#### `POST /api/v1/complaints/{complaintId}/schedule-time`
+
+Pick the time for a visit to my home. **Requires the resident capability** (§7.2). Added 2026-08-23
+under ruling F1.
+
+```json
+{ "startAt": "2026-09-01T09:00:00Z", "endAt": "2026-09-01T11:00:00Z" }
+```
+
+Responds `200` with the re-read `ScheduleRequest`, so a screen sees the booking land rather than
+assuming it. Both ends are required: a half slot silently disables
+`work_order_assignments_no_overlap`, which is checked on `(start, end)` and does nothing when start is
+null.
+
+**The association stopped guessing an hour for somebody else's home.** A resident-subject job now
+reaches the resident as a *request to pick* — a dashboard request, the way a hiring application
+reaches a manager — and their answer is the hour itself. Setting it moves the job to `offered`, which
+is the open pile, and notifies the supervisor who raised it.
+
+**There is no decline here** (ruling F3). Pick-mode was never a proposal, so there is nothing to
+refuse; the decline stays on `POST …/schedule`, which answers a supervisor's proposal. Silence is
+answered instead: twenty-four hours after the raise the dispatcher finds the first hour a serviceman
+can take, books it and assigns them, and both the resident and the worker are notified. If nobody is
+free within a fourteen-day horizon the job returns to the open-jobs board and the supervisor is told.
+
+**The two write routes refuse each other's jobs, deliberately.** A job the association gave an hour
+is a `409` here — *"The association proposed this visit's time — answer that instead."* — and a job
+with no hour cannot be `confirmed`. Sending the wrong one is a mistake with a sentence rather than a
+silent overwrite of somebody else's intention.
+
+**Neither resident route takes a work-order id**, this one included: the job is resolved from the
+complaint, newest live one, so naming somebody else's is not expressible rather than merely refused.
+`resident_set_work_order_schedule` checks `is_own_membership` against whoever raised the complaint,
+which is what actually keeps one person from booking in another's name.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or this visit is not yours to schedule |
+| 404 | `schedule_request_not_found` | No live job on this complaint |
+| 409 | `conflict` | Nothing is waiting on you; the association proposed the time; or the hour is in the past |
+| 422 | `validation_error` | A missing end, or an end before its start |
+| 500 | `internal_error` | Unhandled |
+
 #### The timeline learns five words, and no migration was needed
 
 `complaint_events.event_type` is `text` with **no CHECK constraint** (`0001`:70), so `job_created`,
@@ -6723,7 +7011,8 @@ in the set, still ranks first on adjacency and load, and finds the job booked in
 
 ### The worker's portal — `0039`, and why none of it has a role guard
 
-Fourteen operations, and the notable thing about all of them is the guard: **authenticated only,
+Sixteen operations *(fourteen until 2026-08-23, when the open-jobs board added its read and its
+claim)*, and the notable thing about all of them is the guard: **authenticated only,
 with no membership requirement** — the same as registration and hiring, but here it is a correction
 rather than a convenience.
 
@@ -6849,6 +7138,81 @@ select them. They are null on a `facility` job, where there is no door and nobod
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
 | 404 | `worker_job_not_found` | No such job, **or** not one of yours |
+| 500 | `internal_error` | Unhandled |
+
+#### `GET /api/v1/worker/open-jobs`
+
+The open-jobs board (product ruling 2026-08-23, `COMPLAINT_ENGINE_HANDOFF.md` §22): every unclaimed
+job in every department where the caller holds an active roster row, trade-filtered, claimable now.
+**Requires authentication only.** No parameters — identity is the whole query.
+
+```json
+[{ "workOrderId": "…", "complaintId": "…", "complaintTitle": "Leaking tap",
+   "departmentId": "…", "departmentName": "Plumbing",
+   "communityId": "…", "communityName": "Green Meadows",
+   "skillId": "…", "skillName": "Plumbing", "priority": "medium",
+   "subjectKind": "resident", "scheduledStartAt": null, "scheduledEndAt": null,
+   "createdAt": "2026-08-22T09:00:00Z", "staffAssignmentId": "…" }]
+```
+
+**"Open" means uncommitted and unpromised** (adjudication D1, `docs/plans/OPEN_JOBS_BOARD_SPEC.md`):
+`draft` or `offered` with **no live assignment**. A job with an offer out to somebody else is off the
+board — the supervisor has an intention in flight, and a decline returns it. `awaiting_resident` is
+off (a consent flow is in flight); `failed` is off in v1 (it has its own escalation task).
+
+Keyed on the **work order**, not an assignment — the whole point of the board is that nobody holds
+one yet, which is also why this read is a SECURITY DEFINER RPC rather than a view:
+`can_read_work_order` correctly hides unheld jobs from workers. `staffAssignmentId` is the caller's
+own roster row for that department, returned so a client never guesses which of a multi-community
+worker's rows a claim would ride on.
+
+A null slot is ruling C3, not missing data: an unscheduled job is on the board with a *time to be
+set* marker and is claimable. The trade filter is `dispatch_candidates`' own clause, short-circuit
+for provider-less roster rows included; the list is also exclusion-aware — a worker the complaint's
+history rules out (a decline on it, a resident cancellation, a reopen after their completed visit)
+does not see a job they cannot take.
+
+An empty list is the ordinary answer, not an error: no roster rows, no matching trades, and nothing
+waiting all look the same here, and `communities` on the snapshot distinguishes them for a client.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/worker/jobs/{workOrderId}/claim`
+
+Take an unclaimed job straight off the board. **Requires authentication only.** No body.
+
+**Instant, and first come first served** (ruling C2): the claim commits the worker on the spot with
+accept-an-offer mechanics — an `accepted` assignment in the accept path's exact shape, the job moved
+to `scheduled`, the resident notified with `work_order.assigned` exactly as on accept, the
+supervisor with the new `work_order.claimed` kind (skipped when the claimer *is* that supervisor).
+There is no approval step; the two-step press lives in the client, whose confirm wording carries
+what the offer flow would have said.
+
+Unlike `/accept` there is no offer underneath, so the RPC checks eligibility itself, under the same
+row lock that settles the race: the caller holds an active roster row in the job's department, the
+job's trade matches theirs by the engine's own rule, and the complaint's history does not exclude
+them. The loser of a same-second double-claim reads a job that now holds a live assignment and is
+told *somebody has already taken this job* — a sentence, not a constraint violation.
+
+A job with no slot is claimed with no slot (C3): the overlap check is skipped because there is
+nothing to overlap, the job still moves to `scheduled` — `force_assign_work_order` already writes
+that shape, so `scheduled`+null-slot is established semantics — and the hour is set afterwards in
+the supervisor's queue.
+
+The timeline gains `job_assigned` with `claimed: true` in the payload rather than a new event word:
+from the resident's side the fact is the same fact — somebody is now coming — and a new word costs a
+constraint rebuild (runbook §19 rule).
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid` | Missing or mismatched CSRF pair |
+| 403 | `forbidden` | Not on this department's roster, or the wrong trade |
+| 404 | `not_found` | No such job |
+| 409 | `conflict` | Somebody took it · the complaint's history rules you out · you are booked during its slot |
 | 500 | `internal_error` | Unhandled |
 
 #### `POST /api/v1/worker/jobs/{workOrderId}/accept`
@@ -7246,6 +7610,24 @@ coming"* about a job Ravi has not answered.
 Three actions appear on **every** card in every section — a detail popup (the staff read below), a
 chat, and an internal note — and the stage-specific ones are *Take up*, *Mark as resolved*, *Raise
 priority* and *Assign*.
+
+> **A sixth array arrived on 2026-08-23** with ruling F1
+> ([`plans/RESIDENT_SETS_THE_TIME_SPEC.md`](plans/RESIDENT_SETS_THE_TIME_SPEC.md) G7):
+> `awaitingResident` sits between `takenUp` and `openRequests`, rendered as **"Awaiting resident
+> response"**, and carries the `TriageWorkOrder` rows whose status is `awaiting_resident` and which
+> nobody has committed to.
+>
+> ```jsonc
+> "awaitingResident": [TriageWorkOrder],  // the resident has been asked and has not answered
+> "openRequests":     [TriageWorkOrder],  // draft or offered — now, and only these two
+> ```
+>
+> **`openRequests` narrows in the same change**, and that half is the one that would go unnoticed: a
+> job waiting on a resident is not something the supervisor can act on — they cannot pick the time and
+> are not meant to — so listing it beside the work they *can* take up was showing them a queue that
+> was not theirs. The split is the RPC's, like every other bucket. The row model is unchanged and the
+> section is additive on the wire: a client that ignores the key sees exactly what it saw before,
+> minus the rows that moved.
 
 #### `POST /api/v1/complaints/{complaintId}/resolve`
 

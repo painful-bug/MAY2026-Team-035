@@ -34,6 +34,10 @@ export const workerApi = {
     return api(`/worker/jobs${query ? `?${query}` : ''}`);
   },
   job: (workOrderId) => api(`/worker/jobs/${workOrderId}`),
+  // The open-jobs board (product ruling 2026-08-23): every unclaimed job on
+  // the caller's department rosters, and the instant first-come claim.
+  openJobs: () => api('/worker/open-jobs'),
+  claimJob: (workOrderId) => post(`/worker/jobs/${workOrderId}/claim`),
   acceptJob: (workOrderId) => post(`/worker/jobs/${workOrderId}/accept`),
   declineJob: (workOrderId, reason) => post(`/worker/jobs/${workOrderId}/decline`, { reason: reason || null }),
   startJob: (workOrderId) => post(`/worker/jobs/${workOrderId}/start`),

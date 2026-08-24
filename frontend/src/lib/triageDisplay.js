@@ -255,6 +255,10 @@ const EVENT_LABELS = Object.freeze({
   job_assigned: 'Worker booked',
   job_declined: 'Time declined',
   job_force_assigned: 'Assigned outright',
+  // Ruling R8's own word. `job_assigned` is stamped beside it, so this is the
+  // line that says *who* — a supervisor stepping outside the norm rather than
+  // a technician being booked onto the job.
+  job_taken_up: 'Took up the job themselves',
   job_started: 'Work started',
   job_completed: 'Work finished',
   job_failed: 'Visit failed',

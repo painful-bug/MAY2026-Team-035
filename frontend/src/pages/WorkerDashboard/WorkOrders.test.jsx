@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -52,6 +53,16 @@ const JOB = {
   failedAttemptCount: 0,
 };
 
+const COMPLAINT = {
+  id: 'complaint-1',
+  title: 'Kitchen tap leaking',
+  raisedBy: 'Asha Devi',
+  unitCode: 'B-402',
+  category: 'Plumbing',
+  priority: 'high',
+  status: 'in_progress',
+};
+
 /**
  * Answer every read this page makes, with the department detail refused.
  *
@@ -59,9 +70,9 @@ const JOB = {
  * departments router is guarded `require_admin_or_manager` and a
  * service-department supervisor holds a `worker` membership.
  */
-function serve(communities, { jobs = [JOB] } = {}) {
+function serve(communities, { jobs = [JOB], complaints = [] } = {}) {
   mocks.api.mockReset();
-  mocks.api.mockImplementation((path) => {
+  mocks.api.mockImplementation((path, options) => {
     if (path === '/worker/snapshot') {
       return Promise.resolve({ provider: null, communities });
     }
@@ -69,7 +80,12 @@ function serve(communities, { jobs = [JOB] } = {}) {
       return Promise.resolve(jobs);
     }
     if (path.startsWith('/departments/department-1/complaints')) {
-      return Promise.resolve([]);
+      return Promise.resolve(complaints);
+    }
+    if (path === '/complaints/complaint-1/work-orders') {
+      // The same path is the complaint's job list and the raise. Only the
+      // second one carries a method.
+      return Promise.resolve(options?.method === 'POST' ? { id: 'work-order-9' } : []);
     }
     if (path === '/departments/department-1') {
       return Promise.reject(
@@ -203,5 +219,84 @@ describe('the supervisor dispatch queue in the worker portal', () => {
     expect(
       screen.getByText(/trade list could not be read/),
     ).toBeVisible();
+  });
+});
+
+// Ruling F1 (`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`): the raise form asks
+// *what* and *where* and no longer asks *when*, for anybody. Who answers "when"
+// is decided by who the job is about — the resident for their own home, the
+// system for a common area — and the two sentences the form prints are the only
+// place a supervisor is told that.
+describe('raising a job no longer asks for the hour', () => {
+  const openRaiseTab = async () => {
+    serve([ENGAGEMENT], { complaints: [COMPLAINT] });
+    renderAt(
+      '/worker/departments/department-1/work-orders?tab=raise&complaint=complaint-1',
+    );
+    return screen.findByText('Raise a job against this complaint');
+  };
+
+  it('draws no date or time input at all', async () => {
+    await openRaiseTab();
+
+    // The strongest form of the assertion available: not "the labels are gone"
+    // but "there is nowhere on this screen to type an hour".
+    expect(document.querySelectorAll('input[type="datetime-local"]')).toHaveLength(0);
+    expect(screen.queryByText(/Start \(optional\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/End \(optional\)/)).not.toBeInTheDocument();
+    // And the old fork's explanation went with them.
+    expect(screen.queryByText(/this stays a draft/)).not.toBeInTheDocument();
+  });
+
+  it('tells the supervisor who picks the time, and changes its answer with the subject', async () => {
+    const user = userEvent.setup();
+    await openRaiseTab();
+
+    expect(
+      screen.getByText(
+        /The resident picks the visit time — this sends them the request\. If they have not answered in 24 hours, the system books the first free hour a serviceman can take\./,
+      ),
+    ).toBeVisible();
+
+    // Two selects in the form and the subject is the first: "At somebody's
+    // home" or "A common area".
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'facility');
+
+    expect(
+      screen.getByText(
+        /Nobody confirms a common-area job — the system books the first free hour a serviceman can take, once urgent home visits are covered\./,
+      ),
+    ).toBeVisible();
+  });
+
+  it('sends a payload with no slot keys in it', async () => {
+    const user = userEvent.setup();
+    await openRaiseTab();
+
+    await user.type(
+      screen.getByPlaceholderText(/Where \(Flat B-402/),
+      'Flat B-402',
+    );
+    await user.click(screen.getByRole('button', { name: /Raise it/ }));
+
+    await waitFor(() =>
+      expect(mocks.api).toHaveBeenCalledWith('/complaints/complaint-1/work-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          subjectKind: 'resident',
+          skillId: null,
+          locationText: 'Flat B-402',
+          note: null,
+        }),
+      }));
+
+    // Belt and braces: the wire body is checked for the two words themselves,
+    // because a null `scheduledStartAt` is not the same request as an absent
+    // one — the server forks on presence (adjudication G1).
+    const [, options] = mocks.api.mock.calls.find(
+      ([path, opts]) => path === '/complaints/complaint-1/work-orders' && opts?.method === 'POST',
+    );
+    expect(options.body).not.toContain('scheduledStartAt');
+    expect(options.body).not.toContain('scheduledEndAt');
   });
 });

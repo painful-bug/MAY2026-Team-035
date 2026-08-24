@@ -2196,6 +2196,23 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    # Take-up (2026-08-24, ruling R8). It carries US-2.8 for the same reason
+    # `assign` does and no more: it puts a named roster row on the job, so "who
+    # is handling it" survives being read back. It is deliberately NOT credited
+    # with anything about triage ownership -- that is `POST /complaints/{id}/
+    # take-up`, a different verb about a different question. No `422` beyond the
+    # slot validator's, and no `404` for a roster row, because it names none.
+    ("post", "/api/v1/work-orders/{work_order_id}/take-up"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "The department's manual valve: when the member-only rule "
+                "leaves nobody eligible, a supervisor puts themselves on the "
+                "job and the resident is still told who is coming and when"
+            ),
+        ],
+    ),
     ("post", "/api/v1/work-orders/{work_order_id}/reschedule"): op(
         errors=["401", "403", "404", "409", "422", "500"],
         stories=[
@@ -2237,6 +2254,24 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         errors=["401", "403", "404", "409", "422", "500"],
         no_story=NO_STORY["work_dispatch"],
     ),
+    # The other half of the resident's scheduling since the 2026-08-23 ruling
+    # F1: the association stopped guessing an hour for somebody else's home, so
+    # the resident's answer IS the hour. Same error set as its sibling and for
+    # the same reasons -- the `403` is the RPC's `is_own_membership`, the `404`
+    # is a complaint with no live job, and the `409` covers all three refusals
+    # the RPC writes in words (nothing waiting, the association proposed a time,
+    # the hour is in the past).
+    ("post", "/api/v1/complaints/{complaint_id}/schedule-time"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "'When to expect action' answered by the resident themselves: "
+                "the visit happens when they said it could, instead of at an "
+                "hour a supervisor guessed and they had to ring up to move"
+            ),
+        ],
+    ),
     # -- the worker's own portal -------------------------------------------
     # Authenticated only, with no membership guard, and the `404` rather than
     # `403` on every one of these is the same decision stated eight times: the
@@ -2270,6 +2305,30 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             (
                 "US-2.7",
                 "The resident is told who is coming, by name, without asking"
+            ),
+        ],
+    ),
+    # The open-jobs board (product ruling 2026-08-23, C1-C3). The read is the
+    # worker's own screen and maps to nobody's story, like the job list above
+    # it; the claim reaches the resident exactly as accepting an offer does,
+    # so it carries accept's stories in the claim's own words.
+    ("get", "/api/v1/worker/open-jobs"): op(
+        errors=["401", "500"],
+        no_story=NO_STORY["worker_portal"],
+    ),
+    ("post", "/api/v1/worker/jobs/{work_order_id}/claim"): op(
+        errors=["401", "403", "404", "409", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "'Who is responsible' acquires an answer that came from the "
+                "responsible person -- here before any supervisor asked, "
+                "because the worker took the job off the board themselves"
+            ),
+            (
+                "US-2.7",
+                "The resident is told who is coming, by name, without asking "
+                "-- the claim notifies exactly as accepting an offer does"
             ),
         ],
     ),

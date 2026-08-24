@@ -109,16 +109,51 @@ const inputClass =
 const selectClass =
   'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 focus:outline-none';
 
+// A `datetime-local` value is local wall-clock with no zone. `new Date(…)`
+// reads it in the browser's zone — the one the resident typed it in — and
+// `toISOString` stamps that answer explicitly rather than handing `timestamptz`
+// a naive literal to interpret with the connection's zone. Same reasoning, and
+// the same one-liner, as `WorkOrderTriage.jsx`'s `isoFrom`.
+const isoFrom = (value) => (value ? new Date(value).toISOString() : null);
+
+// `min` on a `datetime-local` wants the same local wall-clock shape the input
+// produces, so "now" has to be shifted out of UTC before it is sliced. The
+// server refuses a start in the past anyway (HB409); this is the browser
+// saying so before the round trip rather than instead of it.
+const localNow = () => {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+};
+
 /**
- * The visit the department proposed, and the resident's answer to it.
+ * The visit request on a complaint, and the resident's answer to it.
  *
- * A `404` here is *nothing proposed*, which is the ordinary case and not an
+ * A `404` here is *nothing to schedule*, which is the ordinary case and not an
  * error on screen — most complaints never get a scheduled visit, and a red box
  * on every one of them would teach a resident to ignore the box.
+ *
+ * **Two questions, one card, and the server says which is being asked.**
+ * `mode: 'approve'` is the department proposing an hour: confirm it or decline
+ * it, unchanged since the day this card shipped. `mode: 'pick'` is ruling F1 —
+ * the department raised the job and is asking the *resident* for the hour. The
+ * mode is read off the response rather than guessed from the null times,
+ * because "no time proposed" and "you are the one proposing" are two different
+ * states and only the server knows which of them this is. Anything that is not
+ * the word `pick` renders as `approve`, which is what keeps this card correct
+ * against a backend that has not shipped the field yet.
+ *
+ * Pick-mode has no decline (ruling F3). Declining exists to send a supervisor's
+ * proposal back for another one; there is nothing to send back when the
+ * resident is the one being asked, and silence already has an answer — 24 hours
+ * later the association books the first free hour itself.
  */
-function ProposedVisit({ complaintId }) {
+export function ProposedVisit({ complaintId }) {
   const queryClient = useQueryClient();
   const [note, setNote] = useState('');
+  const [startAt, setStartAt] = useState('');
+  const [endAt, setEndAt] = useState('');
 
   const request = useQuery({
     queryKey: residentKeys.schedule(complaintId),
@@ -128,14 +163,35 @@ function ProposedVisit({ complaintId }) {
     retry: false,
   });
 
+  // Both writes land in the same place, so both refresh the same three things:
+  // the card's own read, the thread the answer wrote an entry on, and the list
+  // whose row shows the complaint's state.
+  const settle = (visit) => {
+    queryClient.setQueryData(residentKeys.schedule(complaintId), visit);
+    queryClient.invalidateQueries({ queryKey: residentKeys.schedule(complaintId) });
+    queryClient.invalidateQueries({ queryKey: residentKeys.complaint(complaintId) });
+    queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+  };
+
   const respond = useMutation({
     mutationFn: (response) =>
       residentApi.schedule(complaintId, { response, note: note.trim() || null }),
     onSuccess: (visit) => {
-      queryClient.setQueryData(residentKeys.schedule(complaintId), visit);
-      queryClient.invalidateQueries({ queryKey: residentKeys.complaint(complaintId) });
-      queryClient.invalidateQueries({ queryKey: residentKeys.complaintList() });
+      settle(visit);
       setNote('');
+    },
+  });
+
+  const pickTime = useMutation({
+    mutationFn: () =>
+      residentApi.scheduleTime(complaintId, {
+        startAt: isoFrom(startAt),
+        endAt: isoFrom(endAt),
+      }),
+    onSuccess: (visit) => {
+      settle(visit);
+      setStartAt('');
+      setEndAt('');
     },
   });
 
@@ -154,6 +210,15 @@ function ProposedVisit({ complaintId }) {
   const visit = request.data;
   if (!visit) return null;
 
+  // The discriminator, and the reason it is `=== 'pick'` rather than a check
+  // for missing times: a backend that has not shipped the field yet sends no
+  // `mode` at all, and that has to keep rendering the card it always did.
+  const picking = visit.mode === 'pick' && Boolean(visit.awaitingResponse);
+  const badRange =
+    Boolean(startAt) && Boolean(endAt) && new Date(endAt) <= new Date(startAt);
+  const canPick = Boolean(startAt) && Boolean(endAt) && !badRange;
+  const writeError = respond.error || pickTime.error;
+
   const window = visit.scheduledStartAt
     ? `${formatDateTime(visit.scheduledStartAt)}${
         visit.scheduledEndAt
@@ -171,9 +236,16 @@ function ProposedVisit({ complaintId }) {
         <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
         <div>
           <p className="text-sm font-extrabold text-indigo-900">
-            {visit.awaitingResponse ? 'A visit has been proposed' : 'Your visit'}
+            {picking
+              ? 'Pick a time for this visit'
+              : visit.awaitingResponse
+                ? 'A visit has been proposed'
+                : 'Your visit'}
           </p>
-          <p className="mt-1 text-xs font-bold text-slate-700">{window}</p>
+          {/* No hour line in pick-mode: there is no proposed time to print,
+              and "a time has not been proposed yet" would read as a delay
+              rather than as the question the card is asking. */}
+          {picking ? null : <p className="mt-1 text-xs font-bold text-slate-700">{window}</p>}
           <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
             {[visit.departmentName, visit.skillName, visit.locationText]
               .filter(Boolean)
@@ -187,7 +259,71 @@ function ProposedVisit({ complaintId }) {
         </div>
       </div>
 
-      {visit.awaitingResponse ? (
+      {picking ? (
+        <div className="space-y-2">
+          {visit.respondBy && (
+            <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600">
+              Pick by {formatDateTime(visit.respondBy)}.
+            </p>
+          )}
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canPick) return;
+              pickTime.mutate();
+            }}
+          >
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Starts
+                </span>
+                <input
+                  type="datetime-local"
+                  required
+                  min={localNow()}
+                  value={startAt}
+                  onChange={(event) => setStartAt(event.target.value)}
+                  className={inputClass}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Ends
+                </span>
+                <input
+                  type="datetime-local"
+                  required
+                  min={startAt || localNow()}
+                  value={endAt}
+                  onChange={(event) => setEndAt(event.target.value)}
+                  className={inputClass}
+                />
+              </label>
+            </div>
+            {badRange && (
+              <p className="text-[11px] font-semibold text-rose-600">
+                The visit has to end after it starts.
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={pickTime.isPending || !canPick}
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:bg-slate-300"
+            >
+              {pickTime.isPending ? 'Setting the time…' : 'Set this time'}
+            </button>
+          </form>
+          {/* Ruling F3: no decline here. There is no proposal to send back, and
+              silence is not an unanswered question — it is answered for the
+              resident 24 hours after the job was raised. */}
+          <p className="text-[10px] font-semibold text-slate-500">
+            If you have not picked a time within 24 hours, the association books
+            the first available hour.
+          </p>
+        </div>
+      ) : visit.awaitingResponse ? (
         <div className="space-y-2">
           {visit.respondBy && (
             <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600">
@@ -235,9 +371,13 @@ function ProposedVisit({ complaintId }) {
         </p>
       )}
 
-      {respond.error && (
+      {/* Both writes surface here, verbatim and on the card. The server's 409s
+          are whole sentences about this complaint — "The association proposed
+          this visit's time — answer that instead." — and a paraphrase would be
+          this screen guessing at a state the server has already named. */}
+      {writeError && (
         <p role="alert" className="text-[11px] font-semibold text-rose-600">
-          {respond.error.message}
+          {writeError.message}
         </p>
       )}
     </section>

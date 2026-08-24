@@ -279,6 +279,42 @@ def force_assign_work_order(
     return str(response.data or "")
 
 
+def take_up_work_order(
+    client: Client,
+    *,
+    work_order_id: str,
+    scheduled_start_at: str | None,
+    scheduled_end_at: str | None,
+) -> str:
+    """Take the job yourself (RPC). Returns the assignment id.
+
+    Leadership self-assignment (2026-08-24 ruling R8), and the shape of the call
+    is the design: there is **no** ``p_staff_assignment_id``. The holder is the
+    caller's own active ``manager``/``supervisor`` roster row on the job's
+    department, resolved inside the function from ``auth.uid()``, so this verb
+    cannot put anybody else on a job. A caller holding no such row is ``HB403``
+    -- the same code and the same posture as every other refusal on this
+    surface. The rest is ``force_assign_work_order``'s: ``HB404`` for no such
+    job, ``HB409`` for a closed one, a backwards slot or an hour the caller is
+    already booked across, and the exclusion constraint behind that as
+    ``23P01``.
+    """
+    try:
+        response = client.rpc(
+            "take_up_work_order",
+            {
+                "p_work_order_id": work_order_id,
+                "p_scheduled_start_at": scheduled_start_at,
+                "p_scheduled_end_at": scheduled_end_at,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not take up that job."
+        ) from exc
+    return str(response.data or "")
+
+
 def cancel_work_order(
     client: Client, *, work_order_id: str, reason: str
 ) -> None:
@@ -314,4 +350,30 @@ def respond_to_schedule(
     except Exception as exc:  # noqa: BLE001
         raise translate(
             exc, default_message="Could not record your answer."
+        ) from exc
+
+
+def set_resident_schedule(
+    client: Client, *, work_order_id: str, start_at: str, end_at: str
+) -> None:
+    """The hour the resident chose for a visit to their own home (RPC).
+
+    The second write in this module a resident may make, and separate from
+    ``respond_to_schedule`` for the reason the RPC gives: confirming is agreeing
+    to a time somebody else chose, and this is choosing one. The same
+    ``is_own_membership`` check guards it, so a neighbour holding this complaint
+    id gets a 403 rather than an hour booked in somebody else's name.
+    """
+    try:
+        client.rpc(
+            "resident_set_work_order_schedule",
+            {
+                "p_work_order_id": work_order_id,
+                "p_start": start_at,
+                "p_end": end_at,
+            },
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not set that time."
         ) from exc

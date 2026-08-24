@@ -551,6 +551,117 @@ read-only popup with nothing writable in it, the technician refusal),
 keeps it), `LeadershipScreens.test.jsx` (the Calendar and Messages refusals,
 with neither marketplace read attempted).
 
+## The open-jobs board
+
+The product rulings of 2026-08-23 (`docs/COMPLAINT_ENGINE_HANDOFF.md` §22):
+live testing found a freshly hired plumber opening their portal to nothing,
+because in the model on record a worker sees only what a supervisor has
+offered them. The board is the other half of that model — every unclaimed job
+on the caller's department rosters, claimable on the spot, first come first
+served. The frozen build spec, adjudications included, is
+`docs/plans/OPEN_JOBS_BOARD_SPEC.md`.
+
+- **A new page, `OpenJobs.jsx`, at `/worker/open-jobs`.** One read
+  (`GET /worker/open-jobs`, query key `['worker-open-jobs']`) fills the grid;
+  each card carries the complaint title, department and community, the trade
+  chip, the urgent badge for high priority, and either the slot or a "Time to
+  be set" marker — ruling C3 puts unscheduled jobs on the board rather than
+  hiding exactly the job the owner raised in testing.
+- **The claim is a two-step press, and the second step says what it costs.**
+  Ruling C2 makes taking a job instant — no approval sits between the tap and
+  the commitment — so the confirm wording carries the whole of it: the job is
+  theirs immediately, and the supervisor is told. On success both
+  `['worker-open-jobs']` and `['worker-snapshot']` are invalidated, because
+  the job left the board and landed on the dashboard in the same moment.
+- **Losing the race is the ordinary case, not the edge one.** Two technicians
+  reading one board will sometimes press the same card; the server settles it
+  under a row lock and answers the loser in a sentence — "Somebody has already
+  taken this job." — which the card prints verbatim before the refetch takes
+  the card away, because the truthful board no longer has that job on it.
+- **A nav entry "Open jobs", directly after Dashboard, `marketplaceOnly`.**
+  The same flag as the five marketplace entries, with the direction reversed:
+  technicians and marketplace pros claim work here, and leadership *hands out*
+  work from the queue — showing a supervisor a board they dispatch onto would
+  be the mirror of showing a technician the dispatcher's console.
+- **Two empty states, told apart by the snapshot the layout already fetched.**
+  No roster rows: "Jobs appear here once a community hires you." A roster and
+  nothing open: "Nothing is waiting right now." Neither is an error, and the
+  page never interprets one as such.
+
+`workerApi` gains `openJobs()` and `claimJob(id)`. 9 new tests:
+`OpenJobs.test.jsx` (the C3 marker drawn from the null slot, the urgent badge,
+the two-step claim and its confirm wording, backing out without claiming, the
+lost-race sentence and refetch, both empty states, the read failure) and
+`WorkerLayout.test.jsx` (the entry's place directly after Dashboard, plus
+"Open jobs" joining the marketplace list the two symmetric-nav tests already
+walk in both directions).
+
+## The resident sets the time
+
+Product rulings F1–F3 (2026-08-23, recorded in
+`docs/COMPLAINT_ENGINE_HANDOFF.md` §23); frozen interface and the orchestrator's
+adjudications in `docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`. Three surfaces
+change, and the through-line is that **nobody on the staff side picks the hour
+any more**.
+
+- **The raise form stops asking "when", for everybody.**
+  `AdminDashboard/WorkOrderTriage.jsx`'s `CreateForm` loses its start and end
+  `datetime-local` inputs and the `halfASlot` guard that policed them, and the
+  payload carries neither `scheduledStartAt` nor `scheduledEndAt` — absent, not
+  null, because the server forks on presence (adjudication G1) and a null is a
+  different request from an omission. The explainer under the form is now
+  subject-aware, and it is the only place a supervisor learns who answers:
+  a resident job says the resident picks the time and that the system books the
+  first free hour after 24 hours of silence; a common-area job says nobody
+  confirms it and the system books it once urgent home visits are covered. The
+  old three-way sentence — the one about a slotless raise staying a draft
+  nobody is notified about — is gone with the fields it described.
+- **The resident's visit card asks one of two questions, and the server says
+  which.** `ResidentDashboard/Complaints.jsx`'s `ProposedVisit` branches on the
+  `mode` field of `GET /complaints/{id}/schedule-request`. `approve` is the
+  card exactly as it was: a proposed hour, "That time works" and "It does not".
+  `pick` is new: the heading becomes **"Pick a time for this visit"**, two
+  required `datetime-local` inputs collect the start and the end, an end that
+  is not after the start is refused in the browser before the round trip, and
+  the submit posts `{ startAt, endAt }` (ISO, stamped with the browser's own
+  zone) to the new `POST /complaints/{id}/schedule-time`. Under it: *"If you
+  have not picked a time within 24 hours, the association books the first
+  available hour."* There is **no decline** in pick-mode (ruling F3) — there is
+  no proposal to send back, and silence is already answered. The discriminator
+  is `mode === 'pick'` and never "the times are null", so a backend that has
+  not shipped the field renders the old card rather than a form it would
+  refuse. Both writes surface the server's `409` sentences verbatim on the
+  card, and both refresh the same three queries: the schedule request, the
+  complaint thread, and the complaint list.
+- **A sixth section on the supervisor dashboard.**
+  `WorkerDashboard/SupervisorDashboard.jsx` gains
+  `<Section id="triage-awaiting-resident">`, **"Awaiting resident response"**,
+  between "Taken up by you" and "Open job requests" — where it is in the
+  journey: raised, and not yet anybody's to claim. It is fed by the snapshot's
+  new `awaitingResident` array, rendered with the existing `orderCard` and
+  re-bucketed by nothing (the array defaults to `[]`, because the key arrives
+  with the hand-applied migration). The rows carry no verb and the eye popup
+  offers one navigation action only — the deep link into the work-order queue
+  at `?tab=queue&job=…` — because the answer belongs to the resident and the
+  24-hour timer belongs to the engine.
+
+`residentApi` gains `scheduleTime(complaintId, { startAt, endAt })`, and the
+stale `/** Accept a slot or propose a time */` comment above `schedule` is
+replaced: proposing a time was never something that call did, and now that
+proposing one is real it had to stop claiming the wrong endpoint does it.
+`workOrdersApi.create`'s docstring drops the old slot fork for G1's.
+
+14 new tests: `ProposedVisit.test.jsx` (a new file — pick-mode's picker,
+caption and absent decline; the ISO payload; the client-side range refusal; the
+`409` verbatim; approve-mode's two buttons and absent picker; a response with
+no `mode` at all; the 404 that draws nothing), `WorkOrders.test.jsx` (no
+`datetime-local` anywhere on the raise form, both explainer sentences, and a
+wire body asserted not to contain the two slot keys) and
+`SupervisorDashboard.test.jsx` (the sixth bucket rendered with its status chip,
+its place in the DOM order of the six sections, and the no-verb popup). The
+work-order vocabulary needed nothing: `awaiting_resident` has read *"Waiting on
+the resident"* since the day the queue shipped.
+
 ## Retired client code
 
 The following categories were removed after an import-graph audit:

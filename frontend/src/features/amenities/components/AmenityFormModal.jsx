@@ -18,6 +18,7 @@ export default function AmenityFormModal({
   const titleId = useId();
   const {
     errors,
+    isProcessingImage,
     values,
     removeImage,
     selectImage,
@@ -215,6 +216,7 @@ export default function AmenityFormModal({
           <AmenityFormField label="Image Upload" error={errors.image}>
             <AmenityImagePicker
               image={values.image}
+              isProcessing={isProcessingImage}
               onSelect={selectImage}
               onRemove={removeImage}
             />
@@ -223,7 +225,7 @@ export default function AmenityFormModal({
           <div className="flex justify-end border-t border-slate-100 pt-5">
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isProcessingImage}
               className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
             >
               {isSubmitting ? 'Adding Amenity...' : 'Add Amenity'}

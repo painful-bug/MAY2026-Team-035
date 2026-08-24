@@ -34,6 +34,7 @@ from app.domain.worker_schemas import (
     CompleteJobRequest,
     CreateUnavailabilityRequest,
     DeclineJobRequest,
+    OpenJob,
     ReportJobFailureRequest,
     SetAvailabilityRulesRequest,
     UnavailabilityBlock,
@@ -192,9 +193,46 @@ def get_job(client: Client, *, work_order_id: str) -> WorkerJobDetail:
     return _to_job_detail(row)
 
 
+def _to_open_job(row: dict[str, Any]) -> OpenJob:
+    return OpenJob(
+        work_order_id=row["work_order_id"],
+        complaint_id=_text(row.get("complaint_id")),
+        complaint_title=_text(row.get("complaint_title")),
+        department_id=_text(row.get("department_id")),
+        department_name=_text(row.get("department_name")),
+        community_id=_text(row.get("community_id")),
+        community_name=_text(row.get("community_name")),
+        skill_id=_text(row.get("skill_id")),
+        skill_name=_text(row.get("skill_name")),
+        priority=str(row.get("priority") or "medium"),
+        subject_kind=str(row.get("subject_kind") or "resident"),
+        scheduled_start_at=row.get("scheduled_start_at"),
+        scheduled_end_at=row.get("scheduled_end_at"),
+        created_at=row.get("created_at"),
+        staff_assignment_id=_text(row.get("staff_assignment_id")),
+    )
+
+
+def open_jobs(client: Client) -> list[OpenJob]:
+    """The open-jobs board: claimable work on the caller's rosters."""
+    return [_to_open_job(row) for row in repo.list_open_jobs(client)]
+
+
 def accept(client: Client, *, work_order_id: str) -> WorkerJob:
     """Take an offered job."""
     repo.accept_offer(client, work_order_id=work_order_id)
+    return _read_back(client, work_order_id=work_order_id)
+
+
+def claim(client: Client, *, work_order_id: str) -> WorkerJob:
+    """Take an unclaimed job straight off the board.
+
+    The same read-back contract as ``accept``, and it matters more here: the
+    claim is the race the board creates on purpose, and only the re-read says
+    the job the caller now holds is ``scheduled`` -- possibly with no slot yet,
+    which is ruling C3's shape, not an error.
+    """
+    repo.claim_job(client, work_order_id=work_order_id)
     return _read_back(client, work_order_id=work_order_id)
 
 

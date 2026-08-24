@@ -71,6 +71,39 @@ class WorkerJob(CamelModel):
     cancelled_reason: str | None = None
 
 
+class OpenJob(CamelModel):
+    """One unclaimed job on the open-jobs board.
+
+    Keyed on the **work order**, not an assignment: the whole point of the
+    board is that nobody holds one yet. ``staffAssignmentId`` is the caller's
+    own roster row for the job's department, returned by the RPC so a client
+    never has to guess which of a multi-community worker's rows a claim would
+    ride on.
+
+    A null slot is not missing data, it is ruling C3: an unscheduled job is on
+    the board with a "time to be set" marker, claimable, and the hour is set
+    afterwards in the supervisor's queue.
+    """
+
+    work_order_id: str
+    complaint_id: str | None = None
+    complaint_title: str | None = None
+    department_id: str | None = None
+    department_name: str | None = None
+    community_id: str | None = None
+    community_name: str | None = None
+    skill_id: str | None = None
+    skill_name: str | None = None
+    priority: str = "medium"
+    #: ``resident`` (somebody's home) or ``facility`` (a common area).
+    subject_kind: str = "resident"
+    scheduled_start_at: datetime | None = None
+    scheduled_end_at: datetime | None = None
+    created_at: datetime | None = None
+    #: The caller's own roster row in the job's department.
+    staff_assignment_id: str | None = None
+
+
 class WorkerJobDetail(WorkerJob):
     """One job, with what the worker needs in order to turn up at it."""
 

@@ -189,9 +189,15 @@ class BookingSummary(CamelModel):
     ``GET /residents`` returns as ``id``, so the dashboard's
     ``users.find(u => u.id === booking.residentId)`` resolves.
 
-    ``status`` may read ``completed`` for a row whose stored status is
-    ``approved``: a booking that has finished is completed, and storing that
-    would need a scheduled job to keep it true.
+    ``status`` is always a lowercase machine value out of
+    ``public.booking_status`` -- pending, approved, rejected, cancelled,
+    completed, no_show. ``amenity_booking_overview`` also exposes the same enum
+    initcap'd for display ('Approved', 'No Show'); that spelling is for a human
+    to read and never crosses the wire (issue #48 D4).
+
+    ``state`` comes from ``booking_type``, not from ``status``: an admin block
+    is an APPROVED row whose type is 'blocked', which is the only place that
+    fact is recorded.
     """
 
     id: str
@@ -371,12 +377,26 @@ class ReportRow(CamelModel):
 
 
 class ReportKpis(CamelModel):
-    total_amenities: int
+    """The six figures ``amenity_report_totals`` actually computes.
+
+    One field per RPC key, and no field without one. The previous set --
+    ``totalAmenities``, ``pendingApprovals``, ``activeAmenities``,
+    ``bookingsThisMonth`` -- named nothing the RPC returns, so all four rendered
+    a hardcoded 0 on the reports page while looking like measurements (issue #48
+    D4). A KPI with no source is a worse answer than no KPI, so they are gone
+    rather than zeroed.
+
+    ``totalActiveBookings`` is the approved count and ``totalRevenue`` is the
+    money actually received in the window; both keep their names because the
+    number underneath them is the one the label always promised.
+    """
+
+    total_bookings: int
     total_active_bookings: int
-    pending_approvals: int
+    cancelled_bookings: int
+    total_charged: float
     total_revenue: float
-    active_amenities: int
-    bookings_this_month: int
+    total_refunded: float
 
 
 class ReportOption(CamelModel):

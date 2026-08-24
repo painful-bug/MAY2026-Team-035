@@ -36,6 +36,11 @@ export default function AssignPickerModal({ order, onClose }) {
     // reads the same cached list rather than a second fetch of it.
     queryKey: ['work-orders', 'candidates', order.id, false],
     queryFn: () => workOrdersApi.candidates(order.id),
+    // `dispatch_candidates` drops unscheduled jobs before it looks at anyone —
+    // leave, availability windows, and clashing bookings are all checked
+    // against the slot, so with no slot the answer is nobody, always. Don't
+    // ask a question whose answer is fixed.
+    enabled: Boolean(order.scheduledStartAt),
   });
 
   const assign = useMutation({
@@ -72,19 +77,21 @@ export default function AssignPickerModal({ order, onClose }) {
 
       {!order.scheduledStartAt ? (
         <p className="text-[11px] font-semibold text-slate-500">
-          This job has no hour on it yet. If the assignment is refused for that
-          reason, set a time in the work-order queue first.
+          This job has no hour on it yet, and the roster can only be checked
+          against one — leave, availability windows, and clashing bookings all
+          depend on the slot. Set a time in the work-order queue first, then
+          come back here.
         </p>
-      ) : null}
-
-      {candidates.isPending ? (
+      ) : candidates.isPending ? (
         <p className="text-xs font-semibold text-slate-400">Reading the roster…</p>
       ) : candidates.isError ? (
         <Failure error={candidates.error} />
       ) : rows.length === 0 ? (
         <p className="text-xs font-semibold text-slate-500">
-          Nobody in this department holds the trade this job needs. Hiring, or a
-          change of trade on the job, is the way out of that — not this button.
+          Nobody on this department&apos;s roster is eligible for this job at
+          this hour — they may lack the trade, be on leave, or already be booked
+          over the slot. Hiring, another hour, or a change of trade on the job
+          is the way out of that — not this button.
         </p>
       ) : (
         <ul className="space-y-1.5">

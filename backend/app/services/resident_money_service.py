@@ -29,6 +29,7 @@ from app.domain.resident_money_schemas import (
     ResidentBooking,
     ResidentInvoice,
 )
+from app.domain.vocabularies import booking_status_to_wire
 from app.repositories import resident_money_repository as repo
 from app.services.payment_simulator import SimulatedOutcome, simulate
 from supabase import Client
@@ -76,7 +77,14 @@ def _to_booking(row: dict[str, Any]) -> ResidentBooking:
         booking_date=row.get("booking_date"),
         starts_at=row["starts_at"],
         ends_at=row["ends_at"],
-        status=_text(row.get("status")),
+        # The lowercase machine value, from the stored enum where the view gives
+        # us one and from its own display string otherwise. `resident_booking_
+        # overview.status` is Title-case ('Pending', 'No Show') and passing it
+        # through made this the one booking endpoint whose status could not be
+        # compared against any other's (issue #48 D4).
+        status=booking_status_to_wire(
+            row.get("stored_status") or row.get("status")
+        ),
         stored_status=_text(row.get("stored_status")),
         guest_count=int(row.get("guest_count") or 0),
         is_private=bool(row.get("is_private")),

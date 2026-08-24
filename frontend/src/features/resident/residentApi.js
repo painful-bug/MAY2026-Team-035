@@ -3,9 +3,10 @@ import { api } from '../../lib/api/client';
 // The resident's whole API surface, in one place.
 //
 // Same shape as `features/hiring/hiringApi.js`: no state, no caching, no error
-// translation — react-query owns all three. This module is a FROZEN INTERFACE
-// while the two phase-6 wiring tasks run in parallel: both consume it, neither
-// edits it. A missing wrapper is reported to the orchestrator, not added here.
+// translation — react-query owns all three. This module was a FROZEN INTERFACE
+// while the two phase-6 wiring tasks ran in parallel: both consumed it, neither
+// edited it. That freeze is over; it thaws one endpoint at a time, on an
+// orchestrator's say-so, and never because a screen wanted a wrapper.
 //
 // Every operation below is resident-scoped on the server: the community and the
 // caller come from the session, never from an argument, which is why nothing
@@ -54,10 +55,31 @@ export const residentApi = {
     post(`/complaints/${complaintId}/comments`, payload),
 
   // --- complaint scheduling --------------------------------------------------
-  /** The visit the department proposed, if any. 404 means nothing proposed. */
+  /**
+   * The visit request on this complaint, if any. 404 means there is none.
+   *
+   * `mode` says which of the two questions is being asked: `approve` is the
+   * department proposing an hour for the resident to confirm or decline;
+   * `pick` is the department asking the resident to name the hour themselves
+   * (ruling F1), and its proposed times are null because nobody has proposed
+   * one. The two have different writes below.
+   */
   scheduleRequest: (complaintId) => api(`/complaints/${complaintId}/schedule-request`),
-  /** Accept a slot or propose a time: see API.md §resident scheduling. */
+  /**
+   * Answer a proposed hour (`approve`-mode): `{ response: 'confirmed' |
+   * 'declined', note? }`. Declining clears the time and sends it back to the
+   * supervisor; it is not a counter-proposal, which is why there is no time in
+   * this payload.
+   */
   schedule: (complaintId, payload) => post(`/complaints/${complaintId}/schedule`, payload),
+  /**
+   * Name the hour (`pick`-mode): `{ startAt, endAt }`, both ISO and both
+   * required. Silence is answered by the system 24 hours after the raise
+   * (ruling F2), so there is no decline to send here — see API.md §resident
+   * scheduling.
+   */
+  scheduleTime: (complaintId, payload) =>
+    post(`/complaints/${complaintId}/schedule-time`, payload),
 
   // --- visitor passes --------------------------------------------------------
   visitorPasses: (params = {}) => api(`/visitor-passes${query(params)}`),

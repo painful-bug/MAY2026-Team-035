@@ -20,7 +20,9 @@ import WorkerLanding from './WorkerLanding';
 //
 //   * the landing fork, in both directions. A technician's `/worker` is
 //     unchanged, and their browser asks for no triage snapshot at all;
-//   * the page renders the server's five arrays and re-buckets none of them.
+//   * the page renders the server's six arrays and re-buckets none of them —
+//     including ruling F1's `awaitingResident`, whose whole point is that the
+//     job is *not* on the open pile while the resident is choosing an hour;
 //     The bucketing rules are intricate (amendment 2's *furthest stage wins*: a
 //     complaint with a live job appears only as that job, and an offered-but-
 //     unaccepted one is an *open request* rather than an assignment), and a
@@ -138,6 +140,27 @@ const OPEN_REQUEST_HIGH = {
   scheduledStartAt: null,
 };
 
+// Ruling F1's bucket, and the whole of what makes it its own section: raised
+// against somebody's home, with no hour on it, because the *resident* is the
+// one being asked for the hour. It is not claimable and it is not offered, so
+// neither "open requests" nor "assigned" would be true of it.
+const AWAITING_RESIDENT = {
+  id: 'work-order-5',
+  complaintId: 'complaint-awaiting',
+  complaintTitle: 'Bathroom geyser tripping',
+  complaintCategory: 'Electrical',
+  priority: 'Medium',
+  status: 'awaiting_resident',
+  assigneeName: null,
+  offeredToName: null,
+  scheduledStartAt: null,
+  scheduledEndAt: null,
+  startedAt: null,
+  inheritedAt: null,
+  locationText: 'Flat C-101',
+  skillName: 'Electrician',
+};
+
 const BOOKED = {
   id: 'work-order-1',
   complaintId: 'complaint-booked',
@@ -172,6 +195,7 @@ const TRIAGE = {
   departmentId: 'department-1',
   newComplaints: [ORDINARY, URGENT, BOUNCED],
   takenUp: [ALREADY_MINE],
+  awaitingResident: [AWAITING_RESIDENT],
   openRequests: [OPEN_REQUEST, OPEN_REQUEST_HIGH],
   assignedPending: [BOOKED],
   inProgress: [UNDER_WAY],
@@ -181,6 +205,7 @@ const EMPTY_TRIAGE = {
   departmentId: 'department-1',
   newComplaints: [],
   takenUp: [],
+  awaitingResident: [],
   openRequests: [],
   assignedPending: [],
   inProgress: [],
@@ -287,11 +312,11 @@ describe('the worker portal landing fork', () => {
 
     expect(await screen.findByRole('heading', { name: 'Plumbing', level: 1 })).toBeVisible();
     expect(screen.getByText(/Green Meadows/)).toBeVisible();
-    // All five section headers are on the page, empty or not — the shell is
+    // All six section headers are on the page, empty or not — the shell is
     // the promise that the supervisor's whole day is on one screen.
     for (const title of [
-      'New complaints', 'Taken up by you', 'Open job requests',
-      'Assigned, work pending', 'Being worked right now',
+      'New complaints', 'Taken up by you', 'Awaiting resident response',
+      'Open job requests', 'Assigned, work pending', 'Being worked right now',
     ]) {
       expect(screen.getByRole('heading', { name: new RegExp(title), level: 2 })).toBeVisible();
     }
@@ -401,13 +426,14 @@ describe('section 1 — new complaints', () => {
 
     expect(await screen.findByText(/Nothing new is waiting/)).toBeVisible();
     expect(screen.getByText(/You have not taken anything up/)).toBeVisible();
+    expect(screen.getByText(/No resident is being waited on/)).toBeVisible();
     expect(screen.getByText(/Nothing is waiting on a worker/)).toBeVisible();
     expect(screen.getByText(/Nobody is booked on anything/)).toBeVisible();
     expect(screen.getByText(/Nothing is under way this minute/)).toBeVisible();
   });
 });
 
-describe('sections 2 to 5 — rendered as the server bucketed them', () => {
+describe('sections 2 to 6 — rendered as the server bucketed them', () => {
   it('keeps a High complaint in "Taken up" instead of lifting it into the urgent stack', async () => {
     serve();
     renderLanding();
@@ -483,10 +509,10 @@ describe('the three universal actions', () => {
     renderLanding();
 
     await screen.findByText('Sewage backing up');
-    // Five sections, eight rows in the fixture, and not one of them is a card
+    // Six sections, nine rows in the fixture, and not one of them is a card
     // you can only look at: the monitor-only sections carry the trio too.
     const cards = document.querySelectorAll('article');
-    expect(cards).toHaveLength(8);
+    expect(cards).toHaveLength(9);
     for (const card of cards) {
       expect(within(card).getByRole('button', { name: /^View details of/ })).toBeEnabled();
       expect(within(card).getByRole('button', { name: /^Chat about/ })).toBeEnabled();
@@ -634,7 +660,79 @@ describe('section 2 — taken up by you', () => {
   });
 });
 
-describe('section 3 — open job requests', () => {
+describe('section 3 — awaiting resident response', () => {
+  it('renders the server’s bucket under its own header, in its place in the journey', async () => {
+    serve();
+    renderLanding();
+
+    const awaiting = await sectionFor('Awaiting resident response');
+    await waitFor(() =>
+      expect(within(awaiting).getByText('Bathroom geyser tripping')).toBeVisible());
+
+    // The status word comes from the shared vocabulary, so the chip says what
+    // the row is waiting on rather than repeating the section header.
+    expect(within(awaiting).getByText('Waiting on the resident')).toBeVisible();
+    // No hour on it, and that is the point of the bucket.
+    expect(within(awaiting).getByText(/No time set yet/)).toBeVisible();
+    expect((await sectionFor('Awaiting resident response')).querySelector('h2').textContent)
+      .toContain('1');
+
+    // Ruling F1 in one assertion: it is not on the open pile, and nothing in
+    // the browser moves it there.
+    expect(within(await sectionFor('Open job requests')).queryByText('Bathroom geyser tripping'))
+      .not.toBeInTheDocument();
+  });
+
+  it('sits between “Taken up by you” and “Open job requests”', async () => {
+    serve();
+    renderLanding();
+
+    await screen.findByText('Bathroom geyser tripping');
+    const order = [...document.querySelectorAll('section[aria-labelledby]')].map(
+      (section) => section.getAttribute('aria-labelledby'),
+    );
+    expect(order).toEqual([
+      'triage-new',
+      'triage-taken-up',
+      'triage-awaiting-resident',
+      'triage-open-requests',
+      'triage-assigned',
+      'triage-in-progress',
+    ]);
+  });
+
+  it('offers no verb on the row, and only the way to the queue in the popup', async () => {
+    const user = userEvent.setup();
+    serve();
+    renderLanding();
+
+    const awaiting = await sectionFor('Awaiting resident response');
+    await waitFor(() =>
+      expect(within(awaiting).getByText('Bathroom geyser tripping')).toBeVisible());
+    const card = within(awaiting).getByText('Bathroom geyser tripping').closest('article');
+
+    // The answer belongs to the resident and the 24-hour timer belongs to the
+    // engine, so there is nothing here for a supervisor to press.
+    for (const verb of [/Assign without asking/, /Raise priority/, /Resolved/, /Take up/]) {
+      expect(within(card).queryByRole('button', { name: verb })).not.toBeInTheDocument();
+    }
+
+    await user.click(within(card).getByRole('button', { name: /^View details of/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('link', { name: /Open in the work-order queue/ }))
+      .toHaveAttribute(
+        'href',
+        '/worker/departments/department-1/work-orders?tab=queue&job=work-order-5',
+      );
+    // And the popup writes nothing either — it is the same absence, repeated
+    // where the reader now is.
+    for (const verb of [/Assign without asking/, /Raise priority/, /Resolved/, /Take up/]) {
+      expect(within(dialog).queryByRole('button', { name: verb })).not.toBeInTheDocument();
+    }
+  });
+});
+
+describe('section 4 — open job requests', () => {
   it('raises the priority one step, and refuses to pretend there is a step above High', async () => {
     const user = userEvent.setup();
     serve();
@@ -683,6 +781,51 @@ describe('section 3 — open job requests', () => {
       }));
   });
 
+  it('offers the supervisor the job itself, as a button of its own', async () => {
+    const user = userEvent.setup();
+    serve();
+    renderLanding();
+
+    const open = await sectionFor('Open job requests');
+    await waitFor(() => expect(within(open).getByText('Gate motor jammed')).toBeVisible());
+    const card = within(open).getByText('Gate motor jammed').closest('article');
+
+    // Ruling R8: leadership is in no candidate list anywhere, so this is not a
+    // shortcut through the picker beside it — it is a separate door, and it is
+    // beside the routine one rather than in place of it.
+    expect(within(card).getByRole('button', { name: 'Assign without asking' })).toBeVisible();
+    await user.click(within(card).getByRole('button', { name: 'Take this job myself' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Jobs normally go to your technicians/)).toBeVisible();
+    await user.click(
+      within(dialog).getByRole('button', { name: /Take up this job — assign it to me/ }),
+    );
+
+    // No `staffAssignmentId`: the RPC resolves the assignee from the caller.
+    await waitFor(() =>
+      expect(mocks.api).toHaveBeenCalledWith('/work-orders/work-order-3/take-up', {
+        method: 'POST',
+        body: '{}',
+      }));
+  });
+
+  it('repeats the take-up inside the eye popup, where the reader now is', async () => {
+    const user = userEvent.setup();
+    serve();
+    renderLanding();
+
+    const open = await sectionFor('Open job requests');
+    await waitFor(() => expect(within(open).getByText('Gate motor jammed')).toBeVisible());
+    const card = within(open).getByText('Gate motor jammed').closest('article');
+
+    await user.click(within(card).getByRole('button', { name: /^View details of/ }));
+    const detail = await screen.findByRole('dialog');
+    await user.click(within(detail).getByRole('button', { name: 'Take this job myself' }));
+
+    expect(await screen.findByText(/Jobs normally go to your technicians/)).toBeVisible();
+  });
+
   it('leaves the two monitor-only sections monitor-only', async () => {
     serve();
     renderLanding();
@@ -691,7 +834,13 @@ describe('section 3 — open job requests', () => {
     await waitFor(() => expect(within(assigned).getByText('Water tank overflow')).toBeVisible());
 
     for (const section of [assigned, await sectionFor('Being worked right now')]) {
-      for (const verb of [/Assign without asking/, /Raise priority/, /Resolved/, /Take up/]) {
+      // Including the take-up: a job somebody has already committed to is not
+      // the supervisor's to lift off them from here (ruling R8's valve is for
+      // work nobody has taken).
+      for (const verb of [
+        /Assign without asking/, /Raise priority/, /Resolved/, /Take up/,
+        /Take this job myself/,
+      ]) {
         expect(within(section).queryByRole('button', { name: verb })).not.toBeInTheDocument();
       }
     }

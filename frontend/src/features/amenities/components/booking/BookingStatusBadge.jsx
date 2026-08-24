@@ -1,7 +1,8 @@
 import React from 'react';
 import {
   BOOKING_STATUS,
-  BOOKING_STATUS_LABELS,
+  bookingStatusLabel,
+  normalizeBookingStatus,
 } from '../../constants/bookingStatuses.js';
 
 const STATUS_CLASSES = {
@@ -16,11 +17,14 @@ const STATUS_CLASSES = {
     'border-slate-200 bg-slate-50 text-slate-600',
   [BOOKING_STATUS.REJECTED]: 'border-rose-100 bg-rose-50 text-rose-700',
   [BOOKING_STATUS.BLOCKED]: 'border-rose-100 bg-rose-50 text-rose-700',
+  // A real lifecycle value the ledger and report tables can show: without a
+  // class of its own the badge rendered nothing at all for it.
+  [BOOKING_STATUS.NO_SHOW]: 'border-amber-100 bg-amber-50 text-amber-700',
 };
 
 export default function BookingStatusBadge({ status }) {
-  const label = BOOKING_STATUS_LABELS[status];
-  const classes = STATUS_CLASSES[status];
+  const label = bookingStatusLabel(status);
+  const classes = STATUS_CLASSES[normalizeBookingStatus(status)];
 
   if (!label || !classes) {
     return null;

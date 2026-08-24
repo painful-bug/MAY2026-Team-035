@@ -19,11 +19,14 @@ import {
   X,
 } from 'lucide-react';
 import { BOOKING_MODE } from '../../features/amenities/constants/bookingModes.js';
-import { BOOKING_STATUS_LABELS } from '../../features/amenities/constants/bookingStatuses.js';
+import {
+  bookingStatusLabel,
+  normalizeBookingStatus,
+} from '../../features/amenities/constants/bookingStatuses.js';
 import {
   cancelResidentAmenityBookingDays,
+  checkBookingSlotAvailability,
   createResidentAmenityBookingSeries,
-  validateBookingSlot,
 } from '../../features/amenities/services/amenityBookingsService.js';
 import { DEFAULT_AMENITY_SETTINGS } from '../../features/amenities/constants/amenitySettings.js';
 import { normalizeAmenityRecord } from '../../features/amenities/utils/amenitySettingsModel.js';
@@ -126,13 +129,14 @@ const mapBookableAmenity = (item) =>
 //
 // Three translations, each of them a real difference rather than a rename:
 //
-//   status — the view sends the DATABASE's vocabulary in `storedStatus`
-//     (`requested | approved | rejected | cancelled | completed | no_show`) and
-//     a display string in `status`. The frontend's constant calls the first of
-//     those `pending`. Only that one word differs, so only that one is mapped;
-//     everything else passes through, and `statusLabel` keeps the server's own
-//     wording so `no_show` — which this frontend has no label for — still reads
-//     as "No Show" rather than falling back to a raw enum.
+//   status — the wire carries the DATABASE's vocabulary
+//     (`requested | approved | rejected | cancelled | completed | no_show`),
+//     and the frontend's constant calls the first of those `pending`. Only
+//     that one word differs, so only that one is mapped. The DISPLAY wording
+//     is no longer taken from the response: the server used to send a
+//     Title-case string beside the stored one and it is a machine value now
+//     (issue #48, contract §C), so `bookingStatusLabel` — which knows about
+//     `no_show` — decides the casing here.
 //
 //   dates — `bookingDate` is already the calendar day in the COMMUNITY's
 //     timezone, computed in the view. `startsAt`/`endsAt` are instants, and the
@@ -144,20 +148,34 @@ const mapBookableAmenity = (item) =>
 //     not exist here. `isUpcoming` is the database's answer to the same
 //     question the cancel RPC enforces (`starts_at >= now()`), so the button is
 //     offered on exactly the days the write will accept.
-const mapResidentBooking = (item) => ({
-  id: item.id,
-  bookingGroupId: item.bookingSeriesId,
-  amenityId: item.amenityId,
-  amenityName: item.amenityName,
-  date: item.bookingDate ?? String(item.startsAt).slice(0, 10),
-  startsAt: item.startsAt,
-  endsAt: item.endsAt,
-  status: item.storedStatus === 'requested' ? 'pending' : item.storedStatus,
-  statusLabel: item.status,
-  isUpcoming: Boolean(item.isUpcoming),
-});
+const mapResidentBookingStatus = (item) => {
+  const stored = normalizeBookingStatus(item.storedStatus ?? item.status);
+  return stored === 'requested' ? 'pending' : stored;
+};
 
-const CANCELLABLE_STATUSES = ['pending', 'approved', 'confirmed'];
+const mapResidentBooking = (item) => {
+  const status = mapResidentBookingStatus(item);
+
+  return {
+    id: item.id,
+    bookingGroupId: item.bookingSeriesId,
+    amenityId: item.amenityId,
+    amenityName: item.amenityName,
+    date: item.bookingDate ?? String(item.startsAt).slice(0, 10),
+    startsAt: item.startsAt,
+    endsAt: item.endsAt,
+    status,
+    statusLabel: bookingStatusLabel(status),
+    isUpcoming: Boolean(item.isUpcoming),
+  };
+};
+
+// `confirmed` was in this list and is not a status any endpoint can send: the
+// lifecycle is {pending, approved, rejected, cancelled, completed, no_show}
+// (issue #48, contract §C — an admin-created booking is `approved`, and a block
+// is an approved row with `bookingType: 'blocked'`). A day is withdrawable
+// while it is still waiting or already granted.
+const CANCELLABLE_STATUSES = ['pending', 'approved'];
 
 const isCancellableDay = (booking) =>
   booking.isUpcoming && CANCELLABLE_STATUSES.includes(booking.status);
@@ -223,13 +241,8 @@ const getGroupStatus = (records) => {
   if (statuses.size === 1) {
     const [record] = records;
     return {
-      // The server's own wording first: it is the only source that has a label
-      // for `no_show`, which this frontend's constant does not list.
       key: record.status,
-      label:
-        record.statusLabel ??
-        BOOKING_STATUS_LABELS[record.status] ??
-        record.status,
+      label: record.statusLabel ?? bookingStatusLabel(record.status),
     };
   }
 
@@ -329,6 +342,9 @@ export default function Amenities() {
   const [isPrivateBooking, setIsPrivateBooking] = useState(false);
   const [availableSlotValues, setAvailableSlotValues] = useState(new Set());
   const [isCheckingSlots, setIsCheckingSlots] = useState(false);
+  // Whether the last slot check actually reached the conflict data. False
+  // means the slots on offer are unfiltered rather than known-free.
+  const [isAvailabilityVerified, setIsAvailabilityVerified] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [bookingRevision, setBookingRevision] = useState(0);
@@ -408,6 +424,15 @@ export default function Amenities() {
       (bookingDates.length === 0 ? 'Select a valid date range.' : '')
     : '';
 
+  // The slot hint. It is allowed to fail — `checkBookingSlotAvailability`
+  // reads the ADMIN-guarded snapshot and answers `verified: false` for the
+  // resident it 403s — and it is not allowed to hang: an unhandled rejection
+  // here used to leave `isCheckingSlots` true for good, so the dropdown said
+  // "Checking availability..." until the page was reloaded, with the submit
+  // button disabled behind it. Every exit path clears the flag, and an
+  // unverified check offers every slot rather than claiming an availability
+  // nobody looked up. The booking write is the authority either way: a taken
+  // slot comes back as a `409` with a message the form already renders.
   useEffect(() => {
     let ignore = false;
 
@@ -417,43 +442,68 @@ export default function Amenities() {
 
       if (!selectedAmenity || closureReason || bookingSlots.length === 0) {
         setIsCheckingSlots(false);
+        setIsAvailabilityVerified(true);
         return;
       }
 
       setIsCheckingSlots(true);
-      const availability = await Promise.all(
-        bookingSlots.map((slot) =>
-          Promise.all(
-            bookingDates.map((bookingDate) =>
-              validateBookingSlot({
-                amenityId: selectedAmenity.id,
-                date: bookingDate,
-                startTime: slot.startTime,
-                endTime: slot.endTime,
-                openingTime: selectedAmenity.openingTime,
-                closingTime: selectedAmenity.closingTime,
-                cleaningBuffer: selectedAmenity.cleaningBuffer,
-                bookingMode: selectedAmenity.bookingMode,
-                isPrivateBooking,
-                guestCount,
-                capacity: selectedAmenity.capacity,
-              })
-            )
-          ).then((dayAvailability) =>
-            dayAvailability.every(Boolean)
-          )
-        )
-      );
 
-      if (!ignore) {
+      try {
+        const results = await Promise.all(
+          bookingSlots.map((slot) =>
+            Promise.all(
+              bookingDates.map((bookingDate) =>
+                checkBookingSlotAvailability({
+                  amenityId: selectedAmenity.id,
+                  date: bookingDate,
+                  startTime: slot.startTime,
+                  endTime: slot.endTime,
+                  openingTime: selectedAmenity.openingTime,
+                  closingTime: selectedAmenity.closingTime,
+                  cleaningBuffer: selectedAmenity.cleaningBuffer,
+                  bookingMode: selectedAmenity.bookingMode,
+                  isPrivateBooking,
+                  guestCount,
+                  capacity: selectedAmenity.capacity,
+                })
+              )
+            )
+          )
+        );
+
+        if (ignore) {
+          return;
+        }
+
         const values = new Set(
           bookingSlots
-            .filter((_, index) => availability[index])
+            .filter((_, index) =>
+              results[index].every((result) => result.available)
+            )
             .map((slot) => slot.value)
         );
         setAvailableSlotValues(values);
-        setTimeSlot(bookingSlots.find((slot) => values.has(slot.value))?.value ?? '');
-        setIsCheckingSlots(false);
+        setTimeSlot(
+          bookingSlots.find((slot) => values.has(slot.value))?.value ?? ''
+        );
+        setIsAvailabilityVerified(
+          results.every((day) => day.every((result) => result.verified))
+        );
+      } catch {
+        if (ignore) {
+          return;
+        }
+
+        // Nothing is known about conflicts, so nothing is greyed out: the
+        // resident picks a slot and the write decides.
+        const values = new Set(bookingSlots.map((slot) => slot.value));
+        setAvailableSlotValues(values);
+        setTimeSlot(bookingSlots[0]?.value ?? '');
+        setIsAvailabilityVerified(false);
+      } finally {
+        if (!ignore) {
+          setIsCheckingSlots(false);
+        }
       }
     };
 
@@ -1208,8 +1258,27 @@ export default function Amenities() {
                   </div>
                 )}
 
+                {/* The slot list is a hint, and when the hint could not be
+                    fetched it must not read as one. Nothing here claims a slot
+                    is free — the booking write is what decides, and it answers
+                    a clash with a `409` this form renders. */}
                 {!closureReason &&
                   !isCheckingSlots &&
+                  !isAvailabilityVerified &&
+                  bookingSlots.length > 0 && (
+                    <div className="flex gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-600">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>
+                        We could not check which slots are already taken. Pick
+                        the one you want — you will be told straight away if it
+                        has just gone.
+                      </span>
+                    </div>
+                  )}
+
+                {!closureReason &&
+                  !isCheckingSlots &&
+                  isAvailabilityVerified &&
                   bookingSlots.length > 0 &&
                   availableSlotValues.size === 0 && (
                     <div className="flex gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
@@ -1383,9 +1452,7 @@ export default function Amenities() {
                           'border-slate-200 bg-slate-50 text-slate-600'
                         }`}
                       >
-                        {booking.statusLabel ??
-                          BOOKING_STATUS_LABELS[booking.status] ??
-                          booking.status}
+                        {booking.statusLabel ?? bookingStatusLabel(booking.status)}
                       </span>
                     </label>
                   );

@@ -1,6 +1,6 @@
 import React from 'react';
 import { RotateCcw } from 'lucide-react';
-import { BOOKING_STATUS_LABELS } from '../../constants/bookingStatuses.js';
+import { bookingStatusLabel } from '../../constants/bookingStatuses.js';
 import { REPORT_ALL_FILTER } from '../../constants/amenityReports.js';
 import AmenityFormField, {
   amenityInputClasses,
@@ -10,7 +10,11 @@ import DateRangePicker from './DateRangePicker.jsx';
 function FilterSelect({ label, value, options, onChange }) {
   return (
     <AmenityFormField label={label}>
+      {/* `AmenityFormField`'s caption is a bare `<label>` with nothing tying it
+          to the control, so the select had no accessible name at all — it read
+          as "combo box" to a screen reader. */}
       <select
+        aria-label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className={amenityInputClasses}
@@ -71,7 +75,7 @@ export default function ReportFilterBar({
           value={filters.bookingStatus}
           options={options.bookingStatuses.map((status) => ({
             value: status,
-            label: BOOKING_STATUS_LABELS[status] ?? status,
+            label: bookingStatusLabel(status),
           }))}
           onChange={(value) => onChange('bookingStatus', value)}
         />

@@ -46,10 +46,17 @@ export const normalizeAmenityRecord = (amenity) => {
     amenity.operatingHours?.openingTime ?? amenity.openingTime ?? '';
   const storedClosingTime =
     amenity.operatingHours?.closingTime ?? amenity.closingTime ?? '';
-  const hasStoredHours =
+  const recordCarriesHours =
     Boolean(storedOpeningTime) &&
     Boolean(storedClosingTime) &&
     storedOpeningTime !== storedClosingTime;
+  // Normalising an ALREADY normalised record used to resurrect the seed hours
+  // as facts: the first pass writes `openingTime: '06:00'` for the settings
+  // form, and a second pass reads that back as a stored value. An explicit
+  // flag on the input wins, so the answer survives the round trip; passing
+  // `hasStoredHours: undefined` (as `mergeAmenitySettings` does) asks for a
+  // fresh verdict from the hours in hand.
+  const hasStoredHours = amenity.hasStoredHours ?? recordCarriesHours;
   const operatingHours = {
     ...DEFAULT_AMENITY_SETTINGS.operatingHours,
     ...amenity.operatingHours,
@@ -126,6 +133,12 @@ export const normalizeAmenityRecord = (amenity) => {
     maintenanceSettings,
     openingTime: operatingHours.openingTime,
     closingTime: operatingHours.closingTime,
+    // Whether the two fields above are the record's own hours or the settings
+    // form's editable seed. Readers that DISPLAY hours use `openingHours`
+    // below; the one that WRITES them (`toAmenityWrite`) uses this, so that
+    // toggling an amenity's availability cannot quietly persist 06:00-22:00
+    // for a facility whose hours nobody has ever set.
+    hasStoredHours,
     // '' when the record has no real hours; readers omit their hours line
     // rather than render the settings-form seed values as fact.
     openingHours: hasStoredHours
@@ -148,6 +161,11 @@ export const mergeAmenitySettings = (amenity, settings) =>
     category: settings.category,
     location: settings.location.trim(),
     capacity: Number(settings.capacity),
+    // The admin has just submitted the hours fields, so the merged record's
+    // hours are theirs whatever the old record's were — `undefined` asks
+    // `normalizeAmenityRecord` to judge the submitted values afresh instead of
+    // inheriting the previous verdict.
+    hasStoredHours: undefined,
     operatingHours: { ...settings.operatingHours },
     bookingSettings: { ...settings.bookingSettings },
     paymentSettings: { ...settings.paymentSettings },

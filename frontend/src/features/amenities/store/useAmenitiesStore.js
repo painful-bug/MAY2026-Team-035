@@ -18,7 +18,7 @@ const replaceAmenity = (amenities, updatedAmenity) =>
     amenity.id === updatedAmenity.id ? updatedAmenity : amenity
   );
 
-export const useAmenitiesStore = create((set) => ({
+export const useAmenitiesStore = create((set, get) => ({
   amenities: [],
   isLoading: false,
   isAdding: false,
@@ -146,7 +146,13 @@ export const useAmenitiesStore = create((set) => ({
     set({ error: null });
 
     try {
-      const amenity = await setAmenityActiveStatus(amenityId);
+      // The card being toggled is already in this store, so the service is
+      // handed the record rather than sent to refetch the entire admin
+      // snapshot to find it again.
+      const amenity = await setAmenityActiveStatus(
+        amenityId,
+        get().amenities.find((item) => item.id === amenityId) ?? null
+      );
       set((state) => ({
         amenities: replaceAmenity(state.amenities, amenity),
         selectedAmenity:

@@ -41,14 +41,13 @@ ACCESS_REQUESTS_REPOSITORY = (
     BACKEND / "app" / "repositories" / "access_requests_repository.py"
 )
 
-PREVIOUS_SHARED_MIGRATION = (
-    MIGRATIONS / "20260823120000_complaint_engine_v2_repairs.sql"
-)
-MIGRATIONS_ADDED_TOGETHER = (
-    "20260823150000_hosted_invite_claim_names.sql",
-    "20260823153000_hosted_request_status_withdrawn.sql",
-    "20260823160000_visitor_requests_sse.sql",
-)
+#: The file this one had to sort after when it was written. Named, rather than
+#: derived as "everything that is not in a set of new files": that phrasing had
+#: to be edited every time another migration landed, and was edited twice
+#: (2026-08-23, the open-jobs board and then the resident-scheduling package)
+#: before ruling G9 replaced it. Forward-only is a claim about ONE predecessor;
+#: a later sibling is not evidence against it.
+LATEST_PREDECESSOR = MIGRATIONS / "20260823150000_hosted_invite_claim_names.sql"
 
 ENUM = "request_status"
 
@@ -102,19 +101,11 @@ def test_the_migration_parses_as_postgresql() -> None:
     parse_sql(MIGRATION.read_text(encoding="utf-8"))
 
 
-def test_it_sorts_after_every_file_that_already_existed() -> None:
-    """Pin the parent tree's tip; later migrations are not predecessors."""
-    earlier = sorted(
-        path.name
-        for path in MIGRATIONS.glob("*.sql")
-        if path.name < MIGRATIONS_ADDED_TOGETHER[0]
-    )
-    assert earlier, "no pre-existing migrations found -- the glob is wrong"
-    assert PREVIOUS_SHARED_MIGRATION.exists()
-    assert MIGRATIONS_ADDED_TOGETHER == tuple(sorted(MIGRATIONS_ADDED_TOGETHER))
-    assert MIGRATION.name in MIGRATIONS_ADDED_TOGETHER
-    assert earlier[-1] == PREVIOUS_SHARED_MIGRATION.name, earlier[-1]
-    assert MIGRATIONS_ADDED_TOGETHER[0] > earlier[-1], earlier[-1]
+def test_it_sorts_after_the_file_it_had_to_follow() -> None:
+    """Forward-only. A version below the latest on a shared branch is invisible
+    to a fresh replay that has already passed it."""
+    assert LATEST_PREDECESSOR.exists(), LATEST_PREDECESSOR.name
+    assert MIGRATION.name > LATEST_PREDECESSOR.name, LATEST_PREDECESSOR.name
 
 
 def test_the_label_added_is_the_one_the_application_writes() -> None:

@@ -34,6 +34,7 @@ from app.domain.schemas import Principal
 from app.domain.worker_schemas import (
     CompleteJobRequest,
     DeclineJobRequest,
+    OpenJob,
     ReportJobFailureRequest,
     WorkerJob,
     WorkerJobDetail,
@@ -89,6 +90,39 @@ async def worker_snapshot(
     prints about itself.
     """
     return service.snapshot(client, profile_id=principal.user_id)
+
+
+@router.get(
+    "/open-jobs",
+    response_model=list[OpenJob],
+    summary="The open-jobs board",
+)
+async def list_open_jobs(
+    _: Principal = Depends(get_current_user),
+    client: Client = Depends(get_request_client),
+) -> list[OpenJob]:
+    """Every unclaimed job on the caller's department rosters, claimable now.
+
+    The product ruling of 2026-08-23 (C1): a department roster technician who
+    holds the job's trade sees the department's open work, not only what a
+    supervisor has offered them. "Open" is adjudicated as *uncommitted and
+    unpromised* — `draft` or `offered` with no live assignment — so a job with
+    an offer out to somebody else is off the board, and a decline returns it.
+
+    An unscheduled job appears with a null slot (C3): it is claimable, and its
+    hour is set afterwards in the supervisor's queue.
+
+    **The list is exclusion-aware.** A job whose complaint history rules the
+    caller out — a decline on it, a resident cancellation, a reopen after
+    their completed visit — is not shown, because it is not actionable; the
+    claim re-checks it anyway, because the list and the click are seconds
+    apart.
+
+    An empty list is the ordinary answer, not an error: no roster rows, no
+    matching trades, or simply nothing waiting all look the same here, and
+    `communities` on the snapshot is what distinguishes them for a client.
+    """
+    return service.open_jobs(client)
 
 
 @router.get(
@@ -184,6 +218,40 @@ async def accept_job(
     | 409 | `conflict` | Somebody took it · the offer is closed · you are booked |
     """
     return service.accept(client, work_order_id=work_order_id)
+
+
+@router.post(
+    "/jobs/{work_order_id}/claim",
+    response_model=WorkerJob,
+    summary="Take an unclaimed job off the board",
+)
+async def claim_job(
+    work_order_id: str = Path(...),
+    _: Principal = Depends(get_current_user),
+    client: Client = Depends(get_request_client),
+) -> WorkerJob:
+    """Claim, instantly. First come, first served — there is no approval step.
+
+    Ruling C2: taking a job from the board commits the worker on the spot with
+    accept-an-offer mechanics — an `accepted` assignment, the job moved to
+    `scheduled`, the resident and the supervisor notified. Unlike `/accept`
+    there is no offer underneath: the RPC checks the roster, the trade and the
+    complaint's exclusion history itself, under the same row lock that settles
+    the race, so the loser of a same-second double-claim is told *somebody has
+    already taken this job* rather than shown a constraint violation.
+
+    A job with no slot is claimed with no slot (C3): the overlap check is
+    skipped because there is nothing to overlap, the job still moves to
+    `scheduled`, and the hour is set afterwards in the supervisor's queue.
+
+    | Status | Code | Cause |
+    |---|---|---|
+    | 403 | `forbidden` | Not on this department's roster, or the wrong trade |
+    | 404 | `not_found` | No such job |
+    | 409 | `conflict` | Somebody took it · the complaint's history rules you
+      out · you are booked during its slot |
+    """
+    return service.claim(client, work_order_id=work_order_id)
 
 
 @router.post(

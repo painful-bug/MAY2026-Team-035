@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   ArrowUpCircle,
+  CalendarClock,
   CheckCircle2,
   ClipboardCheck,
+  ClipboardList,
   Inbox,
   PlayCircle,
   Plus,
@@ -15,6 +17,7 @@ import {
 
 import AssignPickerModal from './AssignPickerModal';
 import ComplaintDetailModal from './ComplaintDetailModal';
+import TakeUpModal from './TakeUpModal';
 import { NoteModal } from './NoteComposer';
 import { CardActions, Chip, Empty, Failure, Section, whenText } from './triageParts';
 import { openChatDock } from '../../features/messages/messagesApi';
@@ -47,16 +50,22 @@ import {
 // is unchanged and still what a technician sees; `WorkerLanding` picks between
 // the two on the roster rank the worker snapshot already carries.
 //
-// **Five sections, and the order is the work.** New complaints nobody has
-// touched, the ones this supervisor has picked up, jobs raised that nobody has
-// committed to, work somebody is booked for, and work happening right now.
-// Reading down the page is reading the complaint's journey outward from the
-// queue, and amendment 2's rule is that a complaint appears **once**: the
-// furthest stage wins, so a complaint with a live job is that job in sections
-// 3–5 and is not also a card in 1–2.
+// **Six sections, and the order is the work.** New complaints nobody has
+// touched, the ones this supervisor has picked up, jobs waiting on the resident
+// to name an hour, jobs raised that nobody has committed to, work somebody is
+// booked for, and work happening right now. Reading down the page is reading
+// the complaint's journey outward from the queue, and amendment 2's rule is
+// that a complaint appears **once**: the furthest stage wins, so a complaint
+// with a live job is that job in sections 3–6 and is not also a card in 1–2.
+//
+// The third section is ruling F1's: a resident-subject job now leaves the raise
+// form with no hour on it, because the *resident* picks it, and it is not on
+// the open pile until they do (or until the system books it for them 24 hours
+// later). It sits between "taken up" and "open requests" because that is where
+// it is in the journey — raised, and not yet anybody's to claim.
 //
 // **The browser does not decide which section a row is in.** One read,
-// `GET /departments/{id}/triage-snapshot`, answers with five arrays already
+// `GET /departments/{id}/triage-snapshot`, answers with six arrays already
 // bucketed, and the contract (`docs/plans/SUPERVISOR_TRIAGE_SPEC.md`) states the
 // rule outright: *the frontend renders the arrays as-is and never re-buckets*.
 // The definitions are genuinely intricate — an offered-but-unaccepted job is an
@@ -262,8 +271,18 @@ export default function SupervisorDashboard({ engagement }) {
     },
   });
 
-  const { newComplaints = [], takenUp = [], openRequests = [], assignedPending = [], inProgress = [] } =
-    snapshot.data ?? {};
+  // `awaitingResident` defaults with the rest, and the default is load-bearing
+  // for once: the bucket arrives with the migration behind ruling F1, so a
+  // backend that has not been updated yet answers without the key rather than
+  // with an empty array.
+  const {
+    newComplaints = [],
+    takenUp = [],
+    awaitingResident = [],
+    openRequests = [],
+    assignedPending = [],
+    inProgress = [],
+  } = snapshot.data ?? {};
 
   const now = useNow(inProgress.length > 0);
 
@@ -368,6 +387,21 @@ export default function SupervisorDashboard({ engagement }) {
     </Link>
   );
 
+  // Navigation, and deliberately nothing else. A job waiting on the resident's
+  // hour has no supervisor verb on it — the answer belongs to somebody who is
+  // not on this screen, and the 24-hour timer belongs to the engine — so the
+  // one thing offered is the way to go and look at the job's whole history.
+  // `?job=` is the parameter `0037`'s supervisor notifications already carry.
+  const queueLink = (order) => (
+    <Link
+      to={`${base}/departments/${departmentId}/work-orders?tab=queue&job=${order.id}`}
+      className={quietButton}
+    >
+      <ClipboardList className="h-4 w-4" />
+      Open in the work-order queue
+    </Link>
+  );
+
   const priorityButton = (complaintId, priority) => {
     const blocked = raisePriorityBlockedReason(priority);
     return (
@@ -395,6 +429,24 @@ export default function SupervisorDashboard({ engagement }) {
     </>
   );
 
+  // The exception valve of ruling R8, and the quiet style is the ruling: *"it
+  // sholdnt be something seen in normal routine workflow … it is available at
+  // any time though but as a seperate button"*. Leadership is not a candidate
+  // anywhere (ruling R1 filters `dispatch_candidates` to `rank = 'member'`), so
+  // this is not a shortcut through the picker beside it — it is its own call,
+  // with no id in the body, and the modal says what stepping outside the norm
+  // means before it fires.
+  const takeUpJobButton = (order) => (
+    <button
+      type="button"
+      onClick={() => setPopup({ kind: 'takeup', order })}
+      className={quietButton}
+    >
+      <UserCheck className="h-4 w-4 text-indigo-600" />
+      Take this job myself
+    </button>
+  );
+
   const openRequestActions = (order) => (
     <>
       <button
@@ -405,6 +457,7 @@ export default function SupervisorDashboard({ engagement }) {
         <UserPlus className="h-4 w-4" />
         Assign without asking
       </button>
+      {takeUpJobButton(order)}
       {order.complaintId ? priorityButton(order.complaintId, order.priority) : null}
       {order.complaintId ? resolveButton(order.complaintId, 'Mark as resolved') : null}
     </>
@@ -512,6 +565,9 @@ export default function SupervisorDashboard({ engagement }) {
     if (popup.stage === 'New complaint') return takeUpButton(complaint);
     if (popup.stage === 'Taken up by you') return takenUpActions(complaint);
     if (popup.stage === 'Open job request') return openRequestActions(popup.order);
+    if (popup.stage === 'Awaiting resident response') {
+      return popup.order ? queueLink(popup.order) : null;
+    }
     return (
       <p className="text-[11px] font-semibold text-slate-400">
         Nothing to press here: the job is with a worker now. Cancelling or moving
@@ -581,6 +637,26 @@ export default function SupervisorDashboard({ engagement }) {
                 actions: takenUpActions,
                 withStatus: true,
               }))}
+          </div>
+        )}
+      </Section>
+
+      <Section
+        id="triage-awaiting-resident"
+        title="Awaiting resident response"
+        count={awaitingResident.length}
+        blurb="Raised, and the resident is choosing the hour. Nobody can claim these until they do."
+      >
+        {awaitingResident.length === 0 ? (
+          <Empty icon={CalendarClock}>
+            No resident is being waited on. A job appears here the moment one is
+            raised against somebody&apos;s home, and leaves it when they pick a
+            time — or 24 hours later, when the system picks one for them.
+          </Empty>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {awaitingResident.map((order) =>
+              orderCard(order, { stage: 'Awaiting resident response' }))}
           </div>
         )}
       </Section>
@@ -666,6 +742,10 @@ export default function SupervisorDashboard({ engagement }) {
 
       {popup?.kind === 'assign' ? (
         <AssignPickerModal order={popup.order} onClose={() => setPopup(null)} />
+      ) : null}
+
+      {popup?.kind === 'takeup' ? (
+        <TakeUpModal order={popup.order} onClose={() => setPopup(null)} />
       ) : null}
     </div>
   );

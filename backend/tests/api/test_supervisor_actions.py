@@ -1,4 +1,5 @@
-"""The supervisor's card actions: resolve, priority, notes, chat, force-assign.
+"""The supervisor's card actions: resolve, priority, notes, chat, force-assign,
+take-up.
 
 **What these tests can and cannot prove.** Every decision worth making lives in
 `20260822170000_supervisor_actions.sql`: whether a running job blocks a resolve,
@@ -22,6 +23,12 @@ mistake is silent rather than loud:
   is working on this right now" and "already at the highest priority" are what a
   supervisor reads, and `pg_errors` passes a custom code's message through
   untouched;
+* **take-up is a third verb and not a third branch of assign** (2026-08-24
+  ruling R8). It reaches `take_up_work_order` and neither of the other two RPCs,
+  it carries the same optional slot, its body has no `staffAssignmentId` at all
+  -- the holder is resolved from the session inside Postgres -- and it needs the
+  CSRF pair, which matters more here than anywhere else on this surface: it is a
+  bodyless POST that books somebody's day;
 * **the staff detail read no longer refuses the department at the door.** The
   guard widened from `require_admin` to active membership because the RPC has
   always decided `is_community_admin OR can_supervise_department` for itself.
@@ -48,6 +55,7 @@ NOTES = "/api/v1/complaints/complaint-id/notes"
 CHAT = "/api/v1/complaints/complaint-id/chat"
 STAFF_DETAIL = "/api/v1/complaints/staff/complaints/complaint-id"
 ASSIGN = "/api/v1/work-orders/work-order-id/assign"
+TAKE_UP = "/api/v1/work-orders/work-order-id/take-up"
 
 
 @pytest.fixture
@@ -118,11 +126,16 @@ def jobs(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
         captured["forced"] = kwargs
         return "assignment-id"
 
+    def fake_take_up(client: Any, **kwargs: Any) -> str:
+        captured["taken_up"] = kwargs
+        return "assignment-id"
+
     repo = work_orders_service.repo
     monkeypatch.setattr(repo, "get_work_order", fake_get)
     monkeypatch.setattr(repo, "list_assignments", fake_assignments)
     monkeypatch.setattr(repo, "assign_work_order", fake_assign)
     monkeypatch.setattr(repo, "force_assign_work_order", fake_force)
+    monkeypatch.setattr(repo, "take_up_work_order", fake_take_up)
     yield captured
 
 
@@ -367,6 +380,33 @@ def test_api_359_an_internal_note_never_reaches_the_resident_s_timeline() -> Non
         ),
         "priority": service._is_hidden_from_resident(
             {"event_type": "priority_changed", "payload": {"from": "low", "to": "high"}}
+        ),
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_374_take_up_stays_off_the_resident_s_timeline() -> None:
+    """Ruling R14: `job_taken_up` is `job_force_assigned`'s situation exactly.
+
+    `take_up_work_order` writes `job_assigned` beside it, so the resident
+    already holds their fact -- somebody is coming, and this is their name.
+    Which door the assignment came through is staffing, not service. The
+    `job_assigned` half of this test is what would fail on an over-eager fix."""
+    endpoint = "resident_complaints_service._is_hidden_from_resident"
+    expected_output = {"taken_up": True, "assigned_beside_it": False}
+
+    from app.services import resident_complaints_service as service
+
+    actual_output = {
+        "taken_up": service._is_hidden_from_resident(
+            {"event_type": "job_taken_up", "payload": {"workOrderId": "wo-1"}}
+        ),
+        "assigned_beside_it": service._is_hidden_from_resident(
+            {
+                "event_type": "job_assigned",
+                "payload": {"workOrderId": "wo-1", "takenUp": True},
+            }
         ),
     }
 
@@ -687,6 +727,156 @@ def test_api_369_the_staff_detail_read_admits_the_department_not_only_the_admin(
     actual_output = {
         "supervisor": supervisor.get(STAFF_DETAIL).status_code,
         "admin": admin_api_client.get(STAFF_DETAIL).status_code,
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+# ---------------------------------------------------------------------------
+# Take-up (2026-08-24, ruling R8)
+# ---------------------------------------------------------------------------
+
+
+def test_api_370_take_up_routes_to_its_own_rpc_and_carries_the_slot(
+    supervisor: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """A third verb, not a third branch of `assign`.
+
+    The body has no `staffAssignmentId` and the RPC has no parameter for one:
+    the holder is the caller's own leadership roster row, resolved inside
+    Postgres from the session. So what Python must get right is the routing --
+    `take_up_work_order` and neither of the other two -- and the slot, which is
+    optional here for the same reason it is optional on assign: the supervisor
+    picked the job and the hour in one gesture, and a second call to set the
+    time would be a booking that briefly had none."""
+    endpoint = "POST /api/v1/work-orders/work-order-id/take-up"
+    expected_output = {
+        "status_code": 200,
+        "taken_up": {
+            "work_order_id": "work-order-id",
+            "scheduled_start_at": "2026-08-24T10:00:00+00:00",
+            "scheduled_end_at": "2026-08-24T11:00:00+00:00",
+        },
+        "offered": False,
+        "forced": False,
+    }
+
+    response = supervisor.post(
+        TAKE_UP,
+        json={
+            "scheduledStartAt": "2026-08-24T10:00:00Z",
+            "scheduledEndAt": "2026-08-24T11:00:00Z",
+        },
+        headers=csrf_headers,
+    )
+    actual_output = {
+        "status_code": response.status_code,
+        "taken_up": jobs["taken_up"],
+        "offered": "offered" in jobs,
+        "forced": "forced" in jobs,
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_371_take_up_needs_no_body_and_returns_the_read_back_detail(
+    supervisor: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """Sending nothing is the common press: the job already has its hour, and
+    the supervisor is answering "who", not "when". Both slot fields default to
+    null and reach the RPC as nulls, which is how it knows to keep the job's
+    own slot.
+
+    The response is the read-back detail rather than the assignment id the RPC
+    returns -- the screen that pressed the button needs the job, and a client
+    that had to re-fetch it would render a stale card for a beat."""
+    endpoint = "POST /api/v1/work-orders/work-order-id/take-up"
+    expected_output = {
+        "status_code": 200,
+        "taken_up": {
+            "work_order_id": "work-order-id",
+            "scheduled_start_at": None,
+            "scheduled_end_at": None,
+        },
+        "body": {"id": "work-order-id", "status": "scheduled", "assignments": []},
+    }
+
+    response = supervisor.post(TAKE_UP, json={}, headers=csrf_headers)
+    payload = response.json()
+    actual_output = {
+        "status_code": response.status_code,
+        "taken_up": jobs["taken_up"],
+        "body": {
+            "id": payload["id"],
+            "status": payload["status"],
+            "assignments": payload["assignments"],
+        },
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_372_a_caller_with_no_leadership_row_is_refused_in_the_rpcs_words(
+    supervisor: TestClient,
+    jobs: dict,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The router guard admits every worker -- rank is not role and never
+    reaches the request -- so the only thing standing between a technician and
+    this verb is the RPC's `HB403`. `pg_errors` passes a custom code's message
+    through untouched, which is the whole reason the RPC bothers to name the
+    door instead of raising a bare refusal."""
+    endpoint = "POST /api/v1/work-orders/work-order-id/take-up"
+    expected_output = {
+        "status_code": 403,
+        "code": "forbidden",
+        "message": "Only this department's supervisor or manager can take up a job.",
+        "read_back": False,
+    }
+
+    def refuse(client: Any, **kwargs: Any) -> str:
+        raise AuthorizationError(
+            "Only this department's supervisor or manager can take up a job.",
+            code="forbidden",
+        )
+
+    monkeypatch.setattr(work_orders_service.repo, "take_up_work_order", refuse)
+    response = supervisor.post(TAKE_UP, json={}, headers=csrf_headers)
+    actual_output = {
+        "status_code": response.status_code,
+        "code": response.json()["error"]["code"],
+        "message": response.json()["error"]["message"],
+        "read_back": "taken_up" in jobs,
+    }
+
+    assert actual_output == expected_output, endpoint
+
+
+def test_api_373_take_up_is_an_unsafe_request_and_needs_the_csrf_pair(
+    supervisor: TestClient, jobs: dict, csrf_headers: dict[str, str]
+) -> None:
+    """The router's `require_csrf_unsafe` dependency, restated on the newest
+    route rather than assumed from the ones beside it. This verb books a
+    person's day off one POST with **no body at all**, which is exactly the
+    shape a cross-site form can submit -- and both halves of the pair are
+    checked, because an attacker who can set a cookie can set one of them.
+    Neither refusal reaches the repository."""
+    endpoint = "POST /api/v1/work-orders/work-order-id/take-up"
+    expected_output = {
+        "no_origin": (403, "csrf_origin_invalid"),
+        "no_token": (403, "csrf_invalid"),
+        "reached_rpc": False,
+    }
+
+    bare = supervisor.post(TAKE_UP, json={})
+    origin_only = supervisor.post(
+        TAKE_UP, json={}, headers={"Origin": csrf_headers["Origin"]}
+    )
+    actual_output = {
+        "no_origin": (bare.status_code, bare.json()["error"]["code"]),
+        "no_token": (origin_only.status_code, origin_only.json()["error"]["code"]),
+        "reached_rpc": "taken_up" in jobs,
     }
 
     assert actual_output == expected_output, endpoint

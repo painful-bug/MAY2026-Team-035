@@ -338,7 +338,7 @@ describe('WorkerLayout registration gate', () => {
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Complaints' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Settings' })).toBeVisible();
-    for (const name of ['Calendar', 'Availability', 'Communities', 'Messages', 'Profile']) {
+    for (const name of ['Open jobs', 'Calendar', 'Availability', 'Communities', 'Messages', 'Profile']) {
       expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
     }
   });
@@ -362,11 +362,41 @@ describe('WorkerLayout registration gate', () => {
     renderLayout();
 
     await screen.findByRole('navigation');
-    for (const name of ['Calendar', 'Availability', 'Communities', 'Messages', 'Profile']) {
+    for (const name of ['Open jobs', 'Calendar', 'Availability', 'Communities', 'Messages', 'Profile']) {
       expect(screen.getByRole('link', { name })).toBeVisible();
     }
     expect(screen.queryByRole('link', { name: 'Work orders' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Completed work' })).not.toBeInTheDocument();
+  });
+
+  // The open-jobs board's nav entry (product ruling 2026-08-23). It rides the
+  // same `marketplaceOnly` flag as the five marketplace entries, so the two
+  // loop tests above already pin its visibility both ways; what they do not
+  // pin is the placement the frozen spec names — directly after Dashboard,
+  // because the board is where a hired technician's day now starts.
+  it('puts Open jobs directly after Dashboard for the marketplace', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: completeProvider,
+      communities: [
+        {
+          staffAssignmentId: 'staff-2',
+          communityId: 'community-1',
+          departmentId: 'department-1',
+          departmentName: 'Plumbing',
+          rank: 'member',
+          status: 'active',
+        },
+      ],
+      pendingOffers: [],
+      today: [],
+    });
+    renderLayout();
+
+    const nav = await screen.findByRole('navigation');
+    const names = Array.from(nav.querySelectorAll('a')).map((link) => link.textContent);
+    expect(names.indexOf('Open jobs')).toBe(names.indexOf('Dashboard') + 1);
+    const link = screen.getByRole('link', { name: 'Open jobs' });
+    expect(link).toHaveAttribute('href', '/worker/open-jobs');
   });
 
   // Amendment 3, ruling B3: the chrome names the roster rank for leadership.

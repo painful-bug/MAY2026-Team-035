@@ -48,12 +48,17 @@ export const workOrdersApi = {
    * Triage. `{ departmentId?, skillId?, subjectKind, locationText?, note?,
    * scheduledStartAt?, scheduledEndAt? }`.
    *
-   * **Sending no slot is the other half of the fork, not an incomplete
-   * request.** No slot creates a `draft` — the supervisor wants to ask the
-   * resident something first and the conversation carries on in the complaint's
-   * comments. A slot proposes a visit: `awaiting_resident` on a `resident` job,
-   * straight to `offered` on a `facility` one, because there is nobody whose
-   * door is being knocked on.
+   * **The UI sends no slot, and that is the feature** (ruling F1). Slotless, a
+   * `resident` job goes to `awaiting_resident` with no time on it — the
+   * *resident* is asked to pick one, and has 24 hours before the system books
+   * the first free hour instead; a `facility` job goes to `draft` and the
+   * system books it, once the department's urgent home visits have been
+   * allotted.
+   *
+   * The slot fields survive on the request model for backward compatibility
+   * (adjudication G1) and keep the older semantics exactly — resident+slot
+   * proposes a visit for the resident to approve, facility+slot goes straight
+   * to `offered`. Nothing in this app sends them any more.
    *
    * `departmentId` and `skillId` are both derived when omitted, and `priority`
    * is not a field at all — a job's urgency *is* the complaint's.
@@ -110,6 +115,25 @@ export const workOrdersApi = {
    * by name and refused again by the constraint underneath.
    */
   assign: (workOrderId, payload) => post(`/work-orders/${workOrderId}/assign`, payload),
+
+  /**
+   * Put the job on **yourself**. `{}`, or `{ scheduledStartAt, scheduledEndAt }`
+   * — both ends or neither.
+   *
+   * **Not `assign` with your own id in it, and there is no id to send.** Ruling
+   * R1 closed every candidate flow to leadership: managers and supervisors are
+   * not in `dispatch_candidates`, not on the open board, not reachable by ping
+   * or auto-book, so there is no roster row of theirs for `assign` to name. The
+   * product owner's answer (R8) was a door of its own rather than a hole in that
+   * wall — `take_up_work_order` resolves the assignee from `auth.uid()`, which
+   * is why this call carries no `staffAssignmentId` and cannot be pointed at
+   * anybody else.
+   *
+   * `403` when the caller holds no leadership roster row in the job's
+   * department; the `409`s are `assign`'s own — no hour on the job, or an hour
+   * that clashes with something already in the caller's calendar.
+   */
+  takeUp: (workOrderId, payload) => post(`/work-orders/${workOrderId}/take-up`, payload),
 
   /**
    * Move the visit. `{ scheduledStartAt, scheduledEndAt, note? }` — both ends

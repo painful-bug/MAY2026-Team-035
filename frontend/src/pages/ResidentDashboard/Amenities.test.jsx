@@ -15,6 +15,7 @@ import Amenities from './Amenities';
 const mocks = vi.hoisted(() => ({
   availableAmenities: vi.fn(),
   amenityBookings: vi.fn(),
+  checkBookingSlotAvailability: vi.fn(),
   showToast: vi.fn(),
   addActivity: vi.fn(),
 }));
@@ -29,7 +30,9 @@ vi.mock('../../features/resident/residentApi.js', () => ({
 vi.mock('../../features/amenities/services/amenityBookingsService.js', () => ({
   cancelResidentAmenityBookingDays: vi.fn(),
   createResidentAmenityBookingSeries: vi.fn(),
-  validateBookingSlot: vi.fn().mockResolvedValue(true),
+  // `{ available, verified }`: the slot hint reads the ADMIN-guarded snapshot,
+  // so "we could not check" is one of its normal answers (issue #48 D5).
+  checkBookingSlotAvailability: mocks.checkBookingSlotAvailability,
 }));
 
 vi.mock('../../store/appStore.js', () => ({
@@ -81,6 +84,9 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ items: [bookableAmenity()] });
   mocks.amenityBookings.mockReset().mockResolvedValue({ items: [] });
+  mocks.checkBookingSlotAvailability
+    .mockReset()
+    .mockResolvedValue({ available: true, verified: true });
 });
 
 const renderPage = () => {
@@ -142,5 +148,62 @@ describe('resident booking dialog with no bookable hours', () => {
         name: /6:00 am - 7:00 am/i,
       })
     ).toBeInTheDocument();
+    // The check succeeded, so nothing hedges about it.
+    expect(
+      within(dialog).queryByText(/could not check which slots/i)
+    ).not.toBeInTheDocument();
+  });
+});
+
+// Issue #48 D5, at the screen. The slot hint reads `GET /dashboard/snapshot`,
+// which 403s the resident looking at this very form. That rejection used to
+// escape the effect, so `isCheckingSlots` never cleared: the dropdown read
+// "Checking availability..." for as long as the page stayed open and the
+// submit button stayed disabled behind it.
+describe('resident booking dialog when availability cannot be checked', () => {
+  const hoursAmenity = () =>
+    bookableAmenity({ openingTime: '06:00', closingTime: '22:00' });
+
+  it('offers the slots and says the check did not happen, rather than hanging', async () => {
+    mocks.availableAmenities.mockResolvedValue({ items: [hoursAmenity()] });
+    mocks.checkBookingSlotAvailability.mockResolvedValue({
+      available: true,
+      verified: false,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = await openDialog(user);
+
+    expect(
+      await within(dialog).findByText(/could not check which slots are already taken/i)
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('option', {
+        name: 'Checking availability...',
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('option', { name: /6:00 am - 7:00 am/i })
+    ).toBeEnabled();
+    expect(
+      within(dialog).getByRole('button', { name: /book 1 day/i })
+    ).toBeEnabled();
+  });
+
+  it('recovers the same way when the hint throws outright', async () => {
+    mocks.availableAmenities.mockResolvedValue({ items: [hoursAmenity()] });
+    mocks.checkBookingSlotAvailability.mockRejectedValue(
+      new Error('Network request failed.')
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = await openDialog(user);
+
+    expect(
+      await within(dialog).findByText(/could not check which slots are already taken/i)
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: /book 1 day/i })
+    ).toBeEnabled();
   });
 });

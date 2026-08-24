@@ -1,4 +1,4 @@
-"""The supervisor's triage dashboard: five sections in one read, and five verbs.
+"""The supervisor's triage dashboard: six sections in one read, and five verbs.
 
 Thin, like every service over a definer RPC. **There is no authorization
 decision in this file** -- ``can_supervise_department`` is asked inside every one
@@ -110,7 +110,7 @@ def _to_work_order(row: dict[str, Any]) -> TriageWorkOrder:
 
 
 def snapshot(client: Client, *, department_id: str) -> TriageSnapshot:
-    """One department's dashboard: the five sections the RPC bucketed."""
+    """One department's dashboard: the six sections the RPC bucketed."""
     payload = repo.triage_snapshot(client, department_id=department_id)
     return TriageSnapshot(
         department_id=str(payload.get("department_id") or department_id),
@@ -118,6 +118,9 @@ def snapshot(client: Client, *, department_id: str) -> TriageSnapshot:
             _to_complaint(row) for row in _rows(payload, "new_complaints")
         ],
         taken_up=[_to_complaint(row) for row in _rows(payload, "taken_up")],
+        awaiting_resident=[
+            _to_work_order(row) for row in _rows(payload, "awaiting_resident")
+        ],
         open_requests=[
             _to_work_order(row) for row in _rows(payload, "open_requests")
         ],

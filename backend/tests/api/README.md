@@ -770,7 +770,7 @@ database**, and **a decline must not be an HTTP error**. Both are asserted
 directly, because a test that reads the fields of a successful response cannot
 notice either one going wrong.
 
-*Total tests in this file: 31*
+*Total tests in this file: 33*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -784,6 +784,8 @@ notice either one going wrong.
 | `test_an_invoice_carries_both_vocabularies` | `Payments.jsx` splits on Unpaid and Paid and has no third branch, so `partially_paid` reads as Unpaid -- which is what it is to whoever owes the balance. The real one travels beside it. |
 | `test_amounts_survive_as_decimals` | Money is never a float in this codebase. `0.1 + 0.2` is the reason. |
 | `test_the_booking_list_is_the_callers_own` | No description provided. |
+| `test_the_booking_status_crosses_the_wire_as_a_machine_value` | `resident_booking_overview.status` is Title-case for a human to read.  Passing it through made this the one booking endpoint whose status could not be compared against any other's -- 'Pending' here, 'pending' from the admin amenity endpoints (issue #48 D4). `storedStatus` survives as a frozen wire key and now agrees, keeping only the enum's own name for this state. |
+| `test_a_two_word_booking_status_folds_to_its_machine_value` | 'No Show' is the display rendering of `no_show`. The worst case for a naive lowercase, and the one a case-sensitive client would miss twice. |
 | `test_a_successful_payment_is_a_200_with_an_outcome` | No description provided. |
 | `test_a_declined_payment_is_also_a_200` | §11.5. The request was well-formed, authorized, processed and produced a durable record; the *payment* failed. A 402 would put an ordinary business outcome in the same client branch as "your session expired". |
 | `test_a_decline_is_still_written_to_the_database` | The difference between this and the admin's `record_payment`. A failed row is what a support conversation is reconstructed from, and it never enters a balance because every recomputation sums `succeeded` only. |
@@ -821,7 +823,7 @@ several over its life; the resident cares about the newest live one, and
 returning simply the newest would let a cancelled retry hide the visit that
 replaced it.
 
-*Total tests in this file: 9*
+*Total tests in this file: 15*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -834,6 +836,12 @@ replaced it.
 | `test_api_182_answering_somebody_else_s_proposal_is_the_rpc_s_403` | `respond_to_work_order_schedule` checks `is_own_membership` against whoever raised the complaint. A neighbour in the same community passes every guard in this process and is refused there -- which is the whole reason the check is not duplicated here. |
 | `test_api_183_staff_cannot_answer_on_the_resident_s_behalf` | Matching the precedent `resident_complaints.py` set for reopening and confirming a resolution: not because an admin could not press the button, but because this is the resident's verdict about their own home, and an admin answering for them is a record that says something untrue.  The guard is `require_resident_capability` since 2026-08-20, so what is refused here is an admin with **no flat of their own** -- which is what this fixture describes, and what `tests/api/conftest.py` stubs the residency lookup to say. The admin who does live in the building may answer, and `tests/api/test_resident_capability_guard.py` is where that is pinned. |
 | `test_api_184_answering_without_the_csrf_pair_is_refused` | A cross-site form post confirming a visit somebody did not agree to is a small harm with a long tail -- a technician turns up to an empty flat and the slot is spent. |
+| `test_api_373_the_read_says_which_question_is_being_asked` | `mode` is the derivation the screens would otherwise each make for themselves. A job with a slot is `approve` -- somebody proposed an hour and wants a yes or no; the same status with no slot is `pick`, and the card shows a time picker instead of two buttons. Deriving it on the client would put "is this a proposal or a request" in as many places as there are renderers, and the one that drifts shows the wrong control. |
+| `test_api_374_picking_a_time_forwards_the_resolved_job_and_both_ends` | The work-order id the RPC receives was resolved here from the complaint, exactly as on the confirm route and for the same reason -- a resident should not have to have read one. Both ends go through: a half slot silently disables `work_order_assignments_no_overlap`, which is checked on `(start, end)` and does nothing when start is null. |
+| `test_api_375_setting_a_time_the_association_already_proposed_is_a_409` | The two write routes refuse each other's jobs, and this is the half that matters most: a supervisor who proposed an hour asked a yes/no question, and answering it by overwriting the hour would silently turn their proposal into the resident's. The refusal is the RPC's, under the row lock, because the mode can change between a read here and the write. |
+| `test_api_376_picking_a_time_on_somebody_else_s_complaint_is_the_rpc_s_403` | `resident_set_work_order_schedule` asks `is_own_membership` against whoever raised the complaint, the same question its sibling asks. A neighbour in the same community passes every guard in this process and is refused there -- which is why the check is not duplicated here. |
+| `test_api_377_picking_a_time_with_no_live_job_never_reaches_the_database` | The job is resolved before the write, so a complaint whose only job was cancelled is a 404 from this process rather than an RPC call with a `null` id. Same answer as the read, deliberately: "nothing proposed" and "all of it called off" are the same fact to a resident. |
+| `test_api_378_picking_a_time_without_the_csrf_pair_is_refused` | The same reasoning as the confirm route, one step worse: a cross-site post here does not merely agree to a visit, it books one at an hour the attacker chose. |
 
 
 ## `test_resident_snapshot.py`
@@ -1312,7 +1320,7 @@ is silent:
   RPC's own sentence, naming whoever already holds the complaint, because
   "already taken up" with no name sends a supervisor to ask around an office.
 
-*Total tests in this file: 13*
+*Total tests in this file: 14*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1329,6 +1337,7 @@ is silent:
 | `test_api_350_a_resident_reaches_neither` | The other half of the same table, and the reason the guard is there at all: it turns "signed-in resident poking at department ids" into a 403 before any query runs. The person whose flat the leak is in has their own screens and this is not one of them. |
 | `test_api_351_an_admin_reaches_both_because_managing_implies_supervising` | `can_manage_department` implies `can_supervise_department` --- it is the first line of that predicate's body (`0036` 4) --- so an admin opening a department's dashboard is not a widening, it is the rule already written. Asserted because the router guard and the database predicate are two different lists and only one of them is in this repository's Python. |
 | `test_api_352_a_malformed_section_empties_itself_and_not_the_screen` | The one piece of defensiveness in the service, and its bound.  `jsonb_agg` over an empty set is `null`, which the RPC already coalesces to `[]`. If a section ever arrives as something else, it renders empty rather than raising --- because one malformed section should not take the other three off the screen with it. This is a fallback and not a contract: the RPC owns the shape. |
+| `test_api_379_the_sixth_section_carries_the_jobs_waiting_on_a_resident` | The 2026-08-23 ruling F1's dashboard half: a job the resident has been asked to put an hour on is not an *open request*. Nothing on it is the supervisor's to move -- they cannot pick the time and they are not meant to -- so listing it beside the work they can take up was showing them a queue that was not theirs.  `openRequests` narrows to `draft` and `offered` in the same change, and the split is the RPC's: this asserts only that the seventh key is read and rendered as its own array, because a service that dropped it would leave the new section permanently and silently empty. |
 
 
 ## `test_system.py`
@@ -1369,7 +1378,7 @@ notice going missing:
 
 | Test Function | Description |
 |---------------|-------------|
-| `test_api_160_triage_without_a_slot_is_a_request_not_an_omission` | The fork the whole feature turns on. A supervisor who wants to ask the resident something first sends no time, and both slot fields reach the RPC as `None` -- which is what produces a `draft` and notifies nobody. A request that silently substituted `now()` would propose a visit no human chose. |
+| `test_api_160_triage_without_a_slot_is_a_request_not_an_omission` | The fork the whole feature turns on, and since the 2026-08-23 ruling F1 it is the only path the UI takes: the raise form carries no date or time for anyone, so both slot fields reach the RPC as `None` and `create_work_order` decides from the subject. A resident job becomes a request for the resident to name the hour; a facility job becomes a `draft` the queue books for itself. A request that silently substituted `now()` would propose a visit no human chose -- which is the whole defect the ruling removed.  **The field is still accepted** (adjudication G1). A slotted raise keeps today's semantics exactly, which is what the three tests below exercise; what changed is what a *slotless* one means. |
 | `test_api_161_half_a_slot_is_refused_before_it_reaches_the_database` | `0036` signals a half-slot with `22004`, which `pg_errors` maps to a 422 carrying the repository's generic message -- true, and no help in naming which of two fields is missing. The model refuses it first so the caller is told, and the CHECK constraint stays the guarantee rather than the explanation. |
 | `test_api_162_a_slot_that_ends_before_it_starts_is_refused` | The same reasoning one step further: a backwards range would build a `tstzrange` Postgres rejects outright, and the error that produces names the range rather than the field. |
 | `test_api_163_the_department_and_skill_are_derived_when_omitted` | Both reach the RPC as `None` rather than being guessed here. The department comes from the complaint and the skill from its category, and both derivations live in SQL because that is where the rows are -- a Python lookup would be two more round trips and a second answer to a question `0034` already answered. |
@@ -1443,7 +1452,7 @@ row the database settled on rather than the request, that an unregistered caller
 gets a snapshot rather than an error, and that the notification badge is counted
 across every community the caller works in.
 
-*Total tests in this file: 8*
+*Total tests in this file: 11*
 
 | Test Function | Description |
 |---------------|-------------|
@@ -1454,6 +1463,9 @@ across every community the caller works in.
 | `test_api_189_a_failed_visit_must_say_why_and_a_declined_offer_need_not` | The asymmetry is deliberate. A worker who was asked and is not free owes nobody an explanation; a worker who went and could not do the work is reporting something the next person has to act on, and "could not be done" with nothing after it guarantees a second wasted visit. |
 | `test_api_190_an_unregistered_caller_gets_a_snapshot_not_a_404` | This endpoint is the empty state. A null `provider` means "show the registration form" and an empty `communities` means "show the community search" -- both answered by one response rather than by a client interpreting two failures. `GET /service-providers/me` still 404s, because there the question is different. |
 | `test_an_invited_supervisor_gets_their_engagement_with_no_provider_row` | The defect live testing found. `claim_staff_invitations` writes a membership and a roster row and no `service_providers` row, so an invited supervisor is *unregistered* by every provider-keyed read -- and the snapshot used to return on the spot, empty. The portal read that as "show the marketplace registration form" and the Complaints screen, which decides supervisor access from `communities[].rank`, had nothing to decide from.  `provider: null` and a populated `communities` are now an ordinary answer: the two questions -- *do you have a marketplace profile* and *does anybody employ you* -- are asked separately because for leadership they have different answers. |
+| `test_api_370_the_board_names_the_roster_row_and_keeps_the_null_slot` | Two promises the frozen interface makes. `staffAssignmentId` is the caller's own roster row, returned so the frontend never guesses which of a multi-community worker's rows a claim rides on. And a null slot passes through as null rather than being dropped or defaulted -- ruling C3 says an unscheduled job is on the board with a "time to be set" marker, and the marker is the client's to draw from exactly this null. |
+| `test_api_371_claiming_answers_with_the_row_the_database_settled_on` | The same contract as accepting, and it matters more here: the claim is the race the board creates on purpose, and only the re-read knows the job the caller now holds is `scheduled` -- possibly with no slot yet, which is C3's shape rather than an error. |
+| `test_api_372_losing_the_claim_race_is_a_409_in_the_servers_words` | First come, first served (C2) means somebody loses, ordinarily. The RPC locks the work order before it reads anything, so the loser is told *somebody has already taken this job* -- a sentence the card can print -- rather than shown an exclusion-constraint violation. |
 | `test_api_191_the_badge_counts_every_community_the_caller_works_in` | The one place a user can see the multi-membership seam. A count scoped to a default community would silently drop the notifications from the two societies a plumber is not currently 'in'.  Since `0041` the count is asked of the *person*, which is what makes that true for a provider whose engagements are still being decided -- a badge assembled from a list of memberships is empty for somebody who holds none, and an unhired provider with an unanswered application is exactly who has something waiting. |
 
 

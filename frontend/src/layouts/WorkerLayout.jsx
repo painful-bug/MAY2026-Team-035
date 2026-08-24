@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ClipboardList,
   Clock,
+  Hand,
   History,
   LogOut,
   MapPinned,
@@ -48,6 +49,12 @@ import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
 // hiding the nav item is never the guard.
 const NAV = [
   { name: 'Dashboard', path: AUTH_ROUTES.WORKER_DASHBOARD, icon: Briefcase, end: true },
+  // The open-jobs board (product ruling 2026-08-23). `marketplaceOnly` for the
+  // same reason as the five below it, with the direction reversed: technicians
+  // and marketplace pros claim work here, and leadership *hands out* work from
+  // the queue — showing a supervisor a board they dispatch onto would be the
+  // mirror of showing a technician the dispatcher's console.
+  { name: 'Open jobs', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/open-jobs`, icon: Hand, marketplaceOnly: true },
   { name: 'Calendar', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/calendar`, icon: CalendarDays, marketplaceOnly: true },
   { name: 'Availability', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/availability`, icon: Clock, marketplaceOnly: true },
   { name: 'Communities', path: `${AUTH_ROUTES.WORKER_DASHBOARD}/communities`, icon: MapPinned, marketplaceOnly: true },

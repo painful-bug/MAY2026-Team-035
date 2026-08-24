@@ -198,6 +198,29 @@ _BOOKING_MODE_TO_STORAGE = {
 
 _AMENITY_STATUS_TO_WIRE = {"active": "Active", "inactive": "Inactive"}
 
+# A booking status crosses the wire as a lowercase machine value, and there is
+# exactly one word per state. Three spellings of the same fact reach us:
+#
+#   `amenity_bookings.status`            the enum -- 'requested', 'approved', ...
+#   `amenity_booking_overview.status`    the same enum initcap'd for a human --
+#                                        'Pending', 'No Show' (0023 lines 484-492)
+#   `..._overview.series_status`         the app's own word -- 'pending', ...
+#
+# The app's word wins, because it is the one the frontend is built on:
+# `bookingStatuses.js` has PENDING: 'pending' and no 'requested' anywhere, and
+# `_APPROVAL_FILTERS` already filters the series column on 'pending'. So
+# 'requested' -- the enum's name for the same state -- folds onto it here, and
+# Title-case never crosses the wire at all (issue #48 D4).
+_BOOKING_STATUS_TO_WIRE = {
+    "requested": "pending",
+    "pending": "pending",
+    "approved": "approved",
+    "rejected": "rejected",
+    "cancelled": "cancelled",
+    "completed": "completed",
+    "no_show": "no_show",
+}
+
 # Weekdays are stored as ISO day numbers and rendered as English names. The
 # database has to evaluate "is the 14th a closed day?" in SQL, and
 # `extract(isodow from ...)` is the only way to ask that without depending on the
@@ -385,6 +408,42 @@ def booking_mode_to_storage(value: str | None) -> str | None:
 def amenity_status_to_wire(value: str | None) -> str:
     """Stored amenity status -> the ``Active``/``Inactive`` badge on the card."""
     return _AMENITY_STATUS_TO_WIRE.get((value or "").lower(), "Inactive")
+
+
+def booking_status_to_storage(value: str | None) -> str | None:
+    """Wire booking status -> the enum value a column can be compared against.
+
+    The inverse of :func:`booking_status_to_wire`, and the reason it has to
+    exist: ``amenity_ledger_overview.booking_status`` is the raw enum, so a
+    filter carrying the wire's 'pending' matched no row at all -- the stored
+    word is 'requested'. Returns None for anything not in the vocabulary, so a
+    caller can refuse rather than filter on a value that silently matches
+    nothing.
+
+    Absent is None here, though it is 'pending' on the read side. The asymmetry
+    is deliberate: a row with no status is a booking that has been asked for and
+    not yet decided, but a FILTER with no value means "do not filter", and
+    answering that with the pending rows answers a question nobody asked.
+    """
+    if value is None or not str(value).strip():
+        return None
+    wire = booking_status_to_wire(value)
+    if wire not in _BOOKING_STATUS_TO_WIRE.values():
+        return None
+    return "requested" if wire == "pending" else wire
+
+
+def booking_status_to_wire(value: str | None) -> str:
+    """Any of the three spellings of a booking status -> the wire's one.
+
+    Takes the stored enum ('requested'), the view's display string ('No Show')
+    or a value already normalised, and returns the lowercase machine value the
+    frontend compares against. Unknown input is folded to the same shape rather
+    than dropped -- a status nobody planned for should still arrive comparable,
+    not silently become 'pending'.
+    """
+    folded = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return _BOOKING_STATUS_TO_WIRE.get(folded, folded or "pending")
 
 
 def weekday_to_wire(value: int | None) -> str | None:

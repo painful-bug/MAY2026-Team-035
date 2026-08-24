@@ -1369,3 +1369,140 @@ standing.
 
 Nothing here is a new judgement call being taken from you; it is the ruling on
 four you were asked for, in one place, dated.
+
+## 22. Ruled 2026-08-23 — the open-jobs board: workers get eyes, and hands
+
+Live testing surfaced the gap from the worker's side of the counter: a freshly
+hired plumber opened their portal and saw nothing, because in the model on
+record a worker sees only what a supervisor has offered them. The product owner
+ruled that this changes. Three rulings, taken 2026-08-23:
+
+- **C1 — visibility.** Department roster technicians who hold the job's trade
+  see the open-jobs board for their department. Not the whole roster, and not
+  the marketplace: hiring remains the gate to a department's work, and the
+  trade filter matches the one the offer path already applies.
+- **C2 — claim is instant.** Taking a job from the board commits the worker on
+  the spot, with the same mechanics as accepting an offer: an `accepted`
+  assignment, the same status movements, the supervisor notified. First to
+  claim gets it; there is no approval step.
+- **C3 — unscheduled jobs are on the board.** A job with no hour on it appears
+  with a "time to be set" marker and is claimable; the claim skips the
+  slot-dependent eligibility checks (leave, windows, clashes — none of which
+  can run without a slot) and the hour is set afterwards in the queue. This is
+  deliberate: the alternative would have hidden exactly the job the owner
+  raised in testing.
+
+What counts as "open" (a job with a live offer out to somebody else, say) was
+left to the orchestrator to adjudicate and log in the build spec. The board is
+new read+claim surface only — the supervisor's offer and force-assign paths
+are untouched by these rulings.
+
+Related fix, same day: the force-assign picker's empty state blamed trades for
+every empty candidate list, when `dispatch_candidates` returns nobody for any
+job without a scheduled hour (its `job` CTE requires `scheduled_start_at is
+not null` — 20260823120000, and by inheritance every earlier version). The
+modal now names the missing hour and skips the fetch instead of misdiagnosing.
+
+## §23. Ruled 2026-08-23 — the resident sets the time, and the system books what nobody schedules
+
+Ruled by the product owner (live session, 2026-08-23), superseding the
+raise-time model recorded in §12's era:
+
+- **F1 — the raise form carries no date/time, for anyone.** A
+  resident-subject job sends the RESIDENT a request to pick the date and
+  time (a dashboard request, like a hiring application reaching a manager);
+  only when they set it does the job reach the open pile. A facility job is
+  auto-assigned by the system into the first available slot — but only
+  after all urgent (priority `high`) resident complaints in the department
+  have been allotted.
+- **F2 — 24 hours of resident silence, then the system books.** If the
+  resident has not picked within 24 hours of the raise, the system sets the
+  first available time after the 24-hour mark that has a serviceman
+  available, and assigns that serviceman automatically.
+- **F3 — pick-mode has no decline.** The resident's card offers a time
+  picker only; the decline button stays on the supervisor-proposed
+  reschedule (approve-mode) flow. Silence is answered by F2.
+- A new **"Awaiting resident response"** section on the supervisor
+  dashboard surfaces the waiting jobs.
+
+Orchestrator adjudications under these rulings (G1–G11), the frozen
+interface, and the two-specialist split are in
+`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`. Engine-lifecycle notes for the
+record: the supervisor-proposed approve flow survives untouched on the
+reschedule path (awaiting_resident WITH a slot); pick-mode is
+awaiting_resident with a NULL slot; the timeout handler branches on that
+discriminator; and the facility gate re-checks hourly so a gated job is
+never stranded (it stays claimable on the board throughout).
+
+## §24. Ruled 2026-08-23 — only the servicemen pool holds a wrench
+
+Ruled by the product owner (live session, 2026-08-23, on seeing the
+supervisor and manager listed in the "Assign this job outright" picker):
+**"its only asigned to the workers who are hired from the service men
+pool."** Work orders may only be offered to, assigned to, auto-booked to,
+or claimed by rank-`member` staff — the technicians hired from the
+marketplace. Managers and supervisors never appear as candidates, to a
+human or to the engine.
+
+Engine impact: the single eligibility query (`dispatch_candidates_at`,
+last defined in `20260823180000`) had no rank clause, so leadership leaked
+into the picker, the slot-finder, the 24h auto-book, the facility
+auto-assign, the ping, and — via `worker_open_jobs`/`claim_open_work_order`
+— the open board. Because candidates order by fewest open jobs first, an
+idle supervisor would have been the auto-book's FIRST choice. Fixed by one
+`and sa.rank = 'member'` clause in the shared query plus the board's two
+functions (orchestrator rulings R1–R3; the board-door closure R2 is
+derived, flagged for PO confirmation). The same migration
+(`20260823190000_assignment_write_repairs.sql`) also widens the hosted
+`work_order_assignments` legacy NOT NULL drift that made EVERY assignment
+insert crash (the live 422) — the auto-book and facility handlers would
+have died on first fire without it. Full rulings and evidence in
+`docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`.
+
+## §25. Ruled 2026-08-24 — the supervisor may pick up the wrench, but only on purpose
+
+Ruled by the product owner (2026-08-24), confirming §24's derived
+board-door closure (R2) and adding the rule's one deliberate exception:
+**"yes, include an option where a super can take up work … it sholdnt be
+something seen in normal routine workflow where the workers are hired and
+present. it is available at any time though but as a seperate button
+orsomething like that."** And on the thin-department consequence flagged
+in §24's era: **"we assume that workers will eb availbale"** — no
+automation fallback; a department with no technicians yields zero
+candidates and the job waits; leadership take-up is the manual valve.
+
+What this becomes (rulings R8–R14 in the assignment spec's 2026-08-24
+addendum): a new verb, `take_up_work_order` in
+`20260824090000_supervisor_take_up.sql`, exposed as
+`POST /work-orders/{id}/take-up` and a quiet "Take this job myself" button
+beside the primary assign action on the supervisor dashboard. The caller's
+own leadership roster row is always the assignee — the verb cannot assign
+anyone else — and every candidate surface (picker, auto-book, ping,
+board) stays member-only.
+
+Engine-lifecycle notes for your record:
+
+- **One new timeline word, `job_taken_up`**, added to your
+  `complaint_events` CHECK bouncer (§19's lesson: a word is a migration).
+  It is written *beside* a normal `job_assigned` row, and R14 hides it
+  from the resident timeline exactly as `job_force_assigned` is hidden —
+  the resident's fact ("somebody is coming, and this is their name") is
+  already on the row next to it. The worker/admin timeline labels it
+  "Took up the job themselves".
+- **§24's R7 attribution smell is closed** (R12): `force_assign_work_order`
+  now stamps its two timeline events with the acting caller resolved from
+  `auth.uid()` — the `take_up_complaint` pattern — instead of the raising
+  supervisor's membership. Under manager-cover, force-assign and take-up
+  events now name who actually acted.
+- **The board refusal was reworded, not reopened** (R13):
+  `claim_open_work_order` still refuses leadership with HB403, but the
+  message now points at the sanctioned door.
+- No status vocabulary, no dispatch_tasks kind, no transfer rule, no
+  timer, and no `complaints.status` behaviour changed. The assignment row
+  a take-up writes is `accepted / is_forced false / is_auto_assigned
+  false`, so nothing downstream of your engine can mistake it for a
+  forced or automated booking.
+
+Migration hand-applied by the owner only; runbook §30 carries the
+pre/post-checks. Verified 2026-08-24: backend 1472 passed / 5 skipped,
+frontend 57 files / 384 tests, both on the orchestrator's own runs.

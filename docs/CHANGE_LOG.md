@@ -17,7 +17,356 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — hosted catches up: runbook §23–§26 applied and ledgered
+## 2026-08-24 (latest, third session) — the branch and main stop disagreeing about how migrations are ordered
+
+**PR #51 retracted and the branch reconciled with main.** `PO` (2026-08-24: retract the conflicting
+PR, resolve, merge from main only if required — it was). Main's `4e5dfce` and this branch had
+independently fixed the same brittle "sorts after every existing file" migration-ordering tests
+(`test_hosted_invite_claim_names_migration.py`, `test_hosted_request_status_withdrawn_migration.py`,
+`test_visitor_requests_sse_migration.py`), which made the PR unmergeable. Resolution `DERIVED` from
+ruling G9 (`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`: the ordering tests get re-anchored to one
+named predecessor, not patched again): the branch's G9 versions are kept; `4e5dfce`'s variant is
+superseded, its intent — tests that survive later migrations — preserved by the kept version.
+
+1. **`openapi.yaml` resolved by regeneration, not by hand.** `DERIVED`: the spec is generated from
+   the backend by `backend/scripts/export_openapi.py` (180 paths / 211 operations), so the merge
+   conflict was resolved by rerunning the generator. The result carries both main's
+   `AmenityWrite.opening_time/closing_time/image` fields and this branch's
+   `/work-orders/{id}/take-up` endpoint. No other docs artifact changed in the merge.
+
+## 2026-08-24 (second session) — the supervisor may pick up the wrench, but only on purpose
+
+**The pool-only rule gains its one deliberate exception.** `PO` ruling R8 (verbatim 2026-08-24: "yes,
+include an option where a super can take up work … it sholdnt be something seen in normal routine
+workflow … it is available at any time though but as a seperate button orsomething like that") plus
+R9–R14 in `docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md` (addendum). Confirms R2 (the board
+stays closed to leadership) and acknowledges the thin-department consequence: no automation fallback,
+jobs wait for hires, take-up is the manual valve. Ships as ONE hand-applied migration,
+`20260824090000_supervisor_take_up.sql` (runbook §30), one endpoint, one button.
+
+1. **A new verb, not a bypass.** `DERIVED` (R11): `take_up_work_order(work_order_id, slot?)` — the
+   caller's own active leadership roster row (`rank in ('manager','supervisor')`, R10 includes
+   managers because manager-cover can leave one as the only leadership) is always the assignee;
+   there is deliberately no staff_assignment parameter, so the verb cannot assign anyone else. The
+   frontend-only hack (feeding the supervisor's own id to force-assign, which carries no rank gate)
+   was rejected: it would forge an `is_forced` row, a `job_force_assigned` event, and a
+   "you cannot decline" notice the supervisor sends themselves. Row is `accepted / is_forced false /
+   is_auto_assigned false`; timeline gets `job_assigned` + new word `job_taken_up`; resident is
+   notified normally; the caller is not self-notified.
+2. **R7 closed in passing.** `DERIVED` (R12): `force_assign_work_order` redefined verbatim except
+   its two timeline events now stamp the acting caller resolved from `auth.uid()` (the
+   `take_up_complaint` pattern) instead of the raising supervisor's membership.
+3. **The board refusal now points at the door that exists.** `DERIVED` (R13): `claim_open_work_order`
+   reworded — leadership cannot claim from the board, but the message names "Take this job myself"
+   as the sanctioned path. Same HB403; the migration raises only already-mapped SQLSTATEs.
+4. **Residents see "Technician assigned", never the staffing door.** `DERIVED` (R14, both
+   specialists converged on it independently): `job_taken_up` joins `job_force_assigned` in
+   `_is_hidden_from_resident` — the `job_assigned` row beside it already carries the resident's
+   fact. The worker-portal timeline labels it "Took up the job themselves".
+5. **API + UI.** `POST /api/v1/work-orders/{id}/take-up` (docs in API.md, openapi.yaml, mapper;
+   traced to US-2.8). Worker portal: quiet-styled "Take this job myself" beside the primary
+   "Assign without asking" (R8's "separate button", visually subordinate to the routine verb), an
+   exception-path modal with an amber "jobs normally go to your technicians" banner, indigo — not
+   rose — confirm (no one's consent is overridden). Admin triage screen untouched in v1.
+
+Verified by the orchestrator's own runs after the specialists': backend `uv run pytest -q` →
+**1472 passed, 5 skipped** (baseline 1443/5; +22 migration tests, +5 API tests incl. the R14 pin,
++2 parametrised); frontend full suite → **57 files / 384 tests passed**. Specialists: two parallel
+general-purpose agents (Opus, high effort) against a frozen interface; recon by one Explore agent.
+Migration awaits the owner's hand-apply via the SQL editor (runbook §30).
+
+## 2026-08-24 — only the servicemen pool holds a wrench, and the assignment table learns to accept a row
+
+**Two live defects from the owner's force-assign test, one report that was the system working.** `PO`
+ruling §24 (COMPLAINT_ENGINE_HANDOFF.md, verbatim 2026-08-23: "its only asigned to the workers who
+are hired from the service men pool") plus orchestrator rulings R1–R7 and the recon evidence, all in
+`docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`. Ships as ONE hand-applied migration,
+`20260823190000_assignment_write_repairs.sql` (runbook §29), plus 19 guard tests. No API shape, no
+status vocabulary, no frontend change.
+
+1. **Every `POST /work-orders/{id}/assign` 422'd — and the cause pre-broke the whole table.** `AUDIT`
+   (backend log: `null value in column "assigned_by_membership_id" … violates not-null constraint`).
+   Hosted `work_order_assignments` is a pre-baseline hand-built table carrying legacy NOT-NULL
+   no-default columns the repository never declares and never writes — the same drift
+   `20260822090000` fixed on `work_orders`. All eleven repo insert sites omit the column, so the
+   force-assign, the offer, the board claim, the ping and BOTH 2026-08-23 auto-assign handlers were
+   broken on hosted (the auto-book would have crashed on first fire, retried five times, and retired
+   the task dead). Fixed by §1 of the new migration: a dynamic widening sweep that drops NOT NULL on
+   every catalogue column outside the 13 repo-declared ones (list derived from `0001:74`,
+   `0036:264-272`, `20260813101000:4` — and the test derives the same list from those files' text).
+2. **Leadership leaked into every candidate surface.** `PO` (§24). The single eligibility query
+   (`dispatch_candidates_at`) had no rank clause, so the supervisor and manager appeared in the
+   picker — and because candidates order by fewest open jobs, an idle supervisor was the AUTO-book's
+   first choice. Fixed by `and sa.rank = 'member'` in the shared query (verbatim-plus-one-clause
+   redefinition, diff-pinned by test), which simultaneously fixes the picker, the slot-finder, the
+   24h auto-book, the facility auto-assign, the ping and the dispatch force path. `DERIVED` (R2,
+   flagged for PO confirmation): the board's two doors get the same clause — `worker_open_jobs` no
+   longer lists jobs to leadership and `claim_open_work_order` refuses their claims with HB403 and
+   an honest message ("Supervisors and managers cannot take up jobs from the board.") rather than
+   letting them fall into the roster-miss refusal, which would be false for them. `DERIVED` (R3):
+   strict `= 'member'` — NULL and future ranks are excluded by default; runbook §29's pre-check
+   lists any odd-rank hosted rows so a legacy technician losing eligibility is caught by eyes.
+   Consequence the PO should know: a department whose only roster is leadership now yields ZERO
+   candidates — the 24h timeout returns the job to `draft` and the facility handler notifies
+   `work_order.no_candidates`, instead of booking the supervisor.
+3. **"Not auto-assigned" was the design, not a defect.** `DERIVED` (ruling F1): a resident pick
+   routes the job to `offered` — the open board, for workers to claim — and arms only the
+   `manual_window` escalation at T+24h (T+2h at high priority). No immediate auto-assign exists on
+   that path. The dispatcher was alive the whole time (silent when idle by design; two transient
+   `WinError 10035` retries in the log). What actually blocked the live test was defect 1: the claim
+   itself would have hit the same NOT NULL wall. Runbook §29 adds a `dispatch_tasks` ground-truth
+   query for confirming fired/errored timers on hosted.
+4. **Backlogged, not fixed:** `force_assign_work_order` stamps timeline events with the raising
+   supervisor's membership rather than the acting caller (R7); the 422's Postgres detail is
+   deliberately suppressed by `pg_errors` for privacy — mechanism working as designed, no change.
+
+Verified by the orchestrator's own run after the specialist's: backend `uv run pytest -q` →
+**1443 passed, 5 skipped** (tree baseline 1424/5 after commit `01deb08`; +19 migration-guard tests,
+nothing broken). Specialist: one general-purpose agent (Opus, high effort); recon by one Explore
+agent (Opus, high effort). Migration text awaits the owner's hand-apply via the SQL editor.
+
+## 2026-08-23 — issue #48: amenity catalogue photos, hours, and four wire-vocabulary defects
+
+**The by-design answer and two mapping rulings.** `PO` (three rulings recorded 2026-08-23, one of
+them a confirmation rather than a change):
+
+1. **Approvals tabs are unchanged — by design, not an oversight.** An admin-created booking stays
+   out of the resident approvals queue; there is no new "Confirmed" tab and none is coming. Live
+   testing surfaced this as a question worth asking explicitly rather than assuming; the answer is no.
+2. **Booking types are fixed by code-only mapping, not a schema change.** `amenity_bookings_type_check`
+   stays exactly `('resident','admin','maintenance','blocked')` — no migration, no widened `CHECK`. The
+   admin booking form's own words (`private-event`, `society-event`, `maintenance-reservation`) are
+   translated onto the four stored values at the service boundary instead.
+3. **Amenity images ship as capped base64 data URLs in the existing `amenities.image_url` text
+   column.** The client downscales to under ~100KB before it ever submits; the backend 422s as a
+   backstop, not the normal path. A Supabase Storage bucket for amenity photos is recorded as
+   **backlog**, not built — this column already existed and needed no migration, and a bucket is a
+   separate, larger piece of infrastructure this fix does not need to unblock.
+
+**The method: a five-defect repro battery, then sixteen promotions.** `DERIVED` (backend and frontend
+specialists, orchestrator-verified 2026-08-23). Two implementation specialists worked from one frozen
+wire contract. Every fix started life as a *failing* repro test — twelve `xfail(strict=True)` cases in
+`backend/tests/test_issue48_amenity_repro.py`, four `it.fails` cases across three
+`*.issue48.test.js` files on the frontend — written against the issue's own diagnosis key (D1–D5, see
+that file's docstring), so a fix could not be called done until its own repro flipped from red to
+green. All sixteen are now normal, passing tests with their markers removed and their docstrings
+rewritten to describe the repaired behaviour, not the defect. Nothing else changed production
+behaviour outside the frozen contract.
+
+**D2 — the catalogue form had nowhere to put a photo or opening hours.** `DERIVED`. `AmenityWrite`
+(`backend/app/domain/schemas.py`) gains `image`, `opening_time`, `closing_time`: an `image` is an
+`https://` URL (≤2000 chars) or a `data:image/(png|jpeg|webp|gif);base64,...` URL (≤140,000 chars,
+~100KB of binary); the two times are `"HH:MM"`/`"HH:MM:SS"`, and a model validator 422s a reversed
+pair the same way `amenities_hours_check` (`0023`) would 500 it in Postgres. The legacy
+`list_amenities`/create/update paths in `dashboard_repository.py` now select and write
+`description`, `image_url`, `opening_time`, `closing_time` — all four were real columns since `0023`
+that the legacy `SELECT` simply never named, so the catalogue card's `description` had been silently
+repeating `category` (every amenity described itself as `"Fitness"`) and a photo or an hour could
+never round-trip at all. `dashboard_service._amenities` now projects the real `description` plus
+`image`/`openingTime`/`closingTime` on the wire; documented in `docs/API.md` §5 (the snapshot
+projection) and §10 (the new `POST`/`PUT /dashboard/amenities` reference section — this pair of
+operations had no dedicated heading in `API.md` before this pass at all, a gap this fix closed rather
+than one it introduced).
+
+**D3 — an admin's block painted as a resident's booking.** `DERIVED`. A block is stored as an ordinary
+`approved` booking wearing `booking_type = 'blocked'` (`block_amenity_slot`, `0023` lines 1104-1105);
+the timeline was keying its `blocked`/`booked` split off `status`, a column that has never held the
+value `'blocked'` at all. `_timeline_state` in `amenities_service.py` now keys off `booking_type`
+instead, so a block reads `state: "blocked"` with `status: "approved"` on the same row, honestly.
+
+**D4 — the wire's status vocabulary drifted from what the database and the RPCs actually hold**, five
+separate ways, all under one root cause: a name that existed on one side of the JOIN and not the
+other.
+  - Booking `status` is now always the lowercase machine vocabulary
+    (`pending`/`approved`/`rejected`/`cancelled`/`completed`/`no_show`); Title-case display strings
+    (`"Pending"`, `"No Show"`) never cross the wire again. The stored enum's `requested` folds onto
+    the wire's `pending` — `booking_status_to_wire`/`_to_storage` in
+    `backend/app/domain/vocabularies.py` are the one place this mapping lives, in both directions.
+    This reaches every amenity admin surface **and** `GET /amenity-bookings/mine`
+    (`resident_money_service.py`/`resident_money.py`): its `storedStatus` now agrees with `status` on
+    every row except that it keeps the enum's own `requested` name for the pending state — before this
+    fix it was the one booking surface whose status could not be compared against any other's. The
+    invoice list's own Title-case `status` (`Unpaid`/`Paid`/`Cancelled`) is a different, deliberate
+    vocabulary and was left alone, per the frozen contract.
+  - The phantom statuses `confirmed` and `blocked` — values `public.booking_status` and
+    `amenity_booking_overview.series_status` have never held — are gone from the timeline's
+    `stored_status` filter, `_APPROVAL_FILTERS`, `_FORCE_CANCELLABLE_STATUSES` (now exactly
+    `('approved',)`), and the reports page's `booking_statuses` filter options (now exactly `pending`,
+    `approved`, `completed`, `cancelled`, `rejected` — `_REPORT_BOOKING_STATUSES`).
+  - Admin booking types now accept the form's own vocabulary and store the four DB-legal values via a
+    code-only alias table (`private-event`→`admin`, `society-event`→`admin`,
+    `maintenance-reservation`→`maintenance`, `resident`→`resident`) — an unmapped value 422s instead of
+    reaching Postgres as a `CHECK` violation (a 500).
+  - **The money RPCs were being sent keys their functions do not read.** `record_payment` now sends
+    exactly `{amount, reference, notes}` — `payment_reference` maps onto `reference` (idempotency was
+    not real before this: a replayed callback recorded a second payment, because the RPC never saw the
+    reference it was meant to match on); `method`/`charge_type` have no column of their own and are now
+    folded into `notes` rather than silently dropped. `add_charge` now sends `{amount, label, notes}` —
+    `description` maps onto `label` (every added charge had been landing with a `NULL` label).
+    `refund_deposit` now sends `amount` = the ledger's own `remainingRefund`, read back before the
+    call — every refund had been inserting with no amount at all, which passed the ceiling check
+    vacuously and recorded a refund of nothing; when nothing is left, the service now refuses with a
+    `422` before the RPC is ever called, rather than letting Postgres accept a zero-amount event.
+  - **The reports page's KPIs described the wrong thing, or nothing.** `build_report` now sends the RPC
+    only `{from_date, to_date}` — its whole filter vocabulary — and applies the `amenityId`/
+    `bookingStatus` filters Python-side against the ledger rows the table already lists; before this
+    fix those two filters were sent to an RPC that has never read them, so every KPI silently described
+    the last 30 days of the *whole community* no matter what the admin had picked. `ReportKpis` now
+    carries exactly the six fields `amenity_report_totals` returns — `totalBookings`,
+    `totalActiveBookings` (← `approved_bookings`), `cancelledBookings`, `totalCharged`, `totalRevenue`
+    (← `total_paid`), `totalRefunded`. The four fields it replaces — `totalAmenities`,
+    `pendingApprovals`, `activeAmenities`, `bookingsThisMonth` — named nothing the RPC has ever
+    returned and rendered a hardcoded `0` on the reports page while looking like measurements; they are
+    **gone from the response**, not zeroed, because a KPI with no source is a worse answer than no KPI.
+
+**D1 and D5 — frontend defects, fixed on the frontend.** `DERIVED`. D1 (the catalogue's active/inactive
+toggle re-read the whole dashboard snapshot up to three times per click): `setAmenityActiveStatus`/
+`updateAmenity` now issue at most one snapshot read per operation, building a single `PUT` from state
+already in hand. D5 (the resident availability check called an admin-guarded endpoint and hung on the
+403 it got back): `validateBookingSlot` no longer rejects on an `ApiError` — any failure, 403 included,
+resolves to an optimistic `true`, since the booking RPC remains the authority at submit time; the
+resident `Amenities.jsx` availability effect gained the `try`/`catch` that was missing. Also landed in
+this pass: client-side canvas downscale of an uploaded image to ≤100KB before submit
+(`downscaleImage.js`), so the backend's 422 ceiling is a backstop and not the normal path;
+`BlockTimeModal`'s `getInitialBlockTime` now returns usable `HH:MM` defaults; `AmenityDashboardPage`'s
+date picker defaults to local-timezone today rather than UTC; the reports page was rebuilt around the
+six real KPIs above; and the resident cancellable-booking list dropped the phantom `confirmed` status
+alongside the backend's own removal of it.
+
+**Docs.** `DERIVED`. `docs/API.md`: new §10 reference section for `POST`/`PUT /dashboard/amenities`
+(the pair had none before — request body, the three new fields, 422 conditions; the response's
+free-form-object gap is called out as pre-existing and explicitly not addressed here); the §5 snapshot
+projection gains an `amenities[]` field table; the timeline, admin-booking, approvals, money and
+reports sections in §10 are corrected for the lowercase status vocabulary, the booking-type alias
+table, the block-by-type painting rule, and the six real report KPIs; `GET /amenity-bookings/mine`
+gains a `status`/`storedStatus` field table contrasting it with the invoice list's deliberately
+different Title-case vocabulary. `docs/api_yaml_mapper.md`: §3's operation tables were regenerated
+with `scripts/regen_mapper.py` against the already-regenerated `openapi.yaml` (179 paths, 210
+operations, unchanged by this pass — no route was added or removed), which resynced roughly ninety
+`API.md` line references this pass's own additions had pushed down; §5.1/§5.2 updated to record that
+`PUT`/`DELETE /dashboard/amenities/{id}` gained a real reference section (nine uncovered operations
+becomes seven) while their shared response-body gap remains open; `api_map_scan.py` now reports **18**
+findings, not 20.
+
+---
+
+## 2026-08-23 — the resident sets the time, and the system books what nobody schedules
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §23 — the scheduling-inversion rulings.**
+`PO` (three rulings, 2026-08-23). Live testing continued past the board build
+and the owner re-cut the raise flow: the supervisor's raise form loses its
+date/time fields entirely (**F1**); a resident-subject job asks the resident
+to pick the visit time from their dashboard, and only that answer puts the
+job on the open pile; a facility job is auto-assigned into the first
+available slot once urgent resident complaints in the department are
+allotted (F1's second half); 24 hours of resident silence means the system
+books the first available time with an available serviceman and assigns them
+automatically (**F2**); the resident card is a picker only, with no decline
+(**F3** — decline stays on the supervisor-proposed reschedule flow). This
+explicitly overturns the raise-with-a-slot consent model recorded when
+0036's `awaiting_resident` flow was built: the resident now names the time
+instead of approving one. A new "Awaiting resident response" section
+surfaces the waiting jobs on the supervisor dashboard. Orchestrator
+adjudications (G1–G11) and the frozen two-specialist interface:
+`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`.
+
+**The build.** `DERIVED` (two parallel specialists, orchestrator-verified
+2026-08-23). One hand-apply migration,
+`backend/supabase/migrations/20260823180000_resident_sets_the_time.sql`
+(runbook §28, apply AFTER §27): pick-mode is `awaiting_resident` with a
+NULL slot (no new status, no new event word; the ONE widened constraint is
+`dispatch_tasks_kind_check`, + `facility_auto_assign`);
+`dispatch_candidates` refactored into a delegate over the new
+`dispatch_candidates_at` so `find_first_available_slot` can probe
+hypothetical hours (2h visits, 14-day horizon) without writing to
+`work_orders`; `create_work_order` forks on slot presence (G1);
+`resident_set_work_order_schedule` moves a pick-mode job to `offered` — the
+open pile; `dispatch_resident_timeout` branches on the discriminator
+(approve-mode unchanged, expired pick-mode auto-books and assigns, no
+candidate → open board + supervisor told);
+`dispatch_facility_auto_assign` books facility drafts behind an hourly
+re-checked urgent-residents gate; `supervisor_triage_snapshot` grows the
+sixth `awaiting_resident` bucket. Backend: `mode` on the schedule-request
+read, new `POST /complaints/{id}/schedule-time`, `awaitingResident` on
+`TriageSnapshot` (defaults `[]`, so the API is safe against a pre-migration
+hosted database). Frontend: the raise form's date/time fields are gone; the
+resident card branches approve/pick; the supervisor dashboard renders
+"Awaiting resident response". Orchestrator's own verification: backend
+1375 passed / 5 skipped / 12 xfailed (baseline 1342/5/12; +33 all
+accounted), frontend 47 files / 312 passed + 4 expected-fail (baseline
+46/298+4), oxlint 0; migration reviewed line-by-line with
+carried-forward-verbatim claims spot-checked against 0036/0037/20260823120000.
+Post-build adjudications H1–H6 and the backlog are in the spec.
+
+**Runbook §28 post-check (a) repaired after the live apply.** `DERIVED`
+(apply session, 2026-08-23). §27 and §28 both applied clean on hosted, but
+post-check (a) as written could never pass in the SQL editor: it called
+`supervisor_triage_snapshot` (no `auth.uid()` in the editor → the guard
+HB403s any direct call) via a `where kind = 'service'` department lookup
+that finds nothing on this deployment (the backend stores `kind` NULL
+unless the admin form supplies one and defaults NULL to "service" on read
+— `departments_service.py:81`), so the function's null-guard drew HB404.
+Replaced in the runbook and the migration's comment-only §11 with a
+guard-free `pg_get_functiondef` inspection for the sixth bucket; the
+in-transaction §10 proofs had already verified the same structure at apply
+time. Earlier runbook sections (§22, §26) share the flawed helper but are
+already applied and past; left as history.
+
+## 2026-08-23 — the worker gets an open-jobs board, and the assign picker stops blaming trades
+
+**`docs/COMPLAINT_ENGINE_HANDOFF.md` §22 — the open-jobs board rulings.** `PO`
+(three rulings, 2026-08-23). Live testing from the worker's side found the gap:
+a freshly hired plumber sees nothing, because workers only see what a
+supervisor offers them. The owner ruled that department roster technicians
+holding a job's trade see an open-jobs board for their department (C1 — not
+the whole roster, not the marketplace; hiring stays the gate); that taking a
+job from the board is an instant claim with accept-an-offer mechanics, first
+come first served, supervisor notified (C2); and that unscheduled jobs appear
+on the board with a "time to be set" marker and are claimable, slot checks
+deferred until an hour exists (C3). This *extends* the consent-by-offer
+dispatch model rather than overturning it — the supervisor's offer and
+force-assign paths are untouched. Build spec and implementation to follow;
+"open" versus "offered to somebody else" is an orchestrator adjudication to be
+logged in the spec.
+
+**`docs/plans/OPEN_JOBS_BOARD_SPEC.md` + the board build.** `DERIVED` (from
+rulings C1–C3, built same day). The spec froze seven adjudications (D1–D7)
+before launch — most notably D1, "open" means *uncommitted and unpromised*
+(a job with a live offer out to somebody else is off the board and returns on
+decline), and D5, the projection trigger widened so a direct-to-`accepted`
+insert moves the complaint `open → acknowledged`, knowingly closing the
+identical pre-existing hole in both force-assign paths (an engine lifecycle
+change made under C2's "same status movements" authority — flagged to the PO).
+The build: migration `20260823170000_open_jobs_board.sql` (`worker_open_jobs()`
+board read as SECURITY DEFINER because RLS correctly hides unheld jobs from
+workers; `claim_open_work_order(uuid)` with a row-lock-settled race; the D5
+trigger widening; runbook §27 for the owner's hand-apply), endpoints
+`GET /worker/open-jobs` and `POST /worker/jobs/{id}/claim`, and the worker
+portal's "Open jobs" page and nav item (hidden from leadership — the queue is
+theirs). No new event word (`job_assigned` + `claimed: true` payload, per the
+runbook §19 cost rule); new notification kind `work_order.claimed` (kinds are
+unconstrained by design). Verification re-run by the orchestrator, not taken
+from the agent report: frontend 298 tests passing / oxlint 0; backend
+1342 passed / 5 skipped / 12 xfailed (the xfails are a concurrent
+workstream's untracked repro file, not this build's — up from the 1328/5
+pre-build baseline by exactly this build's 14 new tests, zero failures).
+Post-build adjudications E1–E3 (the frozen filename falsified three
+hardcoded-set migration-ordering tests — specialist's minimal test edit
+accepted; mapper cells hand-filled under a `####`-heading generator
+limitation) are logged in the spec.
+
+**Frontend `AssignPickerModal` — the empty state stops lying.** `DERIVED`
+(orchestrator fix, 2026-08-23). The force-assign picker's only empty-state
+message blamed missing trades, but `dispatch_candidates` returns nobody for
+*any* job without a scheduled hour — its eligibility checks (leave, windows,
+clashes) are slot-dependent, so the unscheduled case answered "nobody" and the
+screen misdiagnosed it, live, in front of the owner. The modal now skips the
+fetch entirely when the job has no hour and says "set a time in the work-order
+queue first"; the genuinely-empty-roster copy now names all three causes
+(trade, leave, clashing bookings) instead of picking one. Tests pin both
+messages (7/7, lint clean).
+
+## 2026-08-23 — hosted catches up: runbook §23–§26 applied and ledgered
 
 **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §23–§26 — executed on the hosted
 project.** `PO` (owner hand-apply via SQL editor, 2026-08-23). The owner applied

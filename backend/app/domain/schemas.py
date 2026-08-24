@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import datetime, time
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -151,7 +152,55 @@ class DashboardSnapshot(BaseModel):
     weeklyNew: WeeklyNewCounts = Field(default_factory=WeeklyNewCounts)  # noqa: N815
 
 
+# An amenity photo travels as a base64 `data:` URL in `amenities.image_url`,
+# capped at roughly 100KB of binary (a base64 payload is 4/3 of its bytes). The
+# browser downscales before it submits; this ceiling is the backstop that turns
+# an oversized upload into a 422 instead of a Postgres row nobody can read back
+# in a page budget. The alternative -- a storage bucket -- is a deployment
+# HomeBandhu does not have.
+_MAX_IMAGE_DATA_URL_CHARS = 140_000
+_MAX_IMAGE_HTTPS_URL_CHARS = 2_000
+_IMAGE_DATA_URL = re.compile(
+    r"^data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/\s]+={0,2}$"
+)
+# 'HH:MM' or 'HH:MM:SS' -- the two spellings Postgres `time` accepts and the
+# two an <input type="time"> emits (it drops the seconds unless asked for them).
+_CLOCK_TIME = re.compile(r"^(?P<h>[01]\d|2[0-3]):(?P<m>[0-5]\d)(?::(?P<s>[0-5]\d))?$")
+
+
+def _clock_or_none(value: str | None) -> str | None:
+    """Validate an 'HH:MM'/'HH:MM:SS' string; empty becomes None (= no hours set)."""
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if not _CLOCK_TIME.match(value):
+        raise ValueError("Time must be in HH:MM or HH:MM:SS form.")
+    return value
+
+
+def _as_time(value: str | None) -> time | None:
+    match = _CLOCK_TIME.match(value) if value else None
+    if match is None:
+        return None
+    return time(
+        int(match.group("h")), int(match.group("m")), int(match.group("s") or 0)
+    )
+
+
 class AmenityWrite(StrictModel):
+    """The body of POST/PUT `/dashboard/amenities` -- the only amenity write
+    endpoints the app has, so anything the catalogue form collects has to fit
+    here or it is dropped on the floor (issue #48 D2).
+
+    `image`, `openingTime` and `closingTime` are columns on `amenities` since
+    `0023` (`image_url`, `opening_time`, `closing_time`); the model carries them
+    so the form can reach them. The hours are checked against each other here
+    for the same reason `amenities_hours_check` exists in `0023` -- with the
+    check only in Postgres a reversed pair is a 500, and it is a 422.
+    """
+
     name: str = Field(min_length=2, max_length=160)
     description: str = Field(default="", max_length=2000)
     category: str = Field(default="Utility", max_length=120)
@@ -161,9 +210,49 @@ class AmenityWrite(StrictModel):
     approval_required: bool = False
     hourly_rate: float = Field(default=0, ge=0)
     is_active: bool = True
-    image: str | None = Field(default=None, max_length=2_800_000)
-    opening_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    closing_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    image: str | None = None
+    opening_time: str | None = None
+    closing_time: str | None = None
+
+    @field_validator("image")
+    @classmethod
+    def _image_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if value.startswith("data:"):
+            if len(value) > _MAX_IMAGE_DATA_URL_CHARS:
+                raise ValueError(
+                    "The image is too large. Use one under 100KB "
+                    "(the form downscales before it uploads)."
+                )
+            if not _IMAGE_DATA_URL.match(value):
+                raise ValueError(
+                    "An inline image must be a base64 data URL of a PNG, JPEG, "
+                    "WebP or GIF."
+                )
+            return value
+        if value.startswith("https://"):
+            if len(value) > _MAX_IMAGE_HTTPS_URL_CHARS:
+                raise ValueError("The image URL is too long.")
+            return value
+        raise ValueError(
+            "An image must be an https:// URL or a base64 image data URL."
+        )
+
+    @field_validator("opening_time", "closing_time")
+    @classmethod
+    def _hours_shape(cls, value: str | None) -> str | None:
+        return _clock_or_none(value)
+
+    @model_validator(mode="after")
+    def _hours_are_ordered(self) -> "AmenityWrite":
+        opens, closes = _as_time(self.opening_time), _as_time(self.closing_time)
+        if opens is not None and closes is not None and opens >= closes:
+            raise ValueError("The opening time must be before the closing time.")
+        return self
 
 
 class AuthMethod(BaseModel):

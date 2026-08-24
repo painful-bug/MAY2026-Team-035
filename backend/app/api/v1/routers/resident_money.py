@@ -135,6 +135,12 @@ async def list_my_bookings(
     `amenity_booking_charges` was admin-only until `0033`, so a resident could be
     charged for a booking and had no endpoint that would tell them so. They can
     now see their own, and nobody else's.
+
+    `status` is the lowercase machine value — `pending`, `approved`, `rejected`,
+    `cancelled`, `completed`, `no_show` — the same vocabulary the admin amenity
+    endpoints emit. Unlike the invoice list above, `storedStatus` is not a
+    second, truer answer here: it agrees with `status` on every row except that
+    it keeps the enum's own `requested` for the pending state.
     """
     return service.list_bookings(
         client,

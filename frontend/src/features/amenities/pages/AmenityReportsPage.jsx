@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import {
-  Activity,
   ArrowLeft,
-  Building2,
+  Ban,
   CalendarDays,
+  CircleCheckBig,
   IndianRupee,
-  ShieldCheck,
-  TimerReset,
+  ReceiptText,
+  RotateCcw,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -35,16 +35,24 @@ import { formatLedgerCurrency } from '../utils/amenityLedger.js';
 // statuses are the lifecycle's fixed vocabulary, so the filter does not lose an
 // option the moment nothing currently has that status — which is exactly what
 // the client-side `new Set(rows.map(...))` used to do.
+//
+// **Every tile below names a figure `amenity_report_totals` computes.** Four of
+// them used to name nothing at all — Total Amenities, Pending Approvals, Active
+// Amenities, Bookings This Month — so the response never carried them and the
+// page rendered a hardcoded `0` under each, in the same type as the real
+// numbers beside them (issue #48 D4). The KPIs and their four dead defaults are
+// gone rather than zeroed: a measurement nobody takes is worse than a tile
+// nobody drew. The remaining six are 1:1 with the RPC.
 
 const PAGE_SIZE = 100;
 
 const EMPTY_KPIS = {
-  totalAmenities: 0,
+  totalBookings: 0,
   totalActiveBookings: 0,
-  pendingApprovals: 0,
+  cancelledBookings: 0,
+  totalCharged: 0,
   totalRevenue: 0,
-  activeAmenities: 0,
-  bookingsThisMonth: 0,
+  totalRefunded: 0,
 };
 
 // `all` is this screen's word for "do not narrow"; the API's word for it is an
@@ -75,48 +83,52 @@ export default function AmenityReportsPage() {
   const kpiValues = report.data?.kpis || EMPTY_KPIS;
   const options = report.data?.options || { amenities: [], bookingStatuses: [] };
 
+  // Label ← response key ← RPC column. The three money tiles are three
+  // different questions and are deliberately not collapsed: what was billed,
+  // what came in, and what went back out are rarely the same number, and the
+  // difference is the thing an administrator is looking for.
   const kpis = [
     {
-      label: 'Total Amenities',
-      value: kpiValues.totalAmenities,
-      caption: 'Facilities in scope',
-      icon: Building2,
+      label: 'Total Bookings',
+      value: kpiValues.totalBookings,
+      caption: 'Every booking matching the filters',
+      icon: CalendarDays,
       tone: 'bg-indigo-50 text-indigo-600',
     },
     {
-      label: 'Total Active Bookings',
+      label: 'Approved Bookings',
       value: kpiValues.totalActiveBookings,
-      caption: 'Approved or confirmed',
-      icon: Activity,
+      caption: 'Approved by an administrator',
+      icon: CircleCheckBig,
       tone: 'bg-emerald-50 text-emerald-600',
     },
     {
-      label: 'Pending Approvals',
-      value: kpiValues.pendingApprovals,
-      caption: 'Awaiting admin review',
-      icon: TimerReset,
-      tone: 'bg-amber-50 text-amber-600',
+      label: 'Cancelled Bookings',
+      value: kpiValues.cancelledBookings,
+      caption: 'Withdrawn or cancelled',
+      icon: Ban,
+      tone: 'bg-rose-50 text-rose-600',
+    },
+    {
+      label: 'Total Charged',
+      value: formatLedgerCurrency(kpiValues.totalCharged),
+      caption: 'Billed across matching bookings',
+      icon: ReceiptText,
+      tone: 'bg-blue-50 text-blue-600',
     },
     {
       label: 'Total Revenue',
       value: formatLedgerCurrency(kpiValues.totalRevenue),
-      caption: 'Across every matching booking',
+      caption: 'Payments actually received',
       icon: IndianRupee,
       tone: 'bg-emerald-50 text-emerald-600',
     },
     {
-      label: 'Active Amenities',
-      value: kpiValues.activeAmenities,
-      caption: 'Available facilities',
-      icon: ShieldCheck,
-      tone: 'bg-blue-50 text-blue-600',
-    },
-    {
-      label: 'Bookings This Month',
-      value: kpiValues.bookingsThisMonth,
-      caption: 'Current calendar month',
-      icon: CalendarDays,
-      tone: 'bg-indigo-50 text-indigo-600',
+      label: 'Total Refunded',
+      value: formatLedgerCurrency(kpiValues.totalRefunded),
+      caption: 'Deposits and charges returned',
+      icon: RotateCcw,
+      tone: 'bg-amber-50 text-amber-600',
     },
   ];
 
@@ -134,7 +146,7 @@ export default function AmenityReportsPage() {
           Amenity Reports
         </h1>
         <p className="mt-1 text-xs font-semibold text-slate-400">
-          A lightweight summary of bookings, approvals, and revenue.
+          Bookings, charges and payments across the period you choose.
         </p>
       </header>
 

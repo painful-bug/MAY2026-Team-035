@@ -280,6 +280,33 @@ def test_the_booking_list_is_the_callers_own(
     assert sent["upcoming"] is True
 
 
+def test_the_booking_status_crosses_the_wire_as_a_machine_value(
+    resident_api_client: TestClient, money: dict
+) -> None:
+    """`resident_booking_overview.status` is Title-case for a human to read.
+
+    Passing it through made this the one booking endpoint whose status could not
+    be compared against any other's -- 'Pending' here, 'pending' from the admin
+    amenity endpoints (issue #48 D4). `storedStatus` survives as a frozen wire
+    key and now agrees, keeping only the enum's own name for this state.
+    """
+    item = resident_api_client.get(BOOKINGS).json()["items"][0]
+
+    assert item["status"] == "pending"
+    assert item["storedStatus"] == "requested"
+
+
+def test_a_two_word_booking_status_folds_to_its_machine_value(
+    resident_api_client: TestClient, money: dict
+) -> None:
+    """'No Show' is the display rendering of `no_show`. The worst case for a
+    naive lowercase, and the one a case-sensitive client would miss twice."""
+    money["bookings"] = [booking_row(status="No Show", stored_status="no_show")]
+    item = resident_api_client.get(BOOKINGS).json()["items"][0]
+
+    assert item["status"] == "no_show"
+
+
 # ---------------------------------------------------------------------------
 # Paying, and the two things a payment endpoint must get right
 # ---------------------------------------------------------------------------
