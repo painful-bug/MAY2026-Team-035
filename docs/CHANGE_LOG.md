@@ -17,7 +17,24 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-24 (latest, second session) — the supervisor may pick up the wrench, but only on purpose
+## 2026-08-24 (latest, third session) — the branch and main stop disagreeing about how migrations are ordered
+
+**PR #51 retracted and the branch reconciled with main.** `PO` (2026-08-24: retract the conflicting
+PR, resolve, merge from main only if required — it was). Main's `4e5dfce` and this branch had
+independently fixed the same brittle "sorts after every existing file" migration-ordering tests
+(`test_hosted_invite_claim_names_migration.py`, `test_hosted_request_status_withdrawn_migration.py`,
+`test_visitor_requests_sse_migration.py`), which made the PR unmergeable. Resolution `DERIVED` from
+ruling G9 (`docs/plans/RESIDENT_SETS_THE_TIME_SPEC.md`: the ordering tests get re-anchored to one
+named predecessor, not patched again): the branch's G9 versions are kept; `4e5dfce`'s variant is
+superseded, its intent — tests that survive later migrations — preserved by the kept version.
+
+1. **`openapi.yaml` resolved by regeneration, not by hand.** `DERIVED`: the spec is generated from
+   the backend by `backend/scripts/export_openapi.py` (180 paths / 211 operations), so the merge
+   conflict was resolved by rerunning the generator. The result carries both main's
+   `AmenityWrite.opening_time/closing_time/image` fields and this branch's
+   `/work-orders/{id}/take-up` endpoint. No other docs artifact changed in the merge.
+
+## 2026-08-24 (second session) — the supervisor may pick up the wrench, but only on purpose
 
 **The pool-only rule gains its one deliberate exception.** `PO` ruling R8 (verbatim 2026-08-24: "yes,
 include an option where a super can take up work … it sholdnt be something seen in normal routine
