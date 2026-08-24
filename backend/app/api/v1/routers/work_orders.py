@@ -35,6 +35,7 @@ from app.domain.work_order_schemas import (
     CancelWorkOrderRequest,
     CreateWorkOrderRequest,
     RescheduleWorkOrderRequest,
+    TakeUpWorkOrderRequest,
     UpdateWorkOrderRequest,
     WorkOrder,
     WorkOrderDetail,
@@ -249,6 +250,53 @@ async def assign_work_order(
     | 409 | `conflict` | Already booked · not on this roster · no time set · closed |
     """
     return service.assign(client, work_order_id=work_order_id, body=body)
+
+
+@router.post(
+    "/work-orders/{work_order_id}/take-up",
+    response_model=WorkOrderDetail,
+    summary="Take the job yourself",
+)
+async def take_up_work_order(
+    body: TakeUpWorkOrderRequest,
+    work_order_id: str = Path(...),
+    client: Client = Depends(get_request_client),
+) -> WorkOrderDetail:
+    """**The department's manual valve** (2026-08-24 ruling R8).
+
+    Since 2026-08-23 a job may only be offered, auto-booked or claimed by staff
+    hired from the servicemen pool — rank `member`. That is the right rule and
+    it leaves one gap: a thin department, on a day its technician is away, has
+    work nobody in the system may hold. This is the way out, and it is
+    deliberately a separate button rather than a relaxation of the rule.
+
+    **There is no `staffAssignmentId` and there will not be one.** The holder is
+    the caller's own active `manager` or `supervisor` roster row on this job's
+    department, resolved inside the database from the session. A caller who
+    holds no such row is refused — including a community admin, who has no
+    roster row, no calendar and no trade, and whose booking nobody could keep.
+    The most this route can do is give the caller work.
+
+    Everything after that is `assign`'s: the slot is optional and defaults to
+    the job's own, the previous holder is **withdrawn, not deleted**, the job
+    moves to `scheduled`, the resident is told somebody is coming, and the
+    double-booking `409` is the same one — taking a job up overrides nobody's
+    consent, and certainly not physics.
+
+    The timeline gains **two** entries: `job_assigned`, because from the
+    resident's side the fact is the same fact, and `job_taken_up` beside it,
+    because from the department's side it is not — this job did not go through
+    the pool, and the record says so without anybody having to infer it from a
+    rank. Both name the caller. The department is notified; the caller is not,
+    having just pressed the button.
+
+    | Status | Code | Cause |
+    |---|---|---|
+    | 403 | `forbidden` | You hold no active supervisor or manager row on this department |
+    | 404 | `not_found` | No such work order |
+    | 409 | `conflict` | The job is closed · you are already booked across that hour |
+    """
+    return service.take_up(client, work_order_id=work_order_id, body=body)
 
 
 @router.post(

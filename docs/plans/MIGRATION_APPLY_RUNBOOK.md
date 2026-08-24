@@ -3517,3 +3517,527 @@ one being fired — the reasoning is in the `fire_dispatch_task` comment and the
 ordering is pinned, but only the functional check above shows it; and the
 finder's cost, which walks up to 336 hypothetical hours per expired pick and has
 never been run against a real roster.
+
+
+## 29. `20260823190000_assignment_write_repairs.sql`
+
+**Apply this AFTER §28.** It sorts after
+`20260823180000_resident_sets_the_time.sql` by name and re-issues that file's
+`dispatch_candidates_at` plus §27's `worker_open_jobs` and
+`claim_open_work_order`. Applying it before either would have the earlier file
+overwrite all three bodies and take the rank clause straight back out, with
+nothing in the apply output to say so.
+
+**What breaks without it:** two live defects from 2026-08-23, and a third that
+had not fired yet.
+
+1. **Every assign answers 422.** Force-assigning a tap-leak job from the
+   supervisor's "Assign this job outright" modal failed for every caller. The
+   server-side log behind it, through `app/core/pg_errors.py`:
+   `SQLSTATE 23502: null value in column "assigned_by_membership_id" of relation
+   "work_order_assignments" violates not-null constraint`. Hosted
+   `work_order_assignments` is the pre-baseline hand-built table and carries
+   that column `NOT NULL` with no default; no repository migration has ever
+   declared it, so **all eleven** insert sites in the repository omit it. On
+   hosted, every write path into the table is broken — the offer, the board
+   claim, the ping, force-assign, dispatch force, and both auto-assign
+   handlers.
+2. **Leadership was in the candidate list.** The picker showed the department's
+   supervisor and manager beside its two technicians, because nothing in the
+   eligibility chain has ever asked about `staff_assignments.rank`. The same
+   hole was on the open-jobs board twice: a supervisor could see and claim their
+   own department's work.
+3. **The two 2026-08-23 auto-assign handlers were pre-armed to die.**
+   `dispatch_resident_timeout`'s pick-mode branch and
+   `dispatch_facility_auto_assign` both insert into
+   `work_order_assignments` and neither has ever fired on hosted. Without §1
+   below, the first firing crashes on the same 23502, retries five times, and
+   retires the task dead — a facility job that silently never gets a worker.
+
+The frozen spec, rulings R1–R7 included, is
+`docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`. The product owner's
+ruling R1, verbatim: *"its only asigned to the workers who are hired from the
+service men pool"*.
+
+**What it does:** one widening sweep and three `create or replace`, in five
+sections.
+
+1. **The drift sweep (R4)** — §17's shape, one table along. Drops `NOT NULL` on
+   every `work_order_assignments` column that (a) the repository has never
+   declared, (b) is `NOT NULL` on the hosted table, and (c) has no default —
+   exactly the set that can reject an insert written against the repository's
+   schema. A sweep and not `assigned_by_membership_id` alone, because §17 and
+   the `complaints` drift before it both taught that these constraints bite one
+   behind the other. The protected list is the repository's full declaration —
+   `0001_baseline.sql`:74, `0036_work_orders.sql`:264-272 and
+   `20260813101000`:4 — and
+   `backend/tests/test_assignment_write_repairs_migration.py` derives the same
+   list from those three files' own text rather than reviewing it by eye. The
+   legacy status-ish column that defaults to `'assigned'` **has** a default, so
+   the sweep correctly leaves it alone. It walks `pg_attribute` rather than
+   `information_schema.columns` — the view filters by the reading role's
+   privileges, and this file is pasted into an editor whose role nobody in this
+   repository chose. Widening only, no-op on a baseline-built database, no-op on
+   re-apply.
+2. **`dispatch_candidates_at` re-issued (R1, R3)** — §28's body verbatim with
+   `and sa.rank = 'member'` added to the roster join, and nothing else. It is
+   the *one* eligibility implementation, so the picker
+   (`work_order_candidates` → `dispatch_candidates` → `_at`),
+   `find_first_available_slot`, `dispatch_resident_timeout`,
+   `dispatch_facility_auto_assign`, `dispatch_ping_candidates`,
+   `dispatch_auto_assign` and `dispatch_force_assign` all inherit the rule with
+   no change of their own. Signature, return table, ordering (`adjacent desc,
+   load asc, km asc nulls last, display_name`), null-slot guard, trade
+   short-circuit and grants are untouched.
+3. **`worker_open_jobs` re-issued (R2)** — §27's body verbatim with the same
+   clause on the same roster join. Taking a job off the board is assignment by
+   another door, so the board obeys the same rule; supervisors keep their own
+   triage dashboard, which is where their view of this work belongs.
+4. **`claim_open_work_order` re-issued (R2)** — §27's body verbatim, the clause
+   on the roster re-check, and one branch under it. A deep-linked claim meets
+   that re-check even when the board never showed the job, so the clause belongs
+   there; the branch exists because a supervisor genuinely **is** on the roster,
+   and answering them *"You are not on this department's roster."* would be a
+   lie told to the one person able to check it. Leadership gets
+   *"Supervisors and managers cannot take up jobs from the board."* with
+   **HB403** — the code this function already answers both of its other
+   you-may-not-have-this-job refusals with (the roster miss and the trade miss).
+   No new numbering scheme.
+5. **Post-checks, comment-only.** §28's lesson, written into the file: the SQL
+   editor has no `auth.uid()` and this deployment's departments carry `kind`
+   NULL, so every post-check here is a guard-free structural inspection —
+   `pg_get_functiondef` and `pg_attribute`, nothing called, nothing resolved
+   from a caller. They are reproduced below.
+
+**The clause is strict (R3).** `sa.rank = 'member'`, not `rank <> 'manager'`:
+a NULL rank, and any rank this repository has not declared, is excluded rather
+than admitted. `staff_assignments_rank_check` is `('manager','supervisor',
+'member')` since `0035`:106-108 and marketplace hires land as `member`, so on a
+clean roster nothing moves — but a legacy row predating that constraint would
+lose eligibility silently, which is what the pre-check below exists to catch.
+
+**What it does NOT do, and each absence is deliberate.** No new function and no
+new signature; no `work_orders` status word, no `complaint_events` word, no
+`dispatch_tasks` kind — no constraint is dropped or added anywhere in the file;
+no resolver for `assigned_by_membership_id` (encoding a hosted-only legacy
+column into eleven call sites is drift in the other direction — this
+repository's actor model is `complaint_events.actor_membership_id` via
+`my_membership_in()`); and no code or API change, so nothing needs deploying
+alongside it.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- Any roster row whose rank the new clause will exclude. Expect ZERO rows.
+-- A row here is a person who can hold a job today and cannot after the apply,
+-- so it is a decision, not a diagnostic: NULL or an unknown rank on a real
+-- technician means fixing that row (`update public.staff_assignments set rank =
+-- 'member' where id = '...'`) before applying, not relaxing the clause.
+select sa.id,
+       sa.department_id,
+       sa.display_name,
+       sa.rank,
+       sa.status,
+       sa.is_active,
+       sa.service_provider_id
+  from public.staff_assignments sa
+ where sa.status = 'active'
+   and sa.is_active
+   and (sa.rank is null
+        or sa.rank not in ('manager', 'supervisor', 'member'))
+ order by sa.department_id, sa.display_name;
+
+-- Context for the row above, if there is one: what the roster looks like by
+-- rank. Leadership rows here are expected and are what section 2 excludes.
+select rank, count(*) as active_rows
+  from public.staff_assignments
+ where status = 'active' and is_active
+ group by rank
+ order by 1;
+```
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop not null` and the
+`create or replace function` keywords — and it is safe to confirm: the sweep
+only ever widens (no row the table accepted before is rejected after), the three
+replacements are their predecessors' bodies plus one clause, and the whole paste
+is one transaction, so a failure anywhere rolls the entire file back. Section 1
+raises one `notice` per legacy column it widens, or one saying it found none;
+section 1's verification and section 4's proof raise instead of reporting
+success, so a half-applied file cannot look like a successful one. No other
+output is expected.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260823190000', 'assignment_write_repairs')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only — every one guard-free (§28's lesson):**
+
+```sql
+-- (a) The clause is in all three of the functions that decide who may hold a
+--     job. Expect three rows, has_rank_clause true on each. This inspects the
+--     bodies rather than calling them: the SQL editor has no auth.uid(), so
+--     worker_open_jobs would return an empty board and claim_open_work_order
+--     would HB403 — neither of which proves anything either way.
+select p.oid::regprocedure as signature,
+       pg_get_functiondef(p.oid) like '%sa.rank = ''member''%' as has_rank_clause
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and (p.proname in ('worker_open_jobs', 'claim_open_work_order')
+        or p.oid::regprocedure::text like 'dispatch_candidates_at(%')
+ order by 1;
+
+-- (b) The column that answered every assign with a 422 is nullable now. Expect
+--     one row with attnotnull = false — or NO row at all, which is what a
+--     database built from 0001_baseline.sql looks like and is equally correct.
+select a.attname, a.attnotnull, a.atthasdef
+  from pg_attribute a
+ where a.attrelid = 'public.work_order_assignments'::regclass
+   and a.attname  = 'assigned_by_membership_id';
+
+-- (c) And nothing insert-blocking is left behind it. Expect zero rows.
+select a.attname
+  from pg_attribute a
+ where a.attrelid = 'public.work_order_assignments'::regclass
+   and a.attnum > 0
+   and not a.attisdropped
+   and a.attnotnull
+   and not a.atthasdef
+   and a.attname not in (
+     'id', 'work_order_id', 'staff_assignment_id', 'assigned_at', 'ended_at',
+     'status', 'offered_at', 'responded_at', 'decline_reason',
+     'is_auto_assigned', 'scheduled_start_at', 'scheduled_end_at', 'is_forced')
+ order by a.attname;
+
+-- (d) Ground truth on the dispatcher, which the "not autoassigned or slow"
+--     report needs and no log line answers. A task with completed_at set has
+--     fired; last_error set means it fired and threw (before this file, the
+--     two auto-assign kinds would throw 23502 here); attempts climbing with
+--     completed_at null and due_at in the past means the loop is not running.
+select kind, due_at, completed_at, attempts, last_error
+  from public.dispatch_tasks
+ order by due_at desc
+ limit 20;
+```
+
+**Post-check, functional:** as a department supervisor, open a resident
+complaint's "Assign this job outright" modal. The candidate list now holds
+**only** the department's technicians — the supervisor and the manager are gone.
+Assign one: the call succeeds instead of answering 422, the job moves to
+`scheduled`, and the complaint's timeline gains `job_assigned`. Then sign in as
+that supervisor in the worker portal: the "Open jobs" tab is empty for them (it
+was showing their own department's pile), and a deep-linked claim answers 403
+*"Supervisors and managers cannot take up jobs from the board."* A technician on
+the same roster still sees the board and can still claim from it.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_assignment_write_repairs_migration.py` (19 tests) — the file
+parses (`pglast`), sorts after all six files it reasons about, and is the last
+declaration of each of the three functions it re-issues; it declares no fourth
+function; the sweep's protected list is derived from the three declaring
+migrations' own text and compared exactly against both of the file's copies of
+it; the sweep touches only NOT-NULL-without-default columns, its one dynamic
+statement can only drop `NOT NULL`, it writes no rows, it notices rather than
+raises and its verification raises rather than notices; the sweep runs before
+any `create or replace`; `assigned_by_membership_id` appears nowhere in the
+executable SQL; each of the three copied bodies is diffed line by line against
+its predecessor with **zero removals** and no executable addition beyond the
+clause (and, for the claim, the pinned leadership branch); the leadership
+refusal's code is HB403 and every SQLSTATE the file raises is one `pg_errors`
+can map; no closed vocabulary and no dispatch-task kind is named; the grants and
+the PostgREST reload are restated; the in-transaction proof looks for the clause
+in all three functions and for the delegate still being a delegate; and section
+5 is comment-only and calls nothing guarded. Plus the directory battery in
+`test_migration_directory_is_fresh_appliable.py`. **Not verifiable statically:**
+that hosted's three function bodies are §27's and §28's before this overwrites
+them — these are `create or replace`, so the apply overwrites whatever is there,
+which is the intent; how many legacy `NOT NULL` columns the sweep will actually
+find (only the apply's NOTICEs say); and whether any hosted roster row carries a
+rank outside the closed list, which is what the pre-check above is for.
+
+
+## 30. `20260824090000_supervisor_take_up.sql`
+
+**Apply this AFTER §29.** It re-issues §29's `claim_open_work_order` and
+`20260822170000`'s `force_assign_work_order`, and it recreates the
+`complaint_events` event CHECK that `20260822170000` §7 last defined. Applying
+it before §29 would have §29 overwrite the claim's new refusal and take the
+rank clause straight back out of nothing — and applying §29 *after* this file
+would replace the claim body with one that still says *"Supervisors and
+managers cannot take up jobs from the board"* while the button that answers
+that sentence exists. Filename order is apply order and it is already right;
+this note is for the case where somebody applies out of order by hand.
+
+**What breaks without it:** nothing crashes — and that is the point. §29 closed
+every assignment path to anybody whose roster rank is not `member`, which is
+ruling R1 and what the product owner asked for. What it leaves is a department
+with no eligible holder: one supervisor, one technician on leave, and a
+complaint the picker cannot fill, the auto-book cannot fill, the ping cannot
+fill and the board will not show. Ruling R9 accepted that outcome deliberately
+— no automation fallback, jobs wait for hires — **on the condition that take-up
+is the manual valve**. Without this file there is no valve, and the honest
+description of the product is that a thin department's work stops.
+
+The product owner's ruling R8, verbatim: *"yes, include an option where a super
+can take up work … it sholdnt be something seen in normal routine workflow … it
+is available at any time though but as a seperate button orsomething like
+that."* The frozen spec, rulings R8–R13 included, is
+[`ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`](ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md)'s
+*Addendum 2026-08-24*.
+
+**What it does:** one constraint swap and three `create or replace`, in five
+sections.
+
+1. **One new event word (R11)** — `job_taken_up`, added to
+   `complaint_events_type_check`. §20's shape and §19's before it: prove nothing
+   stored is outside the new list *before* dropping anything, so a failure there
+   leaves the old constraint standing; then drop, add, and prove the **new** word
+   specifically, because a bare existence check passes against the very
+   constraint being replaced. The list is `20260822170000` §7's, carried over
+   word for word — that is the last file in the directory to define this
+   constraint, so its list is the one the database is holding.
+   `backend/tests/test_supervisor_take_up_migration.py` derives the same list
+   from that file's own text and fails if this one dropped a word or invented a
+   second. `job_taken_up` is deliberately **not** `taken_up`: the older word is
+   `take_up_complaint`'s and means a supervisor is *looking at* a complaint;
+   this one means one is *going*.
+2. **`take_up_work_order`, new (R8, R10, R11)** —
+   `force_assign_work_order`'s mechanics with the naming taken out. **There is
+   no `p_staff_assignment_id`**, and that absence is the design: a parameter
+   naming somebody would make this "assign anybody, without the rank check",
+   which is §29's rule with a door in it. The holder is the caller's own active
+   `manager`- or `supervisor`-ranked roster row on **this job's** department,
+   found from `auth.uid()` by the same predicate `claim_open_work_order` uses to
+   identify its caller; no such row is `HB403` in words. Both leadership ranks
+   qualify (R10): `can_supervise_department` treats them identically and
+   `restamp_department_supervision` can leave a manager as a department's only
+   leadership. Everything after the pick is force-assign's — the terminal-status
+   gate, the slot rule, the named overlap refusal, withdraw-then-insert, the
+   `scheduled` update and the resident being told somebody is coming. The
+   assignment row is `accepted` with `is_forced` **false** and
+   `is_auto_assigned` **false**: nobody's consent was overridden and no engine
+   decided anything. Two timeline rows, `job_assigned` and `job_taken_up`, both
+   stamping the caller. The department hears `job.taken_up`; the caller does
+   not, through `notify_complaint_staff`'s exclusion argument rather than a
+   branch. `supervision_inherited_at` is **not** touched — it has exactly one
+   writer, `restamp_department_supervision`, and a supervisor choosing a job is
+   not one being handed one.
+3. **`force_assign_work_order` re-issued (R12, closing R7)** —
+   `20260822170000` §6's body verbatim, with one variable declared, one lookup
+   added and two identifiers changed. Its two `complaint_events` rows stamped
+   `v_order.supervisor_membership_id`, the department's supervisor *of record*,
+   who is not necessarily the person who pressed Assign; a manager covering for
+   a departed supervisor produced a timeline naming the departed supervisor.
+   The actor is now resolved from `auth.uid()` the way `take_up_complaint`
+   (`20260822120000`:209) resolves it, assertion included — a null actor is
+   refused, not defaulted. Unreachable today, because
+   `can_supervise_department` resolves the caller from exactly that row;
+   asserted anyway, because the alternative is two timeline entries from
+   nobody. **No shape change**: same signature, same refusals, same
+   notifications, same `is_forced` row.
+4. **`claim_open_work_order` re-issued (R13)** — §29's body verbatim with one
+   sentence rewritten. R2 stands and the board stays shut to leadership; what
+   changed is that the refusal now names the door that *is* open —
+   *"Supervisors and managers cannot claim from the board. Use "Take this job
+   myself" from your dashboard."* Same `HB403`, same branch, same position. It
+   also stops using the phrase "take up" for the thing that is refused while
+   the thing that is allowed is called exactly that.
+5. **Proof in the transaction, then comment-only post-checks.** §28's lesson
+   again: every post-check is a guard-free structural inspection — the SQL
+   editor has no `auth.uid()`, so `take_up_work_order` would answer `HB403`
+   there and prove nothing. They are reproduced below.
+
+**What it does NOT do, and each absence is deliberate.** No relaxation of §29 —
+`dispatch_candidates_at`, `worker_open_jobs` and the rank clause inside the
+claim are untouched, so the picker, the ping, the auto-book and the board stay
+member-only, and this file declares no fourth function. No `work_orders` status
+word (`scheduled` is what force-assign already writes), no
+`work_order_assignments` status word, no `dispatch_tasks` kind, no roster-rank
+change. **No new SQLSTATE**: the whole file raises only `HB403`, `HB404` and
+`HB409`, so `backend/app/core/pg_errors.py` gains nothing (R13). And nothing is
+dropped except the constraint it immediately re-adds.
+
+**Deploy the code with it.** Unlike §29, this migration has a backend half:
+`POST /api/v1/work-orders/{workOrderId}/take-up` calls the new RPC. The route
+answers `404` from PostgREST until the function exists, so the apply comes
+first and the deploy second — but a deployed route with no function is a broken
+button, not a broken database.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) §29 is applied. All three markers must be true. If any is false, stop
+--     and apply 20260823190000 first: this file re-issues the claim body, and
+--     copying it forward onto a database that never took the rank clause would
+--     leave the board open to leadership behind a refusal message that says it
+--     is closed.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%sa.rank = ''member''%' as has_rank_clause
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and (p.proname in ('worker_open_jobs', 'claim_open_work_order')
+        or p.oid::regprocedure::text like 'dispatch_candidates_at(%')
+ order by 1;
+
+-- (b) The constraint this file recreates is the one 20260822170000 left. Both
+--     must be true. `knows_priority` false means an older definition won at
+--     some point and section 1's list would be widening the wrong list.
+select pg_get_constraintdef(oid) like '%taken_up%'         as knows_taken_up,
+       pg_get_constraintdef(oid) like '%priority_changed%' as knows_priority,
+       pg_get_constraintdef(oid) like '%job_taken_up%'     as already_applied
+  from pg_constraint
+ where conrelid = 'public.complaint_events'::regclass
+   and conname  = 'complaint_events_type_check';
+
+-- (c) Who this feature is actually for. Expect at least one row per department
+--     that has leadership; a department with none cannot use the new button,
+--     which is correct and is worth seeing before the PO tries it.
+select sa.department_id, sa.rank, count(*) as active_rows
+  from public.staff_assignments sa
+ where sa.status = 'active' and sa.is_active
+   and sa.rank in ('manager', 'supervisor')
+ group by 1, 2
+ order by 1, 2;
+```
+
+There is no data risk to check for. The constraint swap only ever widens — no
+row the table accepted before is rejected after — and the three functions are
+`create or replace`. Nothing in this file writes a row, drops a column or
+touches a policy.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop constraint` and the
+`create or replace function` keywords — and it is safe to confirm: the drop is
+followed three lines later by the same constraint with one more word in it, and
+the whole paste is one transaction, so a failure anywhere rolls the entire file
+back. The only output expected is one notice at the end:
+*"supervisor_take_up: one new word, one new verb, and two bodies re-issued."*
+Section 1's guard, section 1's verification and section 5's proof all raise
+rather than report, so a half-applied file cannot look like a successful one.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260824090000', 'supervisor_take_up')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only — every one guard-free (§28's lesson):**
+
+```sql
+-- (a) The new verb exists, with the frozen signature and one grant. Expect one
+--     row: take_up_work_order(uuid, timestamp with time zone, timestamp with
+--     time zone), returning uuid, security definer true, acl naming
+--     authenticated. This inspects the catalogue rather than calling anything:
+--     the SQL editor has no auth.uid(), so calling it would answer HB403 and
+--     prove nothing either way.
+select p.oid::regprocedure           as signature,
+       pg_get_function_result(p.oid) as returns,
+       p.prosecdef                   as security_definer,
+       array_to_string(p.proacl, ', ') as acl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname = 'take_up_work_order';
+
+-- (b) The three assignment verbs, and who each stamps on the timeline. Expect
+--     take_up_work_order and force_assign_work_order both `stamps_caller` true
+--     and `stamps_standing_supervisor` false; claim_open_work_order carries
+--     neither spelling, because it resolves its actor into a variable first.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%v_actor, ''job_%'
+         as stamps_caller,
+       pg_get_functiondef(p.oid) like '%v_order.supervisor_membership_id, ''job_%'
+         as stamps_standing_supervisor
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('take_up_work_order', 'force_assign_work_order',
+                     'claim_open_work_order')
+ order by 1;
+
+-- (c) §29 survived this file. Expect three rows with has_rank_clause true --
+--     the same query as pre-check (a), asked again, because the whole hazard
+--     of copying a body forward is what the copy quietly dropped. Plus the new
+--     sentence in the claim.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%sa.rank = ''member''%'
+         as has_rank_clause,
+       pg_get_functiondef(p.oid) like '%Take this job myself%'
+         as refusal_names_the_verb
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and (p.proname in ('worker_open_jobs', 'claim_open_work_order')
+        or p.oid::regprocedure::text like 'dispatch_candidates_at(%')
+ order by 1;
+
+-- (d) The vocabulary knows the new word and kept every old one. Expect one
+--     row, all three true.
+select pg_get_constraintdef(oid) like '%job_taken_up%'     as knows_job_taken_up,
+       pg_get_constraintdef(oid) like '%taken_up''%'       as knows_taken_up,
+       pg_get_constraintdef(oid) like '%priority_changed%' as knows_priority
+  from pg_constraint
+ where conrelid = 'public.complaint_events'::regclass
+   and conname  = 'complaint_events_type_check';
+
+-- (e) Nothing has been taken up yet, which is what a new word looks like on
+--     the day it lands. Expect zero. Run it again after the functional check
+--     below and expect one.
+select count(*) as taken_up_jobs
+  from public.complaint_events
+ where event_type = 'job_taken_up';
+```
+
+**Post-check, functional:** as a department supervisor in the worker portal,
+open a complaint with a scheduled job that nobody holds and press **"Take this
+job myself"**. The job moves to `scheduled` with you as its holder, the
+complaint's timeline gains **both** `job_assigned` and `job_taken_up` naming
+**you** — not the department's supervisor of record — and the resident is
+notified that somebody is coming. You receive no notification of your own
+action; the department's other leadership does. Then check the two neighbours:
+the same job's "Assign this job outright" modal still lists **only**
+technicians, and the "Open jobs" board is still empty for you, now refusing a
+deep-linked claim with *"Supervisors and managers cannot claim from the board.
+Use "Take this job myself" from your dashboard."* Last, as the community admin
+— who holds no roster row — the take-up call must answer `403`.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_supervisor_take_up_migration.py` (22 tests) — the file
+parses (`pglast`), sorts after all five files it reasons about, and is the last
+declaration of each of the three functions it issues; it declares no fourth
+function; the new word list is derived from `20260822170000`'s own text and
+differs by **exactly one word**, with `taken_up` proved kept and proved not
+reused; the swap is guarded before the drop and proves the new word
+specifically; the new function's signature, `security definer`, `search_path`
+and grant are pinned, it carries no `p_staff_assignment_id`, its roster lookup
+is rank-limited to `manager`/`supervisor`, both its `HB403`s are accounted for,
+its three `HB409`s are force-assign's own three, its row is
+`accepted/false/false`, it stamps the caller on both timeline rows, and it
+notifies the resident and the department but never itself; the two carried
+bodies are diffed line by line against their predecessors with the removals
+pinned **by name** — two lines from force-assign, one from the claim, and
+nothing else may leave; every SQLSTATE the file raises is one `pg_errors` can
+map and the set is exactly `{HB403, HB404, HB409}`; no other closed vocabulary
+and no dispatch-task kind is named; `supervision_inherited_at` and both
+complaint take-up stamps are untouched; the grants and the PostgREST reload are
+stated; the in-transaction proof looks for all three diffs, including R12's as
+an *absence*; and the post-checks are comment-only and call nothing guarded.
+Plus the API battery in `backend/tests/api/test_supervisor_actions.py` (routing,
+slot carry, the read-back body, the `HB403` surfacing as 403, and the CSRF pair
+on both halves), the directory battery in
+`test_migration_directory_is_fresh_appliable.py`, and the 211-operation
+`test_openapi_spec.py`. **Not verifiable statically:** that hosted's
+`force_assign_work_order` and `claim_open_work_order` are `20260822170000`'s and
+§29's before this overwrites them — these are `create or replace`, so the apply
+overwrites whatever is there, which is why pre-check (a) exists; that the hosted
+`complaint_events` constraint is the one `20260822170000` left, which is
+pre-check (b); and whether any department has leadership to use the button at
+all, which is pre-check (c).

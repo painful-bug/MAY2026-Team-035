@@ -2196,6 +2196,23 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    # Take-up (2026-08-24, ruling R8). It carries US-2.8 for the same reason
+    # `assign` does and no more: it puts a named roster row on the job, so "who
+    # is handling it" survives being read back. It is deliberately NOT credited
+    # with anything about triage ownership -- that is `POST /complaints/{id}/
+    # take-up`, a different verb about a different question. No `422` beyond the
+    # slot validator's, and no `404` for a roster row, because it names none.
+    ("post", "/api/v1/work-orders/{work_order_id}/take-up"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        stories=[
+            (
+                "US-2.8",
+                "The department's manual valve: when the member-only rule "
+                "leaves nobody eligible, a supervisor puts themselves on the "
+                "job and the resident is still told who is coming and when"
+            ),
+        ],
+    ),
     ("post", "/api/v1/work-orders/{work_order_id}/reschedule"): op(
         errors=["401", "403", "404", "409", "422", "500"],
         stories=[

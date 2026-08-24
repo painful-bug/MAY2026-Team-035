@@ -34,6 +34,7 @@ from app.domain.work_order_schemas import (
     ScheduleRequest,
     ScheduleResponseRequest,
     ScheduleTimeRequest,
+    TakeUpWorkOrderRequest,
     UpdateWorkOrderRequest,
     WorkOrder,
     WorkOrderAssignment,
@@ -301,6 +302,32 @@ def assign(
         client,
         work_order_id=work_order_id,
         staff_assignment_id=body.staff_assignment_id,
+        scheduled_start_at=_iso(body.scheduled_start_at),
+        scheduled_end_at=_iso(body.scheduled_end_at),
+    )
+    return _read_back_detail(client, work_order_id=work_order_id)
+
+
+def take_up(
+    client: Client, *, work_order_id: str, body: TakeUpWorkOrderRequest
+) -> WorkOrderDetail:
+    """Take the job yourself. **A third verb, not a third branch of ``assign``.**
+
+    2026-08-24 ruling R8: a supervisor or manager may put themselves on a job,
+    and that is an explicit exception rather than a relaxation of the rule that
+    jobs go to workers hired from the pool. It gets its own route and its own
+    RPC for the reason ``force`` did not: ``assign`` answers *who* is going, and
+    this one cannot -- the answer is fixed at "whoever is calling", and a body
+    that could name somebody else would be the member-only rule with a door in
+    it.
+
+    Nothing here decides anything. ``take_up_work_order`` resolves the caller's
+    leadership roster row itself and refuses a caller who holds none, which is
+    the same posture every other verb in this file takes.
+    """
+    repo.take_up_work_order(
+        client,
+        work_order_id=work_order_id,
         scheduled_start_at=_iso(body.scheduled_start_at),
         scheduled_end_at=_iso(body.scheduled_end_at),
     )

@@ -1433,3 +1433,76 @@ reschedule path (awaiting_resident WITH a slot); pick-mode is
 awaiting_resident with a NULL slot; the timeout handler branches on that
 discriminator; and the facility gate re-checks hourly so a gated job is
 never stranded (it stays claimable on the board throughout).
+
+## §24. Ruled 2026-08-23 — only the servicemen pool holds a wrench
+
+Ruled by the product owner (live session, 2026-08-23, on seeing the
+supervisor and manager listed in the "Assign this job outright" picker):
+**"its only asigned to the workers who are hired from the service men
+pool."** Work orders may only be offered to, assigned to, auto-booked to,
+or claimed by rank-`member` staff — the technicians hired from the
+marketplace. Managers and supervisors never appear as candidates, to a
+human or to the engine.
+
+Engine impact: the single eligibility query (`dispatch_candidates_at`,
+last defined in `20260823180000`) had no rank clause, so leadership leaked
+into the picker, the slot-finder, the 24h auto-book, the facility
+auto-assign, the ping, and — via `worker_open_jobs`/`claim_open_work_order`
+— the open board. Because candidates order by fewest open jobs first, an
+idle supervisor would have been the auto-book's FIRST choice. Fixed by one
+`and sa.rank = 'member'` clause in the shared query plus the board's two
+functions (orchestrator rulings R1–R3; the board-door closure R2 is
+derived, flagged for PO confirmation). The same migration
+(`20260823190000_assignment_write_repairs.sql`) also widens the hosted
+`work_order_assignments` legacy NOT NULL drift that made EVERY assignment
+insert crash (the live 422) — the auto-book and facility handlers would
+have died on first fire without it. Full rulings and evidence in
+`docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`.
+
+## §25. Ruled 2026-08-24 — the supervisor may pick up the wrench, but only on purpose
+
+Ruled by the product owner (2026-08-24), confirming §24's derived
+board-door closure (R2) and adding the rule's one deliberate exception:
+**"yes, include an option where a super can take up work … it sholdnt be
+something seen in normal routine workflow where the workers are hired and
+present. it is available at any time though but as a seperate button
+orsomething like that."** And on the thin-department consequence flagged
+in §24's era: **"we assume that workers will eb availbale"** — no
+automation fallback; a department with no technicians yields zero
+candidates and the job waits; leadership take-up is the manual valve.
+
+What this becomes (rulings R8–R14 in the assignment spec's 2026-08-24
+addendum): a new verb, `take_up_work_order` in
+`20260824090000_supervisor_take_up.sql`, exposed as
+`POST /work-orders/{id}/take-up` and a quiet "Take this job myself" button
+beside the primary assign action on the supervisor dashboard. The caller's
+own leadership roster row is always the assignee — the verb cannot assign
+anyone else — and every candidate surface (picker, auto-book, ping,
+board) stays member-only.
+
+Engine-lifecycle notes for your record:
+
+- **One new timeline word, `job_taken_up`**, added to your
+  `complaint_events` CHECK bouncer (§19's lesson: a word is a migration).
+  It is written *beside* a normal `job_assigned` row, and R14 hides it
+  from the resident timeline exactly as `job_force_assigned` is hidden —
+  the resident's fact ("somebody is coming, and this is their name") is
+  already on the row next to it. The worker/admin timeline labels it
+  "Took up the job themselves".
+- **§24's R7 attribution smell is closed** (R12): `force_assign_work_order`
+  now stamps its two timeline events with the acting caller resolved from
+  `auth.uid()` — the `take_up_complaint` pattern — instead of the raising
+  supervisor's membership. Under manager-cover, force-assign and take-up
+  events now name who actually acted.
+- **The board refusal was reworded, not reopened** (R13):
+  `claim_open_work_order` still refuses leadership with HB403, but the
+  message now points at the sanctioned door.
+- No status vocabulary, no dispatch_tasks kind, no transfer rule, no
+  timer, and no `complaints.status` behaviour changed. The assignment row
+  a take-up writes is `accepted / is_forced false / is_auto_assigned
+  false`, so nothing downstream of your engine can mistake it for a
+  forced or automated booking.
+
+Migration hand-applied by the owner only; runbook §30 carries the
+pre/post-checks. Verified 2026-08-24: backend 1472 passed / 5 skipped,
+frontend 57 files / 384 tests, both on the orchestrator's own runs.

@@ -17,6 +17,7 @@ import {
 
 import AssignPickerModal from './AssignPickerModal';
 import ComplaintDetailModal from './ComplaintDetailModal';
+import TakeUpModal from './TakeUpModal';
 import { NoteModal } from './NoteComposer';
 import { CardActions, Chip, Empty, Failure, Section, whenText } from './triageParts';
 import { openChatDock } from '../../features/messages/messagesApi';
@@ -428,6 +429,24 @@ export default function SupervisorDashboard({ engagement }) {
     </>
   );
 
+  // The exception valve of ruling R8, and the quiet style is the ruling: *"it
+  // sholdnt be something seen in normal routine workflow … it is available at
+  // any time though but as a seperate button"*. Leadership is not a candidate
+  // anywhere (ruling R1 filters `dispatch_candidates` to `rank = 'member'`), so
+  // this is not a shortcut through the picker beside it — it is its own call,
+  // with no id in the body, and the modal says what stepping outside the norm
+  // means before it fires.
+  const takeUpJobButton = (order) => (
+    <button
+      type="button"
+      onClick={() => setPopup({ kind: 'takeup', order })}
+      className={quietButton}
+    >
+      <UserCheck className="h-4 w-4 text-indigo-600" />
+      Take this job myself
+    </button>
+  );
+
   const openRequestActions = (order) => (
     <>
       <button
@@ -438,6 +457,7 @@ export default function SupervisorDashboard({ engagement }) {
         <UserPlus className="h-4 w-4" />
         Assign without asking
       </button>
+      {takeUpJobButton(order)}
       {order.complaintId ? priorityButton(order.complaintId, order.priority) : null}
       {order.complaintId ? resolveButton(order.complaintId, 'Mark as resolved') : null}
     </>
@@ -722,6 +742,10 @@ export default function SupervisorDashboard({ engagement }) {
 
       {popup?.kind === 'assign' ? (
         <AssignPickerModal order={popup.order} onClose={() => setPopup(null)} />
+      ) : null}
+
+      {popup?.kind === 'takeup' ? (
+        <TakeUpModal order={popup.order} onClose={() => setPopup(null)} />
       ) : null}
     </div>
   );

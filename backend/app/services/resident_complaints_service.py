@@ -82,6 +82,10 @@ _EVENT_LABELS = {
     "auto_close_warning": "Reminder sent",
     "auto_closed": "Closed automatically",
     "job_force_assigned": "Assigned without offer (critical)",
+    # Written by `20260824090000`'s `take_up_work_order`, and hidden from the
+    # resident for `job_force_assigned`'s reason (ruling R14): the RPC writes
+    # `job_assigned` beside it, which already carries the resident's fact.
+    "job_taken_up": "Took up the job themselves",
     # Written by `20260822120000`'s `take_up_complaint`. It is here rather than
     # nowhere because an unknown type renders as its own raw word (see above),
     # and `taken_up` on a resident's timeline is the ugly row that comment
@@ -206,9 +210,11 @@ def _is_hidden_from_resident(row: dict[str, Any]) -> bool:
     already removed by the policy on ``complaint_comments``; this removes its
     shadow.
 
-    ``job_force_assigned``: internal dispatch mechanics. The resident already has
-    the fact that matters -- somebody is coming, and this is their name -- from
-    the ``job_assigned`` row beside it.
+    ``job_force_assigned`` and ``job_taken_up``: internal dispatch mechanics.
+    The resident already has the fact that matters -- somebody is coming, and
+    this is their name -- from the ``job_assigned`` row each writer puts beside
+    it. Which door the assignment came through (a forced pick, the supervisor
+    taking it up themselves) is staffing, not service.
 
     ``note_added`` **carrying ``internal: true``**: the supervisor's own notes
     (2026-08-22, ruling A5). The product owner's scoping named staff and workers
@@ -217,7 +223,7 @@ def _is_hidden_from_resident(row: dict[str, Any]) -> bool:
     which carry no flag -- are untouched by this and still render.
     """
     event_type = _text(row.get("event_type"))
-    if event_type == "job_force_assigned":
+    if event_type in ("job_force_assigned", "job_taken_up"):
         return True
     payload = row.get("payload")
     data = payload if isinstance(payload, dict) else {}

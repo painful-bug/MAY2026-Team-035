@@ -781,6 +781,51 @@ describe('section 4 — open job requests', () => {
       }));
   });
 
+  it('offers the supervisor the job itself, as a button of its own', async () => {
+    const user = userEvent.setup();
+    serve();
+    renderLanding();
+
+    const open = await sectionFor('Open job requests');
+    await waitFor(() => expect(within(open).getByText('Gate motor jammed')).toBeVisible());
+    const card = within(open).getByText('Gate motor jammed').closest('article');
+
+    // Ruling R8: leadership is in no candidate list anywhere, so this is not a
+    // shortcut through the picker beside it — it is a separate door, and it is
+    // beside the routine one rather than in place of it.
+    expect(within(card).getByRole('button', { name: 'Assign without asking' })).toBeVisible();
+    await user.click(within(card).getByRole('button', { name: 'Take this job myself' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Jobs normally go to your technicians/)).toBeVisible();
+    await user.click(
+      within(dialog).getByRole('button', { name: /Take up this job — assign it to me/ }),
+    );
+
+    // No `staffAssignmentId`: the RPC resolves the assignee from the caller.
+    await waitFor(() =>
+      expect(mocks.api).toHaveBeenCalledWith('/work-orders/work-order-3/take-up', {
+        method: 'POST',
+        body: '{}',
+      }));
+  });
+
+  it('repeats the take-up inside the eye popup, where the reader now is', async () => {
+    const user = userEvent.setup();
+    serve();
+    renderLanding();
+
+    const open = await sectionFor('Open job requests');
+    await waitFor(() => expect(within(open).getByText('Gate motor jammed')).toBeVisible());
+    const card = within(open).getByText('Gate motor jammed').closest('article');
+
+    await user.click(within(card).getByRole('button', { name: /^View details of/ }));
+    const detail = await screen.findByRole('dialog');
+    await user.click(within(detail).getByRole('button', { name: 'Take this job myself' }));
+
+    expect(await screen.findByText(/Jobs normally go to your technicians/)).toBeVisible();
+  });
+
   it('leaves the two monitor-only sections monitor-only', async () => {
     serve();
     renderLanding();
@@ -789,7 +834,13 @@ describe('section 4 — open job requests', () => {
     await waitFor(() => expect(within(assigned).getByText('Water tank overflow')).toBeVisible());
 
     for (const section of [assigned, await sectionFor('Being worked right now')]) {
-      for (const verb of [/Assign without asking/, /Raise priority/, /Resolved/, /Take up/]) {
+      // Including the take-up: a job somebody has already committed to is not
+      // the supervisor's to lift off them from here (ruling R8's valve is for
+      // work nobody has taken).
+      for (const verb of [
+        /Assign without asking/, /Raise priority/, /Resolved/, /Take up/,
+        /Take this job myself/,
+      ]) {
         expect(within(section).queryByRole('button', { name: verb })).not.toBeInTheDocument();
       }
     }

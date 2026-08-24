@@ -9279,6 +9279,43 @@ components:
       - name
       title: StaffMemberInput
       type: object
+    TakeUpWorkOrderRequest:
+      description: 'Take the job yourself. **The only field is the hour, and even that is
+
+        optional.**
+
+
+        There is no ``staffAssignmentId`` and there will not be one: ruling R8 made
+
+        leadership self-assignment a separate deliberate verb rather than a hole in
+
+        the member-only eligibility rule, and a body naming somebody else would be
+
+        exactly that hole. The RPC finds the caller''s own leadership roster row from
+
+        ``auth.uid()``; a caller who holds none is refused.
+
+
+        The slot defaults to the job''s own, like ``AssignWorkOrderRequest``''s, so a
+
+        supervisor who picked the hour in the same gesture does not need a second
+
+        call. Both ends together or neither -- ``_SlotFields`` says why.'
+      properties:
+        scheduledEndAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduledendat
+        scheduledStartAt:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduledstartat
+      title: TakeUpWorkOrderRequest
+      type: object
     TriageComplaint:
       description: 'A complaint on the supervisor''s dashboard: sections 1 and 2.
 
@@ -23198,6 +23235,112 @@ paths:
         role: A moved visit notifies the resident and the booked worker, so the change reaches the two
           people whose day it alters
         title: Complaint lifecycle notifications
+  /api/v1/work-orders/{work_order_id}/take-up:
+    post:
+      description: '**The department''s manual valve** (2026-08-24 ruling R8).
+
+
+        Since 2026-08-23 a job may only be offered, auto-booked or claimed by staff
+
+        hired from the servicemen pool — rank `member`. That is the right rule and
+
+        it leaves one gap: a thin department, on a day its technician is away, has
+
+        work nobody in the system may hold. This is the way out, and it is
+
+        deliberately a separate button rather than a relaxation of the rule.
+
+
+        **There is no `staffAssignmentId` and there will not be one.** The holder is
+
+        the caller''s own active `manager` or `supervisor` roster row on this job''s
+
+        department, resolved inside the database from the session. A caller who
+
+        holds no such row is refused — including a community admin, who has no
+
+        roster row, no calendar and no trade, and whose booking nobody could keep.
+
+        The most this route can do is give the caller work.
+
+
+        Everything after that is `assign`''s: the slot is optional and defaults to
+
+        the job''s own, the previous holder is **withdrawn, not deleted**, the job
+
+        moves to `scheduled`, the resident is told somebody is coming, and the
+
+        double-booking `409` is the same one — taking a job up overrides nobody''s
+
+        consent, and certainly not physics.
+
+
+        The timeline gains **two** entries: `job_assigned`, because from the
+
+        resident''s side the fact is the same fact, and `job_taken_up` beside it,
+
+        because from the department''s side it is not — this job did not go through
+
+        the pool, and the record says so without anybody having to infer it from a
+
+        rank. Both name the caller. The department is notified; the caller is not,
+
+        having just pressed the button.
+
+
+        | Status | Code | Cause |
+
+        |---|---|---|
+
+        | 403 | `forbidden` | You hold no active supervisor or manager row on this department |
+
+        | 404 | `not_found` | No such work order |
+
+        | 409 | `conflict` | The job is closed · you are already booked across that hour |'
+      operationId: take_up_work_order_api_v1_work_orders__work_order_id__take_up_post
+      parameters:
+      - in: path
+        name: work_order_id
+        required: true
+        schema:
+          title: Work Order Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TakeUpWorkOrderRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkOrderDetail'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Take the job yourself
+      tags:
+      - work-orders
+      x-user-stories:
+      - coverage: served
+        id: US-2.8
+        role: 'The department''s manual valve: when the member-only rule leaves nobody eligible, a supervisor
+          puts themselves on the job and the resident is still told who is coming and when'
+        title: Complaint accountability
   /api/v1/worker/applications:
     get:
       description: 'Both directions in one list, newest first.

@@ -186,6 +186,22 @@ class AssignWorkOrderRequest(_SlotFields):
     force: bool = False
 
 
+class TakeUpWorkOrderRequest(_SlotFields):
+    """Take the job yourself. **The only field is the hour, and even that is
+    optional.**
+
+    There is no ``staffAssignmentId`` and there will not be one: ruling R8 made
+    leadership self-assignment a separate deliberate verb rather than a hole in
+    the member-only eligibility rule, and a body naming somebody else would be
+    exactly that hole. The RPC finds the caller's own leadership roster row from
+    ``auth.uid()``; a caller who holds none is refused.
+
+    The slot defaults to the job's own, like ``AssignWorkOrderRequest``'s, so a
+    supervisor who picked the hour in the same gesture does not need a second
+    call. Both ends together or neither -- ``_SlotFields`` says why.
+    """
+
+
 class RescheduleWorkOrderRequest(CamelModel):
     """Move the visit. Both ends required -- this is not a partial edit."""
 

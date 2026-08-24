@@ -4190,6 +4190,7 @@ transition it describes.
 | [`POST /complaints`](#post-apiv1complaints) | The expected resolution is computed on insert, so it exists before anyone asks |
 | `POST /worker/jobs/{workOrderId}/claim` | Added 2026-08-23 with the open-jobs board: "who is responsible" acquires an answer that came from the responsible person — here before any supervisor asked |
 | [`GET /complaints/{complaintId}/schedule-request`](#get-apiv1complaintscomplaintidschedule-request) | *When to expect action*, answered with an hour and a name rather than an SLA estimate — and `respondBy` says when the association stops waiting |
+| [`POST /work-orders/{workOrderId}/take-up`](#post-apiv1work-ordersworkorderidtake-up) | Added 2026-08-24 with ruling R8: the department's manual valve. When the member-only eligibility rule leaves nobody able to hold a job, a supervisor puts themselves on it — and the resident is still told who is coming and when, which is the whole of what this story asks |
 | [`POST /complaints/{complaintId}/schedule-time`](#post-apiv1complaintscomplaintidschedule-time) | Added 2026-08-23 with ruling F1: *when to expect action* becomes the resident's own answer, so the visit happens when they said it could instead of at an hour a supervisor guessed and they had to ring up to move |
 
 > **Closed, 2026-08-04, by `0031`.** All three things the story asks for — who is responsible, when to
@@ -4608,6 +4609,7 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-24 | **Supervisor take-up — the manual valve behind the member-only rule.** One operation added — `POST /work-orders/{workOrderId}/take-up` (surface **210 → 211 across 180 paths**) — backed by `20260824090000_supervisor_take_up.sql` and frozen in [`plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`](plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md)'s *Addendum 2026-08-24*, under rulings R8–R13. The 2026-08-23 eligibility repair made every assignment path member-only, which leaves a thin department with work nobody may hold; ruling R8 answers it with **a separate deliberate verb**, not an exception inside the rule — the candidate list, the ping, the auto-book and the open board are all still member-only. The request carries **no `staffAssignmentId`**: the holder is the caller's own active `manager`/`supervisor` roster row on the job's department, resolved from the session inside Postgres, so the route cannot put anybody else on a job and refuses a community admin, who holds no roster row. Everything after the pick is `assign`'s — optional slot, withdraw-not-delete, `scheduled`, the resident told by name, the same double-booking `409`. The timeline gains **two** entries and one new `complaint_events` word, `job_taken_up` (distinct from `taken_up`, which is complaint triage ownership); the department hears `job.taken_up` minus the person who pressed the button. Two functions were re-issued verbatim beside it: `force_assign_work_order` now stamps the **acting caller** on its two timeline rows instead of the department's supervisor of record (ruling R12, closing the backlogged R7 — an attribution defect, no shape change), and `claim_open_work_order`'s leadership refusal now points at the new verb (R13). No new SQLSTATE: the whole migration raises only HB403/HB404/HB409, so `pg_errors.py` is unchanged. |
 | 2026-08-23 | **The resident sets the time, and the system books what nobody schedules.** One operation added — `POST /complaints/{complaintId}/schedule-time` (surface **209 → 210 across 179 paths**) — plus `mode` on `GET /complaints/{id}/schedule-request` and `awaitingResident` on `TriageSnapshot`, both additive. Backed by `20260823180000_resident_sets_the_time.sql` and frozen in [`plans/RESIDENT_SETS_THE_TIME_SPEC.md`](plans/RESIDENT_SETS_THE_TIME_SPEC.md) under the 2026-08-23 rulings F1–F3. **The raise form loses its date and time for everyone.** A resident-subject job now arrives as a request to the resident to name the hour, and only their answer puts it on the open pile; a facility job is booked by the system into the first free slot, but only after every urgent (`high`) resident job in the department has somebody on it. Twenty-four hours of resident silence and the dispatcher books the first hour a serviceman can take and assigns them — the existing `resident_timeout` timer, which the deadline already armed, branching on whether a slot exists. **No new work-order status and no new event word**: pick-mode is `awaiting_resident` with a **null slot**, approve-mode is the same status with one, and the distinctions ride in payloads (`mode`, `resident_set`, `auto_assigned`) because both vocabularies are closed CHECKs on live tables. The one constraint widened is `dispatch_tasks_kind_check`, for the new `facility_auto_assign` task. `dispatch_candidates` was **refactored, not forked**: the body moved to `dispatch_candidates_at`, parameterised by a hypothetical hour so `find_first_available_slot` can walk the calendar without writing trial slots to `work_orders` — six triggers fire on that table — and the three-argument entry point became a delegate with the same signature, ordering and grants. The triage snapshot gains a **sixth** array, `awaitingResident`, and `openRequests` narrows to `draft`/`offered`: a job waiting on a resident is not work the supervisor can pick up. `US-2.8` gains two rows; the board predicate, the supervisor's offer and force-assign paths, and `respond_to_work_order_schedule` are untouched. |
 | 2026-08-22 | **The supervisor's card actions — amendment 2, four operations and one flag.** `POST /complaints/{complaintId}/resolve`, `/priority-raise`, `/notes` and `/chat` (surface **203 → 207 across 176 paths**), plus `force` on `POST /work-orders/{workOrderId}/assign` and a guard widening on `GET /complaints/staff/complaints/{complaintId}` — backed by `20260822170000_supervisor_actions.sql` and frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md)'s *Amendment 2*, under four product rulings. **Resolve** cancels every other live job with its workers told why and refuses while one is `in_progress`; it moves the complaint to `resolved` and leaves the timeline entry, the resident's notification and both auto-close timers to `complaints_on_resolved`, which already writes them. **Priority** is one-way `Low → Medium → High`, carried onto the complaint's live jobs because a job's urgency *is* its complaint's, and it is the one new `complaint_events` word this amendment cost (`priority_changed` — an enumerating CHECK means a word is a migration, the lesson of `20260822150000`). **Notes** are internal by a payload flag, invisible to the resident and untouched for the admin's resident-visible ones. **Chat** is a real `dm_threads` thread of a third kind, one per complaint, shared by the raiser and the whole department, locked when the complaint closes and unlocked when it reopens. `force: true` on assign routes to `force_assign_work_order` — the dispatch engine's own forced mechanics with the picking removed and a supervisor's guard added — while `false` is the offer flow byte for byte. The snapshot was **re-bucketed into five arrays**: *engaged* became *committed* (an unaccepted offer no longer counts, ruling A3), `openRequests` was added, and the two complaint sections now exclude **any** live work order, so a complaint appears exactly once across the five. `TriageWorkOrder` gains `offeredToName`, additively. |
 | 2026-08-22 | **The supervisor's dashboard — two operations, and three facts the model could not state.** `GET /departments/{departmentId}/triage-snapshot` and `POST /complaints/{complaintId}/take-up` (surface **201 → 203 across 172 paths**), backed by `20260822120000_supervisor_triage.sql` and interface-frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md), against which the screen was built in parallel. The snapshot answers the dashboard's four sections — new, taken up, assigned-but-not-started, being-worked-right-now — in **one read**, and **buckets them server-side**: *live* and *engaged* are defined once, in the RPC, because four definitions that must agree are one definition or they are four answers. Three new columns exist because three facts had nowhere to live: `complaints.taken_up_at` (+ `taken_up_by_membership_id`), so "new" and "mine, not yet dispatched" stop being the same row; `work_orders.started_at`, because `start_work_order` let the moment fall into `updated_at` and the next write overwrote it; and `work_orders.supervision_inherited_at`, which is §16 of the handoff's "no new column" **partially reversed** so an inheriting supervisor can tell the work they chose from the work that arrived by somebody else's removal. Take-up is **triage ownership and never dispatch** — `assigned_to_membership_id` stays the dead column the 2026-08-21 ruling made it — and it gives `acknowledged` a deliberate second writer beside the worker-offer trigger; both move `open` and only `open`, so they cannot race. It notifies nobody, by ARCHITECTURE.md's passive-change rule: the resident reads the same fact as *In Progress* on the next SSE re-snapshot. `US-2.6`'s new row is take-up only; the dashboard read traces to no story, on the standing verdict that a screen only the department can open must not claim a story about what a resident sees. |
@@ -6682,6 +6684,65 @@ This is the `409` **this step exists to produce**. `0036` refuses a double-booki
 | 404 | `not_found` | No such work order, or no such roster entry |
 | 409 | `conflict` | Already booked across that slot · not on this roster · the job has no time yet · the job is closed |
 | 422 | `validation_error` | A backwards slot |
+| 500 | `internal_error` | Unhandled |
+
+#### `POST /api/v1/work-orders/{workOrderId}/take-up`
+
+Take the job yourself. **Requires ADMIN, MANAGER, WORKER or SECURITY** at the door, and an active
+`manager` or `supervisor` roster row on the job's own department underneath it.
+
+```json
+{ "scheduledStartAt": "2026-08-24T10:00:00Z", "scheduledEndAt": "2026-08-24T11:00:00Z" }
+```
+
+Responds `200` with the job and its assignment history. The body is optional in full: sending `{}`
+takes the job up at its own hour.
+
+**Added 2026-08-24, ruling R8** — *"yes, include an option where a super can take up work … it
+sholdnt be something seen in normal routine workflow … it is available at any time though but as a
+seperate button orsomething like that."* Since 2026-08-23 a job may only be offered, auto-booked,
+pinged or claimed by staff hired from the servicemen pool — rank `member` (§18, the eligibility
+amendment). That is the rule the product owner asked for, and it leaves one gap: a thin department,
+on the day its technician is away, has work nobody in the system may hold. This route is the way
+out, and it is deliberately **a separate verb rather than a relaxation** — the candidate list, the
+ping, the auto-book and the open board are all still member-only, and none of them has an exception
+in it.
+
+**There is no `staffAssignmentId`, and there will not be one.** A parameter naming somebody would
+make this *"assign anybody, without the rank check"*, which is the member-only rule with a door in
+it, reachable by anyone who can call an RPC. The holder is the caller's own leadership roster row,
+resolved inside Postgres from the session. A caller holding none is a `403` — **including a
+community admin**, who has no roster row, no calendar and no trade, and whose booking nobody could
+keep. The most this route can do is give the caller work.
+
+**Everything after the pick is `assign`'s.** The slot is optional and defaults to the job's own; any
+previous holder is **withdrawn, not deleted**; the job moves to `scheduled`; the resident is told
+somebody is coming, with a name. The double-booking `409` is the same one — taking a job up
+overrides nobody's consent, and certainly not physics.
+
+**The assignment row is `accepted`, with `isForced` and `isAutoAssigned` both false**, and each flag
+is a sentence: nobody's consent was overridden — the holder asked for it — and no engine decided
+anything.
+
+**Two timeline entries, not one.** `job_assigned`, because from the resident's side the fact is the
+same fact — somebody is now coming, and their name is this — and `job_taken_up` beside it, because
+from the department's side it is not: this job did not go through the pool, and the record says so
+without anybody having to infer it from a rank. Both name the caller. `job_taken_up` is the one new
+`complaint_events` word this feature cost, and it is distinct from `taken_up`
+(`POST /complaints/{id}/take-up`), which means a supervisor is *looking at* a complaint rather than
+*going*.
+
+**The department hears it; the caller does not.** `job.taken_up` reaches the community's admins, the
+department's manager and its supervisors, minus whoever pressed the button — a fact arriving
+unprompted reads differently from an echo of your own action.
+
+| Status | Code | Cause |
+|---|---|---|
+| 401 | `authentication_error` | No credentials |
+| 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed, or you hold no active supervisor or manager row on this department |
+| 404 | `not_found` | No such work order |
+| 409 | `conflict` | The job is closed · a backwards slot · you are already booked across that hour |
+| 422 | `validation_error` | Half a slot, or a backwards one |
 | 500 | `internal_error` | Unhandled |
 
 #### `POST /api/v1/work-orders/{workOrderId}/reschedule`

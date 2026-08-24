@@ -17,7 +17,98 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-23 (latest) — issue #48: amenity catalogue photos, hours, and four wire-vocabulary defects
+## 2026-08-24 (latest, second session) — the supervisor may pick up the wrench, but only on purpose
+
+**The pool-only rule gains its one deliberate exception.** `PO` ruling R8 (verbatim 2026-08-24: "yes,
+include an option where a super can take up work … it sholdnt be something seen in normal routine
+workflow … it is available at any time though but as a seperate button orsomething like that") plus
+R9–R14 in `docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md` (addendum). Confirms R2 (the board
+stays closed to leadership) and acknowledges the thin-department consequence: no automation fallback,
+jobs wait for hires, take-up is the manual valve. Ships as ONE hand-applied migration,
+`20260824090000_supervisor_take_up.sql` (runbook §30), one endpoint, one button.
+
+1. **A new verb, not a bypass.** `DERIVED` (R11): `take_up_work_order(work_order_id, slot?)` — the
+   caller's own active leadership roster row (`rank in ('manager','supervisor')`, R10 includes
+   managers because manager-cover can leave one as the only leadership) is always the assignee;
+   there is deliberately no staff_assignment parameter, so the verb cannot assign anyone else. The
+   frontend-only hack (feeding the supervisor's own id to force-assign, which carries no rank gate)
+   was rejected: it would forge an `is_forced` row, a `job_force_assigned` event, and a
+   "you cannot decline" notice the supervisor sends themselves. Row is `accepted / is_forced false /
+   is_auto_assigned false`; timeline gets `job_assigned` + new word `job_taken_up`; resident is
+   notified normally; the caller is not self-notified.
+2. **R7 closed in passing.** `DERIVED` (R12): `force_assign_work_order` redefined verbatim except
+   its two timeline events now stamp the acting caller resolved from `auth.uid()` (the
+   `take_up_complaint` pattern) instead of the raising supervisor's membership.
+3. **The board refusal now points at the door that exists.** `DERIVED` (R13): `claim_open_work_order`
+   reworded — leadership cannot claim from the board, but the message names "Take this job myself"
+   as the sanctioned path. Same HB403; the migration raises only already-mapped SQLSTATEs.
+4. **Residents see "Technician assigned", never the staffing door.** `DERIVED` (R14, both
+   specialists converged on it independently): `job_taken_up` joins `job_force_assigned` in
+   `_is_hidden_from_resident` — the `job_assigned` row beside it already carries the resident's
+   fact. The worker-portal timeline labels it "Took up the job themselves".
+5. **API + UI.** `POST /api/v1/work-orders/{id}/take-up` (docs in API.md, openapi.yaml, mapper;
+   traced to US-2.8). Worker portal: quiet-styled "Take this job myself" beside the primary
+   "Assign without asking" (R8's "separate button", visually subordinate to the routine verb), an
+   exception-path modal with an amber "jobs normally go to your technicians" banner, indigo — not
+   rose — confirm (no one's consent is overridden). Admin triage screen untouched in v1.
+
+Verified by the orchestrator's own runs after the specialists': backend `uv run pytest -q` →
+**1472 passed, 5 skipped** (baseline 1443/5; +22 migration tests, +5 API tests incl. the R14 pin,
++2 parametrised); frontend full suite → **57 files / 384 tests passed**. Specialists: two parallel
+general-purpose agents (Opus, high effort) against a frozen interface; recon by one Explore agent.
+Migration awaits the owner's hand-apply via the SQL editor (runbook §30).
+
+## 2026-08-24 — only the servicemen pool holds a wrench, and the assignment table learns to accept a row
+
+**Two live defects from the owner's force-assign test, one report that was the system working.** `PO`
+ruling §24 (COMPLAINT_ENGINE_HANDOFF.md, verbatim 2026-08-23: "its only asigned to the workers who
+are hired from the service men pool") plus orchestrator rulings R1–R7 and the recon evidence, all in
+`docs/plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`. Ships as ONE hand-applied migration,
+`20260823190000_assignment_write_repairs.sql` (runbook §29), plus 19 guard tests. No API shape, no
+status vocabulary, no frontend change.
+
+1. **Every `POST /work-orders/{id}/assign` 422'd — and the cause pre-broke the whole table.** `AUDIT`
+   (backend log: `null value in column "assigned_by_membership_id" … violates not-null constraint`).
+   Hosted `work_order_assignments` is a pre-baseline hand-built table carrying legacy NOT-NULL
+   no-default columns the repository never declares and never writes — the same drift
+   `20260822090000` fixed on `work_orders`. All eleven repo insert sites omit the column, so the
+   force-assign, the offer, the board claim, the ping and BOTH 2026-08-23 auto-assign handlers were
+   broken on hosted (the auto-book would have crashed on first fire, retried five times, and retired
+   the task dead). Fixed by §1 of the new migration: a dynamic widening sweep that drops NOT NULL on
+   every catalogue column outside the 13 repo-declared ones (list derived from `0001:74`,
+   `0036:264-272`, `20260813101000:4` — and the test derives the same list from those files' text).
+2. **Leadership leaked into every candidate surface.** `PO` (§24). The single eligibility query
+   (`dispatch_candidates_at`) had no rank clause, so the supervisor and manager appeared in the
+   picker — and because candidates order by fewest open jobs, an idle supervisor was the AUTO-book's
+   first choice. Fixed by `and sa.rank = 'member'` in the shared query (verbatim-plus-one-clause
+   redefinition, diff-pinned by test), which simultaneously fixes the picker, the slot-finder, the
+   24h auto-book, the facility auto-assign, the ping and the dispatch force path. `DERIVED` (R2,
+   flagged for PO confirmation): the board's two doors get the same clause — `worker_open_jobs` no
+   longer lists jobs to leadership and `claim_open_work_order` refuses their claims with HB403 and
+   an honest message ("Supervisors and managers cannot take up jobs from the board.") rather than
+   letting them fall into the roster-miss refusal, which would be false for them. `DERIVED` (R3):
+   strict `= 'member'` — NULL and future ranks are excluded by default; runbook §29's pre-check
+   lists any odd-rank hosted rows so a legacy technician losing eligibility is caught by eyes.
+   Consequence the PO should know: a department whose only roster is leadership now yields ZERO
+   candidates — the 24h timeout returns the job to `draft` and the facility handler notifies
+   `work_order.no_candidates`, instead of booking the supervisor.
+3. **"Not auto-assigned" was the design, not a defect.** `DERIVED` (ruling F1): a resident pick
+   routes the job to `offered` — the open board, for workers to claim — and arms only the
+   `manual_window` escalation at T+24h (T+2h at high priority). No immediate auto-assign exists on
+   that path. The dispatcher was alive the whole time (silent when idle by design; two transient
+   `WinError 10035` retries in the log). What actually blocked the live test was defect 1: the claim
+   itself would have hit the same NOT NULL wall. Runbook §29 adds a `dispatch_tasks` ground-truth
+   query for confirming fired/errored timers on hosted.
+4. **Backlogged, not fixed:** `force_assign_work_order` stamps timeline events with the raising
+   supervisor's membership rather than the acting caller (R7); the 422's Postgres detail is
+   deliberately suppressed by `pg_errors` for privacy — mechanism working as designed, no change.
+
+Verified by the orchestrator's own run after the specialist's: backend `uv run pytest -q` →
+**1443 passed, 5 skipped** (tree baseline 1424/5 after commit `01deb08`; +19 migration-guard tests,
+nothing broken). Specialist: one general-purpose agent (Opus, high effort); recon by one Explore
+agent (Opus, high effort). Migration text awaits the owner's hand-apply via the SQL editor.
+
+## 2026-08-23 — issue #48: amenity catalogue photos, hours, and four wire-vocabulary defects
 
 **The by-design answer and two mapping rulings.** `PO` (three rulings recorded 2026-08-23, one of
 them a confirmation rather than a change):

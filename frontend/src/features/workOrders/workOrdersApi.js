@@ -117,6 +117,25 @@ export const workOrdersApi = {
   assign: (workOrderId, payload) => post(`/work-orders/${workOrderId}/assign`, payload),
 
   /**
+   * Put the job on **yourself**. `{}`, or `{ scheduledStartAt, scheduledEndAt }`
+   * — both ends or neither.
+   *
+   * **Not `assign` with your own id in it, and there is no id to send.** Ruling
+   * R1 closed every candidate flow to leadership: managers and supervisors are
+   * not in `dispatch_candidates`, not on the open board, not reachable by ping
+   * or auto-book, so there is no roster row of theirs for `assign` to name. The
+   * product owner's answer (R8) was a door of its own rather than a hole in that
+   * wall — `take_up_work_order` resolves the assignee from `auth.uid()`, which
+   * is why this call carries no `staffAssignmentId` and cannot be pointed at
+   * anybody else.
+   *
+   * `403` when the caller holds no leadership roster row in the job's
+   * department; the `409`s are `assign`'s own — no hour on the job, or an hour
+   * that clashes with something already in the caller's calendar.
+   */
+  takeUp: (workOrderId, payload) => post(`/work-orders/${workOrderId}/take-up`, payload),
+
+  /**
    * Move the visit. `{ scheduledStartAt, scheduledEndAt, note? }` — both ends
    * required, because the accepted assignment's range moves with the job and a
    * range needs two ends.
