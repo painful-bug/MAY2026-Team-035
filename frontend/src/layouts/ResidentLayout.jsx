@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useApp } from '../store/useApp';
 import { AUTH_ROUTES } from '../routes/authRoutes';
 import Header from '../components/layout/Header';
-import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import PortalErrorBoundary, { PortalRouteFallback } from '../components/common/PortalErrorBoundary';
+import { useResidentLiveUpdates } from '../features/resident/residentEvents';
 import {
   LayoutDashboard, 
   Users, 
@@ -21,9 +22,16 @@ import {
 } from 'lucide-react';
 
 export default function ResidentLayout() {
-  const { currentUser, logout } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
+  const logout = useApp((state) => state.logout);
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // One mount for the whole portal, replacing the two that lived in
+  // `DashboardHome` and `Complaints`. Visitors, amenities, payments and notices
+  // were on none of them, and navigating between the two pages closed one
+  // stream to open another.
+  useResidentLiveUpdates();
 
   const handleLogout = () => {
     void logout();
@@ -148,7 +156,9 @@ export default function ResidentLayout() {
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main className="p-6 flex-1 max-w-7xl w-full mx-auto animate-fade-in">
           <PortalErrorBoundary>
-            <Outlet />
+            <Suspense fallback={<PortalRouteFallback />}>
+              <Outlet />
+            </Suspense>
           </PortalErrorBoundary>
         </main>
       </div>

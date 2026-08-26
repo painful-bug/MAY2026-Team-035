@@ -55,7 +55,7 @@ router = APIRouter(
     response_model=WorkerSnapshot,
     summary="The worker dashboard aggregate",
 )
-async def worker_snapshot(
+def worker_snapshot(
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> WorkerSnapshot:
@@ -97,7 +97,7 @@ async def worker_snapshot(
     response_model=list[OpenJob],
     summary="The open-jobs board",
 )
-async def list_open_jobs(
+def list_open_jobs(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> list[OpenJob]:
@@ -130,7 +130,7 @@ async def list_open_jobs(
     response_model=list[WorkerJob],
     summary="My jobs",
 )
-async def list_jobs(
+def list_jobs(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     status_filter: str | None = Query(None, alias="status", max_length=24),
@@ -166,7 +166,7 @@ async def list_jobs(
     response_model=WorkerJobDetail,
     summary="One job, with who to meet",
 )
-async def get_job(
+def get_job(
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -192,7 +192,7 @@ async def get_job(
     response_model=WorkerJob,
     summary="Take an offered job",
 )
-async def accept_job(
+def accept_job(
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -225,7 +225,7 @@ async def accept_job(
     response_model=WorkerJob,
     summary="Take an unclaimed job off the board",
 )
-async def claim_job(
+def claim_job(
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -259,7 +259,7 @@ async def claim_job(
     response_model=WorkerJob,
     summary="Say no to an offer",
 )
-async def decline_job(
+def decline_job(
     body: DeclineJobRequest,
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),
@@ -293,7 +293,7 @@ async def decline_job(
     response_model=WorkerJob,
     summary="I am on site",
 )
-async def start_job(
+def start_job(
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -314,7 +314,7 @@ async def start_job(
     response_model=WorkerJob,
     summary="The work is done",
 )
-async def complete_job(
+def complete_job(
     body: CompleteJobRequest,
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),
@@ -343,7 +343,7 @@ async def complete_job(
     response_model=WorkerJob,
     summary="The visit could not be completed",
 )
-async def report_job_failure(
+def report_job_failure(
     body: ReportJobFailureRequest,
     work_order_id: str = Path(...),
     _: Principal = Depends(get_current_user),

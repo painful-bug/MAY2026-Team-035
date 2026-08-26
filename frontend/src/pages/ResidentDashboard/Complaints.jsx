@@ -21,7 +21,8 @@ import {
   X,
 } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
-import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
+import { residentKeys } from '../../features/resident/residentEvents';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import { residentFaqs } from '../../data/residentFaqs';
 import { ComplaintTracker } from '../../features/complaints/ComplaintTracker';
 import { canCancelUnstartedWork } from '../../features/complaints/trackerProjection';
@@ -158,6 +159,7 @@ export function ProposedVisit({ complaintId }) {
   const request = useQuery({
     queryKey: residentKeys.schedule(complaintId),
     queryFn: () => residentApi.scheduleRequest(complaintId),
+    ...QUERY_POLICIES.detail,
     // A 404 is an answer, not a failure to get one; retrying it three times
     // would only delay the empty state.
     retry: false,
@@ -397,6 +399,7 @@ function ComplaintDrawer({ complaintId, onClose }) {
   const detail = useQuery({
     queryKey: residentKeys.complaint(complaintId),
     queryFn: () => residentApi.complaint(complaintId),
+    ...QUERY_POLICIES.detail,
   });
 
   const afterWrite = (complaint) => {
@@ -852,7 +855,11 @@ function RaiseComplaintModal({ onClose, onCreated }) {
     queryFn: () => residentApi.directoryContacts(),
     staleTime: 5 * 60_000,
   });
-  const skills = useQuery({ queryKey: ['skills'], queryFn: residentApi.skills, staleTime: 5 * 60_000 });
+  const skills = useQuery({
+    queryKey: ['skills'],
+    queryFn: residentApi.skills,
+    ...QUERY_POLICIES.reference,
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -1021,7 +1028,6 @@ function RaiseComplaintModal({ onClose, onCreated }) {
 
 export default function Complaints() {
   const queryClient = useQueryClient();
-  useResidentLiveUpdates();
 
   const [isRaiseModalOpen, setIsRaiseModalOpen] = useState(false);
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
@@ -1045,6 +1051,8 @@ export default function Complaints() {
   const list = useQuery({
     queryKey: residentKeys.complaints(params),
     queryFn: () => residentApi.complaints(params),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   // Per membership, so opening a thread clears the resident's own marker and

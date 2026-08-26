@@ -11,7 +11,8 @@ import {
   Users,
 } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
-import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
+import { residentKeys } from '../../features/resident/residentEvents';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { useApp } from '../../store/useApp';
 
 // The resident's front page, over `GET /resident/snapshot` (API.md §14.5).
@@ -117,15 +118,15 @@ function Card({ children, className = '' }) {
 }
 
 export default function DashboardHome() {
-  const { currentUser, searchQuery } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
+  const searchQuery = useApp((state) => state.searchQuery);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-
-  useResidentLiveUpdates();
 
   const snapshot = useQuery({
     queryKey: residentKeys.snapshot(),
     queryFn: () => residentApi.snapshot(),
+    ...QUERY_POLICIES.snapshot,
   });
 
   const refresh = () =>

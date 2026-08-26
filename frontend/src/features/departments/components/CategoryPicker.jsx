@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { departmentsApi } from '../departmentsApi';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 import TokenCombobox from './TokenCombobox';
 
 // The category field, replacing a hardcoded six-item checkbox grid.
@@ -32,7 +33,7 @@ export default function CategoryPicker({ selected, onChange, required = false })
   const categories = useQuery({
     queryKey: ['complaint-categories'],
     queryFn: departmentsApi.categories,
-    staleTime: 60_000,
+    ...QUERY_POLICIES.reference,
   });
 
   const all = useMemo(() => categories.data || [], [categories.data]);

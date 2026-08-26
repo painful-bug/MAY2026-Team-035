@@ -3,7 +3,7 @@ import { useApp } from '../../store/useApp';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
 
 export default function ToastContainer() {
-  const { toasts } = useApp();
+  const toasts = useApp((state) => state.toasts);
 
   if (toasts.length === 0) return null;
 

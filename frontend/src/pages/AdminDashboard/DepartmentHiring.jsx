@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import {
   AlertTriangle, ArrowLeft, Ban, Check, Clock, DoorOpen, Inbox, Info, MapPin,
   MessageSquare, Search, Shuffle, UserMinus, UserPlus, X,
@@ -555,6 +556,7 @@ function DepartureCard({ departure, departmentId, basePath, roster, onChanged })
   const detail = useQuery({
     queryKey: ['hiring', departmentId, 'departure', departure.id],
     queryFn: () => hiringApi.departure(departmentId, departure.id),
+    ...QUERY_POLICIES.detail,
     enabled: open,
   });
 
@@ -772,6 +774,7 @@ export default function DepartmentHiring() {
   const department = useQuery({
     queryKey: ['hiring', departmentId, 'roster'],
     queryFn: () => hiringApi.department(departmentId),
+    ...QUERY_POLICIES.detail,
   });
   // `undefined` while the read is in flight, so this is "known to be false"
   // rather than "not true yet" — the difference between explaining a real
@@ -783,16 +786,23 @@ export default function DepartmentHiring() {
   const applications = useQuery({
     queryKey: ['hiring', departmentId, 'applications'],
     queryFn: () => hiringApi.applications(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: mayHire,
   });
   const departures = useQuery({
     queryKey: ['hiring', departmentId, 'departures'],
     queryFn: () => hiringApi.departures(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: tab === 'departures',
   });
   const candidates = useQuery({
     queryKey: ['hiring', departmentId, 'candidates', search],
     queryFn: () => hiringApi.candidates(departmentId, { q: search || undefined }),
+    ...QUERY_POLICIES.list,
+    // The search box re-keys this query on every keystroke; keep the
+    // previous results on screen while the next one resolves instead of
+    // flashing the list to empty on each character typed.
+    ...PAGINATED,
     enabled: tab === 'candidates',
   });
 

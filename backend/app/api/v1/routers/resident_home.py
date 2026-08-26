@@ -29,7 +29,7 @@ router = APIRouter(tags=["resident-home"], dependencies=[Depends(require_csrf_un
 
 
 @router.get("/notices", response_model=Page[Notice], summary="Published notices")
-async def list_notices(
+def list_notices(
     category: str | None = Query(None, description="Exact category match."),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
@@ -63,7 +63,7 @@ async def list_notices(
     response_model=list[HouseholdMember],
     summary="Who is registered to my flat",
 )
-async def get_household(
+def get_household(
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> list[HouseholdMember]:
@@ -87,7 +87,7 @@ async def get_household(
     response_model=list[HouseholdMember],
     summary="Add a number to my flat",
 )
-async def add_household_phone(
+def add_household_phone(
     body: AddHouseholdPhoneRequest,
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -113,7 +113,7 @@ async def add_household_phone(
     response_model=list[ManagementContact],
     summary="Management and emergency contacts",
 )
-async def list_contacts(
+def list_contacts(
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> list[ManagementContact]:

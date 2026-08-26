@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import {
   ArrowLeft,
   Calendar,
@@ -186,18 +187,21 @@ export default function EmployeeDetail() {
   const member = useQuery({
     queryKey: ['hiring', departmentId, 'staff', staffId],
     queryFn: () => hiringApi.staffMember(departmentId, staffId),
+    ...QUERY_POLICIES.detail,
   });
 
   const range = weekRange(weekOffset);
   const schedule = useQuery({
     queryKey: ['hiring', departmentId, 'staff', staffId, 'schedule', range.from],
     queryFn: () => hiringApi.staffSchedule(departmentId, staffId, { from: range.from, to: range.to }),
+    ...QUERY_POLICIES.detail,
   });
 
   const departure = member.data?.departure || null;
   const coverage = useQuery({
     queryKey: ['hiring', departmentId, 'departure', departure?.id, 'coverage'],
     queryFn: () => hiringApi.coverage(departmentId, departure.id),
+    ...QUERY_POLICIES.detail,
     enabled: showCoverage && Boolean(departure),
   });
 
@@ -205,6 +209,7 @@ export default function EmployeeDetail() {
   const department = useQuery({
     queryKey: ['hiring', departmentId, 'roster'],
     queryFn: () => hiringApi.department(departmentId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(departure),
   });
 

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import PortalErrorBoundary, { PortalRouteFallback } from '../components/common/PortalErrorBoundary';
 import {
   Building2,
   ClipboardList,
@@ -15,6 +15,8 @@ import {
 import Header from '../components/layout/Header';
 import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useApp } from '../store/useApp';
+import { useLiveUpdates } from '../lib/realtime/useLiveUpdates';
+import { MANAGER_EVENT_MAP } from '../lib/realtime/portalMaps';
 
 // The department manager's portal.
 //
@@ -31,10 +33,17 @@ import { useApp } from '../store/useApp';
 // worse than no screen.
 
 export default function ManagerLayout() {
-  const { currentUser, logout } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
+  const logout = useApp((state) => state.logout);
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const base = AUTH_ROUTES.MANAGER_DASHBOARD;
+
+  // Managers have been in the `dashboard.refresh` role audience since `0028`
+  // and nobody in this portal was listening: an administrator moving this
+  // department's team, skills or complaints pushed a frame at a tab that threw
+  // it away. This is the listener that audience always implied.
+  useLiveUpdates(MANAGER_EVENT_MAP);
 
   // **Hiring is here now.** It shipped without a tab and that was recorded as
   // `docs/potential issues/14` rather than left silent: the endpoints have
@@ -183,7 +192,9 @@ export default function ManagerLayout() {
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
           <PortalErrorBoundary>
-            <Outlet />
+            <Suspense fallback={<PortalRouteFallback />}>
+              <Outlet />
+            </Suspense>
           </PortalErrorBoundary>
         </main>
       </div>

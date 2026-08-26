@@ -19,6 +19,8 @@ import os
 import textwrap
 from pathlib import Path
 
+import pytest
+
 # `setdefault`, not assignment: a developer with a real .env in their environment
 # keeps it, and these only fill the gaps.
 for _key, _value in {
@@ -30,6 +32,32 @@ for _key, _value in {
     "COOKIE_SIGNING_SECRET": "placeholder-cookie-signing-secret-0123456789",
 }.items():
     os.environ.setdefault(_key, _value)
+
+
+@pytest.fixture(autouse=True)
+def _reset_reference_read_caches():
+    """Empty the process-local TTL caches (Phase B2) around every test.
+
+    These caches are module-level singletons -- deliberately, so every request
+    in one worker shares them -- which means every test in this session shares
+    them too unless something clears them. Different tests reuse the same
+    fixture community/department ids, monkeypatching the repository to return
+    different rows each time; without this, the second test to call, say,
+    `GET /departments` for "the" test community could be served the first
+    test's cached response instead of hitting its own monkeypatched repo.
+    Cleared both before and after so a test that fails partway through a
+    mutation cannot leave a poisoned entry for the next one.
+    """
+    from app.services import departments_service, settings_service, skills_service
+
+    def _clear() -> None:
+        departments_service.reset_cache()
+        skills_service.reset_cache()
+        settings_service.reset_cache()
+
+    _clear()
+    yield
+    _clear()
 
 
 def pytest_addoption(parser):

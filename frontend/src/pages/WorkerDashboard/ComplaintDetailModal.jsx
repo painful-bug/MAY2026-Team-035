@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { Lock } from 'lucide-react';
 
 import { triageApi } from '../../features/triage/triageApi';
@@ -56,6 +57,7 @@ export default function ComplaintDetailModal({
   const detail = useQuery({
     queryKey: ['staff-complaint', complaintId],
     queryFn: () => triageApi.staffComplaintDetail(complaintId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(complaintId),
   });
 

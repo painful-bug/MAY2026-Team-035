@@ -97,7 +97,7 @@ def require_gate_membership(
 
 
 @router.get("/posts", response_model=list[SecurityPost], summary="Guard posts")
-async def list_posts(
+def list_posts(
     _: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
     include_inactive: bool = Query(False, alias="includeInactive"),
@@ -117,7 +117,7 @@ async def list_posts(
     status_code=status.HTTP_201_CREATED,
     summary="Add a guard post",
 )
-async def create_post(
+def create_post(
     body: UpsertPostRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -136,7 +136,7 @@ async def create_post(
 @router.patch(
     "/posts/{post_id}", response_model=SecurityPost, summary="Change a guard post"
 )
-async def update_post(
+def update_post(
     body: UpsertPostRequest,
     post_id: str = Path(...),
     membership: MembershipContext = Depends(require_gate_membership),
@@ -164,7 +164,7 @@ async def update_post(
 
 
 @router.get("/shifts", response_model=list[SecurityShift], summary="The roster")
-async def list_shifts(
+def list_shifts(
     _: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
     starts_from: datetime | None = Query(None, alias="from"),
@@ -207,7 +207,7 @@ async def list_shifts(
     status_code=status.HTTP_201_CREATED,
     summary="Put a guard on a post",
 )
-async def create_shift(
+def create_shift(
     body: CreateShiftRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -233,7 +233,7 @@ async def create_shift(
 @router.patch(
     "/shifts/{shift_id}", response_model=SecurityShift, summary="Change a shift"
 )
-async def update_shift(
+def update_shift(
     body: UpdateShiftRequest,
     shift_id: str = Path(...),
     membership: MembershipContext = Depends(require_gate_membership),
@@ -264,7 +264,7 @@ async def update_shift(
     response_model=list[RosterEntry],
     summary="Guards the shift form may offer",
 )
-async def list_roster(
+def list_roster(
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
 ) -> list[RosterEntry]:
@@ -297,7 +297,7 @@ async def list_roster(
     response_model=list[MaterialMovement],
     summary="The inward/outward register",
 )
-async def list_movements(
+def list_movements(
     _: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
     starts_from: datetime | None = Query(None, alias="from"),
@@ -328,7 +328,7 @@ async def list_movements(
     status_code=status.HTTP_201_CREATED,
     summary="Record a material movement",
 )
-async def record_movement(
+def record_movement(
     body: RecordMovementRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -354,7 +354,7 @@ async def record_movement(
     response_model=MaterialMovement,
     summary="A returnable item came back",
 )
-async def return_movement(
+def return_movement(
     body: ReturnMovementRequest,
     movement_id: str = Path(...),
     membership: MembershipContext = Depends(require_gate_membership),
@@ -386,7 +386,7 @@ async def return_movement(
     response_model=list[WaterTankerLog],
     summary="The water tanker log",
 )
-async def list_tankers(
+def list_tankers(
     _: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
     starts_from: datetime | None = Query(None, alias="from"),
@@ -405,7 +405,7 @@ async def list_tankers(
     status_code=status.HTTP_201_CREATED,
     summary="Log a water tanker",
 )
-async def record_tanker(
+def record_tanker(
     body: RecordTankerRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -432,7 +432,7 @@ async def record_tanker(
     response_model=WaterTankerLog,
     summary="Record a departure",
 )
-async def update_tanker(
+def update_tanker(
     body: UpdateTankerRequest,
     log_id: str = Path(...),
     membership: MembershipContext = Depends(require_gate_membership),
@@ -458,7 +458,7 @@ async def update_tanker(
 @router.get(
     "/incidents", response_model=list[SecurityIncident], summary="Security incidents"
 )
-async def list_incidents(
+def list_incidents(
     _: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
     starts_from: datetime | None = Query(None, alias="from"),
@@ -482,7 +482,7 @@ async def list_incidents(
     status_code=status.HTTP_201_CREATED,
     summary="File a security incident",
 )
-async def record_incident(
+def record_incident(
     body: RecordIncidentRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -518,7 +518,7 @@ async def record_incident(
     response_model=SecurityIncident,
     summary="Acknowledge or resolve an incident",
 )
-async def update_incident(
+def update_incident(
     body: UpdateIncidentRequest,
     incident_id: str = Path(...),
     membership: MembershipContext = Depends(require_gate_membership),
@@ -547,7 +547,7 @@ async def update_incident(
 @router.post(
     "/gate/verify", response_model=GateVerification, summary="May this visitor in"
 )
-async def verify_credential(
+def verify_credential(
     body: GateVerifyRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -588,7 +588,7 @@ async def verify_credential(
 @router.get(
     "/offline-bundle", response_model=OfflineBundle, summary="Cache for an outage"
 )
-async def offline_bundle(
+def offline_bundle(
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
     hours: int = Query(12, ge=1, le=48),
@@ -631,7 +631,7 @@ async def offline_bundle(
     response_model=OfflineReconcileResult,
     summary="Replay what the gate did offline",
 )
-async def offline_reconcile(
+def offline_reconcile(
     body: OfflineReconcileRequest,
     membership: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),
@@ -679,7 +679,7 @@ async def offline_reconcile(
         }
     },
 )
-async def export_dataset(
+def export_dataset(
     dataset: str = Path(...),
     _: MembershipContext = Depends(require_gate_membership),
     client: Client = Depends(get_request_client),

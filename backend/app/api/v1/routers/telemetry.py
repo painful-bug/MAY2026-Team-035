@@ -18,7 +18,7 @@ router = APIRouter(prefix="/telemetry", tags=["telemetry"])
     response_model=MessageResponse,
     dependencies=[Depends(require_csrf)],
 )
-async def record_service_signup_event(
+def record_service_signup_event(
     body: ServiceSignupTelemetryRequest, request: Request, response: Response
 ) -> MessageResponse:
     """Record one allowlisted event; storage failure never blocks the funnel."""

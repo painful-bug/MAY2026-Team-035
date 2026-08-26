@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { securityApi } from '../../features/security/securityApi';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import ExportButton from '../../features/security/components/ExportButton';
 import {
   Empty,
@@ -126,6 +127,7 @@ export default function Shifts() {
   const shifts = useQuery({
     queryKey: ['security', 'shifts', { from, to }],
     queryFn: () => securityApi.shifts({ from, to }),
+    ...QUERY_POLICIES.list,
   });
 
   const rows = useMemo(() => shifts.data || [], [shifts.data]);
@@ -139,6 +141,7 @@ export default function Shifts() {
   const linked = useQuery({
     queryKey: ['security', 'shifts', { shiftId: linkedId }],
     queryFn: () => securityApi.shifts({ shiftId: linkedId }),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(linkedId) && shifts.isSuccess && !linkedIsOnScreen,
   });
   const linkedShift = linked.data?.[0];

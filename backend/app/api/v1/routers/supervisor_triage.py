@@ -62,7 +62,7 @@ router = APIRouter(
     response_model=TriageSnapshot,
     summary="The supervisor's dashboard, in one read",
 )
-async def triage_snapshot(
+def triage_snapshot(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> TriageSnapshot:
@@ -107,7 +107,7 @@ async def triage_snapshot(
     response_model=MessageResult,
     summary="Take a new complaint up",
 )
-async def take_up_complaint(
+def take_up_complaint(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
@@ -150,7 +150,7 @@ async def take_up_complaint(
     response_model=MessageResult,
     summary="Mark a complaint resolved",
 )
-async def resolve_complaint(
+def resolve_complaint(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
@@ -188,7 +188,7 @@ async def resolve_complaint(
     response_model=MessageResult,
     summary="Raise a complaint's priority one step",
 )
-async def raise_complaint_priority(
+def raise_complaint_priority(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
@@ -229,7 +229,7 @@ async def raise_complaint_priority(
     status_code=status.HTTP_201_CREATED,
     summary="Add an internal note to a complaint",
 )
-async def add_complaint_note(
+def add_complaint_note(
     body: AddComplaintNoteRequest,
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -261,7 +261,7 @@ async def add_complaint_note(
     response_model=ComplaintThreadOpened,
     summary="Open the complaint's chat thread",
 )
-async def open_complaint_chat(
+def open_complaint_chat(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> ComplaintThreadOpened:

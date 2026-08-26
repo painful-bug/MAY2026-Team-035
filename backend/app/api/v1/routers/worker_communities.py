@@ -45,7 +45,7 @@ router = APIRouter(
     response_model=list[ServiceEngagement],
     summary="Communities that employ me",
 )
-async def list_my_communities(
+def list_my_communities(
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     active_only: bool = Query(True, alias="activeOnly"),
@@ -71,7 +71,7 @@ async def list_my_communities(
     response_model=list[ServiceableCommunity],
     summary="Communities that need my trades",
 )
-async def search_communities(
+def search_communities(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     query: str | None = Query(None, alias="q", max_length=120),
@@ -99,7 +99,7 @@ async def search_communities(
     response_model=list[ServiceApplication],
     summary="My applications and invitations",
 )
-async def list_my_applications(
+def list_my_applications(
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     status_filter: str | None = Query(None, alias="status", max_length=20),
@@ -128,7 +128,7 @@ async def list_my_applications(
     status_code=status.HTTP_201_CREATED,
     summary="Apply to a department",
 )
-async def apply(
+def apply(
     body: ApplyRequest,
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -153,7 +153,7 @@ async def apply(
     response_model=ServiceApplication,
     summary="Withdraw my application",
 )
-async def withdraw(
+def withdraw(
     application_id: str = Path(...),
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -177,7 +177,7 @@ async def withdraw(
     response_model=ServiceApplication,
     summary="Accept or decline an invitation",
 )
-async def decide_invitation(
+def decide_invitation(
     body: ProviderDecisionRequest,
     application_id: str = Path(...),
     _: Principal = Depends(get_current_user),
@@ -206,7 +206,7 @@ async def decide_invitation(
     status_code=status.HTTP_201_CREATED,
     summary="Ask to leave a community",
 )
-async def request_departure(
+def request_departure(
     body: RequestDepartureRequest,
     staff_id: str = Path(...),
     principal: Principal = Depends(get_current_user),
@@ -248,7 +248,7 @@ async def request_departure(
     response_model=MessageResult,
     summary="Withdraw my request to leave",
 )
-async def cancel_departure(
+def cancel_departure(
     staff_id: str = Path(...),
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),

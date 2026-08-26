@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Boxes, Droplets, ShieldCheck } from 'lucide-react';
 import JoinRequests from '../../features/hiring/components/JoinRequests';
 import { securityApi } from '../../features/security/securityApi';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import {
   Empty,
   ErrorText,
@@ -27,7 +28,7 @@ import {
 // which is the behaviour a snapshot would have taken away.
 
 export default function Overview() {
-  const { currentUser } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
   const mayOpenHiring = ['MANAGER', 'SECURITY'].includes(currentUser?.accessRole);
   const { dayFrom, dayTo } = useMemo(() => {
     const start = new Date();
@@ -37,21 +38,27 @@ export default function Overview() {
     return { dayFrom: start.toISOString(), dayTo: end.toISOString() };
   }, []);
 
+  // Four independent `list`-policy reads, deliberately — see the file header:
+  // this page has no snapshot endpoint of its own, by product decision.
   const movements = useQuery({
     queryKey: ['security', 'movements', { from: dayFrom, to: dayTo }],
     queryFn: () => securityApi.movements({ from: dayFrom, to: dayTo }),
+    ...QUERY_POLICIES.list,
   });
   const tankers = useQuery({
     queryKey: ['security', 'tankers', { onSite: true }],
     queryFn: () => securityApi.tankers({ onSite: true }),
+    ...QUERY_POLICIES.list,
   });
   const incidents = useQuery({
     queryKey: ['security', 'incidents', { status: 'open' }],
     queryFn: () => securityApi.incidents({ status: 'open' }),
+    ...QUERY_POLICIES.list,
   });
   const shifts = useQuery({
     queryKey: ['security', 'shifts', { from: dayFrom, to: dayTo }],
     queryFn: () => securityApi.shifts({ from: dayFrom, to: dayTo }),
+    ...QUERY_POLICIES.list,
   });
 
   const openIncidents = incidents.data || [];

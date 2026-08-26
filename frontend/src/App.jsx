@@ -10,95 +10,118 @@ import ResidentLayout from './layouts/ResidentLayout';
 import AdminLayout from './layouts/AdminLayout';
 import SecurityLayout from './layouts/SecurityLayout';
 import ManagerLayout from './layouts/ManagerLayout';
-import ManagerOverview from './pages/ManagerDashboard/Overview';
-import ManagerComplaints from './pages/ManagerDashboard/Complaints';
-import ManagerSkills from './pages/ManagerDashboard/Skills';
-import ManagerTeam from './pages/ManagerDashboard/Team';
 import WorkerLayout from './layouts/WorkerLayout';
 
-// Public Pages
-import LandingPage from './pages/Landing/LandingPage';
-import LoginPage from './pages/Login/LoginPage';
-import RegistrationPage from './pages/Registration/RegistrationPage';
-import GetStartedPage from './pages/GetStarted/GetStartedPage';
-import AuthCallbackPage from './pages/AuthCallback/AuthCallbackPage';
-import EmailConfirmationPage from './pages/Auth/EmailConfirmationPage';
-import PasswordRecoveryPage from './pages/Auth/PasswordRecoveryPage';
-import AssociationRegistrationPage from './pages/AssociationRegistration/AssociationRegistrationPage';
-import MapConfigurationPage from './pages/MapConfiguration/MapConfigurationPage';
-import FeatureConfigurationPage from './pages/FeatureConfiguration/FeatureConfigurationPage';
-import AdminProfilePage from './pages/AdminProfile/AdminProfilePage';
-import OnboardingSuccessPage from './pages/OnboardingSuccess/OnboardingSuccessPage';
-import OnboardingReviewPage from './pages/OnboardingReview/OnboardingReviewPage';
-import AccountPage from './pages/Account/AccountPage';
-import CandidateDetail from './pages/AdminDashboard/CandidateDetail';
-import DepartmentHiring from './pages/AdminDashboard/DepartmentHiring';
-import EmployeeDetail from './pages/AdminDashboard/EmployeeDetail';
-import AdminMessages from './pages/AdminDashboard/Messages';
-import WorkOrderTriage from './pages/AdminDashboard/WorkOrderTriage';
-import JoinPage from './pages/Join/JoinPage';
-import ResidentLandingPage from './pages/ResidentLanding/ResidentLandingPage';
 import OnboardingFlowRoute from './routes/OnboardingFlowRoute';
 import { AUTH_ROUTES, homeRouteFor } from './routes/authRoutes';
 import { SESSION_STATUS, useAuthStore } from './store/authStore';
 import { ONBOARDING_STEPS } from './data/onboarding';
 
+// Every route below this point is a page, not chrome, and is loaded on
+// demand: the initial bundle used to pull in all six portals' screens (and
+// every onboarding step) whether the visit ever reached them or not. Each
+// `lazy()` becomes its own chunk, and the six layouts below each wrap their
+// `<Outlet />` in one local Suspense boundary — a portal switch shows that
+// portal's own small fallback instead of the whole page going blank.
+
+// Public Pages
+const LandingPage = lazy(() => import('./pages/Landing/LandingPage'));
+const LoginPage = lazy(() => import('./pages/Login/LoginPage'));
+const RegistrationPage = lazy(() => import('./pages/Registration/RegistrationPage'));
+const GetStartedPage = lazy(() => import('./pages/GetStarted/GetStartedPage'));
+const AuthCallbackPage = lazy(() => import('./pages/AuthCallback/AuthCallbackPage'));
+const EmailConfirmationPage = lazy(() => import('./pages/Auth/EmailConfirmationPage'));
+const PasswordRecoveryPage = lazy(() => import('./pages/Auth/PasswordRecoveryPage'));
+const AccountPage = lazy(() => import('./pages/Account/AccountPage'));
+const JoinPage = lazy(() => import('./pages/Join/JoinPage'));
+const ResidentLandingPage = lazy(() => import('./pages/ResidentLanding/ResidentLandingPage'));
+
+// Onboarding Pages
+const AssociationRegistrationPage = lazy(() => import('./pages/AssociationRegistration/AssociationRegistrationPage'));
+const MapConfigurationPage = lazy(() => import('./pages/MapConfiguration/MapConfigurationPage'));
+const FeatureConfigurationPage = lazy(() => import('./pages/FeatureConfiguration/FeatureConfigurationPage'));
+const AdminProfilePage = lazy(() => import('./pages/AdminProfile/AdminProfilePage'));
+const OnboardingSuccessPage = lazy(() => import('./pages/OnboardingSuccess/OnboardingSuccessPage'));
+const OnboardingReviewPage = lazy(() => import('./pages/OnboardingReview/OnboardingReviewPage'));
+
 // Resident Pages
-import ResidentHome from './pages/ResidentDashboard/DashboardHome';
-import ResidentVisitors from './pages/ResidentDashboard/Visitors';
-import ResidentComplaints from './pages/ResidentDashboard/Complaints';
-import ResidentAmenities from './pages/ResidentDashboard/Amenities';
-import ResidentPayments from './pages/ResidentDashboard/Payments';
-import ResidentNotices from './pages/ResidentDashboard/Notices';
-import ResidentProfile from './pages/ResidentDashboard/Profile';
-import ResidentFaq from './pages/ResidentDashboard/Faq';
+const ResidentHome = lazy(() => import('./pages/ResidentDashboard/DashboardHome'));
+const ResidentVisitors = lazy(() => import('./pages/ResidentDashboard/Visitors'));
+const ResidentComplaints = lazy(() => import('./pages/ResidentDashboard/Complaints'));
+const ResidentAmenities = lazy(() => import('./pages/ResidentDashboard/Amenities'));
+const ResidentPayments = lazy(() => import('./pages/ResidentDashboard/Payments'));
+const ResidentNotices = lazy(() => import('./pages/ResidentDashboard/Notices'));
+const ResidentProfile = lazy(() => import('./pages/ResidentDashboard/Profile'));
+const ResidentFaq = lazy(() => import('./pages/ResidentDashboard/Faq'));
 
 // Admin Pages
-import AdminHome from './pages/AdminDashboard/AdminHome';
-import PendingRegistrations from './pages/AdminDashboard/PendingRegistrations';
-import ResidentsTable from './pages/AdminDashboard/Residents';
-import AdminsList from './pages/AdminDashboard/Admins';
-import AdminNotices from './pages/AdminDashboard/Notices';
-import AdminComplaints from './pages/AdminDashboard/Complaints';
-import AdminComplaintTriage from './pages/AdminDashboard/ComplaintTriage';
-import AdminMaintenance from './pages/AdminDashboard/Maintenance';
-import AdminSettings from './pages/AdminDashboard/Settings';
-import AdminAmenities from './pages/AdminDashboard/Amenities';
-import AdminDepartments from './pages/AdminDashboard/Departments';
-import AdminDepartmentDetail from './pages/AdminDashboard/DepartmentDetail';
-import GateHome from './pages/SecurityDashboard/GateHome';
-import SecurityRegisters from './pages/SecurityDashboard/Registers';
-import SecurityIncidents from './pages/SecurityDashboard/Incidents';
-import SecurityShifts from './pages/SecurityDashboard/Shifts';
-import SecurityEmergency from './pages/SecurityDashboard/Emergency';
-import SecurityOverview from './pages/SecurityManagerDashboard/Overview';
-import SecurityRoster from './pages/SecurityManagerDashboard/Roster';
-import ManagerIncidents from './pages/SecurityManagerDashboard/ManagerIncidents';
-import SecurityExports from './pages/SecurityManagerDashboard/Exports';
-import AdminSecurityIncidents from './pages/AdminDashboard/SecurityIncidents';
+const AdminHome = lazy(() => import('./pages/AdminDashboard/AdminHome'));
+const PendingRegistrations = lazy(() => import('./pages/AdminDashboard/PendingRegistrations'));
+const ResidentsTable = lazy(() => import('./pages/AdminDashboard/Residents'));
+const AdminsList = lazy(() => import('./pages/AdminDashboard/Admins'));
+const AdminNotices = lazy(() => import('./pages/AdminDashboard/Notices'));
+const AdminComplaints = lazy(() => import('./pages/AdminDashboard/Complaints'));
+const AdminComplaintTriage = lazy(() => import('./pages/AdminDashboard/ComplaintTriage'));
+const AdminMaintenance = lazy(() => import('./pages/AdminDashboard/Maintenance'));
+const AdminSettings = lazy(() => import('./pages/AdminDashboard/Settings'));
+const AdminAmenities = lazy(() => import('./pages/AdminDashboard/Amenities'));
+const AdminDepartments = lazy(() => import('./pages/AdminDashboard/Departments'));
+const AdminDepartmentDetail = lazy(() => import('./pages/AdminDashboard/DepartmentDetail'));
+const AdminSecurityIncidents = lazy(() => import('./pages/AdminDashboard/SecurityIncidents'));
+// Hiring and work-order triage, shared across the admin/manager/security-manager bases.
+const CandidateDetail = lazy(() => import('./pages/AdminDashboard/CandidateDetail'));
+const DepartmentHiring = lazy(() => import('./pages/AdminDashboard/DepartmentHiring'));
+const EmployeeDetail = lazy(() => import('./pages/AdminDashboard/EmployeeDetail'));
+const AdminMessages = lazy(() => import('./pages/AdminDashboard/Messages'));
+const WorkOrderTriage = lazy(() => import('./pages/AdminDashboard/WorkOrderTriage'));
 
-// Service Partner Pages
-import WorkerLanding from './pages/WorkerDashboard/WorkerLanding';
-import WorkerOpenJobs from './pages/WorkerDashboard/OpenJobs';
-import WorkerCalendar from './pages/WorkerDashboard/Calendar';
-import WorkerAvailability from './pages/WorkerDashboard/Availability';
-import WorkerCommunities from './pages/WorkerDashboard/Communities';
-import WorkerMessages from './pages/WorkerDashboard/Messages';
-import WorkerComplaints from './pages/WorkerDashboard/Complaints';
-import WorkerCompletedWork from './pages/WorkerDashboard/CompletedWork';
-import WorkerWorkOrders from './pages/WorkerDashboard/WorkOrders';
-import WorkerProfile from './pages/WorkerDashboard/Profile';
-import WorkerSettings from './pages/WorkerDashboard/Settings';
+// Manager Pages
+const ManagerOverview = lazy(() => import('./pages/ManagerDashboard/Overview'));
+const ManagerComplaints = lazy(() => import('./pages/ManagerDashboard/Complaints'));
+const ManagerSkills = lazy(() => import('./pages/ManagerDashboard/Skills'));
+const ManagerTeam = lazy(() => import('./pages/ManagerDashboard/Team'));
 
-import AmenityDetailLayout from './features/amenities/layouts/AmenityDetailLayout';
-import AmenityDashboardPage from './features/amenities/pages/AmenityDashboardPage';
-import AmenityApprovalsPage from './features/amenities/pages/AmenityApprovalsPage';
-import AmenityLedgerPage from './features/amenities/pages/AmenityLedgerPage';
-import AmenitySettingsPage from './features/amenities/pages/AmenitySettingsPage';
+// Security Pages
+const GateHome = lazy(() => import('./pages/SecurityDashboard/GateHome'));
+const SecurityRegisters = lazy(() => import('./pages/SecurityDashboard/Registers'));
+const SecurityIncidents = lazy(() => import('./pages/SecurityDashboard/Incidents'));
+const SecurityShifts = lazy(() => import('./pages/SecurityDashboard/Shifts'));
+const SecurityEmergency = lazy(() => import('./pages/SecurityDashboard/Emergency'));
+const SecurityOverview = lazy(() => import('./pages/SecurityManagerDashboard/Overview'));
+const SecurityRoster = lazy(() => import('./pages/SecurityManagerDashboard/Roster'));
+const ManagerIncidents = lazy(() => import('./pages/SecurityManagerDashboard/ManagerIncidents'));
+const SecurityExports = lazy(() => import('./pages/SecurityManagerDashboard/Exports'));
 
+// Service Partner (worker) Pages
+const WorkerLanding = lazy(() => import('./pages/WorkerDashboard/WorkerLanding'));
+const WorkerOpenJobs = lazy(() => import('./pages/WorkerDashboard/OpenJobs'));
+const WorkerCalendar = lazy(() => import('./pages/WorkerDashboard/Calendar'));
+const WorkerAvailability = lazy(() => import('./pages/WorkerDashboard/Availability'));
+const WorkerCommunities = lazy(() => import('./pages/WorkerDashboard/Communities'));
+const WorkerMessages = lazy(() => import('./pages/WorkerDashboard/Messages'));
+const WorkerComplaints = lazy(() => import('./pages/WorkerDashboard/Complaints'));
+const WorkerCompletedWork = lazy(() => import('./pages/WorkerDashboard/CompletedWork'));
+const WorkerWorkOrders = lazy(() => import('./pages/WorkerDashboard/WorkOrders'));
+const WorkerProfile = lazy(() => import('./pages/WorkerDashboard/Profile'));
+const WorkerSettings = lazy(() => import('./pages/WorkerDashboard/Settings'));
+
+const AmenityDetailLayout = lazy(() => import('./features/amenities/layouts/AmenityDetailLayout'));
+const AmenityDashboardPage = lazy(() => import('./features/amenities/pages/AmenityDashboardPage'));
+const AmenityApprovalsPage = lazy(() => import('./features/amenities/pages/AmenityApprovalsPage'));
+const AmenityLedgerPage = lazy(() => import('./features/amenities/pages/AmenityLedgerPage'));
+const AmenitySettingsPage = lazy(() => import('./features/amenities/pages/AmenitySettingsPage'));
 const AmenityReportsPage = lazy(() =>
   import('./features/amenities/pages/AmenityReportsPage')
 );
+
+// The shared small fallback for the per-group Suspense boundaries below.
+function RouteLoadingFallback() {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white px-6 py-16 text-center text-xs font-semibold text-slate-400">
+      Loading...
+    </div>
+  );
+}
 
 // The hiring sub-tree, mounted identically under three portal bases.
 //
@@ -170,7 +193,9 @@ function ProtectedRoute({
   requiredRole,
   loginPath = AUTH_ROUTES.LOGIN,
 }) {
-  const { currentUser, isAuthReady, sessionStatus } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
+  const isAuthReady = useApp((state) => state.isAuthReady);
+  const sessionStatus = useApp((state) => state.sessionStatus);
 
   if (!isAuthReady || sessionStatus === SESSION_STATUS.ERROR) return <SessionRestorationState />;
   
@@ -228,6 +253,12 @@ export default function App() {
   return (
       <BrowserRouter>
         <AuthSessionBootstrap />
+        {/* The outer net for routes with no persistent layout of their own —
+            public, auth and onboarding pages. Every portal layout below also
+            wraps its own `<Outlet />` in a local Suspense so a route change
+            within a portal only ever blanks that portal's content area, not
+            this whole boundary. */}
+        <Suspense fallback={<RouteLoadingFallback />}>
         <Routes>
           {/* Public Routes */}
           <Route path={AUTH_ROUTES.HOME} element={<LandingPage />} />
@@ -581,6 +612,7 @@ export default function App() {
           {/* Fallback Redirect */}
           <Route path="*" element={<Navigate to={AUTH_ROUTES.HOME} replace />} />
         </Routes>
+        </Suspense>
 
         {/* Global Floating Toast Alert Messages */}
         <ToastContainer />

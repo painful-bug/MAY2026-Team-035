@@ -465,6 +465,23 @@ def latest_event_id(client: Client) -> int:
     return int(rows[0]["id"]) if rows else 0
 
 
+def oldest_event_id(client: Client) -> int:
+    """Low-water mark: the oldest row the prune job has left standing.
+
+    `prune-sse-events` (`0024`) deletes anything older than two hours, so a
+    reconnecting client whose `Last-Event-ID` predates this row has a gap the
+    backfill cannot replay -- `app.core.realtime` uses this to tell it to
+    resync instead. `0` means the outbox is empty, which is indistinguishable
+    from "nothing happened"; the caller treats it as no evidence of a gap.
+    """
+    rows = (
+        client.table("sse_events").select("id").order("id").limit(1)
+        .execute().data
+        or []
+    )
+    return int(rows[0]["id"]) if rows else 0
+
+
 def list_pending_access_requests(client: Client, community_id: str) -> list[dict[str, Any]]:
     """Pending join requests, newest first -- the admin sidebar badge's source."""
     return (

@@ -6,7 +6,9 @@ import { peopleApi } from '../../features/people/peopleApi';
 import { getDashboardSnapshot } from '../../lib/dashboard/dashboardApi';
 
 export default function Admins() {
-  const { users, hydrateDashboard, showToast } = useApp();
+  const users = useApp((state) => state.users);
+  const hydrateDashboard = useApp((state) => state.hydrateDashboard);
+  const showToast = useApp((state) => state.showToast);
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');

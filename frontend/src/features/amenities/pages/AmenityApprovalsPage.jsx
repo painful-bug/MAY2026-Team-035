@@ -3,6 +3,7 @@ import { ClipboardCheck } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOutletContext } from 'react-router-dom';
 import { amenitiesApi } from '../amenitiesApi.js';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 import ApprovalFilters from '../components/Approvals/ApprovalFilters.jsx';
 import ApprovalTable from '../components/Approvals/ApprovalTable.jsx';
 import RejectBookingDialog from '../components/Approvals/RejectBookingDialog.jsx';
@@ -57,6 +58,8 @@ export default function AmenityApprovalsPage() {
         status: activeFilter,
         pageSize: PAGE_SIZE,
       }),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () =>

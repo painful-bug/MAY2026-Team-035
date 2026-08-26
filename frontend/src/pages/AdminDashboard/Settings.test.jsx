@@ -14,7 +14,12 @@ vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
 vi.mock('../../components/common/LocationMap', () => ({
   default: () => <div data-testid="map" />,
 }));
-vi.mock('../../store/useApp', () => ({ useApp: () => ({ showToast: mocks.showToast }) }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => {
+    const state = { showToast: mocks.showToast };
+    return selector ? selector(state) : state;
+  },
+}));
 
 const LOADED = {
   community: { latitude: 22.572645, longitude: 88.363892, locationLabel: 'Salt Lake, Kolkata' },

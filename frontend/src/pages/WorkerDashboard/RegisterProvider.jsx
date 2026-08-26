@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Wrench } from 'lucide-react';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { useNavigate } from 'react-router-dom';
 import LocationPicker from '../../components/common/LocationPicker';
 import { workerApi } from '../../features/worker/workerApi';
@@ -30,7 +31,11 @@ export default function RegisterProvider({ provider = null }) {
     longitude: provider?.longitude ?? '',
     locationLabel: provider?.locationLabel ?? '',
   });
-  const skills = useQuery({ queryKey: ['skills'], queryFn: workerApi.skills });
+  const skills = useQuery({
+    queryKey: ['skills'],
+    queryFn: workerApi.skills,
+    ...QUERY_POLICIES.reference,
+  });
 
   const byCategory = useMemo(() => {
     const groups = new Map();

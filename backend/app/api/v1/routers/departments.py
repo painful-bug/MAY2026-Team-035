@@ -22,7 +22,8 @@ from app.api.admin_deps import (
     require_admin_or_manager,
     require_csrf_unsafe,
 )
-from app.api.deps import get_current_user, get_request_client
+from app.api.deps import get_active_membership, get_request_client
+from app.domain.schemas import MembershipContext
 from app.domain.common_schemas import MessageResult, Page
 from app.domain.department_schemas import (
     CreateDepartmentRequest,
@@ -58,7 +59,7 @@ ADMIN_ONLY = [Depends(require_admin)]
     summary="List departments",
     dependencies=ADMIN_ONLY,
 )
-async def list_departments(
+def list_departments(
     search: str | None = Query(
         None,
         max_length=100,
@@ -73,7 +74,7 @@ async def list_departments(
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[DepartmentDetail]:
     """Departments with their staff, category claims and complaint counts.
@@ -84,7 +85,7 @@ async def list_departments(
     """
     return departments_service.list_departments(
         client,
-        principal.user_id,
+        membership.community_id,
         search=search,
         status=status_filter,
         page=page,
@@ -99,9 +100,9 @@ async def list_departments(
     summary="Create a department",
     dependencies=ADMIN_ONLY,
 )
-async def create_department(
+def create_department(
     body: CreateDepartmentRequest,
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> DepartmentDetail:
     """Create a department together with its categories, roster and head.
@@ -111,7 +112,7 @@ async def create_department(
 
     Returns 409 when the community already has a department with that name.
     """
-    return departments_service.create_department(client, principal.user_id, body)
+    return departments_service.create_department(client, membership.community_id, body)
 
 
 @router.get(
@@ -119,13 +120,13 @@ async def create_department(
     response_model=DepartmentDetail,
     summary="Get a department",
 )
-async def get_department(
+def get_department(
     department_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> DepartmentDetail:
     """One department with its active roster and each member's open workload."""
-    return departments_service.get_department(client, principal.user_id, department_id)
+    return departments_service.get_department(client, membership.community_id, department_id)
 
 
 @router.patch(
@@ -134,10 +135,10 @@ async def get_department(
     summary="Update a department",
     dependencies=ADMIN_ONLY,
 )
-async def update_department(
+def update_department(
     body: UpdateDepartmentRequest,
     department_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> DepartmentDetail:
     """Patch a department. Omitted fields are left unchanged.
@@ -152,7 +153,7 @@ async def update_department(
     have no action left.
     """
     return departments_service.update_department(
-        client, principal.user_id, department_id, body
+        client, membership.community_id, department_id, body
     )
 
 
@@ -162,9 +163,9 @@ async def update_department(
     summary="Delete a department",
     dependencies=ADMIN_ONLY,
 )
-async def delete_department(
+def delete_department(
     department_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
     """Permanently remove a department, its category claims and its roster.
@@ -177,5 +178,5 @@ async def delete_department(
     inside the deleting transaction, so a complaint raised mid-check cannot slip
     through. Deactivate instead.
     """
-    departments_service.delete_department(client, principal.user_id, department_id)
+    departments_service.delete_department(client, membership.community_id, department_id)
     return MessageResult(message="Department deleted.")

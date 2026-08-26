@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Plus } from 'lucide-react';
 import { securityApi } from '../securityApi';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 import {
   Empty,
   ErrorText,
@@ -41,6 +42,8 @@ export default function IncidentPanel({ mode = 'report', from, to }) {
   const incidents = useQuery({
     queryKey: ['security', 'incidents', filters],
     queryFn: () => securityApi.incidents(filters),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () =>

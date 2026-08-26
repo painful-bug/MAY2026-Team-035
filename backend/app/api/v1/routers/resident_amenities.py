@@ -32,7 +32,7 @@ router = APIRouter(tags=["amenities"])
     response_model=Page[BookableAmenity],
     summary="List bookable amenities",
 )
-async def list_available_amenities(
+def list_available_amenities(
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[BookableAmenity]:

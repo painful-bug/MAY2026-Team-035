@@ -30,6 +30,8 @@ export default function MapCard({ imageSrc, onMapClick, children }) {
         src={imageSrc}
         alt="Fictional residential neighborhood map"
         draggable="false"
+        loading="lazy"
+        decoding="async"
         className="absolute inset-0 h-full w-full select-none object-cover"
       />
       <span className="absolute inset-0 bg-slate-900/5" aria-hidden="true" />

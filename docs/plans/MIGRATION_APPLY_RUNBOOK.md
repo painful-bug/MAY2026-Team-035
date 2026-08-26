@@ -36,8 +36,16 @@ competence with Postgres and Supabase, but no context on this branch's work.
 > its own post-checks, and each says for itself what the last ledger probe found
 > — this paragraph deliberately does not restate that, because a second copy of
 > an apply status is the copy that goes stale. **§28 is outstanding as of
-> 2026-08-23** and is the newest. If the section numbers below run past §28, this
-> paragraph is what needs updating.
+> 2026-08-23.**
+>
+> **Three more sections have been written since — §29 `20260823190000`
+> (assignment write repairs), §30 `20260824090000` (supervisor take-up) and
+> §31 `20260826090000` (realtime expansion).** §30 must follow §29 and §29
+> must follow §28 (each section says so, and re-issues the previous one's
+> function bodies); §31 is independent of both and sorts after them by
+> filename alone. Filename order — §29, then §30, then §31 — satisfies all of
+> it, as it always does. **§31 is the newest.** If the section numbers below
+> run past §31, this paragraph is what needs updating.
 >
 > So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
@@ -4041,3 +4049,297 @@ overwrites whatever is there, which is why pre-check (a) exists; that the hosted
 `complaint_events` constraint is the one `20260822170000` left, which is
 pre-check (b); and whether any department has leadership to use the button at
 all, which is pre-check (c).
+
+## 31. `20260826090000_realtime_expansion.sql`
+
+**Independent of §29 and §30.** It declares no function either of them names,
+touches no constraint, and fires on tables neither of them writes to. Filename
+order still puts it last, which is fine; it can also be applied on its own.
+
+**What breaks without it:** three screens that look live and are not. The outbox
+has carried `dashboard.refresh` since `0007` and `notification.created` since
+`0030`, and `0028` scoped the first of those to `{admin, manager}` — correctly,
+because it means *re-read the admin snapshot*. What that leaves is every
+non-admin surface with no frame of its own:
+
+- **A work order changes and nobody hears it.** `public.work_orders` carries no
+  SSE trigger at all. It is not one of the twelve tables `0007`'s loop names,
+  and nothing in the thirty files since attached one — so the resident watching
+  their complaint, the technician watching their queue and the supervisor
+  watching a department all learn about a status change on a manual reload.
+- **A slot is taken and the grid does not know.** `amenity_bookings` has only
+  the generic trigger, which since `0028` speaks to admins. A resident staring
+  at the availability grid finds out the slot went by trying to book it.
+- **The chat dock polls.** `0046`'s messages reach the notification bell —
+  `notify_profile` writes a `notifications` row and `0030`'s trigger turns that
+  into a `notification.created` frame — but the thread itself has no topic, so
+  the open conversation refreshes on a timer.
+
+**What it does:** three emitter functions and four triggers, in five sections.
+Nothing is dropped that this file did not create, and every function lands via
+`create or replace`.
+
+1. **`emit_work_order_sse_event` → `work_order.changed`, audience
+   `community`.** `after insert or update or delete` on `public.work_orders`,
+   as trigger `work_orders_sse_event`. The payload is the table, the work-order
+   id, the complaint id and the status word — nothing renderable. The audience
+   is the whole community on purpose: the four populations that may read a job
+   (`can_read_work_order`, `0036`) do not map onto any role list, so a `role`
+   row would have to guess, and guessing *narrow* silently drops the frame for
+   the people who needed it. Over-delivery is safe under the doctrine in
+   [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — the frame is a hint, the client
+   re-reads through the endpoint whose authorization already scopes it, and a
+   client nudged about a job it may not see re-fetches an empty answer.
+2. **`emit_amenity_sse_event` → `amenity.changed`, audience `community`.** An
+   **additional** trigger on `public.amenity_bookings`, named
+   `amenity_bookings_amenity_sse`, beside whatever generic trigger that table
+   already carries — hosted's is `amenity_bookings_sse` (§26's inventory
+   probe), a fresh database's is `dashboard_sse_amenity_bookings`, and this
+   file drops neither, so `0028`'s `{admin, manager}` scoping of
+   `dashboard.refresh` is untouched and admins converge exactly as before. The
+   payload is the table and the amenity id, so the client re-reads availability
+   it could already read. `public.amenity_booking_series` gets the same trigger
+   **if it exists**: `0023` renamed hosted's to
+   `legacy_amenity_booking_series` and creates nothing under the live name, so
+   the attach sits behind `to_regclass`, which is `0007`'s own posture for this
+   exact table.
+3. **`emit_message_sse_event` → `message.created`, audience `member`.** `after
+   insert` only, on `public.dm_messages`, as `dm_messages_sse_event` — `0046`
+   exposes no update or delete, so an update arm would be a trigger waiting on
+   a write that cannot happen. This is `0030`'s member-addressed emitter with
+   one extra hop: the thread is addressed by *profile* (`0046`) and the stream
+   by *membership* (`0028`), so each recipient participant is resolved to their
+   active `community_memberships` row in the thread's community, and a
+   participant with no active membership there gets no frame rather than a
+   malformed one. The sender is skipped by `is not distinct from` against
+   `author_profile_id`, which also means a system line (null author — `0046`'s
+   thread-lock notice) reaches **both** participants, since both have a mailbox
+   to refresh. The payload is the thread id and the message id; the body
+   travels only through the RLS-scoped read, for the reason `0030` refused to
+   put a notification title in a frame.
+4. **Grants.** All three are trigger functions, which cannot be called
+   directly, but the default `execute` grant to `public` still exists on them
+   and is revoked — `0046`'s posture for `lock_work_order_threads`.
+5. **Proof in the transaction.** A closing `do` block raises if any trigger
+   this file claims to have made is missing, **by name**, on the table it names.
+   Named rather than bare: `work_orders` had no trigger at all, so "this table
+   has some trigger" would have passed against nothing useful. The
+   `amenity_booking_series` arm is conditional on the same `to_regclass` that
+   gates its attach, so the guard and the proof cannot disagree.
+
+**Topic names are frozen.** `work_order.changed`, `amenity.changed`,
+`message.created` — the frontend listeners are being written against exactly
+these strings. Renaming one here means a listener that never fires, with no
+error anywhere.
+
+**Nothing is dropped, nothing is rewritten, no row is written.** The file
+declares no fourth function, alters no table, touches no policy and no
+constraint, and does not redefine `emit_dashboard_sse_event`,
+`emit_access_request_sse_event` or `emit_notification_sse_event`. Its only
+`drop`s are `drop trigger if exists` of its own four names.
+
+**The code half, which needs no migration and no apply order.**
+`app/core/realtime.py`'s reconnect backfill reads `id > last_event_id`, and
+`prune_sse_events` (`0024`) drops rows older than two hours, so a client that
+was away longer than the retention window was handed the tail of the outbox as
+though nothing were missing — a gap with no symptom, because the client
+believes it is caught up. The backfill now asks
+`dashboard_repository.oldest_event_id()` first and, when the oldest surviving
+row sits past the client's resume point, prepends the existing `stream.resync`
+frame (`dashboard.refresh` for an admin, whose listener already ships) so the
+client refetches instead of trusting the middle of its history. That ships in
+the deploy, is independent of this file, and works the same whether or not the
+apply has happened. Pre-check (d) below is about it: a project without
+`pg_cron` never prunes, so the gap it guards against cannot occur there yet.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) 0028 is applied. This is the one thing the static battery cannot check,
+--     and it is a hard dependency: two of the three emitters write an
+--     `audience` column, and the member-addressed one writes
+--     `recipient_membership_id`. On a database without them the insert fails
+--     and the whole file rolls back. Expect three rows.
+select column_name, data_type, is_nullable
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'sse_events'
+   and column_name in ('audience', 'audience_roles', 'recipient_membership_id')
+ order by 1;
+
+-- (b) And its shape constraint, which is what makes a malformed row
+--     unwritable rather than silently undeliverable. Expect one row naming
+--     'community', 'role' and 'member'.
+select conname, pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conrelid = 'public.sse_events'::regclass
+   and conname  = 'sse_events_audience_shape_check';
+
+-- (c) The four tables this file fires on exist, and what each already carries.
+--     Expect: work_orders with NO row at all; amenity_bookings with its
+--     generic trigger under whatever name hosted holds (`amenity_bookings_sse`
+--     per §26's probe); dm_messages with none of ours. None of this file's own
+--     four names may appear yet -- if one does, this section has already been
+--     applied and the re-run is a no-op, which is fine.
+select c.relname as table_name,
+       t.tgname  as trigger_name,
+       pg_get_triggerdef(t.oid) as definition
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  left join pg_trigger t on t.tgrelid = c.oid and not t.tgisinternal
+ where n.nspname = 'public'
+   and c.relname in ('work_orders', 'amenity_bookings', 'dm_messages',
+                     'dm_threads', 'amenity_booking_series')
+ order by 1, 2;
+-- `amenity_booking_series` returning no row at all is the EXPECTED result --
+-- 0023 parked hosted's copy as `legacy_amenity_booking_series`. The file's
+-- to_regclass guard skips it; nothing to do.
+
+-- (d) Is anything actually pruning? Informational, and it is about the code
+--     half above, not about this file. Zero rows means pg_cron is not
+--     scheduling `prune-sse-events`, so the outbox grows without bound and no
+--     client can fall off the back of it yet.
+select jobname, schedule, active
+  from cron.job
+ where jobname = 'prune-sse-events';
+-- If `cron.job` does not exist, the extension is not installed. That is the
+-- documented state of a project without pg_cron (see 0024 and ARCHITECTURE.md
+-- "Retention"), not a failure of this apply.
+```
+
+There is no data risk to check for. The file writes no row, drops no column,
+alters no table and touches no policy; the three functions are
+`create or replace` and the four triggers are `drop trigger if exists` of names
+only this file uses.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning may fire — it sees `drop trigger` and
+`create or replace function` — and it is safe to confirm: every drop names a
+trigger this file created three lines later, the whole paste is one
+transaction, so a failure anywhere rolls the entire file back. No output is
+expected on success; section 5's `do` block raises if any trigger this file
+claims to have made is missing, so a half-applied file cannot look like a
+successful one.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260826090000', 'realtime_expansion')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) The four triggers, by name, and the generic ones still standing beside
+--     them. Expect work_orders_sse_event on work_orders;
+--     amenity_bookings_amenity_sse on amenity_bookings ALONGSIDE the generic
+--     trigger that was there in pre-check (c); dm_messages_sse_event on
+--     dm_messages. `amenity_booking_series_amenity_sse` will be absent, which
+--     is correct -- the table is not there.
+select c.relname as table_name,
+       t.tgname  as trigger_name,
+       pg_get_triggerdef(t.oid) as definition
+  from pg_trigger t
+  join pg_class c on c.oid = t.tgrelid
+  join pg_namespace n on n.oid = c.relnamespace
+ where not t.tgisinternal
+   and n.nspname = 'public'
+   and c.relname in ('work_orders', 'amenity_bookings', 'dm_messages')
+ order by 1, 2;
+
+-- (b) The three emitters: security definer, search_path pinned, and no grant
+--     to public or authenticated. Expect three rows, all `security_definer`
+--     true, each `config` naming search_path=public, and no acl mentioning
+--     anon or authenticated.
+select p.proname,
+       p.prosecdef                     as security_definer,
+       array_to_string(p.proconfig, ', ') as config,
+       coalesce(array_to_string(p.proacl, ', '), '(owner only)') as acl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('emit_work_order_sse_event', 'emit_amenity_sse_event',
+                     'emit_message_sse_event')
+ order by 1;
+
+-- (c) The generic emitters were NOT rewritten. Expect dashboard.refresh still
+--     going to the {admin, manager} role audience -- true -- and the
+--     notification emitter still member-addressed -- true.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%array[''admin'', ''manager'']%'
+         as still_role_scoped
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('emit_dashboard_sse_event', 'emit_access_request_sse_event')
+ order by 1;
+
+-- (d) The topic census, before and after the functional check below. Run it
+--     now and expect the three new topics absent; run it again after and
+--     expect work_order.changed at audience `community`, amenity.changed at
+--     `community`, and message.created at `member`. Rows older than two hours
+--     may have been pruned away between the two readings, which is the
+--     retention working, not a miss.
+select topic, audience, count(*) as rows
+  from public.sse_events
+ group by 1, 2
+ order by 1, 2;
+```
+
+**Post-check, functional:** the frontend listeners for these three topics are
+being written in parallel, so read the stream itself rather than a screen —
+open the app as any member, and in the browser devtools **Network → the
+`/api/v1/events` request → EventStream** pane watch the frames arrive while a
+second browser acts:
+
+1. Move a work order's status (assign it, or complete it). The member's stream
+   gains a `work_order.changed` frame carrying the work-order id, its complaint
+   id and the new status word — including for a resident, which is the whole
+   point of the community audience.
+2. Book an amenity slot as one resident. A *second* resident's stream gains
+   `amenity.changed` with the amenity id. The admin's stream gains **both**
+   that and the generic `dashboard.refresh` it always got — two frames, which
+   is the "additional, not a replacement" design being visible.
+3. Send a direct message. The recipient's stream gains `message.created` with
+   the thread id and the message id and **no body**; the sender's stream gains
+   nothing at all. Then check the negative case that matters: a third member of
+   the same community, with the same page open, receives nothing — `member`
+   audience means one connection, and this is the frame that would be a
+   disclosure if it were wrong.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_realtime_expansion_migration.py` (16 tests) — the file
+parses (`pglast`); it sorts after its named predecessor `20260824090000` and
+after every file it reasons about, including `0007` (the outbox), `0028` (the
+audience columns), `0030` (the member-emitter template) and every file in the
+directory that creates `work_orders`, `amenity_bookings`, `dm_threads` or
+`dm_messages`, each derived from the migration texts rather than listed by
+hand; all three emitters are `security definer` with a pinned `search_path`;
+the only trigger names dropped are this file's own four, the string
+`dashboard_sse` does not appear anywhere in it, and it holds no
+`create table`, `alter table`, `drop function`, `create policy`, `delete from`
+or `update public.`; each payload is asserted for what it carries **and** for
+what it must not — no title, body, location, priority or name on the work-order
+frame, no booker, slot or status on the amenity frame, no message body on the
+message frame; the work-order emitter's `DELETE` arm reads `old` and returns
+it; the community-audience frames carry neither `audience_roles` nor
+`recipient_membership_id`, which is `0028`'s community shape; the series attach
+is proved to sit behind its `to_regclass` guard; the message trigger is proved
+`after insert` and nothing else, by exact match on the whole trigger
+definition; the sender exclusion, the `is not distinct from` spelling that
+carries the system line to both participants, and the active-membership
+predicate (`community_id`, `status = 'active'`, `ended_at is null`) are each
+pinned; and the closing `do` block is proved to name every trigger and every
+table specifically, with `not tgisinternal` and a `raise exception` per arm.
+Plus the directory battery in `test_migration_directory_is_fresh_appliable.py`.
+The code half is pinned by `backend/tests/test_realtime.py`, which covers both
+branches of the prune-horizon guard — a resume point behind the horizon gets
+the resync frame **first** and stamped with the client's own id, the contiguous
+boundary (`oldest = last + 1`) gets no resync, an empty outbox is not a gap, a
+failing horizon probe fails open and still delivers, and the repository read is
+ascending. **Not verifiable statically:** that hosted's `sse_events` carries
+`0028`'s audience columns and shape constraint — both sort long before this
+file and the ledger says they are applied, which is why pre-check (a) and (b)
+exist; and whether `pg_cron` is scheduling the pruner at all, which is
+pre-check (d).

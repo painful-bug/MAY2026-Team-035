@@ -69,7 +69,7 @@ _resident_capability = require_resident_capability()
     response_model=Page[ComplaintSummary],
     summary="List my complaints",
 )
-async def list_my_complaints(
+def list_my_complaints(
     complaint_status: str | None = Query(
         None,
         alias="status",
@@ -116,7 +116,7 @@ async def list_my_complaints(
     dependencies=[Depends(_resident_capability)],
     summary="Raise a complaint",
 )
-async def raise_complaint(
+def raise_complaint(
     body: RaiseComplaintRequest,
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -153,7 +153,7 @@ async def raise_complaint(
     response_model=ComplaintDetail,
     summary="One of my complaints",
 )
-async def get_complaint(
+def get_complaint(
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -187,7 +187,7 @@ async def get_complaint(
     dependencies=[Depends(_resident_capability)],
     summary="Cancel or return scheduled work to the re-evaluation pool",
 )
-async def cancel_complaint_work(
+def cancel_complaint_work(
     body: CancelWorkRequest,
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
@@ -204,7 +204,7 @@ async def cancel_complaint_work(
     dependencies=[Depends(_resident_capability)],
     summary="Reopen a resolved complaint",
 )
-async def reopen_complaint(
+def reopen_complaint(
     body: ReopenComplaintRequest,
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
@@ -235,7 +235,7 @@ async def reopen_complaint(
     dependencies=[Depends(_resident_capability)],
     summary="Confirm a resolution",
 )
-async def confirm_resolution(
+def confirm_resolution(
     body: ConfirmResolutionRequest,
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
@@ -264,7 +264,7 @@ async def confirm_resolution(
     response_model=MessageResult,
     summary="Clear the unread marker",
 )
-async def mark_complaint_read(
+def mark_complaint_read(
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),

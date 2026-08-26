@@ -60,7 +60,7 @@ router = APIRouter(
     status_code=status.HTTP_201_CREATED,
     summary="Raise work against a complaint",
 )
-async def create_work_order(
+def create_work_order(
     body: CreateWorkOrderRequest,
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -103,7 +103,7 @@ async def create_work_order(
     response_model=list[WorkOrder],
     summary="Every job raised against one complaint",
 )
-async def list_complaint_work_orders(
+def list_complaint_work_orders(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> list[WorkOrder]:
@@ -121,7 +121,7 @@ async def list_complaint_work_orders(
     response_model=list[WorkOrder],
     summary="This department's work queue",
 )
-async def list_department_work_orders(
+def list_department_work_orders(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
     status_filter: str | None = Query(None, alias="status", max_length=24),
@@ -145,7 +145,7 @@ async def list_department_work_orders(
     response_model=WorkOrderDetail,
     summary="One job, with its assignment history",
 )
-async def get_work_order(
+def get_work_order(
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> WorkOrderDetail:
@@ -170,7 +170,7 @@ async def get_work_order(
     response_model=list[Candidate],
     summary="Eligible workers for a work-order offer",
 )
-async def work_order_candidates(
+def work_order_candidates(
     work_order_id: str = Path(...),
     include_excluded: bool = Query(False, alias="includeExcluded"),
     client: Client = Depends(get_request_client),
@@ -185,7 +185,7 @@ async def work_order_candidates(
     response_model=WorkOrder,
     summary="Edit what the job is",
 )
-async def update_work_order(
+def update_work_order(
     body: UpdateWorkOrderRequest,
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -211,7 +211,7 @@ async def update_work_order(
     response_model=WorkOrderDetail,
     summary="Put a named person on the job",
 )
-async def assign_work_order(
+def assign_work_order(
     body: AssignWorkOrderRequest,
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -257,7 +257,7 @@ async def assign_work_order(
     response_model=WorkOrderDetail,
     summary="Take the job yourself",
 )
-async def take_up_work_order(
+def take_up_work_order(
     body: TakeUpWorkOrderRequest,
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -304,7 +304,7 @@ async def take_up_work_order(
     response_model=WorkOrderDetail,
     summary="Move the visit",
 )
-async def reschedule_work_order(
+def reschedule_work_order(
     body: RescheduleWorkOrderRequest,
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -330,7 +330,7 @@ async def reschedule_work_order(
     response_model=WorkOrder,
     summary="Call the job off",
 )
-async def cancel_work_order(
+def cancel_work_order(
     body: CancelWorkOrderRequest,
     work_order_id: str = Path(...),
     client: Client = Depends(get_request_client),

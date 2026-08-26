@@ -24,7 +24,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
 
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 
 // No `departments` in the store state: the page reads the real
 // `GET /departments` envelope now, and a store copy here would only let a

@@ -757,12 +757,24 @@ data: {"request_id":"…","applicant_name":"Asha R","requested_relationship":"te
 | `access_request.created` | `{admin, manager}` | someone asks to join the community | `request_id`, `applicant_name`, `requested_relationship`, `status`, `created_at`, `pending_count` |
 | `access_request.decided` | `{admin, manager}` | a request is approved, rejected or blacklisted | `request_id`, `applicant_name`, `from`, `to`, `pending_count` |
 | `dashboard.refresh` | `{admin, manager}` | any write to one of 12 domain tables | `{"table": "…"}`, or `{"resync": true}` if this connection fell behind and events were dropped |
-| `stream.resync` | the affected connection | this connection fell behind and events were dropped | `{"resync": true}` |
+| `work_order.changed` | every community subscriber | a work order is created, updated or deleted | work order id, complaint id, status |
+| `amenity.changed` | every community subscriber | an amenity booking (or booking series) is created or updated | amenity id |
+| `message.created` | the one recipient | a direct message is sent in a thread they're a participant of | thread id, message id — no message body |
+| `stream.resync` | the affected connection | this connection fell behind and events were dropped, **or** it reconnected with a `Last-Event-ID` older than the outbox's oldest surviving row | `{"resync": true}` |
 
 `stream.resync` and `dashboard.refresh`-with-`resync` are the same instruction — *you have a gap, re-read
 everything*. They differ only in name: an admin gets the topic its listener is already wired to, and every
 other role gets one that does not claim to be about the admin dashboard. **Any client that opens this stream
 must handle `stream.resync`**; it is the only frame that can arrive without a preceding domain event.
+
+**A reconnect past the prune horizon resyncs too, not just a slow live connection.** The outbox retains two
+hours of rows (`prune_sse_events`). A `Last-Event-ID` older than that — a tab reopened after a long sleep, a
+laptop woken the next day — used to backfill silently starting mid-history, with nothing telling the client it
+had missed anything. The backfill now checks the oldest surviving row before replaying and prepends
+`stream.resync` (or `dashboard.refresh` with `{"resync": true}`, per the role rule above) when the resume point
+predates it, so a client away that long is told to re-fetch rather than left believing a partial backfill was
+the whole story. The check fails open: if it errors, the backfill proceeds without the extra frame rather than
+refusing the reconnect.
 
 **Contract notes**
 

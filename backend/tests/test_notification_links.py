@@ -52,6 +52,20 @@ _ROUTE_CLOSE = "</Route>"
 _PATH_ATTR = re.compile(r"""path=(?:"([^"]*)"|\{AUTH_ROUTES\.([A-Z0-9_]+)\})""")
 _ELEMENT_ATTR = re.compile(r"element=\{<([A-Za-z_][A-Za-z0-9_]*)")
 _IMPORT = re.compile(r"^import\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\s+'([^']+)'", re.M)
+#: `const Name = lazy(() => import('./path'));` -- the code-split form of the
+#: import above. `App.jsx` moved every page behind a portal's route table to
+#: this shape (2026-08) so the initial bundle stops pulling in all six
+#: portals' screens whether a visit reaches them or not; a static
+#: `import Name from '...'` is no longer how most of these components reach
+#: this file. Written to match either one line (`lazy(() => import('X'));`) or
+#: the wrapped form a long path forces (`lazy(() =>\n  import('X')\n);`) --
+#: `\s*` already spans the newline in the second case, so one pattern covers
+#: both.
+_LAZY_IMPORT = re.compile(
+    r"^const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*lazy\(\s*\(\)\s*=>\s*"
+    r"import\(\s*'([^']+)'\s*\)\s*\)\s*;",
+    re.M,
+)
 _URL_LINE = re.compile(r"'url',\s*(.+)$", re.MULTILINE)
 _LITERAL = re.compile(r"^'([^']*)'$")
 
@@ -294,10 +308,19 @@ def _resolve_module(from_dir: Path, target: str) -> Path | None:
 
 
 def component_sources() -> dict[str, Path]:
-    """Component name -> the file `App.jsx` imports it from."""
+    """Component name -> the file `App.jsx` imports it from.
+
+    Two shapes count: a plain `import Name from '...'` (layouts, and anything
+    else `App.jsx` still needs eagerly) and `const Name = lazy(() =>
+    import('...'))` (every portal's pages, since the 2026-08 route-group code
+    split). Both are read and merged -- a route's element can come from
+    either, and which one is an implementation detail this file has no stake
+    in.
+    """
     src = _ROOT / "frontend" / "src"
+    text = _APP_JSX.read_text(encoding="utf-8")
     out: dict[str, Path] = {}
-    for name, target in _IMPORT.findall(_APP_JSX.read_text(encoding="utf-8")):
+    for name, target in _IMPORT.findall(text) + _LAZY_IMPORT.findall(text):
         if not target.startswith("."):
             continue
         resolved = _resolve_module(src, target.lstrip("./"))

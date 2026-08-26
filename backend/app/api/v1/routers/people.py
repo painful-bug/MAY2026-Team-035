@@ -13,7 +13,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.admin_deps import require_admin, require_csrf_unsafe
-from app.api.deps import get_current_user, get_request_client
+from app.api.deps import get_active_membership, get_request_client
+from app.domain.schemas import MembershipContext
 from app.domain.people_schemas import AdminSummary, PromoteAdminRequest
 from app.services import people_service
 from supabase import Client
@@ -29,9 +30,9 @@ router = APIRouter(
     response_model=AdminSummary,
     summary="Promote a member to administrator",
 )
-async def promote_admin(
+def promote_admin(
     body: PromoteAdminRequest,
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> AdminSummary:
     """Give an existing community member the ``admin`` role.
@@ -53,4 +54,4 @@ async def promote_admin(
     four on their profile and residency, and letting a promotion silently rewrite
     someone's flat would be a worse bug than ignoring the fields.
     """
-    return people_service.promote_admin(client, principal.user_id, body)
+    return people_service.promote_admin(client, membership.community_id, body)

@@ -10,7 +10,9 @@ import AdminHome from './AdminHome';
 
 const mocks = vi.hoisted(() => ({ state: {} }));
 
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 
 const baseState = () => ({
   users: [],

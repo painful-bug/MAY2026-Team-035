@@ -8,8 +8,11 @@ list render N+1 requests from a client we are not allowed to change.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from app.core.exceptions import ValidationError
 from app.core.formatting import clock_time, parse_instant
+from app.core.ttl_cache import TTLCache
 from app.domain.common_schemas import Page
 from app.domain.department_schemas import (
     CreateDepartmentRequest,
@@ -25,10 +28,39 @@ from app.domain.vocabularies import (
     department_status_to_wire,
 )
 from app.repositories import departments_repository as repo
-from app.repositories import tenancy_repository as tenancy_repo
+from app.services import skills_service
 from supabase import Client
 
 _VALID_KINDS = ("service", "security")
+
+# The department list -- name, roster, category and skill claims, counts -- is
+# a community-scoped reference read requested repeatedly by the same admin
+# screen (poll, re-render, a second tab). Keyed by every input that changes the
+# rows, not community_id alone: a cache that ignored `search`/`status`/`page`
+# would answer a filtered request with an unrelated cached page. 60 seconds,
+# matching every other cache added in this pass -- see
+# ``app.core.ttl_cache`` for why that number and why per-process is accepted.
+_LIST_CACHE: TTLCache[Page[DepartmentDetail]] = TTLCache(ttl_seconds=60, max_entries=256)
+
+
+def reset_cache() -> None:
+    """Empty the department list cache. For tests only."""
+    _LIST_CACHE.clear()
+
+
+def invalidate_department_cache(community_id: str) -> None:
+    """Drop every cached listing page/filter for one community.
+
+    Called after any write that changes a row the list renders: the roster
+    embedded in each ``DepartmentDetail``, a department's own fields, or the
+    category/skill claims shown alongside it. The key is a tuple
+    ``(community_id, ...)``, so every cached page and filter for this
+    community is cleared at once rather than only the one combination the
+    writer happened to read last.
+    """
+    _LIST_CACHE.invalidate_where(lambda key: key[0] == community_id)
+
+
 # Widened to match `staff_assignments_shift_check` as 0035 corrects it. Before
 # that they were disjoint on three of five words: this tuple accepted `Day`,
 # which the CHECK rejected, and the CHECK accepted `Morning` and `Full Day`,
@@ -155,7 +187,7 @@ def _storage_status(value: str | None) -> str | None:
 
 def list_departments(
     client: Client,
-    user_id: str,
+    community_id: str,
     *,
     search: str | None = None,
     status: str | None = None,
@@ -168,56 +200,73 @@ def list_departments(
     frontend's edit modal is seeded straight from the list row
     (``Departments.jsx:69``). One extra query per page, not one per department:
     ``list_staff`` takes every id on the page at once.
+
+    Cached for 60 seconds per ``(community_id, search, status, page,
+    page_size)`` -- the exact combination a re-render or a poll repeats
+    verbatim, and never one a differently-filtered request can collide with.
     """
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    offset = (page - 1) * page_size
+    storage_status = _storage_status(status)
+    cache_key = (community_id, search, storage_status, page, page_size)
 
-    rows, total = repo.list_departments(
-        client,
-        community_id,
-        search=search,
-        status=_storage_status(status),
-        offset=offset,
-        limit=page_size,
-    )
+    def _load() -> Page[DepartmentDetail]:
+        offset = (page - 1) * page_size
 
-    staff_rows = repo.list_staff(client, community_id, [row["id"] for row in rows])
-    by_department: dict[str, list[dict]] = {}
-    for member in staff_rows:
-        by_department.setdefault(member["department_id"], []).append(member)
+        rows, total = repo.list_departments(
+            client,
+            community_id,
+            search=search,
+            status=storage_status,
+            offset=offset,
+            limit=page_size,
+        )
 
-    items = [_to_detail(row, by_department.get(row["id"], [])) for row in rows]
-    return Page[DepartmentDetail](
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        has_more=offset + len(items) < total,
-    )
+        staff_rows = repo.list_staff(client, community_id, [row["id"] for row in rows])
+        by_department: dict[str, list[dict]] = {}
+        for member in staff_rows:
+            by_department.setdefault(member["department_id"], []).append(member)
+
+        items = [_to_detail(row, by_department.get(row["id"], [])) for row in rows]
+        return Page[DepartmentDetail](
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_more=offset + len(items) < total,
+        )
+
+    return _LIST_CACHE.get_or_load(cache_key, _load)
 
 
 def get_department(
-    client: Client, user_id: str, department_id: str
+    client: Client, community_id: str, department_id: str
 ) -> DepartmentDetail:
     """One department with its active roster, and whether this caller may hire.
 
     ``canHire`` is only filled in here. The list leaves it ``None`` because the
     answer is per department and per caller, so a list of twelve would be twelve
     extra round trips for a screen with no control that needs one.
+
+    The three reads are independent, so they run concurrently (the pattern
+    ``dashboard_service.snapshot`` set). ``row_f.result()`` is taken first: a
+    missing department raises its ``NotFoundError`` from there, exactly as the
+    sequential version did.
     """
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    row = repo.get_department(client, community_id, department_id)
-    staff = repo.list_staff(client, community_id, [department_id])
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="department") as pool:
+        row_f = pool.submit(repo.get_department, client, community_id, department_id)
+        staff_f = pool.submit(repo.list_staff, client, community_id, [department_id])
+        can_hire_f = pool.submit(repo.can_hire, client, department_id)
+        row = row_f.result()
+        staff = staff_f.result()
+        can_hire = can_hire_f.result()
     detail = _to_detail(row, staff)
-    detail.can_hire = repo.can_hire(client, department_id)
+    detail.can_hire = can_hire
     return detail
 
 
 def create_department(
-    client: Client, user_id: str, body: CreateDepartmentRequest
+    client: Client, community_id: str, body: CreateDepartmentRequest
 ) -> DepartmentDetail:
     """Create a department, its category claims and its roster, atomically."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     _validate_kind(body.kind)
     for member in body.staff:
         _validate_shift(member.shift)
@@ -250,16 +299,21 @@ def create_department(
         payload["staff"] = _staff_payload(body.staff)
 
     department_id = repo.create_department(client, community_id, payload)
+    # Always invalidated, not only when `categories` was non-empty: `payload`
+    # always carries the key (see the comment above), and the RPC may have
+    # just created new category rows this community's cached
+    # `community_categories` read does not know about yet.
+    invalidate_department_cache(community_id)
+    skills_service.invalidate_categories_cache(community_id)
     row = repo.get_department(client, community_id, department_id)
     staff = repo.list_staff(client, community_id, [department_id])
     return _to_detail(row, staff)
 
 
 def update_department(
-    client: Client, user_id: str, department_id: str, body: UpdateDepartmentRequest
+    client: Client, community_id: str, department_id: str, body: UpdateDepartmentRequest
 ) -> DepartmentDetail:
     """Apply a partial update and return the department as it now stands."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     _validate_kind(body.kind)
     for member in body.staff or []:
         _validate_shift(member.shift)
@@ -294,6 +348,9 @@ def update_department(
 
     if patch:
         repo.update_department(client, department_id, patch)
+        invalidate_department_cache(community_id)
+        if "categories" in patch:
+            skills_service.invalidate_categories_cache(community_id)
     else:
         # Nothing to write, but the caller still deserves a 404 rather than a
         # cheerful echo if the department does not exist.
@@ -304,9 +361,18 @@ def update_department(
     return _to_detail(row, staff)
 
 
-def delete_department(client: Client, user_id: str, department_id: str) -> None:
-    """Delete a department. Refuses (409) while it owns open complaints."""
-    tenancy_repo.get_caller_community_id(client, user_id)
+def delete_department(client: Client, community_id: str, department_id: str) -> None:
+    """Delete a department. Refuses (409) while it owns open complaints.
+
+    ``community_id`` is only needed to invalidate this community's cached
+    listing and category counts -- the delete RPC still enforces its own
+    rules from the caller's proven membership, exactly as before this cache
+    existed.
+    """
     repo.delete_department(client, department_id)
+    invalidate_department_cache(community_id)
+    # A deleted department's category claims go with it, which moves the
+    # `departmentCount` the categories read reports.
+    skills_service.invalidate_categories_cache(community_id)
 
 

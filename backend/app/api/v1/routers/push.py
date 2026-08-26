@@ -35,7 +35,7 @@ router = APIRouter(tags=["push"], dependencies=[Depends(require_csrf_unsafe)])
     response_model=VapidPublicKey,
     summary="Public key for PushManager.subscribe",
 )
-async def vapid_key(
+def vapid_key(
     _principal: Principal = Depends(get_current_user),
 ) -> VapidPublicKey:
     """The public half of this server's VAPID keypair.
@@ -60,7 +60,7 @@ async def vapid_key(
     response_model=PushSubscriptionResult,
     summary="Register a browser for push",
 )
-async def subscribe(
+def subscribe(
     body: RegisterPushSubscription,
     _principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -91,7 +91,7 @@ async def subscribe(
     response_model=PushSubscriptionResult,
     summary="Unregister a browser",
 )
-async def unsubscribe(
+def unsubscribe(
     body: UnregisterPushSubscription,
     _principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),

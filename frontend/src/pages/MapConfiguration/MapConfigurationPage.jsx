@@ -1,7 +1,11 @@
 import React, { useEffect } from 'react';
 import { Building2, House } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import onboardingMap from '../../assets/onboarding-map.png';
+// WebP, not the original 3.8 MB PNG (2026-08-27): this step is also
+// `lazy()`-loaded at the route level (`App.jsx`), so the image only ever
+// downloads for a visitor who reaches the onboarding map step — but it was
+// still the single heaviest asset in the app once they did.
+import onboardingMap from '../../assets/onboarding-map.webp';
 import OnboardingLayout from '../../components/onboarding/OnboardingLayout';
 import InstructionPanel from '../../components/onboarding/map/InstructionPanel';
 import LocationList from '../../components/onboarding/map/LocationList';

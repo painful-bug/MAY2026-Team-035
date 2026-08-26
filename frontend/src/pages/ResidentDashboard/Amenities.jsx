@@ -25,8 +25,9 @@ import {
 } from '../../features/amenities/constants/bookingStatuses.js';
 import {
   cancelResidentAmenityBookingDays,
-  checkBookingSlotAvailability,
   createResidentAmenityBookingSeries,
+  evaluateBookingSlot,
+  fetchBookingConflicts,
 } from '../../features/amenities/services/amenityBookingsService.js';
 import { DEFAULT_AMENITY_SETTINGS } from '../../features/amenities/constants/amenitySettings.js';
 import { normalizeAmenityRecord } from '../../features/amenities/utils/amenitySettingsModel.js';
@@ -341,7 +342,8 @@ export default function Amenities() {
   const [guestCount, setGuestCount] = useState(0);
   const [isPrivateBooking, setIsPrivateBooking] = useState(false);
   const [availableSlotValues, setAvailableSlotValues] = useState(new Set());
-  const [isCheckingSlots, setIsCheckingSlots] = useState(false);
+  // `isCheckingSlots` itself is now derived from the conflicts query below
+  // rather than its own state (see `bookingConflictsQuery`).
   // Whether the last slot check actually reached the conflict data. False
   // means the slots on offer are unfiltered rather than known-free.
   const [isAvailabilityVerified, setIsAvailabilityVerified] = useState(true);
@@ -374,18 +376,17 @@ export default function Amenities() {
     [queryClient]
   );
 
-  useEffect(() => {
-    // No explicit initial fetch: both `useQuery` calls above fetch on mount.
-    const handleRefresh = () => {
-      fetchAmenities();
-      loadUserBookings();
-      setBookingRevision((revision) => revision + 1);
-    };
-
-    window.addEventListener('homebandhu:dashboard-refresh', handleRefresh);
-    return () =>
-      window.removeEventListener('homebandhu:dashboard-refresh', handleRefresh);
-  }, [fetchAmenities, loadUserBookings]);
+  // There used to be a `homebandhu:dashboard-refresh` listener here, re-reading
+  // the amenities, the bookings and the conflict snapshot. That window event is
+  // dispatched by `DashboardDataBootstrap`, which mounts in `AdminLayout` and
+  // nowhere else — so on the resident portal it never fired, and this screen
+  // has never once updated itself while somebody else took the 6pm slot.
+  //
+  // `ResidentLayout` now subscribes to the real stream for the whole portal,
+  // and `amenity.changed` (audience: community) stales exactly those three
+  // reads — see `RESIDENT_EVENT_MAP` in `features/resident/residentEvents.js`.
+  // Both `useQuery` calls above still fetch on mount, so there is no initial
+  // fetch to replace.
 
   useEffect(() => {
     if (
@@ -424,102 +425,125 @@ export default function Amenities() {
       (bookingDates.length === 0 ? 'Select a valid date range.' : '')
     : '';
 
-  // The slot hint. It is allowed to fail — `checkBookingSlotAvailability`
-  // reads the ADMIN-guarded snapshot and answers `verified: false` for the
-  // resident it 403s — and it is not allowed to hang: an unhandled rejection
-  // here used to leave `isCheckingSlots` true for good, so the dropdown said
-  // "Checking availability..." until the page was reloaded, with the submit
-  // button disabled behind it. Every exit path clears the flag, and an
-  // unverified check offers every slot rather than claiming an availability
-  // nobody looked up. The booking write is the authority either way: a taken
-  // slot comes back as a `409` with a message the form already renders.
-  useEffect(() => {
-    let ignore = false;
+  // The slot hint. It is allowed to fail — the conflict read is the
+  // ADMIN-guarded snapshot and answers `verified: false` for the resident it
+  // 403s — and it is not allowed to hang: an unhandled rejection here used to
+  // leave `isCheckingSlots` true for good, so the dropdown said "Checking
+  // availability..." until the page was reloaded, with the submit button
+  // disabled behind it. Every exit path clears the flag, and an unverified
+  // check offers every slot rather than claiming an availability nobody
+  // looked up. The booking write is the authority either way: a taken slot
+  // comes back as a `409` with a message the form already renders.
+  //
+  // ONE fetch per amenity/date-range/revision change, not one per slot-date
+  // pair: `fetchBookingConflicts` pulls the snapshot once and every slot-date
+  // question is answered locally from it by `evaluateBookingSlot` below.
+  // `guestCount` and `isPrivateBooking` deliberately do not re-trigger the
+  // fetch — they change which slots the same bookings admit, which is pure
+  // local arithmetic recomputed in the memo underneath.
+  //
+  // On React Query rather than its own `useEffect` + `ignore` flag: the query
+  // key below carries the exact same dependency set the old effect ran on
+  // (amenity, date range, closure, slots, revision), so this fires on the
+  // same occasions the effect did — React Query's own key-based dedup
+  // replaces the manual `ignore` guard against a stale response landing after
+  // a newer one. `staleTime: 0` is deliberate: this is a live availability
+  // check, not cacheable reference data, so every dependency change (or
+  // remount) is trusted to ask the server again rather than reuse a cached
+  // answer.
+  const shouldCheckSlots =
+    Boolean(selectedAmenity) && !closureReason && bookingSlots.length > 0;
+  const bookingConflictsQuery = useQuery({
+    queryKey: [
+      'resident',
+      'amenity-booking-conflicts',
+      selectedAmenity?.id,
+      bookingDates,
+      closureReason,
+      bookingSlots.map((slot) => slot.value),
+      bookingRevision,
+    ],
+    // `fetchBookingConflicts` already resolves `verified: false` rather than
+    // rejecting when the snapshot is refused; the catch is belt-and-braces so
+    // a surprise rejection can never strand `isCheckingSlots` again.
+    queryFn: () =>
+      fetchBookingConflicts().catch(() => ({ bookings: [], verified: false })),
+    enabled: shouldCheckSlots,
+    staleTime: 0,
+    gcTime: 5 * 60_000,
+  });
+  const bookingConflicts = shouldCheckSlots
+    ? bookingConflictsQuery.data ?? null
+    : null;
+  const isCheckingSlots = shouldCheckSlots && bookingConflictsQuery.isFetching;
 
-    const checkSlots = async () => {
-      setTimeSlot('');
-      setAvailableSlotValues(new Set());
+  // Which slots the fetched conflicts admit, recomputed locally on every
+  // guest-count or private-booking keystroke without touching the network.
+  const slotAvailability = useMemo(() => {
+    if (!selectedAmenity || closureReason || bookingSlots.length === 0) {
+      return { ready: false, values: new Set(), verified: true };
+    }
+    if (!bookingConflicts) {
+      return { ready: false, values: new Set(), verified: true };
+    }
 
-      if (!selectedAmenity || closureReason || bookingSlots.length === 0) {
-        setIsCheckingSlots(false);
-        setIsAvailabilityVerified(true);
-        return;
-      }
-
-      setIsCheckingSlots(true);
-
-      try {
-        const results = await Promise.all(
-          bookingSlots.map((slot) =>
-            Promise.all(
-              bookingDates.map((bookingDate) =>
-                checkBookingSlotAvailability({
-                  amenityId: selectedAmenity.id,
-                  date: bookingDate,
-                  startTime: slot.startTime,
-                  endTime: slot.endTime,
-                  openingTime: selectedAmenity.openingTime,
-                  closingTime: selectedAmenity.closingTime,
-                  cleaningBuffer: selectedAmenity.cleaningBuffer,
-                  bookingMode: selectedAmenity.bookingMode,
-                  isPrivateBooking,
-                  guestCount,
-                  capacity: selectedAmenity.capacity,
-                })
-              )
+    try {
+      const values = new Set(
+        bookingSlots
+          .filter((slot) =>
+            bookingDates.every((bookingDate) =>
+              evaluateBookingSlot({
+                amenityId: selectedAmenity.id,
+                date: bookingDate,
+                startTime: slot.startTime,
+                endTime: slot.endTime,
+                openingTime: selectedAmenity.openingTime,
+                closingTime: selectedAmenity.closingTime,
+                cleaningBuffer: selectedAmenity.cleaningBuffer,
+                bookingMode: selectedAmenity.bookingMode,
+                isPrivateBooking,
+                guestCount,
+                capacity: selectedAmenity.capacity,
+                bookings: bookingConflicts.bookings,
+              })
             )
           )
-        );
-
-        if (ignore) {
-          return;
-        }
-
-        const values = new Set(
-          bookingSlots
-            .filter((_, index) =>
-              results[index].every((result) => result.available)
-            )
-            .map((slot) => slot.value)
-        );
-        setAvailableSlotValues(values);
-        setTimeSlot(
-          bookingSlots.find((slot) => values.has(slot.value))?.value ?? ''
-        );
-        setIsAvailabilityVerified(
-          results.every((day) => day.every((result) => result.verified))
-        );
-      } catch {
-        if (ignore) {
-          return;
-        }
-
-        // Nothing is known about conflicts, so nothing is greyed out: the
-        // resident picks a slot and the write decides.
-        const values = new Set(bookingSlots.map((slot) => slot.value));
-        setAvailableSlotValues(values);
-        setTimeSlot(bookingSlots[0]?.value ?? '');
-        setIsAvailabilityVerified(false);
-      } finally {
-        if (!ignore) {
-          setIsCheckingSlots(false);
-        }
-      }
-    };
-
-    checkSlots();
-    return () => {
-      ignore = true;
-    };
+          .map((slot) => slot.value)
+      );
+      return { ready: true, values, verified: bookingConflicts.verified };
+    } catch {
+      // Nothing is known about conflicts, so nothing is greyed out: the
+      // resident picks a slot and the write decides.
+      return {
+        ready: true,
+        values: new Set(bookingSlots.map((slot) => slot.value)),
+        verified: false,
+      };
+    }
   }, [
     selectedAmenity,
-    bookingDates,
     closureReason,
     bookingSlots,
-    bookingRevision,
+    bookingDates,
+    bookingConflicts,
     isPrivateBooking,
     guestCount,
   ]);
+
+  useEffect(() => {
+    if (!slotAvailability.ready) {
+      setTimeSlot('');
+      setAvailableSlotValues(new Set());
+      return;
+    }
+
+    setAvailableSlotValues(slotAvailability.values);
+    setTimeSlot(
+      bookingSlots.find((slot) => slotAvailability.values.has(slot.value))
+        ?.value ?? ''
+    );
+    setIsAvailabilityVerified(slotAvailability.verified);
+  }, [slotAvailability, bookingSlots]);
 
   useEffect(() => {
     const supportsPrivateBooking =

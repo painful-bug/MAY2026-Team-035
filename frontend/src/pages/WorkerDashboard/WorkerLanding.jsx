@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 import SupervisorDashboard from './SupervisorDashboard';
 import WorkerHome from './Dashboard';
@@ -38,7 +39,11 @@ import { workerApi } from '../../features/worker/workerApi';
 // this file.
 
 export default function WorkerLanding() {
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
 
   // In the app this never renders: `WorkerLayout` holds a full-screen
   // "Preparing your workspace…" until the same query settles, and it is the

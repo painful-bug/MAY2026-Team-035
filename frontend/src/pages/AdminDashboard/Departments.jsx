@@ -14,6 +14,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 // whole app (the tile was added with the category-picker rework, the import
 // was not).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import {
   AlertTriangle,
   BriefcaseBusiness,
@@ -116,13 +117,11 @@ const getDepartmentComplaints = (department, complaints) =>
   });
 
 export default function Departments() {
-  const {
-    complaints,
-    createDepartment,
-    updateDepartment,
-    setDepartmentStatus,
-    deleteDepartment,
-  } = useApp();
+  const complaints = useApp((state) => state.complaints);
+  const createDepartment = useApp((state) => state.createDepartment);
+  const updateDepartment = useApp((state) => state.updateDepartment);
+  const setDepartmentStatus = useApp((state) => state.setDepartmentStatus);
+  const deleteDepartment = useApp((state) => state.deleteDepartment);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -147,6 +146,7 @@ export default function Departments() {
   const departmentsQuery = useQuery({
     queryKey: ['departments'],
     queryFn: departmentsApi.list,
+    ...QUERY_POLICIES.list,
   });
   const departments = useMemo(
     () => departmentsQuery.data ?? [],
@@ -244,7 +244,10 @@ export default function Departments() {
   const categories = useQuery({
     queryKey: ['complaint-categories'],
     queryFn: departmentsApi.categories,
-    staleTime: 60_000,
+    // Named reference-data domain (task calls this out explicitly): was a
+    // bespoke 60s staleTime, upgraded to the shared 30-minute policy every
+    // other reader of this catalogue now uses.
+    ...QUERY_POLICIES.reference,
   });
   const unassignedCategoryCount = (categories.data || []).filter(
     (category) => (category.departmentCount ?? 0) === 0
@@ -264,6 +267,7 @@ export default function Departments() {
     queryKey: ['departments', selectedDepartmentId, 'staff-invitations'],
     queryFn: () =>
       departmentsApi.staffInvitations(selectedDepartmentId, { status: 'pending' }),
+    ...QUERY_POLICIES.list,
     // `isLoading` rather than `isPending` is what the form is handed below: a
     // disabled query stays `pending` for as long as it is off, so the create
     // modal would otherwise render a spinner that never resolves.

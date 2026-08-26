@@ -35,7 +35,7 @@ router = APIRouter(tags=["messages"], dependencies=[Depends(require_csrf_unsafe)
     response_model=list[DmRecipient],
     summary="Who I can message in one community",
 )
-async def list_recipients(
+def list_recipients(
     community_id: str = Query(..., alias="communityId"),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -61,7 +61,7 @@ async def list_recipients(
     response_model=list[DmThread],
     summary="My message threads",
 )
-async def list_threads(
+def list_threads(
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> list[DmThread]:
@@ -81,7 +81,7 @@ async def list_threads(
     status_code=status.HTTP_201_CREATED,
     summary="Open (or return) a thread",
 )
-async def open_thread(
+def open_thread(
     body: OpenThreadRequest,
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -106,7 +106,7 @@ async def open_thread(
     response_model=DmThreadDetail,
     summary="One thread with its messages",
 )
-async def get_thread(
+def get_thread(
     thread_id: str = Path(...),
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -131,7 +131,7 @@ async def get_thread(
     status_code=status.HTTP_201_CREATED,
     summary="Send a message",
 )
-async def post_message(
+def post_message(
     body: PostDmMessageRequest,
     thread_id: str = Path(...),
     principal: Principal = Depends(get_current_user),

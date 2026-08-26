@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { useCalendarRange } from '../../features/calendar/useCalendarRange';
@@ -28,16 +29,22 @@ import JobDetailModal from './JobDetailModal';
 export default function WorkerCalendar() {
   const range = useCalendarRange('month');
   const [openJob, setOpenJob] = useState(null);
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const leadership = holdsLeadershipEngagement(snapshot.data?.communities);
   const entries = useQuery({
     queryKey: ['worker-calendar', range.from, range.to],
     queryFn: () => workerApi.calendar(range.from, range.to),
+    ...QUERY_POLICIES.list,
     enabled: snapshot.isSuccess && !leadership,
   });
   const communities = useQuery({
     queryKey: ['worker-communities'],
     queryFn: workerApi.myCommunities,
+    ...QUERY_POLICIES.list,
     enabled: snapshot.isSuccess && !leadership,
   });
 

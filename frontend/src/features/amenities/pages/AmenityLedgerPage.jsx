@@ -3,6 +3,7 @@ import { ReceiptText } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOutletContext } from 'react-router-dom';
 import { amenitiesApi } from '../amenitiesApi.js';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 import AddChargeModal from '../components/Ledger/AddChargeModal.jsx';
 import DamageDeductionModal from '../components/Ledger/DamageDeductionModal.jsx';
 import FinancialSummary from '../components/Ledger/FinancialSummary.jsx';
@@ -67,12 +68,14 @@ export default function AmenityLedgerPage() {
         q: debouncedSearch || undefined,
         pageSize: PAGE_SIZE,
       }),
-    placeholderData: (previous) => previous,
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const summary = useQuery({
     queryKey: ['amenities', amenity.id, 'ledger', 'summary'],
     queryFn: () => amenitiesApi.ledgerSummary(amenity.id),
+    ...QUERY_POLICIES.detail,
   });
 
   const transactions = ledger.data?.items || [];

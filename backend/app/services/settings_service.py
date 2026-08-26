@@ -22,6 +22,7 @@ with itself.
 from __future__ import annotations
 
 from app.core.formatting import parse_instant
+from app.core.ttl_cache import TTLCache
 from app.domain.settings_schemas import (
     BillingToggles,
     CommunityProfile,
@@ -37,18 +38,39 @@ from app.domain.vocabularies import (
     late_fee_period_to_wire,
 )
 from app.repositories import settings_repository as repo
-from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 __all__ = [
     "get_settings_snapshot",
     "update_settings",
+    "invalidate_settings_cache",
 ]
 
+# The settings snapshot -- preferences, billing toggles, the module collection
+# -- is a community-scoped reference read with no `timeAgo`-shaped field in it
+# (see ``app.core.formatting`` for the fields this cache must never touch):
+# every timestamp here is a raw instant, parsed on read, never rendered
+# relative to "now". That is what makes it safe to hand back a snapshot built
+# up to 60 seconds ago. See ``app.core.ttl_cache`` for the cache itself and the
+# per-process trade-off it accepts.
+_SNAPSHOT_CACHE: TTLCache[SettingsSnapshot] = TTLCache(ttl_seconds=60, max_entries=256)
 
-def _community(client: Client, user_id: str) -> str:
-    """The community the caller belongs to."""
-    return tenancy_repo.get_caller_community_id(client, user_id)
+
+def reset_cache() -> None:
+    """Empty the settings snapshot cache. For tests only."""
+    _SNAPSHOT_CACHE.clear()
+
+
+def invalidate_settings_cache(community_id: str) -> None:
+    """Drop the cached snapshot for one community.
+
+    Called by this module's own ``update_settings`` and, cross-module, by
+    ``money_service.update_billing_settings`` -- the billing toggles it
+    writes are columns on the same ``community_settings_overview`` row this
+    snapshot reads, so a billing-settings write is a settings-snapshot write
+    too even though it has its own endpoint and its own writer function.
+    """
+    _SNAPSHOT_CACHE.invalidate(community_id)
 
 
 def _amount(value: object) -> float | None:
@@ -152,29 +174,34 @@ def _to_collection(rows: list[dict]) -> ModuleCollection:
     )
 
 
-def get_settings_snapshot(client: Client, user_id: str) -> SettingsSnapshot:
-    """Everything the settings screen needs, in one response."""
-    community_id = _community(client, user_id)
-    row = repo.fetch_settings(client, community_id)
-    modules = repo.list_modules(client, community_id)
+def get_settings_snapshot(client: Client, community_id: str) -> SettingsSnapshot:
+    """Everything the settings screen needs, in one response.
 
-    return SettingsSnapshot(
-        community=_to_profile(row),
-        preferences=_to_preferences(row),
-        billing=_to_billing(row),
-        modules=_to_collection(modules),
-        has_saved_settings=bool(row.get("has_saved_settings", False)),
-        version=int(row.get("version") or 0),
-        updated_at=_instant(row.get("settings_updated_at")),
-        updated_by=row.get("settings_updated_by_name"),
-    )
+    Cached 60 seconds per ``community_id``.
+    """
+
+    def _load() -> SettingsSnapshot:
+        row = repo.fetch_settings(client, community_id)
+        modules = repo.list_modules(client, community_id)
+
+        return SettingsSnapshot(
+            community=_to_profile(row),
+            preferences=_to_preferences(row),
+            billing=_to_billing(row),
+            modules=_to_collection(modules),
+            has_saved_settings=bool(row.get("has_saved_settings", False)),
+            version=int(row.get("version") or 0),
+            updated_at=_instant(row.get("settings_updated_at")),
+            updated_by=row.get("settings_updated_by_name"),
+        )
+
+    return _SNAPSHOT_CACHE.get_or_load(community_id, _load)
 
 
 def update_settings(
-    client: Client, user_id: str, body: UpdateSettingsRequest
+    client: Client, community_id: str, body: UpdateSettingsRequest
 ) -> SettingsSnapshot:
     """Patch the community preferences. Omitted fields are left unchanged."""
-    community_id = _community(client, user_id)
 
     supplied = body.model_dump(exclude_unset=True)
     payload: dict = {}
@@ -217,4 +244,7 @@ def update_settings(
             float(body.longitude),
             location_label=body.location_label,
         )
-    return get_settings_snapshot(client, user_id)
+    # Before the read-back below, or it would faithfully return the snapshot
+    # this call just changed.
+    invalidate_settings_cache(community_id)
+    return get_settings_snapshot(client, community_id)

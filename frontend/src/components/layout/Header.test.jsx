@@ -8,7 +8,9 @@ import Header from './Header';
 
 const mocks = vi.hoisted(() => ({ state: {} }));
 
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 
 // The bell polls GET /notifications; irrelevant to the chip under test.
 vi.mock('../notifications/NotificationBell', () => ({ default: () => null }));

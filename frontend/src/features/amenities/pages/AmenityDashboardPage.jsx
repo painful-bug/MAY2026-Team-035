@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOutletContext } from 'react-router-dom';
 import { fromISODate, localTodayISO, longDate } from '../../../lib/dates.js';
 import { amenitiesApi } from '../amenitiesApi.js';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 import BlockTimeModal from '../components/BlockTimeModal/index.jsx';
 import BookingTimeline from '../components/BookingTimeline.jsx';
 import CancelBookingDialog from '../components/CancelBookingDialog/index.jsx';
@@ -58,6 +59,10 @@ export default function AmenityDashboardPage() {
         date: selectedDate,
         pageSize: 200,
       }),
+    ...QUERY_POLICIES.list,
+    // Keep the previous day's timeline on screen while the next day loads,
+    // rather than collapsing to a loading state on every date-picker change.
+    ...PAGINATED,
   });
 
   // Only fetched once a modal that needs it is open. It is a read of the
@@ -66,6 +71,7 @@ export default function AmenityDashboardPage() {
   const residents = useQuery({
     queryKey: ['amenities', 'bookable-residents'],
     queryFn: () => amenitiesApi.bookableResidents(),
+    ...QUERY_POLICIES.list,
     enabled: openModal === 'create',
   });
 

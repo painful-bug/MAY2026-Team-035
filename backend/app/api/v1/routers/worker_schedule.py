@@ -42,7 +42,7 @@ router = APIRouter(
     response_model=list[CalendarEntry],
     summary="My week, jobs and leave together",
 )
-async def get_calendar(
+def get_calendar(
     starts_from: datetime = Query(..., alias="from"),
     starts_to: datetime = Query(..., alias="to"),
     _: Principal = Depends(get_current_user),
@@ -74,7 +74,7 @@ async def get_calendar(
     response_model=list[UnavailabilityBlock],
     summary="When I have said I am not available",
 )
-async def list_unavailability(
+def list_unavailability(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     starts_from: datetime | None = Query(None, alias="from"),
@@ -103,7 +103,7 @@ async def list_unavailability(
     status_code=status.HTTP_201_CREATED,
     summary="Mark a window unavailable",
 )
-async def add_unavailability(
+def add_unavailability(
     body: CreateUnavailabilityRequest,
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -132,7 +132,7 @@ async def add_unavailability(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="I am available after all",
 )
-async def delete_unavailability(
+def delete_unavailability(
     block_id: str = Path(...),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -154,7 +154,7 @@ async def delete_unavailability(
     response_model=list[AvailabilityRule],
     summary="The week I am willing to work",
 )
-async def list_availability_rules(
+def list_availability_rules(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> list[AvailabilityRule]:
@@ -176,7 +176,7 @@ async def list_availability_rules(
     response_model=list[AvailabilityRule],
     summary="Set the week I am willing to work",
 )
-async def set_availability_rules(
+def set_availability_rules(
     body: SetAvailabilityRulesRequest,
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),

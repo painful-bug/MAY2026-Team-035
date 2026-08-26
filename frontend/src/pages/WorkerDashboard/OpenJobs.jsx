@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { Hand, Inbox } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
+import { useSseFallbackInterval } from '../../lib/realtime/useLiveUpdates';
 
 // The open-jobs board (product ruling 2026-08-23, C1-C3): every unclaimed job
 // on the caller's department rosters, claimable on the spot.
@@ -117,8 +119,27 @@ export default function OpenJobs() {
   // The snapshot answers "does anybody employ you", which decides which of the
   // two empty states an empty board means. Same key as the layout's query, so
   // react-query deduplicates the fetch.
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
-  const board = useQuery({ queryKey: ['worker-open-jobs'], queryFn: workerApi.openJobs });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
+  // The board is the highest-contention read in the app — the card another
+  // technician is about to claim is the card on this screen — so it is the one
+  // that most wants the live path. `WorkerLayout` subscribes for the whole
+  // portal and `work_order.changed` stales this key (WORKER_EVENT_MAP), which
+  // is what takes a claimed job off the board without anybody pressing it.
+  //
+  // The degraded fallback below is the same rule the bell and the dock use: a
+  // slow re-read, and only while the stream is unavailable or in error. The
+  // board never polled before, so this adds nothing to a healthy tab.
+  const refetchInterval = useSseFallbackInterval();
+  const board = useQuery({
+    queryKey: ['worker-open-jobs'],
+    queryFn: workerApi.openJobs,
+    ...QUERY_POLICIES.list,
+    refetchInterval,
+  });
 
   const claim = useMutation({
     mutationFn: (workOrderId) => workerApi.claimJob(workOrderId),

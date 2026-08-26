@@ -15,7 +15,7 @@ import Amenities from './Amenities';
 const mocks = vi.hoisted(() => ({
   availableAmenities: vi.fn(),
   amenityBookings: vi.fn(),
-  checkBookingSlotAvailability: vi.fn(),
+  fetchBookingConflicts: vi.fn(),
   showToast: vi.fn(),
   addActivity: vi.fn(),
 }));
@@ -27,13 +27,21 @@ vi.mock('../../features/resident/residentApi.js', () => ({
   },
 }));
 
-vi.mock('../../features/amenities/services/amenityBookingsService.js', () => ({
-  cancelResidentAmenityBookingDays: vi.fn(),
-  createResidentAmenityBookingSeries: vi.fn(),
-  // `{ available, verified }`: the slot hint reads the ADMIN-guarded snapshot,
-  // so "we could not check" is one of its normal answers (issue #48 D5).
-  checkBookingSlotAvailability: mocks.checkBookingSlotAvailability,
-}));
+vi.mock(
+  '../../features/amenities/services/amenityBookingsService.js',
+  async (importOriginal) => ({
+    // The real `evaluateBookingSlot` stays: it is pure arithmetic over the
+    // bookings handed to it, and the page's slot filtering is what is under
+    // test. Only the network half is mocked.
+    ...(await importOriginal()),
+    cancelResidentAmenityBookingDays: vi.fn(),
+    createResidentAmenityBookingSeries: vi.fn(),
+    // `{ bookings, verified }`: the conflict read is the ADMIN-guarded
+    // snapshot, so "we could not check" is one of its normal answers
+    // (issue #48 D5).
+    fetchBookingConflicts: mocks.fetchBookingConflicts,
+  })
+);
 
 vi.mock('../../store/appStore.js', () => ({
   useAppStore: (selector) =>
@@ -84,9 +92,9 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ items: [bookableAmenity()] });
   mocks.amenityBookings.mockReset().mockResolvedValue({ items: [] });
-  mocks.checkBookingSlotAvailability
+  mocks.fetchBookingConflicts
     .mockReset()
-    .mockResolvedValue({ available: true, verified: true });
+    .mockResolvedValue({ bookings: [], verified: true });
 });
 
 const renderPage = () => {
@@ -166,8 +174,8 @@ describe('resident booking dialog when availability cannot be checked', () => {
 
   it('offers the slots and says the check did not happen, rather than hanging', async () => {
     mocks.availableAmenities.mockResolvedValue({ items: [hoursAmenity()] });
-    mocks.checkBookingSlotAvailability.mockResolvedValue({
-      available: true,
+    mocks.fetchBookingConflicts.mockResolvedValue({
+      bookings: [],
       verified: false,
     });
     const user = userEvent.setup();
@@ -192,7 +200,7 @@ describe('resident booking dialog when availability cannot be checked', () => {
 
   it('recovers the same way when the hint throws outright', async () => {
     mocks.availableAmenities.mockResolvedValue({ items: [hoursAmenity()] });
-    mocks.checkBookingSlotAvailability.mockRejectedValue(
+    mocks.fetchBookingConflicts.mockRejectedValue(
       new Error('Network request failed.')
     );
     const user = userEvent.setup();

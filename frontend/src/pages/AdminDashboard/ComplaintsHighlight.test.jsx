@@ -22,7 +22,9 @@ import AdminComplaints from './Complaints';
 
 const mocks = vi.hoisted(() => ({ state: {} }));
 
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 // The raise modal is a screen of its own with its own reads, and nothing here
 // opens it.
 vi.mock('../../features/complaints/components/AdminRaiseComplaintModal', () => ({

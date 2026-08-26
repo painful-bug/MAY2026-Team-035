@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { MapPin, Phone, User, X } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
@@ -28,6 +29,7 @@ export default function JobDetailModal({ workOrderId, onClose }) {
   const job = useQuery({
     queryKey: ['worker-job', workOrderId],
     queryFn: () => workerApi.job(workOrderId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(workOrderId),
   });
 
