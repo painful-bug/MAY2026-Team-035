@@ -266,10 +266,14 @@ begin
     raise exception 'amenity_bookings_amenity_sse missing on public.amenity_bookings';
   end if;
 
+  -- `to_regclass`, not a literal `::regclass` cast: the cast is resolved when
+  -- this expression is PLANNED, before the guard on its left is evaluated, so
+  -- on a database without the table it raises 42P01 despite the guard.
+  -- `to_regclass` returns null there, and `tgrelid = null` is simply false.
   if to_regclass('public.amenity_booking_series') is not null and not exists (
     select 1
       from pg_trigger
-     where tgrelid = 'public.amenity_booking_series'::regclass
+     where tgrelid = to_regclass('public.amenity_booking_series')
        and tgname = 'amenity_booking_series_amenity_sse'
        and not tgisinternal
   ) then

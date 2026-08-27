@@ -311,11 +311,21 @@ def test_it_verifies_every_trigger_it_claims_to_have_made() -> None:
     for table, trigger in (
         ("work_orders", "work_orders_sse_event"),
         ("amenity_bookings", "amenity_bookings_amenity_sse"),
-        ("amenity_booking_series", "amenity_booking_series_amenity_sse"),
         ("dm_messages", "dm_messages_sse_event"),
     ):
         assert f"tgrelid = 'public.{table}'::regclass" in text, table
         assert f"tgname = '{trigger}'" in text, trigger
         assert f"{trigger} missing on public.{table}" in text, trigger
+    # The series arm may NOT use a literal `::regclass` cast: the cast is
+    # resolved at expression-planning time, before the `to_regclass` guard is
+    # evaluated, so it raises 42P01 on any database without the table -- which
+    # is every current database. Hosted proved this on 2026-08-27.
+    assert "tgrelid = 'public.amenity_booking_series'::regclass" not in text
+    assert "tgrelid = to_regclass('public.amenity_booking_series')" in text
+    assert "tgname = 'amenity_booking_series_amenity_sse'" in text
+    assert (
+        "amenity_booking_series_amenity_sse missing on public.amenity_booking_series"
+        in text
+    )
     assert "raise exception" in text
     assert "not tgisinternal" in text
