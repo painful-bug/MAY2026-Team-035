@@ -49,6 +49,7 @@ def test_api_004_refresh_timeout_returns_service_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.v1.routers import auth as auth_router
+    from app.config import get_settings
     from app.core.web_session import cookie_name
 
     endpoint = "POST /api/v1/auth/refresh"
@@ -69,6 +70,9 @@ def test_api_004_refresh_timeout_returns_service_unavailable(
     def stalled_refresh(_: str) -> None:
         time.sleep(0.05)
 
+    # Pinned here, not in `api_client`: only this test wants a budget the
+    # stalled provider is guaranteed to miss.
+    monkeypatch.setattr(get_settings(), "auth_provider_timeout_seconds", 0.001)
     monkeypatch.setattr(
         auth_router.auth_service,
         "refresh_session",
