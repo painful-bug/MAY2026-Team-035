@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 import { workOrdersApi } from '../../features/workOrders/workOrdersApi';
 import { Failure, ModalShell, whenText } from './triageParts';
@@ -36,6 +37,7 @@ export default function AssignPickerModal({ order, onClose }) {
     // reads the same cached list rather than a second fetch of it.
     queryKey: ['work-orders', 'candidates', order.id, false],
     queryFn: () => workOrdersApi.candidates(order.id),
+    ...QUERY_POLICIES.list,
     // `dispatch_candidates` drops unscheduled jobs before it looks at anyone —
     // leave, availability windows, and clashing bookings are all checked
     // against the slot, so with no slot the answer is nobody, always. Don't

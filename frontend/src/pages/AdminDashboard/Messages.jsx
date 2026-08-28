@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessageSquare, Send } from 'lucide-react';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { hiringApi } from '../../features/hiring/hiringApi';
 
 // The department's side of the hiring conversation.
@@ -46,10 +47,12 @@ export default function Messages() {
   const threads = useQuery({
     queryKey: ['conversations'],
     queryFn: () => hiringApi.conversations(),
+    ...QUERY_POLICIES.list,
   });
   const thread = useQuery({
     queryKey: ['conversations', selectedId],
     queryFn: () => hiringApi.conversation(selectedId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(selectedId),
   });
 

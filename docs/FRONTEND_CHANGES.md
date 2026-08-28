@@ -676,7 +676,7 @@ the resident"* since the day the queue shipped.
 ## The join request claims a residence, and approval resolves it
 
 Added 2026-08-28, the frontend half of `20260828090000_residence_claim_on_join.sql`
-(runbook §31) under the three product rulings of 2026-08-27: the applicant
+(runbook §33) under the three product rulings of 2026-08-27: the applicant
 states their residence as free text at request time, approval requires a unit,
 and the unit inventory gap is closed by find-or-create at approval. The join
 tab's half is described under "Authentication and registration" above; this

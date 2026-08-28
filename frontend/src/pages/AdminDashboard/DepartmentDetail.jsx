@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { useApp } from '../../store/useApp';
 import { hiringApi } from '../../features/hiring/hiringApi';
 import { departmentsApi } from '../../features/departments/departmentsApi';
@@ -99,11 +100,9 @@ const getComplaintHistory = (complaint) => {
 
 export default function DepartmentDetail() {
   const { departmentId } = useParams();
-  const {
-    complaints,
-    updateComplaint,
-    addComplaintComment,
-  } = useApp();
+  const complaints = useApp((state) => state.complaints);
+  const updateComplaint = useApp((state) => state.updateComplaint);
+  const addComplaintComment = useApp((state) => state.addComplaintComment);
   const [statusFilter, setStatusFilter] = useState('All');
   const [search, setSearch] = useState('');
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
@@ -123,6 +122,7 @@ export default function DepartmentDetail() {
   const rosterQuery = useQuery({
     queryKey: ['departments', departmentId, 'roster'],
     queryFn: () => hiringApi.department(departmentId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(departmentId),
   });
   const department = rosterQuery.data ?? null;
@@ -199,6 +199,7 @@ export default function DepartmentDetail() {
   const invitationsQuery = useQuery({
     queryKey: ['departments', departmentId, 'staff-invitations'],
     queryFn: () => departmentsApi.staffInvitations(departmentId, { status: 'pending' }),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
   const pendingLeaders = invitationsQuery.data ?? [];

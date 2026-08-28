@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { Plus, Trash2 } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import NoMarketplaceProfile from '../../features/worker/NoMarketplaceProfile';
@@ -49,16 +50,22 @@ export default function WorkerAvailability() {
   // here is a button that 404s. They are scheduled by their department rather
   // than matched by the dispatcher; saying so is more use than a form that
   // refuses on submit.
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
   const rules = useQuery({
     queryKey: ['worker-rules'],
     queryFn: workerApi.availabilityRules,
+    ...QUERY_POLICIES.list,
     enabled: snapshot.isSuccess && !noMarketplaceProfile,
   });
   const blocks = useQuery({
     queryKey: ['worker-unavailability'],
     queryFn: () => workerApi.unavailability(),
+    ...QUERY_POLICIES.list,
     enabled: snapshot.isSuccess && !noMarketplaceProfile,
   });
 

@@ -15,7 +15,7 @@ _logger = get_logger(__name__)
 
 
 def promote_admin(
-    client: Client, user_id: str, body: PromoteAdminRequest
+    client: Client, community_id: str, body: PromoteAdminRequest
 ) -> AdminSummary:
     """Give an existing member of the caller's community the ``admin`` role.
 
@@ -23,8 +23,6 @@ def promote_admin(
         NotFoundError: If no active membership in this community has that email.
         ConflictError: If that member is already an admin.
     """
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-
     membership = repo.find_active_membership_by_email(client, community_id, body.email)
     if membership is None:
         raise NotFoundError(

@@ -21,6 +21,7 @@ see the 0016 header.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 
 from app.core.exceptions import ValidationError
@@ -68,7 +69,6 @@ from app.domain.vocabularies import (
     weekdays_to_wire,
 )
 from app.repositories import amenities_repository as repo
-from app.repositories import tenancy_repository as tenancy_repo
 from supabase import Client
 
 _CATEGORIES = ("Sports", "Fitness", "Recreation", "Events", "Utility")
@@ -114,16 +114,6 @@ _REFUNDABLE_STATUSES = ("completed", "cancelled")
 # so 'approved' is the whole of it: 'confirmed' stood beside it here as a value
 # no row could ever hold (issue #48 D4).
 _FORCE_CANCELLABLE_STATUSES = ("approved",)
-
-
-def _community(client: Client, user_id: str) -> str:
-    """The community the caller belongs to.
-
-    Resolved here rather than in the router, matching every other service: the
-    router layer has no repository call in it anywhere else and this is not the
-    place to introduce the first one.
-    """
-    return tenancy_repo.get_caller_community_id(client, user_id)
 
 
 def _amount(value: object) -> float:
@@ -273,7 +263,7 @@ def _to_detail(row: dict) -> AmenityDetail:
 
 def list_amenities(
     client: Client,
-    user_id: str,
+    community_id: str,
     *,
     search: str | None = None,
     category: str | None = None,
@@ -282,7 +272,6 @@ def list_amenities(
     page_size: int = 24,
 ) -> Page[AmenitySummary]:
     """The catalogue grid."""
-    community_id = _community(client, user_id)
     stored_status = None
     if status and status.lower() not in ("all", ""):
         if status.lower() not in ("active", "inactive"):
@@ -308,9 +297,8 @@ def list_amenities(
     )
 
 
-def get_amenity(client: Client, user_id: str, amenity_id: str) -> AmenityDetail:
+def get_amenity(client: Client, community_id: str, amenity_id: str) -> AmenityDetail:
     """One amenity with every settings group."""
-    community_id = _community(client, user_id)
     return _to_detail(repo.get_amenity(client, community_id, amenity_id))
 
 
@@ -396,13 +384,12 @@ def _settings_payload(request: SaveAmenityRequest) -> dict | None:
 
 def save_amenity(
     client: Client,
-    user_id: str,
+    community_id: str,
     request: SaveAmenityRequest,
     *,
     amenity_id: str | None = None,
 ) -> AmenityDetail:
     """Create or update an amenity and its settings in one call."""
-    community_id = _community(client, user_id)
     if amenity_id is None and not request.name:
         raise ValidationError("An amenity needs a name.")
 
@@ -549,7 +536,7 @@ def _to_booking(
 
 def list_bookings(
     client: Client,
-    user_id: str,
+    community_id: str,
     *,
     amenity_id: str | None = None,
     booking_date: date | None = None,
@@ -562,7 +549,6 @@ def list_bookings(
     page_size: int = 50,
 ) -> Page[BookingSummary]:
     """Occupied days, for the timeline and for a resident's own list."""
-    community_id = _community(client, user_id)
     offset = (page - 1) * page_size
     rows, total = repo.list_bookings(
         client,
@@ -591,7 +577,7 @@ def list_bookings(
 
 def list_approvals(
     client: Client,
-    user_id: str,
+    community_id: str,
     amenity_id: str,
     *,
     status: str = "pending",
@@ -605,7 +591,6 @@ def list_approvals(
     invoices attach to the unit and carry no person. Same label, different
     number -- DECISIONS_NEEDED E18.
     """
-    community_id = _community(client, user_id)
     statuses = _APPROVAL_FILTERS.get(status.lower())
     if statuses is None:
         raise ValidationError(
@@ -623,9 +608,16 @@ def list_approvals(
     )
 
     series_ids = [row["booking_series_id"] for row in rows]
-    guests = repo.list_guests(client, community_id, series_ids)
-    dates = repo.list_series_dates(client, community_id, series_ids)
-    dues = _outstanding_by_unit(client, community_id, rows)
+    # The first read establishes the page; the three per-page reads that hang
+    # off it are independent of each other, so they run concurrently (the
+    # pattern ``dashboard_service.snapshot`` set).
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="approvals") as pool:
+        guests_f = pool.submit(repo.list_guests, client, community_id, series_ids)
+        dates_f = pool.submit(repo.list_series_dates, client, community_id, series_ids)
+        dues_f = pool.submit(_outstanding_by_unit, client, community_id, rows)
+        guests = guests_f.result()
+        dates = dates_f.result()
+        dues = dues_f.result()
 
     items = []
     for row in rows:
@@ -674,7 +666,7 @@ def _outstanding_by_unit(
 
 def request_booking(
     client: Client,
-    user_id: str,
+    community_id: str,
     amenity_id: str,
     request: ResidentBookingRequest,
 ) -> Page[BookingSummary]:
@@ -684,7 +676,6 @@ def request_booking(
     bookings and telling the caller about one of them is how a resident ends up
     surprised by the other two.
     """
-    community_id = _community(client, user_id)
     _assert_time_range(request.start_time, request.end_time)
 
     payload = {
@@ -720,12 +711,11 @@ def _storage_booking_type(value: str) -> str:
 
 def create_admin_booking(
     client: Client,
-    user_id: str,
+    community_id: str,
     amenity_id: str,
     request: AdminBookingRequest,
 ) -> BookingSummary:
     """An admin booking on a resident's behalf. Approved on creation."""
-    community_id = _community(client, user_id)
     _assert_time_range(request.start_time, request.end_time)
 
     payload = {
@@ -752,10 +742,9 @@ def create_admin_booking(
 
 
 def block_slot(
-    client: Client, user_id: str, amenity_id: str, request: BlockSlotRequest
+    client: Client, community_id: str, amenity_id: str, request: BlockSlotRequest
 ) -> BookingSummary:
     """Reserve a slot administratively. Always exclusive."""
-    community_id = _community(client, user_id)
     _assert_time_range(request.start_time, request.end_time)
 
     payload = {
@@ -771,19 +760,17 @@ def block_slot(
 
 
 def approve_booking(
-    client: Client, user_id: str, series_id: str
+    client: Client, community_id: str, series_id: str
 ) -> Page[BookingSummary]:
     """Approve a whole request. Every day of it, in one decision."""
-    community_id = _community(client, user_id)
     repo.approve_booking(client, series_id)
     return _series_page(client, community_id, series_id)
 
 
 def reject_booking(
-    client: Client, user_id: str, series_id: str, request: RejectBookingRequest
+    client: Client, community_id: str, series_id: str, request: RejectBookingRequest
 ) -> Page[BookingSummary]:
     """Reject a whole request and free its slots."""
-    community_id = _community(client, user_id)
     if request.reason_code == "other" and not (request.reason or "").strip():
         raise ValidationError("Add the rejection reason.")
 
@@ -820,10 +807,9 @@ def cancel_bookings(client: Client, request: CancelBookingRequest) -> int:
 
 
 def force_cancel_booking(
-    client: Client, user_id: str, occurrence_id: str, request: ForceCancelRequest
+    client: Client, community_id: str, occurrence_id: str, request: ForceCancelRequest
 ) -> BookingSummary:
     """Override a booking the resident still wants. The ledger records who."""
-    community_id = _community(client, user_id)
     repo.force_cancel_booking(
         client,
         occurrence_id,
@@ -1050,7 +1036,7 @@ def _to_transaction(row: dict, events: list[dict]) -> LedgerTransaction:
 
 def list_ledger(
     client: Client,
-    user_id: str,
+    community_id: str,
     *,
     amenity_id: str | None = None,
     payment_status: str | None = None,
@@ -1059,7 +1045,6 @@ def list_ledger(
     page_size: int = 20,
 ) -> Page[LedgerTransaction]:
     """The ledger table."""
-    community_id = _community(client, user_id)
     status = None
     if payment_status and payment_status.lower() not in ("all", ""):
         status = payment_status.lower()
@@ -1087,10 +1072,9 @@ def list_ledger(
 
 
 def get_ledger_summary(
-    client: Client, user_id: str, amenity_id: str
+    client: Client, community_id: str, amenity_id: str
 ) -> LedgerSummary:
     """The eight cards above the ledger table. Zeros for an unbooked amenity."""
-    community_id = _community(client, user_id)
     row = repo.fetch_ledger_summary(client, community_id, amenity_id) or {}
     return LedgerSummary(
         total_bookings=int(row.get("total_bookings") or 0),
@@ -1119,7 +1103,7 @@ def _fold_notes(notes: str | None, *labelled: tuple[str, object]) -> str | None:
 
 def record_payment(
     client: Client,
-    user_id: str,
+    community_id: str,
     occurrence_id: str,
     request: RecordAmenityPaymentRequest,
 ) -> LedgerTransaction:
@@ -1133,7 +1117,6 @@ def record_payment(
     no column of their own on a financial event, so they are folded into the
     notes rather than dropped.
     """
-    community_id = _community(client, user_id)
     if request.charge_type not in _CHARGE_TYPES:
         raise ValidationError(
             "Charge type must be one of: " + ", ".join(_CHARGE_TYPES) + "."
@@ -1157,7 +1140,7 @@ def record_payment(
 
 def refund_deposit(
     client: Client,
-    user_id: str,
+    community_id: str,
     occurrence_id: str,
     request: RefundDepositRequest,
 ) -> LedgerTransaction:
@@ -1170,7 +1153,6 @@ def refund_deposit(
     Not sending it made every refund a NULL-amount event: the ceiling check
     passed vacuously and the ledger recorded a refund of nothing (issue #48 D4).
     """
-    community_id = _community(client, user_id)
     remaining = _amount(
         repo.get_ledger_row(client, community_id, occurrence_id).get(
             "remaining_refund"
@@ -1193,12 +1175,11 @@ def refund_deposit(
 
 def deduct_damage(
     client: Client,
-    user_id: str,
+    community_id: str,
     occurrence_id: str,
     request: DamageDeductionRequest,
 ) -> LedgerTransaction:
     """Take damage out of the held deposit. Capped there, not here."""
-    community_id = _community(client, user_id)
     repo.deduct_damage(
         client,
         occurrence_id,
@@ -1212,7 +1193,7 @@ def deduct_damage(
 
 
 def add_charge(
-    client: Client, user_id: str, occurrence_id: str, request: AddChargeRequest
+    client: Client, community_id: str, occurrence_id: str, request: AddChargeRequest
 ) -> LedgerTransaction:
     """Add an extra charge after the fact.
 
@@ -1223,7 +1204,6 @@ def add_charge(
     D4). The requested charge type is folded into the note, because the RPC
     hardcodes the column and a late-cancellation fee should still say so.
     """
-    community_id = _community(client, user_id)
     if request.charge_type not in ("additional", "late_cancellation"):
         raise ValidationError(
             "Only additional and late-cancellation charges can be added."
@@ -1263,7 +1243,7 @@ def _read_transaction(
 
 def build_report(
     client: Client,
-    user_id: str,
+    community_id: str,
     *,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -1280,7 +1260,6 @@ def build_report(
     (agenda item 11), and it is worse here because the number is labelled "Total
     Revenue".
     """
-    community_id = _community(client, user_id)
     # The RPC's whole filter vocabulary is `from_date`/`to_date` (0023 lines
     # 1496-1497). It used to be sent `start_date`/`end_date`/`amenity_id`/
     # `booking_status`, none of which it reads, so every KPI silently described
@@ -1303,21 +1282,30 @@ def build_report(
         )
 
     offset = (page - 1) * page_size
-    rows, _total = repo.list_ledger(
-        client,
-        community_id,
-        amenity_id=amenity_id,
-        offset=offset,
-        limit=page_size,
-        date_from=str(start_date) if start_date else None,
-        date_to=str(end_date) if end_date else None,
-        booking_status=stored_status,
-    )
-    totals = repo.fetch_report_totals(client, community_id, filters)
-    catalogue, _ = repo.list_amenities(
-        client, community_id, search=None, category=None, status=None,
-        offset=0, limit=200,
-    )
+    # The ledger page, the KPI aggregate and the amenity options are three
+    # independent reads, so they run concurrently (the pattern
+    # ``dashboard_service.snapshot`` set).
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="report") as pool:
+        rows_f = pool.submit(
+            repo.list_ledger,
+            client,
+            community_id,
+            amenity_id=amenity_id,
+            offset=offset,
+            limit=page_size,
+            date_from=str(start_date) if start_date else None,
+            date_to=str(end_date) if end_date else None,
+            booking_status=stored_status,
+        )
+        totals_f = pool.submit(repo.fetch_report_totals, client, community_id, filters)
+        catalogue_f = pool.submit(
+            repo.list_amenities,
+            client, community_id, search=None, category=None, status=None,
+            offset=0, limit=200,
+        )
+        rows, _total = rows_f.result()
+        totals = totals_f.result()
+        catalogue, _ = catalogue_f.result()
     amenities = [_to_summary(row) for row in catalogue]
 
     return AmenityReport(

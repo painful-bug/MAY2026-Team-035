@@ -40,7 +40,7 @@ router = APIRouter(
     dependencies=[Depends(get_active_membership)],
     summary="Staff complaint detail with full timeline",
 )
-async def staff_complaint_detail(
+def staff_complaint_detail(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> StaffComplaintDetail:
@@ -70,7 +70,7 @@ async def staff_complaint_detail(
     dependencies=[Depends(require_admin)],
     summary="Raise a complaint from the admin portal",
 )
-async def admin_raise_complaint(
+def admin_raise_complaint(
     body: AdminRaiseComplaintRequest,
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -127,7 +127,7 @@ async def admin_raise_complaint(
     dependencies=[Depends(require_admin)],
     summary="Update a complaint",
 )
-async def update_complaint(
+def update_complaint(
     body: UpdateComplaintRequest,
     complaint_id: str = Path(...),
     principal=Depends(get_current_user),
@@ -154,7 +154,7 @@ async def update_complaint(
     status_code=status.HTTP_201_CREATED,
     summary="Comment on a complaint",
 )
-async def add_comment(
+def add_comment(
     body: AddCommentRequest,
     complaint_id: str = Path(...),
     principal=Depends(get_current_user),

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import { QUERY_POLICIES } from '../lib/api/queryClient';
+import PortalErrorBoundary, { PortalRouteFallback } from '../components/common/PortalErrorBoundary';
 import {
   Briefcase,
   CalendarDays,
@@ -26,6 +27,8 @@ import { isProviderProfileComplete } from '../features/worker/providerProfile';
 import { rankLabel, supervisedEngagement } from '../lib/staffVocabulary';
 import NotificationBell from '../components/notifications/NotificationBell';
 import RegisterProvider from '../pages/WorkerDashboard/RegisterProvider';
+import { useLiveUpdates } from '../lib/realtime/useLiveUpdates';
+import { WORKER_EVENT_MAP } from '../lib/realtime/portalMaps';
 
 // Modelled on SecurityLayout.jsx, with two deliberate differences.
 //
@@ -96,7 +99,11 @@ const NAV = [
 
 function AvailabilityToggle() {
   const queryClient = useQueryClient();
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const provider = snapshot.data?.provider;
   const toggle = useMutation({
     mutationFn: (next) => workerApi.setAvailable(next),
@@ -141,7 +148,17 @@ export default function WorkerLayout() {
   // of tabs that all render broken screens, no "form inside the Dashboard
   // tab". Same key as AvailabilityToggle's query, so react-query deduplicates
   // the fetch.
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
+
+  // Portal-wide live updates (C2). Above the early returns below, because a
+  // hook cannot be called conditionally — and correct there anyway: the
+  // registration screen is still a screen whose snapshot can move under it
+  // (an administrator hiring this person is exactly that).
+  useLiveUpdates(WORKER_EVENT_MAP);
 
   const handleLogout = () => {
     void logout();
@@ -333,7 +350,9 @@ export default function WorkerLayout() {
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
           <PortalErrorBoundary>
-            <Outlet />
+            <Suspense fallback={<PortalRouteFallback />}>
+              <Outlet />
+            </Suspense>
           </PortalErrorBoundary>
         </main>
       </div>

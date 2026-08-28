@@ -77,7 +77,7 @@ router = APIRouter(
     response_model=list[UnassignedComplaint],
     summary="Complaints nothing could route",
 )
-async def unassigned_complaints(
+def unassigned_complaints(
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> list[UnassignedComplaint]:
@@ -109,7 +109,7 @@ async def unassigned_complaints(
     response_model=list[DepartmentOption],
     summary="Every department, named, for a picker",
 )
-async def department_options(
+def department_options(
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> list[DepartmentOption]:
@@ -133,7 +133,7 @@ async def department_options(
     response_model=MessageResult,
     summary="Allot or move a complaint",
 )
-async def assign_department(
+def assign_department(
     body: AssignDepartmentRequest,
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
@@ -172,7 +172,7 @@ async def assign_department(
     status_code=status.HTTP_201_CREATED,
     summary="Ask for a complaint to be moved",
 )
-async def request_department_change(
+def request_department_change(
     body: RequestDepartmentChangeRequest,
     complaint_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
@@ -205,7 +205,7 @@ async def request_department_change(
     response_model=MessageResult,
     summary="Answer a move request",
 )
-async def decide_department_change(
+def decide_department_change(
     body: DecideDepartmentChangeRequest,
     complaint_id: str = Path(...),
     request_id: str = Path(...),
@@ -237,7 +237,7 @@ async def decide_department_change(
     response_model=list[DepartmentComplaint],
     summary="This department's complaints",
 )
-async def department_complaints(
+def department_complaints(
     department_id: str = Path(...),
     complaint_status: str | None = Query(default=None, alias="status"),
     client: Client = Depends(get_request_client),
@@ -264,7 +264,7 @@ async def department_complaints(
     response_model=list[DepartmentChangeRequest],
     summary="Move requests waiting on this manager",
 )
-async def department_change_requests(
+def department_change_requests(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> list[DepartmentChangeRequest]:

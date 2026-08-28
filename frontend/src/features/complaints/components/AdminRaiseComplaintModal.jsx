@@ -5,6 +5,7 @@ import { MapPin, Send, X } from 'lucide-react';
 import { adminComplaintsApi } from '../adminComplaintsApi';
 import { complaintRoutingApi } from '../routingApi';
 import { departmentsApi } from '../../departments/departmentsApi';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 
 // The admin's raise-complaint form: the resident modal's field set, plus one
 // optional picker.
@@ -65,7 +66,7 @@ export default function AdminRaiseComplaintModal({ onClose, onCreated }) {
   const skills = useQuery({
     queryKey: ['skills'],
     queryFn: () => departmentsApi.allSkills(),
-    staleTime: 5 * 60_000,
+    ...QUERY_POLICIES.reference,
   });
 
   // `/department-options` rather than `/departments`: the same read the triage
@@ -74,13 +75,13 @@ export default function AdminRaiseComplaintModal({ onClose, onCreated }) {
   const departments = useQuery({
     queryKey: ['department-options'],
     queryFn: complaintRoutingApi.departmentOptions,
-    staleTime: 5 * 60_000,
+    ...QUERY_POLICIES.reference,
   });
 
   const residents = useQuery({
     queryKey: ['admin-complaint-resident-options'],
     queryFn: adminComplaintsApi.residentOptions,
-    staleTime: 60_000,
+    ...QUERY_POLICIES.list,
   });
 
   const skillGroups = useMemo(() => {

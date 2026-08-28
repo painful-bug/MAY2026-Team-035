@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { departmentsApi } from '../departmentsApi';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 import TokenCombobox from './TokenCombobox';
 import { useDebounced } from './useDebounced';
 
@@ -36,7 +37,11 @@ export default function SkillPicker({
     queryKey: ['skills', 'search', debounced],
     queryFn: () => departmentsApi.searchSkills(debounced),
     enabled: debounced.trim().length > 0,
-    staleTime: 30_000,
+    // Skills are the reference-data domain named in the cache policy; the
+    // previous search still keeps its results on screen while the next
+    // keystroke's query resolves, instead of flashing the dropdown empty.
+    ...QUERY_POLICIES.reference,
+    ...PAGINATED,
   });
 
   const rows = suggestions.data || [];
@@ -47,10 +52,21 @@ export default function SkillPicker({
     (row) => row.name.trim().toLowerCase() === debounced.trim().toLowerCase()
   );
 
+  // Scoped rather than blanket: attaching/detaching an existing catalogue
+  // skill from *this* department does not change any other page's data, so
+  // this used to needlessly refetch the plain ['skills'] reference list
+  // every other screen reads (RegisterProvider, AdminRaiseComplaintModal,
+  // worker Settings, ...), the admin-wide departments list, and every other
+  // department's roster/staff-invitations cache — all keyed under the
+  // ['departments'] prefix invalidateQueries matches by default.
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['skills'] });
+    // Only this picker's own search domain, not the unrelated plain
+    // ['skills'] list other screens read.
+    queryClient.invalidateQueries({ queryKey: ['skills', 'search'] });
     if (departmentId) {
-      queryClient.invalidateQueries({ queryKey: ['departments'] });
+      // Only this department's cached data (roster, staff-invitations, ...),
+      // not the admin-wide list or any other department's.
+      queryClient.invalidateQueries({ queryKey: ['departments', departmentId] });
     }
   };
 

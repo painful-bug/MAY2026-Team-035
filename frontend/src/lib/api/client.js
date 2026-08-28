@@ -1,5 +1,21 @@
 const API_BASE = '/api/v1';
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
+// The default for every other `api()` call — data reads and writes alike.
+// Before this, only the three auth calls below ever aborted; every other
+// endpoint could hang forever on a stalled connection, and the screen calling
+// it just sat on its loading state with nothing telling the person it had
+// stopped making progress. 15s is long enough for a slow real request and
+// short enough that "the app is stuck" becomes a visible, catchable error
+// instead of an indefinite spinner.
+//
+// Explicitly NOT applied to `EventSource` (the dashboard/resident live
+// streams open their own connection and never call `api()`) or to
+// `download()` above (a CSV export button, deliberately its own code path
+// with no retry and no default timeout — a slow export should keep waiting,
+// not abort mid-stream). A caller that genuinely needs longer — or no limit
+// at all — still passes its own `timeoutMs` in the options object, same as
+// the auth calls do.
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 function csrfToken() {
   const cookies = document.cookie.split('; ');
@@ -63,7 +79,7 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-export async function api(path, options = {}, { retry = true, timeoutMs } = {}) {
+export async function api(path, options = {}, { retry = true, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS } = {}) {
   const method = (options.method || 'GET').toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !csrfToken()) {
     await prepareAnonymousCsrf();

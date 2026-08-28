@@ -4,7 +4,8 @@ import { Megaphone, Plus, Calendar } from 'lucide-react';
 import { api } from '../../lib/api/client';
 
 export default function Notices() {
-  const { notices, showToast } = useApp();
+  const notices = useApp((state) => state.notices);
+  const showToast = useApp((state) => state.showToast);
   const [modalOpen, setModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');

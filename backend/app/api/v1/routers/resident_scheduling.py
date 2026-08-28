@@ -58,7 +58,7 @@ router = APIRouter(
     response_model=ScheduleRequest,
     summary="The visit proposed for my complaint",
 )
-async def get_schedule_request(
+def get_schedule_request(
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> ScheduleRequest:
@@ -99,7 +99,7 @@ async def get_schedule_request(
     response_model=ScheduleRequest,
     summary="Confirm or decline a proposed visit",
 )
-async def respond_to_schedule(
+def respond_to_schedule(
     body: ScheduleResponseRequest,
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -139,7 +139,7 @@ async def respond_to_schedule(
     response_model=ScheduleRequest,
     summary="Pick the time for a visit to my home",
 )
-async def set_schedule_time(
+def set_schedule_time(
     body: ScheduleTimeRequest,
     complaint_id: str = Path(...),
     client: Client = Depends(get_request_client),

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle, Clock, Check, Receipt, ShieldCheck, CalendarClock } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 // Wired to `docs/API.md` §14 / `backend/app/api/v1/routers/resident_money.py`.
 //
@@ -43,10 +44,12 @@ export default function Payments() {
   const invoicesQuery = useQuery({
     queryKey: ['resident', 'invoices'],
     queryFn: () => residentApi.invoices(),
+    ...QUERY_POLICIES.list,
   });
   const bookingsQuery = useQuery({
     queryKey: ['resident', 'amenity-bookings'],
     queryFn: () => residentApi.amenityBookings(),
+    ...QUERY_POLICIES.list,
   });
 
   const invalidateForKind = (kind) => {

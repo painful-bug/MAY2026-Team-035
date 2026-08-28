@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { CalendarDays, Inbox, MapPinned, Wrench } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
@@ -97,7 +98,11 @@ export default function WorkerDashboardHome() {
     },
     [searchParams, setSearchParams]
   );
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
 
   if (snapshot.isPending) {
     return <p className="py-16 text-center text-sm font-semibold text-slate-400">Loading your work…</p>;

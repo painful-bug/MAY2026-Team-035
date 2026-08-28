@@ -33,7 +33,7 @@ router = APIRouter(tags=["notifications"], dependencies=[Depends(require_csrf_un
     response_model=NotificationFeed,
     summary="List the caller's notifications",
 )
-async def list_notifications(
+def list_notifications(
     unread: bool = Query(
         False,
         description=(
@@ -76,7 +76,7 @@ async def list_notifications(
     response_model=NotificationReadResult,
     summary="Mark one notification read",
 )
-async def mark_notification_read(
+def mark_notification_read(
     notification_id: str,
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -102,7 +102,7 @@ async def mark_notification_read(
     response_model=NotificationReadResult,
     summary="Mark every notification read",
 )
-async def mark_all_notifications_read(
+def mark_all_notifications_read(
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> NotificationReadResult:

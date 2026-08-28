@@ -221,21 +221,20 @@ export default function SupervisorDashboard({ engagement }) {
     queryKey: ['supervisor-triage', departmentId],
     queryFn: () => triageApi.snapshot(departmentId),
     enabled: Boolean(departmentId),
-    // The fallback half of the refresh rule. The event below is the fast path;
-    // this is what covers a tab that has been open with no SSE beat.
+    // The fallback half of the refresh rule. `WorkerLayout`'s `useLiveUpdates`
+    // is the fast path — `work_order.changed` and every complaint notification
+    // stale `['supervisor-triage']` — and this is what covers a tab whose
+    // stream has dropped, alongside the 5-minute degraded poll the same rule
+    // gives the bell and the dock.
     staleTime: 60_000,
   });
 
-  // This page is react-query and the SSE stream is not, so the re-snapshot that
-  // ticks the notification bell would leave the queue behind it stale.
-  // `DashboardDataBootstrap` already dispatches this window event after every
-  // beat, so hanging the invalidation off it keeps the two in step without a
-  // second EventSource — the pattern `PendingRegistrations.jsx` set.
-  useEffect(() => {
-    const onRefresh = () => queryClient.invalidateQueries({ queryKey: ['supervisor-triage'] });
-    window.addEventListener('homebandhu:dashboard-refresh', onRefresh);
-    return () => window.removeEventListener('homebandhu:dashboard-refresh', onRefresh);
-  }, [queryClient]);
+  // The listener that used to sit here waited on `homebandhu:dashboard-refresh`,
+  // a window event `DashboardDataBootstrap` dispatches — and that component
+  // mounts in `AdminLayout` only. In the worker portal it never fired once, so
+  // the queue's "live" half was dead from the day it shipped. `WorkerLayout`
+  // now subscribes to the real stream for the whole portal (WORKER_EVENT_MAP),
+  // which covers this page's key, so there is nothing left to hang here.
 
   // The complaint leaves one section and appears in another, and which of those
   // happens is the server's answer and not this screen's guess — so every

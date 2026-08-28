@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import PortalErrorBoundary, { PortalRouteFallback } from '../components/common/PortalErrorBoundary';
 import {
   Building2,
   CalendarClock,
@@ -21,7 +21,8 @@ import { AUTH_ROUTES } from '../routes/authRoutes';
 import { useApp } from '../store/useApp';
 
 export default function SecurityLayout() {
-  const { currentUser, logout } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
+  const logout = useApp((state) => state.logout);
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isManager = currentUser?.role === 'SecurityManager';
@@ -211,7 +212,9 @@ export default function SecurityLayout() {
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
           <PortalErrorBoundary>
-            <Outlet />
+            <Suspense fallback={<PortalRouteFallback />}>
+              <Outlet />
+            </Suspense>
           </PortalErrorBoundary>
         </main>
       </div>

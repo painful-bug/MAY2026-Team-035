@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, Copy, Link2, Loader2, UserPlus } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { registrationApi } from '../../features/registration/registrationApi';
 
 const initialForm = { full_name: '', invitee_email: '', phone: '', intended_unit_id: '' };
@@ -9,7 +10,11 @@ export default function Residents() {
   const [form, setForm] = useState(initialForm);
   const [invite, setInvite] = useState(null);
   const [copied, setCopied] = useState('');
-  const units = useQuery({ queryKey: ['admin-units'], queryFn: registrationApi.adminUnits });
+  const units = useQuery({
+    queryKey: ['admin-units'],
+    queryFn: registrationApi.adminUnits,
+    ...QUERY_POLICIES.list,
+  });
   const create = useMutation({
     mutationFn: registrationApi.createInvitation,
     onSuccess: (result) => { setInvite(result); setForm(initialForm); },

@@ -277,7 +277,10 @@ function RecordPaymentModal({ invoice, onClose, onRecorded }) {
 }
 
 export default function Maintenance() {
-  const { payments, users, hydrateDashboard, showToast } = useApp();
+  const payments = useApp((state) => state.payments);
+  const users = useApp((state) => state.users);
+  const hydrateDashboard = useApp((state) => state.hydrateDashboard);
+  const showToast = useApp((state) => state.showToast);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [creating, setCreating] = useState(false);

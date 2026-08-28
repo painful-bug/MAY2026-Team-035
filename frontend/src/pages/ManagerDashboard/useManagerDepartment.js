@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { departmentsApi } from '../../features/departments/departmentsApi';
 import { hiringApi } from '../../features/hiring/hiringApi';
 import { useApp } from '../../store/useApp';
@@ -20,7 +21,7 @@ import { useApp } from '../../store/useApp';
  * plain explanation rather than an empty dashboard.
  */
 export function useManagerDepartment() {
-  const { currentUser } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
   const departmentId = currentUser?.departmentId || null;
 
   const department = useQuery({
@@ -29,12 +30,14 @@ export function useManagerDepartment() {
     // manager for exactly this call. It was also the only department operation
     // with no frontend caller at all.
     queryFn: () => hiringApi.departmentDetail(departmentId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(departmentId),
   });
 
   const invitations = useQuery({
     queryKey: ['departments', departmentId, 'staff-invitations'],
     queryFn: () => departmentsApi.staffInvitations(departmentId, { status: 'pending' }),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
 

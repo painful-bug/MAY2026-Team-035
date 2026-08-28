@@ -50,7 +50,7 @@ router = APIRouter(
     status_code=status.HTTP_201_CREATED,
     summary="Add a trade to the global catalogue",
 )
-async def create_skill(
+def create_skill(
     body: CreateSkillRequest,
     response: Response,
     client: Client = Depends(get_request_client),
@@ -81,7 +81,7 @@ async def create_skill(
     response_model=list[ComplaintCategory],
     summary="This community's complaint categories",
 )
-async def list_categories(
+def list_categories(
     membership: MembershipContext = Depends(require_admin_or_manager),
     client: Client = Depends(get_request_client),
 ) -> list[ComplaintCategory]:
@@ -96,7 +96,9 @@ async def list_categories(
     ``departmentCount`` is how many departments claim the category. Zero means
     complaints filed under it reach no department at all.
     """
-    return service.list_categories(client, membership_id=membership.id)
+    return service.list_categories(
+        client, membership_id=membership.id, community_id=membership.community_id
+    )
 
 
 @router.get(
@@ -104,7 +106,7 @@ async def list_categories(
     response_model=list[Skill],
     summary="Skills a department needs",
 )
-async def list_department_skills(
+def list_department_skills(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> list[Skill]:
@@ -123,7 +125,7 @@ async def list_department_skills(
     response_model=list[Skill],
     summary="Replace a department's skills",
 )
-async def set_department_skills(
+def set_department_skills(
     body: SetDepartmentSkillsRequest,
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -148,7 +150,7 @@ async def set_department_skills(
     status_code=status.HTTP_201_CREATED,
     summary="Add a skill to a department by name",
 )
-async def add_department_skill(
+def add_department_skill(
     body: AddDepartmentSkillRequest,
     response: Response,
     department_id: str = Path(...),
@@ -178,7 +180,7 @@ async def add_department_skill(
     response_model=MessageResult,
     summary="Detach a skill from a department",
 )
-async def remove_department_skill(
+def remove_department_skill(
     department_id: str = Path(...),
     skill_id: str = Path(...),
     client: Client = Depends(get_request_client),

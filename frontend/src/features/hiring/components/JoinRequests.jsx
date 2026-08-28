@@ -5,6 +5,7 @@ import { Check, MapPin, UserPlus, X } from 'lucide-react';
 
 import { hiringApi } from '../hiringApi';
 import { JOB_TITLES } from '../../../lib/staffVocabulary';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 
 // Service people asking to join, answerable without leaving the dashboard.
 //
@@ -171,6 +172,7 @@ export default function JoinRequests({ departmentId, basePath }) {
   const applications = useQuery({
     queryKey: ['hiring', departmentId, 'applications'],
     queryFn: () => hiringApi.applications(departmentId, { status: 'pending' }),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
 

@@ -20,7 +20,9 @@ import DepartmentDetail from './DepartmentDetail';
 const mocks = vi.hoisted(() => ({ api: vi.fn(), state: {} }));
 
 vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 
 const complaint = {
   id: 'complaint-1',

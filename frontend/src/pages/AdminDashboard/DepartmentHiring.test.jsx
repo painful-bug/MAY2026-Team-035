@@ -32,7 +32,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 
 const staff = (overrides = {}) => ({
   id: 'staff-1',

@@ -40,7 +40,7 @@ router = APIRouter(tags=["resident-money"], dependencies=[Depends(require_csrf_u
     response_model=Page[ResidentInvoice],
     summary="List my invoices",
 )
-async def list_my_invoices(
+def list_my_invoices(
     view: str | None = Query(
         None, description="`unpaid` | `paid`. Omitted returns both."
     ),
@@ -78,7 +78,7 @@ async def list_my_invoices(
     response_model=PaymentOutcome,
     summary="Pay one of my invoices",
 )
-async def pay_invoice(
+def pay_invoice(
     body: PayInvoiceRequest,
     invoice_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
@@ -121,7 +121,7 @@ async def pay_invoice(
     response_model=Page[ResidentBooking],
     summary="List my amenity bookings",
 )
-async def list_my_bookings(
+def list_my_bookings(
     view: str | None = Query(
         None, description="`upcoming` | `past`. Omitted returns both."
     ),
@@ -156,7 +156,7 @@ async def list_my_bookings(
     response_model=PaymentOutcome,
     summary="Pay for one of my bookings",
 )
-async def pay_booking(
+def pay_booking(
     body: PayBookingRequest,
     booking_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRightLeft, Clock3 } from 'lucide-react';
 
 import { complaintRoutingApi } from '../routingApi';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 import { Empty, Pill } from '../../security/components/Primitives';
 
 // One department's complaints, and what the reader may do about them.
@@ -67,6 +68,7 @@ export default function DepartmentComplaintList({
   const complaints = useQuery({
     queryKey: ['departments', departmentId, 'complaints'],
     queryFn: () => complaintRoutingApi.departmentComplaints(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
 
@@ -77,6 +79,7 @@ export default function DepartmentComplaintList({
   const departments = useQuery({
     queryKey: ['department-options'],
     queryFn: () => complaintRoutingApi.departmentOptions(),
+    ...QUERY_POLICIES.reference,
   });
 
   const refresh = () => {

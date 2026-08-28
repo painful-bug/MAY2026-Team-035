@@ -5,6 +5,7 @@ import CommunitySearch from '../../../components/common/CommunitySearch';
 import { useCommunitySearch } from '../hooks/useCommunitySearch';
 import { registrationApi } from '../registrationApi';
 import { COMMUNITY_TYPES } from '../../../data/onboarding';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 
 const relationships = [
   ['tenant', 'Tenant'],
@@ -28,7 +29,11 @@ export default function JoinCommunityTab() {
   const [unitText, setUnitText] = useState('');
   const [dismissedRejected, setDismissedRejected] = useState(false);
   const search = useCommunitySearch(query);
-  const mine = useQuery({ queryKey: ['my-access-requests'], queryFn: registrationApi.myAccessRequests });
+  const mine = useQuery({
+    queryKey: ['my-access-requests'],
+    queryFn: registrationApi.myAccessRequests,
+    ...QUERY_POLICIES.list,
+  });
   const pending = useMemo(
     () => mine.data?.items?.find((item) => item.status === 'pending'),
     [mine.data]

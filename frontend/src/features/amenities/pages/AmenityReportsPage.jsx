@@ -11,6 +11,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { amenitiesApi } from '../amenitiesApi.js';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 import KpiCard from '../components/Reports/KpiCard.jsx';
 import ReportFilterBar from '../components/Reports/ReportFilterBar.jsx';
 import ReportTable from '../components/Reports/ReportTable.jsx';
@@ -75,9 +76,10 @@ export default function AmenityReportsPage() {
   const report = useQuery({
     queryKey: ['amenities', 'reports', filters],
     queryFn: () => amenitiesApi.report(toQuery(filters)),
+    ...QUERY_POLICIES.list,
     // The previous page's numbers stay on screen while a filter change is in
     // flight, rather than the tiles blanking to zero and back.
-    placeholderData: (previous) => previous,
+    ...PAGINATED,
   });
 
   const kpiValues = report.data?.kpis || EMPTY_KPIS;

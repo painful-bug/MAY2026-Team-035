@@ -43,7 +43,7 @@ router = APIRouter(
     response_model=list[Conversation],
     summary="My conversations",
 )
-async def list_conversations(
+def list_conversations(
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
     department_id: str | None = Query(None, alias="departmentId"),
@@ -72,7 +72,7 @@ async def list_conversations(
     status_code=status.HTTP_201_CREATED,
     summary="Open a conversation",
 )
-async def open_conversation(
+def open_conversation(
     body: OpenConversationRequest,
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -101,7 +101,7 @@ async def open_conversation(
     response_model=ConversationThread,
     summary="Read a conversation",
 )
-async def get_conversation(
+def get_conversation(
     conversation_id: str = Path(...),
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -127,7 +127,7 @@ async def get_conversation(
     status_code=status.HTTP_201_CREATED,
     summary="Send a message",
 )
-async def post_message(
+def post_message(
     body: PostMessageRequest,
     conversation_id: str = Path(...),
     _: Principal = Depends(get_current_user),

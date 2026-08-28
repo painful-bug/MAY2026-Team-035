@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Ban, Check, Home, Mail, Phone, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { registrationApi } from '../../features/registration/registrationApi';
 import { normalizeUnitCode } from '../../features/registration/utils/unitCode';
 import { COMMUNITY_TYPES } from '../../data/onboarding';
@@ -25,6 +26,7 @@ export default function PendingRegistrations() {
   const requests = useQuery({
     queryKey: ['admin-access-requests', 'pending'],
     queryFn: () => registrationApi.adminAccessRequests('pending'),
+    ...QUERY_POLICIES.list,
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['admin-access-requests'] });
 

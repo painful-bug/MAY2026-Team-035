@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import {
   Users,
   UserPlus,
@@ -92,6 +93,8 @@ export default function Visitors() {
   const passesQuery = useQuery({
     queryKey: ['resident', 'visitor-passes', activeView],
     queryFn: () => residentApi.visitorPasses({ view: activeView }),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () =>

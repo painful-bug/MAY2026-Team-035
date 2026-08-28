@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { registrationApi } from '../registrationApi';
 import { useAuthStore } from '../../../store/authStore';
+import { QUERY_POLICIES, PAGINATED } from '../../../lib/api/queryClient';
 
 function useDebouncedValue(value, delay = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -19,6 +20,9 @@ export function useCommunitySearch(rawQuery) {
     queryKey: ['community-search', identityId, query],
     enabled: query.length >= 2,
     queryFn: ({ signal }) => registrationApi.searchCommunities({ query, signal }),
-    staleTime: 30_000,
+    // A geo/community lookup: the named reference-data domain, plus keeping
+    // the previous keystroke's matches on screen while the next resolves.
+    ...QUERY_POLICIES.reference,
+    ...PAGINATED,
   });
 }

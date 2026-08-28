@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import SkillPicker from '../../features/departments/components/SkillPicker';
 import { departmentsApi } from '../../features/departments/departmentsApi';
 import { PageHeading } from '../../features/security/components/Primitives';
@@ -27,6 +28,7 @@ export default function ManagerSkills() {
   const skills = useQuery({
     queryKey: ['departments', departmentId, 'skills'],
     queryFn: () => departmentsApi.departmentSkills(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
 

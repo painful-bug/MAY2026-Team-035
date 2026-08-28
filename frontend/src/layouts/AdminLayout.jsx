@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useApp } from '../store/useApp';
 import Header from '../components/layout/Header';
-import PortalErrorBoundary from '../components/common/PortalErrorBoundary';
+import PortalErrorBoundary, { PortalRouteFallback } from '../components/common/PortalErrorBoundary';
 import DashboardDataBootstrap from '../components/dashboard/DashboardDataBootstrap';
 import { 
   LayoutDashboard, 
@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 
 export default function AdminLayout() {
-  const { logout, pendingRequests } = useApp();
+  const logout = useApp((state) => state.logout);
+  const pendingRequests = useApp((state) => state.pendingRequests);
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -147,7 +148,9 @@ export default function AdminLayout() {
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main className="p-6 flex-1 max-w-7xl w-full mx-auto animate-fade-in">
           <PortalErrorBoundary>
-            <Outlet />
+            <Suspense fallback={<PortalRouteFallback />}>
+              <Outlet />
+            </Suspense>
           </PortalErrorBoundary>
         </main>
       </div>

@@ -26,7 +26,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path, status
 
 from app.api.admin_deps import require_admin, require_csrf_unsafe
-from app.api.deps import get_current_user, get_request_client
+from app.api.deps import get_active_membership, get_request_client
+from app.domain.schemas import MembershipContext
 from app.domain.money_schemas import (
     BillingSettings,
     CreateInvoiceRequest,
@@ -49,9 +50,9 @@ router = APIRouter(
     status_code=status.HTTP_201_CREATED,
     summary="Issue an invoice",
 )
-async def create_invoice(
+def create_invoice(
     body: CreateInvoiceRequest,
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> InvoiceDetail:
     """Issue one invoice against one flat.
@@ -64,7 +65,7 @@ async def create_invoice(
     created on first reference. Returns 409 when the lines total zero or the due
     date precedes the issue date.
     """
-    return money_service.create_invoice(client, principal.user_id, body)
+    return money_service.create_invoice(client, membership.community_id, body)
 
 
 @router.post(
@@ -73,10 +74,10 @@ async def create_invoice(
     status_code=status.HTTP_201_CREATED,
     summary="Record a payment",
 )
-async def record_payment(
+def record_payment(
     body: RecordPaymentRequest,
     invoice_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> InvoiceDetail:
     """Record money received against an invoice and return the settled invoice.
@@ -91,15 +92,15 @@ async def record_payment(
     it. Also 409 once the invoice has been voided.
     """
     return money_service.record_payment(
-        client, principal.user_id, invoice_id, body
+        client, membership.community_id, invoice_id, body
     )
 
 
 @router.get(
     "/billing-settings", response_model=BillingSettings, summary="Get billing settings"
 )
-async def get_billing_settings(
-    principal=Depends(get_current_user),
+def get_billing_settings(
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> BillingSettings:
     """The community's billing configuration.
@@ -109,7 +110,7 @@ async def get_billing_settings(
     in the product only as a literal ``4250`` inside an approval handler
     (agenda item 12).
     """
-    return money_service.get_billing_settings(client, principal.user_id)
+    return money_service.get_billing_settings(client, membership.community_id)
 
 
 @router.put(
@@ -117,9 +118,9 @@ async def get_billing_settings(
     response_model=BillingSettings,
     summary="Update billing settings",
 )
-async def update_billing_settings(
+def update_billing_settings(
     body: UpdateBillingSettingsRequest,
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> BillingSettings:
     """Patch the billing configuration. Omitted fields are left unchanged.
@@ -132,4 +133,4 @@ async def update_billing_settings(
     already issued keep the number they were given, because a number that changes
     is not an identifier.
     """
-    return money_service.update_billing_settings(client, principal.user_id, body)
+    return money_service.update_billing_settings(client, membership.community_id, body)

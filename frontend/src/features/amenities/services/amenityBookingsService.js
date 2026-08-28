@@ -86,11 +86,31 @@ const refreshBookings = async () => {
 
 const getAllBookings = () => bookingCache.map(cloneBooking);
 
-// Pure, over whatever `refreshBookings` managed to cache. With an empty cache
-// — the caller was forbidden the snapshot — every conflict test below finds
-// nothing to conflict with and the answer collapses to the opening-hours
-// window, which is the optimistic half of the contract.
-const evaluateBookingSlot = ({
+/**
+ * One snapshot fetch for a whole grid of slot-date questions.
+ *
+ * `checkBookingSlotAvailability` below re-fetches the ENTIRE dashboard
+ * snapshot per slot-date pair, which is up to slots x dates full snapshot
+ * requests when a screen asks about all of them at once. A screen that needs
+ * the grid calls this ONCE per amenity/date-range change and then answers
+ * every pair locally with `evaluateBookingSlot`, passing `bookings` in.
+ *
+ * Never rejects: a refused snapshot (the resident cannot read it) resolves
+ * `{ bookings: [], verified: false }`, the same optimistic contract as the
+ * per-pair call.
+ */
+export const fetchBookingConflicts = async () => {
+  const verified = await refreshBookings();
+  return { bookings: getAllBookings(), verified };
+};
+
+// Pure, over whatever `refreshBookings` managed to cache — or over an
+// explicit `bookings` array handed in by a caller that fetched once via
+// `fetchBookingConflicts`. With an empty list — the caller was forbidden the
+// snapshot — every conflict test below finds nothing to conflict with and the
+// answer collapses to the opening-hours window, which is the optimistic half
+// of the contract.
+export const evaluateBookingSlot = ({
   amenityId,
   date,
   startTime,
@@ -103,6 +123,7 @@ const evaluateBookingSlot = ({
   isPrivateBooking = false,
   guestCount = 0,
   capacity = null,
+  bookings = null,
 }) => {
   assertValidTimeRange(startTime, endTime);
 
@@ -115,7 +136,7 @@ const evaluateBookingSlot = ({
     return false;
   }
 
-  const dayBookings = getAllBookings().filter(
+  const dayBookings = (bookings ?? getAllBookings()).filter(
     (booking) =>
       booking.amenityId === amenityId &&
       booking.date === date &&

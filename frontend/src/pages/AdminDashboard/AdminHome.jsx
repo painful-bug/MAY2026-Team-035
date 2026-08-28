@@ -43,7 +43,12 @@ function TrendChip({ count }) {
 }
 
 export default function AdminHome() {
-  const { users, pendingRequests, complaints, payments, activities, weeklyNew } = useApp();
+  const users = useApp((state) => state.users);
+  const pendingRequests = useApp((state) => state.pendingRequests);
+  const complaints = useApp((state) => state.complaints);
+  const payments = useApp((state) => state.payments);
+  const activities = useApp((state) => state.activities);
+  const weeklyNew = useApp((state) => state.weeklyNew);
   const navigate = useNavigate();
 
   // Stats Calculations

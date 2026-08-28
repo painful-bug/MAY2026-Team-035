@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import {
   Bell,
   BellOff,
@@ -190,7 +191,11 @@ function LeaveModal({ engagement, busy, error, onSubmit, onClose }) {
 
 function LeaveSection() {
   const queryClient = useQueryClient();
-  const engagements = useQuery({ queryKey: ['worker-communities'], queryFn: workerApi.myCommunities });
+  const engagements = useQuery({
+    queryKey: ['worker-communities'],
+    queryFn: workerApi.myCommunities,
+    ...QUERY_POLICIES.list,
+  });
   const [leaving, setLeaving] = useState(null);
 
   const refresh = () => {
@@ -293,16 +298,22 @@ export default function WorkerSettings() {
   // "Loading settings…" on screen for good. The snapshot answers the question
   // in one field, so the read is not attempted and the page keeps the parts
   // that are still theirs — identity, alerts, leaving.
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
   const profile = useQuery({
     queryKey: ['worker-profile'],
     queryFn: workerApi.profile,
+    ...QUERY_POLICIES.detail,
     enabled: snapshot.isSuccess && !noMarketplaceProfile,
   });
   const skills = useQuery({
     queryKey: ['skills'],
     queryFn: workerApi.skills,
+    ...QUERY_POLICIES.reference,
     enabled: snapshot.isSuccess && !noMarketplaceProfile,
   });
 

@@ -16,6 +16,7 @@ import {
 import { usePortalScope } from '../../features/hiring/usePortalScope';
 import { hiringApi } from '../../features/hiring/hiringApi';
 import { complaintRoutingApi } from '../../features/complaints/routingApi';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 
 // Work-order triage: the hand path behind the dispatch engine.
 //
@@ -187,6 +188,8 @@ function AssignForm({ order, roster, onSubmit, pending, error }) {
   const candidates = useQuery({
     queryKey: ['work-orders', 'candidates', order.id, includeExcluded],
     queryFn: () => workOrdersApi.candidates(order.id, { includeExcluded }),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
   const { slotRequiredToAssign } = permittedActions(order);
 
@@ -455,6 +458,7 @@ function JobDetail({ jobId, roster, skills, onChanged, onClose }) {
   const job = useQuery({
     queryKey: ['work-orders', 'job', jobId],
     queryFn: () => workOrdersApi.detail(jobId),
+    ...QUERY_POLICIES.detail,
   });
 
   const settle = () => { setOpen(null); onChanged(); };
@@ -778,6 +782,7 @@ function ComplaintWorkOrders({ complaintId, skills, onOpenJob, onChanged }) {
   const jobs = useQuery({
     queryKey: ['work-orders', 'complaint', complaintId],
     queryFn: () => workOrdersApi.forComplaint(complaintId),
+    ...QUERY_POLICIES.list,
   });
 
   return (
@@ -854,13 +859,30 @@ export default function WorkOrderTriage() {
     }, { replace: true });
   };
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['work-orders'] });
+  // Scoped to what a job change can actually affect, rather than the whole
+  // ['work-orders'] prefix — which used to also refetch every other job's
+  // detail, every other job's candidate list, and (via the shared prefix)
+  // this department's roster read, on every single assign/reschedule/edit/
+  // cancel/create anywhere on the screen.
+  const invalidateQueue = () =>
+    queryClient.invalidateQueries({ queryKey: ['work-orders', departmentId, 'queue'] });
+  const invalidateJob = (id) => {
+    if (!id) return;
+    queryClient.invalidateQueries({ queryKey: ['work-orders', 'job', id] });
+    queryClient.invalidateQueries({ queryKey: ['work-orders', 'candidates', id] });
+  };
+  const invalidateComplaintJobs = (id) => {
+    if (!id) return;
+    queryClient.invalidateQueries({ queryKey: ['work-orders', 'complaint', id] });
   };
 
   const queue = useQuery({
     queryKey: ['work-orders', departmentId, 'queue', statusFilter],
     queryFn: () => workOrdersApi.forDepartment(departmentId, { status: statusFilter || undefined }),
+    ...QUERY_POLICIES.list,
+    // The status filter chips re-key this query; keep the previous filter's
+    // rows on screen while the next one loads.
+    ...PAGINATED,
     enabled: Boolean(departmentId),
   });
 
@@ -871,12 +893,14 @@ export default function WorkOrderTriage() {
   const department = useQuery({
     queryKey: ['work-orders', departmentId, 'department'],
     queryFn: () => hiringApi.departmentDetail(departmentId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(departmentId),
   });
 
   const complaints = useQuery({
     queryKey: ['work-orders', departmentId, 'complaints'],
     queryFn: () => complaintRoutingApi.departmentComplaints(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId) && tab === 'raise',
   });
 
@@ -957,7 +981,7 @@ export default function WorkOrderTriage() {
               jobId={jobId}
               roster={roster}
               skills={skills}
-              onChanged={invalidate}
+              onChanged={() => { invalidateQueue(); invalidateJob(jobId); }}
               onClose={() => setParam('job', null)}
             />
           ) : null}
@@ -992,7 +1016,11 @@ export default function WorkOrderTriage() {
               jobId={jobId}
               roster={roster}
               skills={skills}
-              onChanged={invalidate}
+              onChanged={() => {
+                invalidateJob(jobId);
+                invalidateComplaintJobs(complaintId);
+                invalidateQueue();
+              }}
               onClose={() => setParam('job', null)}
             />
           ) : null}
@@ -1043,7 +1071,10 @@ export default function WorkOrderTriage() {
                       complaintId={complaint.id}
                       skills={skills}
                       onOpenJob={(id) => setParam('job', id)}
-                      onChanged={invalidate}
+                      onChanged={() => {
+                        invalidateComplaintJobs(complaint.id);
+                        invalidateQueue();
+                      }}
                     />
                   ) : null}
                 </article>

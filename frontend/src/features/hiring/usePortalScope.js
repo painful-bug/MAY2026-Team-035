@@ -48,7 +48,7 @@ import { useApp } from '../../store/useApp';
  * authorization decision*.
  */
 export function usePortalScope() {
-  const { currentUser } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
   const params = useParams();
 
   return {

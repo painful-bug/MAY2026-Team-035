@@ -74,3 +74,15 @@ export default function PortalErrorBoundary({ children }) {
     </RenderErrorBoundary>
   );
 }
+
+// The Suspense fallback every portal layout shows in its content area while
+// its `<Outlet />` route — now a `lazy()` chunk — is still loading. Small and
+// chrome-less on purpose: the sidebar, header and nav around it never
+// unmount, so this is the only thing that should visibly change.
+export function PortalRouteFallback() {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white px-6 py-16 text-center text-xs font-semibold text-slate-400">
+      Loading...
+    </div>
+  );
+}

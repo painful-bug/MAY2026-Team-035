@@ -25,7 +25,7 @@ that overturns something already written says so explicitly, including what it o
 sent null — the join form had no unit field, the admin's Accept posted `{}` — so every self-service
 approval minted a membership with no residency, `membership.unit` rendered `—` everywhere, and
 `_has_active_residency` 403'd people who genuinely live there. Ships as ONE hand-applied migration,
-`20260828090000_residence_claim_on_join.sql` (runbook §31), plus backend shapes, the join-form and
+`20260828090000_residence_claim_on_join.sql` (runbook §33; §32 is reserved for `live-app-fixes`'s pending one-live-job section), plus backend shapes, the join-form and
 approval UI, and this docs pass. `PO` rulings (2026-08-27, plan-mode Q&A), verbatim:
 
 1. Applicant states their residence as **free text at request time** — Tower/Block + Flat for
@@ -65,7 +65,7 @@ Consequences and findings, by artifact:
    `community_type` APPENDED — `create or replace view` permits exactly that — and the migration's
    in-transaction proof checks the tail so a reorder cannot land silently.
 6. **The repository sends the new RPC params only when non-null.** `DERIVED`: a backend deployed
-   before the owner hand-applies §31 still matches the old 4-argument RPC shape, so
+   before the owner hand-applies §33 still matches the old 4-argument RPC shape, so
    deploy-before-apply degrades gracefully (the runbook still says apply first).
 7. **AdminHome rendered "Flat undefined • Tower undefined".** `AUDIT` (live app): the pending card
    read demo-era `req.name`/`req.flat`/`req.tower` keys that never existed on the snapshot's
@@ -91,7 +91,7 @@ typed decision response and the approve parameters, `RegistrationApi` the approv
 `docs/design-of-components.md` §3 already requires residents' records to carry "flats, towers" and
 administrators to approve access requests — this change is that requirement finally holding on the
 self-service path, no edit needed. Supabase: migration `20260828090000_residence_claim_on_join.sql`,
-hand-applied per runbook §31.
+hand-applied per runbook §33.
 
 **Caching/realtime checklist** (REALTIME_AND_CACHING_STANDARD): no new tables and no new SSE
 topics — the `0024` triggers on `access_requests` already fire on the writes this flow makes, and
@@ -112,6 +112,58 @@ findings** (down from 18 — all ten pre-recorded in mapper §5), all 24 stories
 failures are the known pre-existing date-sensitive pair in
 `src/pages/ResidentDashboard/ProposedVisit.test.jsx` (two pick-mode cases sensitive to the
 wall-clock date) — not this change's, and stated plainly rather than rounded off.
+
+## 2026-08-27 — the realtime/caching overhaul gets a written standard, and the runbook catches up to itself
+
+The 2026-08-27 session shipped, all verified green: routers converted `async` → `def` so sync Supabase
+calls leave the event loop; a bounded per-process TTL cache (`backend/app/core/ttl_cache.py`) over
+reference data; three new SSE topics plus a reconnect guard for resume points older than the outbox's
+retention; and a frontend consolidation to one `EventSource` per tab. `DERIVED` from that session
+(no new product-owner ruling — this is the documentation half of already-approved work) unless noted.
+
+1. **New: `docs/plans/REALTIME_AND_CACHING_STANDARD.md`.** The team-visible standard the session's three
+   workstreams add up to: the four-layer rule (client React Query cache primary → SSE invalidation for
+   coherence → server TTL cache for reference data only, write-through invalidated → authenticated HTTP
+   stays no-store throughout), the `QUERY_POLICIES` bucket table, the SSE audience rules (community/role/
+   member, over-delivery safe, under-scoping the real risk, `work_order.changed`'s department-scoped
+   narrowing recorded as future work), the one-`EventSource`-per-tab frontend architecture and the
+   uniform 5-minute degraded-poll fallback, the four scheduler non-interference rules, the accepted-
+   staleness list the server cache trades for its 60-second window, and a new-feature checklist. Reason:
+   three independently defensible workstreams read as three ad hoc optimizations unless the layering they
+   jointly impose on every future read, mutable surface and time-based feature is written down once,
+   in one place, rather than re-derived per PR.
+2. **`docs/plans/README.md`** gains the new document's row in the index table, per this file's own rule
+   (`docs/design/README.md`'s "moving or adding a document here means a change-log entry") extended to
+   the sibling `plans/` index.
+3. **`docs/ARCHITECTURE.md` § Live updates.** `DERIVED` from the 2026-08-26 migration
+   (`20260826090000_realtime_expansion.sql`) and the same-day frontend consolidation, both of which made
+   the section factually stale:
+   - A pointer paragraph at the top of the section to the new standard document, so the backend/transport
+     reference and the build-on-top-of-it standard don't drift into duplicating each other.
+   - The **Reconnects** guarantee gained a second bullet: a resume point older than the outbox's two-hour
+     retention now triggers `stream.resync` on backfill (probing `dashboard_repository.oldest_event_id()`,
+     failing open on a probe error) instead of silently backfilling from the middle of the client's history.
+   - The **Topics** table gained `work_order.changed`, `amenity.changed` and `message.created`
+     (`20260826090000`), plus a paragraph on why the first two are community-scoped rather than role-scoped
+     (the readership doesn't collapse onto a role list; over-delivery is safe, guessing narrow is not).
+   - A new paragraph documents the frontend's one-`EventSource`-per-tab consolidation
+     (`frontend/src/lib/realtime/`), which portals mount it, and that the security portal is deferred —
+     this section previously said nothing about the client side at all.
+4. **`docs/plans/MIGRATION_APPLY_RUNBOOK.md`.** §31 (`20260826090000_realtime_expansion.sql` — three
+   emitters, the topic census, the pre/post-checks) was written earlier in the 2026-08-27 session, before
+   this docs pass; this session's own contribution is the preamble fix: the "if the section numbers below
+   run past §28, this paragraph is what needs updating" sentence was still pointing at §28 while the file
+   had grown three more sections (§29 assignment write repairs, §30 supervisor take-up, §31 realtime
+   expansion) past it. Reworded to name all three and point the trigger at §31, matching the pattern the
+   preamble already uses for its own prior extensions. `AUDIT` — found by reading the preamble against the
+   file's actual section count.
+5. **`docs/API.md` §5.1 (`GET /events`).** Frame table gained the same three topics, plus a paragraph on
+   the prune-horizon resync behavior, matching the existing table's format and the `stream.resync`/
+   `dashboard.refresh`-with-`resync` framing already there. **`docs/openapi.yaml` and
+   `docs/api_yaml_mapper.md` were checked and left untouched** — neither encodes a topic list or a topic-
+   specific description of `GET /events`; both simply point at `API.md` §5.1 by section reference or line
+   number, and that reference still resolves since nothing was inserted before it. No endpoint request or
+   response shape changed this session, so there was nothing for the generated spec to regenerate.
 
 ## 2026-08-24 (third session) — the branch and main stop disagreeing about how migrations are ordered
 
