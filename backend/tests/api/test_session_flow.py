@@ -71,12 +71,13 @@ PROFILE_ID = "11111111-1111-4111-8111-111111111111"
 
 @pytest.fixture
 def session_client(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """A client with the same settings as `api_client`, but a real provider timeout.
+    """A client with the same settings as `api_client`, plus a backend base URL.
 
-    `api_client` pins `AUTH_PROVIDER_TIMEOUT_SECONDS` to a millisecond so it can
-    prove the timeout path fires. Every provider call below is patched to return
-    instantly and would race that budget on a loaded machine, so this fixture
-    gives them a real one. Nothing else differs.
+    Historically this fixture existed because `api_client` pinned
+    `AUTH_PROVIDER_TIMEOUT_SECONDS` to a millisecond and the instantly-returning
+    provider stubs below raced that budget on a loaded machine. `api_client` now
+    carries a real budget too (the timeout test pins its own), so the remaining
+    differences are `BACKEND_BASE_URL` and redirects being left unfollowed.
     """
     for key, value in {
         "SUPABASE_URL": "https://example.supabase.co",
