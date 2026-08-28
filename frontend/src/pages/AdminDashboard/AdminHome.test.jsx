@@ -28,6 +28,31 @@ const renderPage = () =>
     </MemoryRouter>
   );
 
+describe('admin dashboard pending approval rows', () => {
+  // The demo-era card read `req.name` / `req.flat` / `req.tower`, keys that
+  // never existed on the snapshot's snake_case view rows — the live app showed
+  // "Flat undefined • Tower undefined". The rows carry applicant_name plus
+  // requested_unit_code and, post-migration, the applicant's free-text claim.
+  it('renders applicant names and residences without any undefined', () => {
+    mocks.state = {
+      ...baseState(),
+      pendingRequests: [
+        { id: 'r1', applicant_name: 'Asha Rao', requested_unit_code: 'C-505' },
+        { id: 'r2', applicant_name: 'Vikram Shetty', requested_building_text: 'B', requested_unit_text: '204' },
+        { id: 'r3', applicant_name: 'Meera Iyer' },
+      ],
+    };
+    const { container } = renderPage();
+
+    expect(screen.getByText('Asha Rao')).toBeInTheDocument();
+    expect(screen.getByText('C-505')).toBeInTheDocument();
+    expect(screen.getByText('Tower B · Flat 204')).toBeInTheDocument();
+    expect(screen.getByText('Meera Iyer')).toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('undefined');
+  });
+});
+
 describe('admin dashboard trend chips', () => {
   it('renders no trend chip while the snapshot has no weeklyNew field', () => {
     mocks.state = baseState();

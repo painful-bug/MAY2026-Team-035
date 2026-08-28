@@ -471,7 +471,8 @@ def list_pending_access_requests(client: Client, community_id: str) -> list[dict
         client.table("pending_access_request_overview")
         .select(
             "id,applicant_name,applicant_email,applicant_phone_e164,"
-            "requested_relationship,status,created_at,requested_unit_code,community_name"
+            "requested_relationship,status,created_at,requested_unit_code,community_name,"
+            "requested_building_text,requested_unit_text,community_type"
         )
         .eq("community_id", community_id).order("created_at", desc=True).limit(200)
         .execute().data

@@ -39,6 +39,17 @@ The Join Community tab debounces its database search, cancels stale requests,
 shows explicit empty/pending/rejected states, and lets applicants provide an
 optional E.164 phone number through separate country-code and local-number
 controls. The country code defaults to `+91` and can be changed before submit.
+Since 2026-08-28 it also captures the applicant's **residence claim** as
+required free text, branched on the selected community's `community_type`
+(which the search results already carried and the form previously ignored):
+an apartment community asks for Tower/Block and Flat Number, a villa layout
+for a single Villa Number. Free text is deliberate — the privacy invariant
+keeps a community's unit inventory away from non-members, so there is nothing
+to offer in a picker. The claim posts as `requested_unit_text` (plus
+`requested_building_text` in apartment mode), trimmed; submit stays disabled
+until the claim is complete, and picking a different community clears it —
+another community means another address scheme. See "The join request claims
+a residence, and approval resolves it" below for the admin half.
 
 ## Dashboard data flow
 
@@ -661,6 +672,48 @@ wire body asserted not to contain the two slot keys) and
 its place in the DOM order of the six sections, and the no-verb popup). The
 work-order vocabulary needed nothing: `awaiting_resident` has read *"Waiting on
 the resident"* since the day the queue shipped.
+
+## The join request claims a residence, and approval resolves it
+
+Added 2026-08-28, the frontend half of `20260828090000_residence_claim_on_join.sql`
+(runbook §31) under the three product rulings of 2026-08-27: the applicant
+states their residence as free text at request time, approval requires a unit,
+and the unit inventory gap is closed by find-or-create at approval. The join
+tab's half is described under "Authentication and registration" above; this
+section is the admin's.
+
+`PendingRegistrations.jsx` renders the claimed residence on every card — a
+`Claims:` line showing "Tower C · Flat 505" or the villa number, with
+"Not stated" for pre-migration rows and the resolved unit code for the rare
+invitation-era row that carries a validated `requested_unit_id`. **Accept no
+longer fires the mutation directly.** The backend now refuses an approval
+without a unit (`422 approval_requires_unit`), so Accept toggles an inline
+expansion panel — not a modal — prefilled from the claim, its labels branched
+on the community's `community_type` exactly as the join form's are. A match
+indicator reads the previously unused `GET /communities/admin/units` through
+the `['admin-units']` query (fetched only while a panel is open) and a small
+JS mirror of the backend's unit-code normalizer
+(`src/features/registration/utils/unitCode.js`) to say **"Matches existing
+unit C-505"** or **"Will create unit C-505"** before the admin commits — the
+mirror only previews; the backend recomputes the canonical code itself, so a
+drift can mislabel the preview but never corrupt data. Confirm posts
+`{unit_code, building_code}`; the panel refuses to submit with no unit, and a
+backend refusal surfaces through the existing `role="alert"` line. Reject,
+blacklist and the `homebandhu:dashboard-refresh` invalidation are untouched.
+
+`AdminHome.jsx`'s pending-requests card had a live defect: it read the
+demo-era `req.name` / `req.flat` / `req.tower` keys, which never existed on
+the snapshot's snake_case view rows, and rendered **"Flat undefined • Tower
+undefined"** under an empty name. It now renders `applicant_name` and a
+residence label — the resolved `requested_unit_code`, else the claimed text,
+else `—` (the snapshot rows carry the claim since the same migration extended
+`pending_access_request_overview`).
+
+Tests: `JoinCommunityTab.test.jsx` (the apartment/villa branching, submit
+gating, payload shape, the clear-on-reselect rule),
+`PendingRegistrations.test.jsx` (the claims line, the panel's prefill, the
+match/create indicator, the posted body shape) and new `AdminHome.test.jsx`
+cases pinning that "undefined" never renders.
 
 ## Retired client code
 

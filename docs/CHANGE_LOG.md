@@ -17,7 +17,103 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-24 (latest, third session) — the branch and main stop disagreeing about how migrations are ordered
+## 2026-08-28 (latest) — the join flow finally asks where you live
+
+**Joining a community now captures a residence, and approving one now requires it.** Live testing
+(2026-08-27) surfaced the product gap: the wire contract for a unit existed end to end
+(`requested_unit_id`, the approve RPC's `p_unit_id`, the `unit_residencies` insert) and both ends
+sent null — the join form had no unit field, the admin's Accept posted `{}` — so every self-service
+approval minted a membership with no residency, `membership.unit` rendered `—` everywhere, and
+`_has_active_residency` 403'd people who genuinely live there. Ships as ONE hand-applied migration,
+`20260828090000_residence_claim_on_join.sql` (runbook §31), plus backend shapes, the join-form and
+approval UI, and this docs pass. `PO` rulings (2026-08-27, plan-mode Q&A), verbatim:
+
+1. Applicant states their residence as **free text at request time** — Tower/Block + Flat for
+   `apartment`, Villa number for `layout_villa` — stored on `access_requests`. No unit exposure to
+   non-members; the privacy invariant stands.
+2. **Approval requires a unit**: the RPC refuses a resident approval without one, so every approved
+   resident gets a `unit_residencies` row.
+3. Inventory gap solved by **find-or-create at approval**: admin confirms/edits the claimed
+   residence; the RPC matches an existing active unit in that community or creates it (with its
+   building) inline. No unit-management screen in this work.
+
+Consequences and findings, by artifact:
+
+1. **One new SQLSTATE and one new error code.** `DERIVED` (ruling 2): `HBUNT` →
+   `422 approval_requires_unit`, mapped in `pg_errors.py` in the same commit, raised by the RPC
+   **before any row is written** so a refused approval leaves the request cleanly pending; the API
+   fails fast with the same code when neither `unit_id` nor unit text is given. An existing but
+   inactive unit named by code is `HB422` in words. Documented in API.md §6.1 and the approve
+   section's error table.
+2. **Find-or-create mirrors the founder RPC's shape.** `DERIVED` (ruling 3, from `20260805144502`):
+   apartment gets a `block` building from `building_code` and a `flat` unit; `layout_villa` gets one
+   `villa` building per villa — its code defaulting to the unit code itself — and a `villa` unit.
+   Both inserts are on-conflict-do-nothing with a re-select, race-safe against two admins approving
+   into the same new tower. Case-insensitive match, exact-case create, and the Python side
+   canonicalises the pair with `normalize_unit_code` (the C-C-505 guard), one normalizer shared
+   with a JS preview mirror (`frontend/src/features/registration/utils/unitCode.js`).
+3. **The `audit_events` insert is NOT restored.** `DERIVED`: `20260730170036` dropped it as a
+   hosted-compat decision, the new 6-arg body is that body carried forward, and the decision
+   stands — recorded here so its absence reads as deliberate, not as a regression.
+4. **The three admin decision routes answer a typed shape.** `DERIVED`:
+   `AccessRequestDecisionResponse {request_id, status, membership_id?, unit_id?}` replaces the raw
+   `-> dict` RPC passthrough on approve/reject/blacklist — closing the mapper's §5.1
+   "Under-documented" defect, flagged since the mapper existed (2026-08-08). `unit_id` is tolerated
+   absent until the hand-applied RPC returns it.
+5. **The pending view was extended append-only.** `DERIVED`: `pending_access_request_overview`
+   re-issued column-for-column with `requested_building_text`, `requested_unit_text` and
+   `community_type` APPENDED — `create or replace view` permits exactly that — and the migration's
+   in-transaction proof checks the tail so a reorder cannot land silently.
+6. **The repository sends the new RPC params only when non-null.** `DERIVED`: a backend deployed
+   before the owner hand-applies §31 still matches the old 4-argument RPC shape, so
+   deploy-before-apply degrades gracefully (the runbook still says apply first).
+7. **AdminHome rendered "Flat undefined • Tower undefined".** `AUDIT` (live app): the pending card
+   read demo-era `req.name`/`req.flat`/`req.tower` keys that never existed on the snapshot's
+   snake_case view rows. Fixed to `applicant_name` plus a residence label (resolved unit code, else
+   the claimed text, else `—`), pinned by tests that assert "undefined" never renders.
+8. **All seven access-request routes were missing from API.md.** `AUDIT` (mapper §5.2, standing
+   since 2026-08-08): five had no `###` section anywhere and two only a passing sentence in a §6
+   that called itself "intentionally empty". API.md §6 now documents the whole join flow — the
+   create-time refusal table, approve's unit-resolution precedence, the typed decision responses,
+   the SSE topics — and the mapper's finding count moved **18 → 10**, its first downward move. In
+   the same pass API.md's banner (stale at 201/170 since 2026-08-21) and §16.6's headline (stale
+   at 124/199) were corrected to **211 across 180** and **81 mapped / 130 unmapped**, off the
+   exporter's own summary and §6.3's recount command.
+
+**Five gates, all touched.** Frontend: `FRONTEND_CHANGES.md` (join-tab residence capture; the
+admin's inline resolution panel with its matches/creates indicator; the AdminHome fix). ERD:
+`docs/diagrams/homebandhu_submission_erd.dbml` — the two claim columns on `access_requests` with
+the ruling recorded, and the overview-view note (the frozen milestone ERD untouched). Class
+diagram: `docs/diagrams/HomeBandhu-Architecture-Classes.puml` — router/service members carry the
+typed decision response and the approve parameters, `RegistrationApi` the approval call and
+`adminUnits()`; known drift NOT fixed here: `docs/class-diagram/homebandhu-domain.puml` still shows
+`approve()` returning `ResidentInvite`, which predates this work. Component design:
+`docs/design-of-components.md` §3 already requires residents' records to carry "flats, towers" and
+administrators to approve access requests — this change is that requirement finally holding on the
+self-service path, no edit needed. Supabase: migration `20260828090000_residence_claim_on_join.sql`,
+hand-applied per runbook §31.
+
+**Caching/realtime checklist** (REALTIME_AND_CACHING_STANDARD): no new tables and no new SSE
+topics — the `0024` triggers on `access_requests` already fire on the writes this flow makes, and
+the updated view carries the new fields to the existing refetch; React Query invalidation is
+unchanged (`['admin-units']` is a new read-only query fetched only while an approval panel is
+open); no scheduler involvement.
+
+**Verification (docs pass, run at the end, after the migration's final rename to
+`20260828090000`):** backend `cd backend && uv run pytest -q` → **1502 passed, 5 skipped** (2026-08-24
+baseline was 1472/5; the +30 are this feature's — 21 static migration tests in
+`test_residence_claim_migration.py` plus the residence/API additions in
+`test_access_request_residence.py` and `test_access_requests.py`), including
+`tests/test_openapi_spec.py` (30 passed), which had been the one failing test until the spec was
+regenerated in this pass. Docs battery: `export_openapi.py` → **180 paths, 211 operations**;
+`export_openapi.py --check` and `regen_mapper.py --check` both clean; `api_map_scan.py` → **10
+findings** (down from 18 — all ten pre-recorded in mapper §5), all 24 stories agreeing. Frontend
+`cd frontend && npx vitest run` → **396 passed, 2 failed of 398 (59 of 60 files passed)**; the two
+failures are the known pre-existing date-sensitive pair in
+`src/pages/ResidentDashboard/ProposedVisit.test.jsx` (two pick-mode cases sensitive to the
+wall-clock date) — not this change's, and stated plainly rather than rounded off.
+
+## 2026-08-24 (third session) — the branch and main stop disagreeing about how migrations are ordered
 
 **PR #51 retracted and the branch reconciled with main.** `PO` (2026-08-24: retract the conflicting
 PR, resolve, merge from main only if required — it was). Main's `4e5dfce` and this branch had

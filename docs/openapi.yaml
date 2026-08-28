@@ -96,6 +96,11 @@ components:
   schemas:
     AccessRequestCommunity:
       properties:
+        community_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Community Type
         id:
           title: Id
           type: string
@@ -106,6 +111,37 @@ components:
       - id
       - name
       title: AccessRequestCommunity
+      type: object
+    AccessRequestDecisionResponse:
+      description: 'The typed answer of an admin decision (approve, reject, blacklist).
+
+
+        `membership_id` and `unit_id` are populated only by an approval -- and
+
+        `unit_id` only once the residence-claim migration teaches the RPC to
+
+        return it, so absence is tolerated.'
+      properties:
+        membership_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Membership Id
+        request_id:
+          title: Request Id
+          type: string
+        status:
+          title: Status
+          type: string
+        unit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit Id
+      required:
+      - request_id
+      - status
+      title: AccessRequestDecisionResponse
       type: object
     AccessRequestListResponse:
       properties:
@@ -149,6 +185,11 @@ components:
           - type: string
           - type: 'null'
           title: Rejection Reason
+        requested_building_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requested Building Text
         requested_relationship:
           title: Requested Relationship
           type: string
@@ -157,6 +198,11 @@ components:
           - type: string
           - type: 'null'
           title: Requested Unit Id
+        requested_unit_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requested Unit Text
         reviewed_at:
           anyOf:
           - format: date-time
@@ -904,6 +950,12 @@ components:
     ApproveAccessRequest:
       additionalProperties: false
       properties:
+        building_code:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Building Code
         relationship:
           anyOf:
           - enum:
@@ -915,6 +967,12 @@ components:
             type: string
           - type: 'null'
           title: Relationship
+        unit_code:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Unit Code
         unit_id:
           anyOf:
           - type: string
@@ -2773,6 +2831,12 @@ components:
             type: string
           - type: 'null'
           title: Phone
+        requested_building_text:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Requested Building Text
         requested_relationship:
           default: tenant
           enum:
@@ -2788,6 +2852,12 @@ components:
           - type: string
           - type: 'null'
           title: Requested Unit Id
+        requested_unit_text:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Requested Unit Text
       required:
       - community_id
       title: CreateAccessRequest
@@ -11370,6 +11440,13 @@ paths:
       description: 'Apply to join a community. Answers **201**.
 
 
+        The applicant states where they live as free text -- `requested_building_text` (tower/block) and
+        `requested_unit_text` (flat or villa number), each up to 120 characters, blank stripped to null.
+        Free text by product ruling (2026-08-27): non-members are never shown the community''s unit inventory,
+        so there is nothing to validate the claim against here. The admin resolves it into a real unit
+        at approval.
+
+
         Four distinct refusals, deliberately separated: an unknown community is **404**; already being
         a member, or already having a request pending, is **409**; a rejected application inside the cool-off
         window is **409**; and a unit that belongs to a different community is **422**, because the request
@@ -11545,7 +11622,14 @@ paths:
       x-user-stories: []
   /api/v1/admin/access-requests/{request_id}/approve:
     post:
-      description: 'Approve a join request, creating the membership.
+      description: 'Approve a join request, creating the membership AND its residency.
+
+
+        Approval requires a unit (product ruling, 2026-08-27). Precedence: `unit_id`, then the request''s
+        own validated `requested_unit_id`, then `unit_code` (+ optional `building_code`), which is matched
+        case-insensitively against the community''s units or **finds-or-creates** the unit with its building.
+        Neither given is **422** `approval_requires_unit` -- refused in the API and again in the RPC (`HBUNT`),
+        before anything is written. A code naming an existing but inactive unit is **422** too, in words.
 
 
         Approving a request that is not pending is **409** -- which is what two administrators clicking
@@ -11570,10 +11654,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Response Approve Access Request Api V1 Admin Access Requests  Request Id  Approve
-                  Post
-                type: object
+                $ref: '#/components/schemas/AccessRequestDecisionResponse'
           description: Successful Response
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -11625,10 +11706,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Response Blacklist Access Request Api V1 Admin Access Requests  Request Id  Blacklist
-                  Post
-                type: object
+                $ref: '#/components/schemas/AccessRequestDecisionResponse'
           description: Successful Response
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -11658,8 +11736,8 @@ paths:
       description: 'Reject a join request, with a reason recorded against it.
 
 
-        The applicant may apply again after the cool-off window; see `POST /access-requests`, which enforces
-        it.'
+        Answers with the typed decision shape shared by the three admin verbs. The applicant may apply
+        again after the cool-off window; see `POST /access-requests`, which enforces it.'
       operationId: reject_access_request_api_v1_admin_access_requests__request_id__reject_post
       parameters:
       - description: Access-request id.
@@ -11680,10 +11758,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Response Reject Access Request Api V1 Admin Access Requests  Request Id  Reject
-                  Post
-                type: object
+                $ref: '#/components/schemas/AccessRequestDecisionResponse'
           description: Successful Response
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -13851,8 +13926,9 @@ paths:
       description: 'List the units in the caller''s community, for pickers.
 
 
-        Feeds the unit selector on the join-request and invitation screens; the ids returned here are
-        the ones `POST /access-requests` accepts.'
+        Feeds the unit selector on the join-request and invitation screens -- the ids returned here are
+        the ones `POST /access-requests` accepts -- and, since 2026-08-28, the approval panel''s *matches
+        existing unit / will create unit* indicator.'
       operationId: list_admin_units_api_v1_communities_admin_units_get
       responses:
         '200':
