@@ -303,6 +303,8 @@ Table access_requests [headercolor: #102A43] {
   id uuid [pk]
   community_id uuid [not null, ref: > communities.id]
   requested_unit_id uuid [ref: > units.id]
+  requested_building_text text [note: '20260828090000: the tower/block the applicant claims, as typed. Free text by ruling (2026-08-27) - non-members never see the unit list, so there is nothing to validate against. Null for villa communities and pre-migration rows. CHECK: null or non-blank and <= 120 chars']
+  requested_unit_text text [note: '20260828090000: the flat or villa number the applicant claims, as typed. Resolved by the admin at approval - approve_access_request matches an existing active unit case-insensitively or finds-or-creates it (with its building); approval without any unit is refused (HBUNT). CHECK: null or non-blank and <= 120 chars']
   applicant_profile_id uuid [not null, ref: > profiles.id]
   applicant_name text [not null]
   applicant_email citext [not null]
@@ -1063,6 +1065,10 @@ TableGroup admin_dashboard {
 // pending_access_request_overview backs DashboardSnapshot.pendingRequests --
 // the field the admin sidebar badge counts. No new table: it is a projection of
 // access_requests where status = 'pending', joined to communities and units.
+// Since 20260828090000 it APPENDS three columns -- requested_building_text,
+// requested_unit_text and communities.community_type -- so the admin queue can
+// show the applicant's claimed residence and label it Tower/Flat vs Villa.
+// Appended, never reordered: create-or-replace view permits exactly that.
 //
 // REALTIME (0024)
 //

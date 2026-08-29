@@ -868,6 +868,13 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         no_story=NO_STORY["join"],
         description=(
             "Apply to join a community. Answers **201**.\n\n"
+            "The applicant states where they live as free text -- "
+            "`requested_building_text` (tower/block) and `requested_unit_text` "
+            "(flat or villa number), each up to 120 characters, blank stripped "
+            "to null. Free text by product ruling (2026-08-27): non-members are "
+            "never shown the community's unit inventory, so there is nothing "
+            "to validate the claim against here. The admin resolves it into a "
+            "real unit at approval.\n\n"
             "Four distinct refusals, deliberately separated: an unknown community "
             "is **404**; already being a member, or already having a request "
             "pending, is **409**; a rejected application inside the cool-off "
@@ -905,10 +912,18 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         ),
     ),
     ("post", "/api/v1/admin/access-requests/{request_id}/approve"): op(
-        errors=["401", "403", "404", "409", "500"],
+        errors=["401", "403", "404", "409", "422", "500"],
         no_story=NO_STORY["join"],
         description=(
-            "Approve a join request, creating the membership.\n\n"
+            "Approve a join request, creating the membership AND its residency.\n\n"
+            "Approval requires a unit (product ruling, 2026-08-27). Precedence: "
+            "`unit_id`, then the request's own validated `requested_unit_id`, "
+            "then `unit_code` (+ optional `building_code`), which is matched "
+            "case-insensitively against the community's units or "
+            "**finds-or-creates** the unit with its building. Neither given is "
+            "**422** `approval_requires_unit` -- refused in the API and again in "
+            "the RPC (`HBUNT`), before anything is written. A code naming an "
+            "existing but inactive unit is **422** too, in words.\n\n"
             "Approving a request that is not pending is **409** -- which is what "
             "two administrators clicking the same row a second apart will get, "
             "and the reason the second one is not silently ignored."
@@ -919,8 +934,9 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         no_story=NO_STORY["join"],
         description=(
             "Reject a join request, with a reason recorded against it.\n\n"
-            "The applicant may apply again after the cool-off window; see "
-            "`POST /access-requests`, which enforces it."
+            "Answers with the typed decision shape shared by the three admin "
+            "verbs. The applicant may apply again after the cool-off window; "
+            "see `POST /access-requests`, which enforces it."
         ),
     ),
     ("post", "/api/v1/admin/access-requests/{request_id}/blacklist"): op(
@@ -985,8 +1001,10 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
         no_story=NO_STORY["found"],
         description=(
             "List the units in the caller's community, for pickers.\n\n"
-            "Feeds the unit selector on the join-request and invitation screens; "
-            "the ids returned here are the ones `POST /access-requests` accepts."
+            "Feeds the unit selector on the join-request and invitation screens "
+            "-- the ids returned here are the ones `POST /access-requests` "
+            "accepts -- and, since 2026-08-28, the approval panel's *matches "
+            "existing unit / will create unit* indicator."
         ),
     ),
     ("post", "/api/v1/onboarding/community"): op(

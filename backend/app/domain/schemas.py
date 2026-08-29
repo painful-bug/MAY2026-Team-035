@@ -392,6 +392,20 @@ class CreateAccessRequest(StrictModel):
     requested_unit_id: str | None = None
     requested_relationship: Relationship = "tenant"
     phone: str | None = Field(default=None, max_length=20)
+    # The applicant's residence claim, as free text: Tower/Block + Flat for an
+    # apartment community, the villa number for a villa layout. Free text by
+    # product ruling (2026-08-27) -- non-members must never see the community's
+    # unit inventory, so there is nothing to validate against here.
+    requested_building_text: str | None = Field(default=None, max_length=120)
+    requested_unit_text: str | None = Field(default=None, max_length=120)
+
+    @field_validator("requested_building_text", "requested_unit_text")
+    @classmethod
+    def _strip_residence_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class WithdrawAccessRequest(StrictModel):
@@ -401,6 +415,10 @@ class WithdrawAccessRequest(StrictModel):
 class AccessRequestCommunity(BaseModel):
     id: str
     name: str
+    # Drives the admin/applicant UI's residence labelling: "Tower + Flat" for
+    # `apartment`, "Villa number" for `layout_villa`. Optional because a row
+    # can reach `_summary` without the communities embed.
+    community_type: str | None = None
 
 
 class AccessRequestResponse(BaseModel):
@@ -409,6 +427,8 @@ class AccessRequestResponse(BaseModel):
     status: str
     requested_relationship: str
     requested_unit_id: str | None = None
+    requested_building_text: str | None = None
+    requested_unit_text: str | None = None
     applicant_name: str | None = None
     applicant_email: str | None = None
     applicant_phone_e164: str | None = None
@@ -424,6 +444,11 @@ class AccessRequestListResponse(BaseModel):
 class ApproveAccessRequest(StrictModel):
     unit_id: str | None = None
     relationship: Relationship | None = None
+    # The admin-confirmed residence, as text. The service canonicalises the
+    # pair with `normalize_unit_code(building_code, unit_code)` and the RPC
+    # finds-or-creates the unit. `unit_id` stays the highest-precedence input.
+    unit_code: str | None = Field(default=None, max_length=120)
+    building_code: str | None = Field(default=None, max_length=120)
 
 
 class RejectAccessRequest(StrictModel):
@@ -432,6 +457,20 @@ class RejectAccessRequest(StrictModel):
 
 class BlacklistAccessRequest(StrictModel):
     reason: str = Field(min_length=3, max_length=500)
+
+
+class AccessRequestDecisionResponse(BaseModel):
+    """The typed answer of an admin decision (approve, reject, blacklist).
+
+    `membership_id` and `unit_id` are populated only by an approval -- and
+    `unit_id` only once the residence-claim migration teaches the RPC to
+    return it, so absence is tolerated.
+    """
+
+    request_id: str
+    status: str
+    membership_id: str | None = None
+    unit_id: str | None = None
 
 
 # --- Founder onboarding -------------------------------------------------------

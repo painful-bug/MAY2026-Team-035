@@ -69,6 +69,17 @@ _CUSTOM = {
     # string matching these SQLSTATEs exist to avoid.
     "HBMKT": (ConflictError, "leadership_marketplace_conflict"),
     "HBLED": (ConflictError, "leadership_already_held"),
+    # The approval-requires-a-unit ruling of 2026-08-27
+    # (`20260828090000_residence_claim_on_join.sql`): approving a join request
+    # without saying where the person lives used to mint a resident with no
+    # residency, which the resident guards then 403. A 422 like `HB422`,
+    # because the fix is in the caller's own request body -- the admin left the
+    # unit out, and supplying one makes the same call succeed. Its own code for
+    # the reason `HBLOC` has one: "you forgot the unit" is an omission the
+    # client can point a form field at, where `HB422`'s `validation_error` is
+    # the generic refusal a client can only echo -- and it is nothing like the
+    # 409 family, because no other row is in the way.
+    "HBUNT": (ValidationError, "approval_requires_unit"),
 }
 
 # Postgres classes worth distinguishing from a generic failure.

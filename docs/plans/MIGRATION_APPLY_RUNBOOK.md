@@ -38,16 +38,18 @@ competence with Postgres and Supabase, but no context on this branch's work.
 > an apply status is the copy that goes stale. **§28 is outstanding as of
 > 2026-08-23.**
 >
-> **Four more sections have been written since — §29 `20260823190000`
+> **Five more sections have been written since — §29 `20260823190000`
 > (assignment write repairs), §30 `20260824090000` (supervisor take-up), §31
-> `20260826090000` (realtime expansion) and §32 `20260827210000` (one live job
-> per complaint).** §30 must follow §29 and §29 must follow §28 (each section
-> says so, and re-issues the previous one's function bodies); §31 is
-> independent of all of them; §32 must follow §28, whose `create_work_order`
-> body it carries forward, and is independent of §29–§31. Filename order —
-> §29, then §30, then §31, then §32 — satisfies all of it, as it always does.
-> **§32 is the newest.** If the section numbers below run past §32, this
-> paragraph is what needs updating.
+> `20260826090000` (realtime expansion), §32 `20260827210000` (one live job
+> per complaint) and §33 `20260828090000` (residence claim on join).** §30 must
+> follow §29 and §29 must follow §28 (each section says so, and re-issues the
+> previous one's function bodies); §31 is independent of all of them; §32 must
+> follow §28, whose `create_work_order` body it carries forward, and is
+> independent of §29–§31; §33 touches none of their objects and depends only on
+> the long-applied §23-era state, but comes last because filename order is apply
+> order. Filename order — §29, then §30, then §31, then §32, then §33 —
+> satisfies all of it, as it always does. **§33 is the newest.** If the section
+> numbers below run past §33, this paragraph is what needs updating.
 >
 > So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
@@ -4633,3 +4635,259 @@ which is the property that is actually true after 2026-08-27.
 **Not verifiable statically:** that two concurrent raises actually serialize on
 the lock, and that `HB409` surfaces as a 409 with the sentence rather than a 500
 — post-checks 1 and 4 are the only proof of either.
+
+## 33. `20260828090000_residence_claim_on_join.sql`
+
+**Apply this AFTER §31 and after §32
+`20260827210000_one_live_job_per_complaint.sql`.** Not because they share
+an object — this file touches `access_requests`, `approve_access_request` and
+`pending_access_request_overview`, none of which §29, §30, §31 or §32's
+migration name — but because filename order is apply order and this file's
+version sorts after all of theirs. If any of them is somehow still outstanding
+when you get here, applying this one first breaks nothing; apply them anyway,
+and apply all of it in filename order.
+
+**What breaks without it:** every self-service join approval mints a resident
+with no residency. The wire contract for a unit exists end to end —
+`access_requests.requested_unit_id`, the approve RPC's `p_unit_id`, and a
+`unit_residencies` insert that fires when either is set — but both ends send
+null: the join form has no unit field and the admin's Accept button posts `{}`.
+So `membership.unit` is null, flat/tower render '—' across both portals, and
+`_has_active_residency` (`backend/app/api/deps.py`) 403s people who genuinely
+live there. Live testing surfaced it on 2026-08-27. An admin cannot even repair
+it by hand: apartment communities carry exactly one `units` row (the founder's
+own flat, seeded by `20260805144502`), and there is no unit CRUD anywhere in
+the product.
+
+The product owner's rulings (2026-08-27, plan-mode Q&A), verbatim:
+
+1. *"Applicant states their residence as **free text at request time** —
+   Tower/Block + Flat for `apartment`, Villa number for `layout_villa` — stored
+   on `access_requests`. No unit exposure to non-members; the privacy invariant
+   stands."*
+2. *"**Approval requires a unit**: the RPC refuses a resident approval without
+   one, so every approved resident gets a `unit_residencies` row."*
+3. *"Inventory gap solved by **find-or-create at approval**: admin
+   confirms/edits the claimed residence; the RPC matches an existing active
+   unit in that community or creates it (with its building) inline. No
+   unit-management screen in this work."*
+
+**What it does:** two columns, one signature change, one view append, in five
+sections.
+
+1. **Two claim columns (ruling 1)** — `requested_building_text` and
+   `requested_unit_text` on `access_requests`, each null or a non-blank string
+   of at most 120 characters (the `rejection_reason` convention with the blank
+   refusal added). Two columns and not one so tower and flat stay separable —
+   the approval prefill feeds `normalize_unit_code(tower, flat)` on the Python
+   side, and a single concatenated field is how the documented C-C-505
+   double-prefix hazard happens. `add column if not exists` plus
+   `pg_constraint`-guarded CHECK adds, so a re-run is a no-op.
+   `backend/tests/test_residence_claim_migration.py::test_both_claim_columns_are_added_idempotently_with_the_trim_length_check`
+   pins the shape.
+2. **`approve_access_request` re-issued as six arguments (rulings 2 and 3)** —
+   the 4-argument signature is **dropped first**, not overloaded: PostgREST
+   cannot dispatch overloads, and with both in the catalogue
+   `POST /rpc/approve_access_request` answers 300 for every caller
+   (`test_the_old_signature_is_dropped_by_name_and_before_the_create`). The
+   body is the applied `20260730170036`'s — the lock, the reviewer check, the
+   idempotent already-approved return, the membership insert with its
+   `unique_violation` fallback, the residency insert with the hosted-only
+   `created_by_membership_id`, the final update — proved surviving span by
+   span, each span extracted from that file's own text rather than retyped
+   (`test_every_load_bearing_statement_of_the_old_body_survives`). Added
+   between the existing validation and the membership insert: `p_unit_code` is
+   matched case-insensitively against the community's units (found-but-inactive
+   refuses in words as `HB422`,
+   `test_an_inactive_unit_is_a_refusal_in_words_not_a_silent_duplicate`); not
+   found is find-or-create mirroring the founder RPC — for `layout_villa` the
+   building code defaults to the unit code itself and each villa gets its own
+   `buildings` row (`building_type 'villa'`, `unit_type 'villa'`), apartment
+   creates or reuses a `block` from `p_building_code` — both inserts
+   `on conflict do nothing` with a re-select, so two admins approving into the
+   same new tower race against the unique constraints instead of each other
+   (`test_the_find_or_create_is_race_safe_and_mirrors_the_founder_shape`).
+3. **THE GATE (ruling 2)** — a resolution that still holds no unit refuses the
+   whole approval with the new SQLSTATE `HBUNT`, **before the membership
+   insert**, so a refused approval writes nothing and the request stays cleanly
+   pending for the retry that carries a unit
+   (`test_the_gate_refuses_before_anything_is_written`). The residency insert
+   loses its `if target_unit_id is not null` guard: after the gate the
+   condition is always true, and a guard that can no longer be false is a
+   sentence claiming this function still mints unitless residents
+   (`test_the_residency_insert_lost_its_guard_and_nothing_else`). `HBUNT` maps
+   in `backend/app/core/pg_errors.py` to a 422 with code
+   `approval_requires_unit` — its own code, not `HB422`'s generic
+   `validation_error`, because "you forgot the unit" is an omission the client
+   can point a form field at
+   (`test_the_new_code_is_a_validation_error_the_client_can_point_at_a_field`).
+4. **`pending_access_request_overview` re-issued (ruling 1's admin half)** —
+   the same columns in the same order with three APPENDED:
+   `requested_building_text`, `requested_unit_text`, `community_type` (the
+   admin card needs the claim to prefill and the community type to label
+   Tower/Flat vs Villa). `create or replace view` permits appending and nothing
+   else; the old order is derived from `0024`'s own text and proved surviving
+   as a prefix, `security_invoker = true` included
+   (`test_the_view_appends_and_keeps_every_column_where_it_was`,
+   `test_the_view_keeps_security_invoker_and_reissues_its_comment`).
+5. **Proof in the transaction, then comment-only post-checks.** The proof
+   raises if the 4-argument signature survived the drop, if the new body lost
+   the `HBUNT` gate, or if the view's tail is not exactly the three appended
+   columns — each an apply that would otherwise *look* clean. The post-checks
+   are reproduced below; every one is a guard-free catalogue inspection
+   (§28's lesson — and this RPC is service-role-only and **writes** on
+   success, so calling it would either refuse or mint a real membership).
+
+**What it does NOT do, and each absence is deliberate.** The `audit_events`
+insert that `20260730170036` dropped is **not restored** — that was a
+hosted-compat decision (the hosted table's shape drifted from the migrations')
+and it stands; recorded as DERIVED in the change log. No unit CRUD screen —
+ruling 3 closes the inventory gap at approval, not with a new surface. No SSE
+payload change — the `access_requests` triggers from `0024` fire on the UPDATE
+this function already does, and the admin queue refetches through the view,
+which now carries the new fields. And `requested_unit_id` keeps working — a
+validated FK path invitations already use and a future villa picker could,
+still the highest-precedence input after `p_unit_id` itself.
+
+**Deploy the code AFTER the apply.** This migration has a backend half: the
+join endpoint stores the two claim columns and the approve endpoint sends
+`p_unit_code`/`p_building_code`. The Python repository includes the new RPC
+keys **only when non-null**, so the old backend against the new database
+degrades gracefully (a 4-key payload binds to the 6-argument function through
+its defaults) — but the new backend against the old database does not: an
+insert naming `requested_unit_text` errors on the missing column, and an RPC
+payload carrying `p_unit_code` finds no 4-argument function that accepts it.
+Apply first, deploy second.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The function being replaced is the 4-argument `20260730170036` body.
+--     Expect exactly one row, pronargs = 4. Two rows means an overload
+--     already exists and PostgREST is already broken; zero means the drop
+--     will no-op and only the create matters. Neither stops the apply.
+select p.oid::regprocedure as signature, p.pronargs
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'approve_access_request';
+
+-- (b) The case-insensitive match assumes one unit per spelling. Expect zero
+--     rows; a row here means two units in one community differ only by case,
+--     and the match will pick one of them arbitrarily (limit 1). Rename one
+--     of the pair first if any appear.
+select community_id, upper(unit_code) as code, count(*)
+  from public.units
+ group by 1, 2
+having count(*) > 1;
+
+-- (c) The view being replaced is 0024's eleven-column shape. Expect 11; a
+--     different number means another definition won at some point, and the
+--     append below would not be an append.
+select count(*) as view_columns
+  from information_schema.columns
+ where table_schema = 'public'
+   and table_name = 'pending_access_request_overview';
+```
+
+There is no data risk to check for. The two columns arrive null everywhere, the
+CHECKs accept null, no existing row is touched, and the function and view
+swaps replace code, not data. The one behavioural change is the intended one:
+an approval that names no unit, which used to half-succeed, now refuses whole.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop function` — and it
+is safe to confirm: the drop is the overload rule, the create follows in the
+same paste, and the whole paste is one transaction, so a failure anywhere rolls
+the entire file back. The only output expected is one notice at the end:
+*"residence_claim_on_join: two claim columns, a 6-arg approve with the unit
+gate, and the view carries the claim."* Section 5's proof raises rather than
+reports, so a half-applied file cannot look like a successful one.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260828090000', 'residence_claim_on_join')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only — every one guard-free (§28's lesson):**
+
+```sql
+-- (a) One approve_access_request, with six arguments, security definer,
+--     granted to service_role only. Expect exactly one row, pronargs = 6.
+select p.oid::regprocedure           as signature,
+       p.pronargs                    as args,
+       p.prosecdef                   as security_definer,
+       array_to_string(p.proacl, ', ') as acl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname = 'approve_access_request';
+
+-- (b) The two claim columns and their CHECKs. Expect two rows from each.
+select column_name, data_type, is_nullable
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'access_requests'
+   and column_name in ('requested_building_text', 'requested_unit_text');
+select conname, pg_get_constraintdef(oid)
+  from pg_constraint
+ where conrelid = 'public.access_requests'::regclass
+   and conname like 'access_requests_requested_%_text_check';
+
+-- (c) The view's tail is the three appended columns, in this order, and
+--     nothing before them moved. Expect 14 rows, positions 12-14 being
+--     requested_building_text, requested_unit_text, community_type.
+select ordinal_position, column_name
+  from information_schema.columns
+ where table_schema = 'public'
+   and table_name = 'pending_access_request_overview'
+ order by ordinal_position;
+
+-- (d) Nobody has claimed a residence yet, which is what day one looks like.
+--     Expect zero until the join form ships.
+select count(*) as requests_with_a_claim
+  from public.access_requests
+ where requested_unit_text is not null;
+```
+
+**Post-check, functional (after the backend and frontend deploys):** as an
+apartment applicant, submit a join request — the form now requires Tower/Block
+and Flat Number — and as that community's admin, open Pending Registrations:
+the card shows the claim, Accept expands an inline panel prefilled from it, and
+Confirm approves. The new resident's `membership.unit` is populated and the
+resident-guarded pages load instead of 403ing. Approve a **pre-migration**
+pending request by typing the unit into the empty panel. Then approve with the
+unit field cleared: the API answers `422` with code `approval_requires_unit`
+and the request stays pending. Last, approve into a tower that does not exist
+yet and confirm the building and unit rows were created (`select * from
+public.units order by created_at desc limit 3`).
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_residence_claim_migration.py` (21 tests) — the file parses
+(`pglast`), sorts after the three files it reasons about, and is the **last**
+definer of `approve_access_request`, that list derived by scanning the
+directory's own text; it declares no second function; the drop names the exact
+4-argument signature and precedes the create; the six-argument signature,
+`security definer`, `search_path`, and the service-role-only revoke/grant pair
+are pinned on the new signature, with exactly one grant in the file; every
+load-bearing statement of `20260730170036`'s body survives, each span
+extracted from that file's text; the residency insert's guard is removed and
+nothing else around it; the `HBUNT` gate stands before the membership insert
+and after the carried validation; the code match is case-insensitive, the
+create exact-case, the find-or-create `on conflict`-guarded against both
+unique constraints with the villa defaulting rule stated; the SQLSTATE set is
+exactly `{HB422, HBUNT}` and both are mapped, `HBUNT` as a `ValidationError`
+with code `approval_requires_unit` distinct from `HB422`'s; both columns carry
+the trim+length CHECK behind idempotent guards; the view's old column order is
+derived from `0024`'s text and survives as a prefix with exactly the three
+appended columns and `security_invoker = true`; the in-transaction proof
+checks the three failures with no symptom; the file's **last statement** is
+`notify pgrst, 'reload schema'`; and the post-checks are comment-only and call
+nothing guarded. Plus the directory battery in
+`test_migration_directory_is_fresh_appliable.py` and the SQLSTATE precedent
+suite in `test_leadership_exclusivity_migration.py`, both green beside it.
+**Not verifiable statically:** that hosted's `approve_access_request` is
+`20260730170036`'s 4-argument body before the drop (pre-check (a)); that no
+community holds two units differing only by case (pre-check (b)); and that the
+hosted view is `0024`'s eleven columns (pre-check (c)).

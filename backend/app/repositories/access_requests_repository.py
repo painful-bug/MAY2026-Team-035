@@ -6,9 +6,10 @@ from supabase import Client
 
 _TABLE = "access_requests"
 _SELECT = (
-    "id,community_id,requested_unit_id,requested_relationship,status,"
+    "id,community_id,requested_unit_id,requested_building_text,requested_unit_text,"
+    "requested_relationship,status,"
     "applicant_name,applicant_email,applicant_phone_e164,created_at,reviewed_at,"
-    "rejection_reason,communities(name)"
+    "rejection_reason,communities(name,community_type)"
 )
 
 
@@ -94,16 +95,22 @@ def approve(
     reviewer_profile_id: str,
     unit_id: str | None,
     relationship: str | None,
+    unit_code: str | None = None,
+    building_code: str | None = None,
 ) -> dict:
-    response = client.rpc(
-        "approve_access_request",
-        {
-            "p_request_id": request_id,
-            "p_reviewer_profile_id": reviewer_profile_id,
-            "p_unit_id": unit_id,
-            "p_relationship": relationship,
-        },
-    ).execute()
+    payload = {
+        "p_request_id": request_id,
+        "p_reviewer_profile_id": reviewer_profile_id,
+        "p_unit_id": unit_id,
+        "p_relationship": relationship,
+    }
+    # Sent only when present, so a backend deployed before the hand-applied
+    # residence-claim migration still matches the old 4-argument RPC shape.
+    if unit_code is not None:
+        payload["p_unit_code"] = unit_code
+    if building_code is not None:
+        payload["p_building_code"] = building_code
+    response = client.rpc("approve_access_request", payload).execute()
     return response.data[0] if isinstance(response.data, list) else response.data
 
 

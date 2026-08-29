@@ -22,6 +22,7 @@ from app.domain.schemas import (
     Principal,
     RejectAccessRequest,
 )
+from app.domain.units import normalize_unit_code
 from app.repositories import access_requests_repository, profiles_repository
 
 
@@ -47,11 +48,15 @@ def _summary(row: dict) -> AccessRequestResponse:
     return AccessRequestResponse(
         id=row["id"],
         community=AccessRequestCommunity(
-            id=row["community_id"], name=community.get("name", "Community")
+            id=row["community_id"],
+            name=community.get("name", "Community"),
+            community_type=community.get("community_type"),
         ),
         status=row["status"],
         requested_relationship=row["requested_relationship"],
         requested_unit_id=row.get("requested_unit_id"),
+        requested_building_text=row.get("requested_building_text"),
+        requested_unit_text=row.get("requested_unit_text"),
         applicant_name=row.get("applicant_name"),
         applicant_email=row.get("applicant_email"),
         applicant_phone_e164=row.get("applicant_phone_e164"),
@@ -105,7 +110,7 @@ def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestR
         )
     community_rows = (
         service.table("communities")
-        .select("id, name, status")
+        .select("id, name, community_type, status")
         .eq("id", request.community_id)
         .eq("status", "active")
         .limit(1)
@@ -217,6 +222,9 @@ def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestR
     payload = {
         "community_id": request.community_id,
         "requested_unit_id": request.requested_unit_id,
+        # Free text by ruling -- already stripped (blank -> None) by the schema.
+        "requested_building_text": request.requested_building_text,
+        "requested_unit_text": request.requested_unit_text,
         "applicant_profile_id": principal.user_id,
         "applicant_name": profile.full_name or principal.email,
         "applicant_email": principal.email.strip().casefold(),
@@ -236,7 +244,10 @@ def create(request: CreateAccessRequest, principal: Principal) -> AccessRequestR
                 code="access_request_pending",
             ) from exc
         raise
-    row["communities"] = {"name": community_rows[0]["name"]}
+    row["communities"] = {
+        "name": community_rows[0]["name"],
+        "community_type": community_rows[0].get("community_type"),
+    }
     return _summary(row)
 
 
@@ -299,6 +310,18 @@ def approve(request_id: str, body: ApproveAccessRequest, principal: Principal) -
     _require_active_admin(
         profile_id=principal.user_id, community_id=request["community_id"]
     )
+    # One normalizer for the tower/flat pair, shared with the legacy pending
+    # queue -- ('C', 'C-505') stays 'C-505', never 'C-C-505'. The RPC matches
+    # the canonical code case-insensitively and finds-or-creates the unit.
+    canonical = normalize_unit_code(body.building_code, body.unit_code)
+    building_code = (body.building_code or "").strip() or None
+    if body.unit_id is None and canonical is None:
+        # Fail fast; the RPC's HBUNT refusal stays the authoritative backstop.
+        raise ValidationError(
+            "A unit is required to approve a resident. Provide the flat or "
+            "villa to place them in.",
+            code="approval_requires_unit",
+        )
     try:
         return access_requests_repository.approve(
             service,
@@ -306,6 +329,8 @@ def approve(request_id: str, body: ApproveAccessRequest, principal: Principal) -
             reviewer_profile_id=principal.user_id,
             unit_id=body.unit_id,
             relationship=body.relationship,
+            unit_code=canonical,
+            building_code=building_code,
         )
     except Exception as exc:  # provider error text is unstable
         # Our own SQLSTATEs carry a message written for the caller, and one of
