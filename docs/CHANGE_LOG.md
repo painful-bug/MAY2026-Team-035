@@ -17,6 +17,15 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-29 — residence migration runbook section corrected
+
+**Migration `20260828090000_residence_claim_on_join.sql` header comments updated.** The file's
+header comment and post-checks section stated "Runbook section 31", but the runbook lists this
+migration under section 33. The numbers have been corrected in both locations; no SQL semantics
+changed. `DERIVED` (runbook numbering settled after merge).
+
+---
+
 ## 2026-08-28 — the join flow finally asks where you live
 
 **Joining a community now captures a residence, and approving one now requires it.** Live testing

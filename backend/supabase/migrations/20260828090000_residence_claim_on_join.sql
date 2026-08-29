@@ -98,7 +98,7 @@
 -- `create or replace`.
 --
 -- Hand-applied by the owner in the Supabase SQL editor, like every file here.
--- Runbook section 31.
+-- Runbook section 33.
 --
 -- ROLLBACK:
 --   * section 1: `alter table public.access_requests drop column
@@ -525,7 +525,7 @@ notify pgrst, 'reload schema';
 -- Comment-only on purpose: these belong in the SQL editor's next tab, not in
 -- the apply. Every one is a GUARD-FREE structural inspection -- no `auth.uid()`
 -- (the editor has none; this RPC is service-role-only anyway, and calling it
--- would write real rows). Runbook section 31 carries them too.
+-- would write real rows). Runbook section 33 carries them too.
 --
 --   -- (a) One approve_access_request, with six arguments, security definer,
 --   --     granted to service_role only. Expect exactly one row.
