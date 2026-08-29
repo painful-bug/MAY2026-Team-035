@@ -30,6 +30,13 @@ import WorkOrderTriage from './WorkOrderTriage';
 //     or has failed, the form is absent. A form drawn in that window is the
 //     duplicate-raise window itself, and it is the one property a
 //     naive `jobs.data?.find(...)` implementation gets wrong.
+//
+// The second describe pins a different boundary: `GET /departments/{id}` is
+// guarded `require_admin_or_manager` (`departments.py:47`), so the worker
+// portal's supervisor — a `worker` membership — never asks for it, and
+// `WorkerDashboard/WorkOrders.test.jsx` pins that side. This side proves the
+// gate cost the admin nothing: the read still happens here, and its trades
+// still populate the raise form.
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), state: {} }));
 
@@ -212,5 +219,39 @@ describe('the raise form is gated on the complaint having no live job', () => {
     // An unreadable list is not evidence that nothing is live, so the form
     // stays away rather than defaulting open.
     expect(screen.queryByText(FORM_HEADING)).not.toBeInTheDocument();
+  });
+});
+
+describe('the department-detail read under the admin portal', () => {
+  it('still asks for it, and offers its trades in the raise form', async () => {
+    serve();
+    await renderRaiseTab();
+
+    await screen.findByText(FORM_HEADING);
+    const asked = mocks.api.mock.calls.map(([path]) => path);
+    expect(asked).toContain('/departments/dept-1');
+    // The trade list came off the read, so the raise form has it to offer.
+    expect(
+      await screen.findByRole('option', { name: 'Plumber' }),
+    ).toBeInTheDocument();
+    // And the "not available here" note is the worker portal's, not this one's.
+    expect(
+      screen.queryByText(/trade list is not available here/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the note for a genuine failure of the read', async () => {
+    serve();
+    const answers = mocks.api.getMockImplementation();
+    mocks.api.mockImplementation((path, options) => (
+      path === '/departments/dept-1'
+        ? Promise.reject(Object.assign(new Error('boom'), { status: 500 }))
+        : answers(path, options)
+    ));
+    await renderRaiseTab();
+
+    expect(
+      await screen.findByText(/trade list is not available here/),
+    ).toBeVisible();
   });
 });

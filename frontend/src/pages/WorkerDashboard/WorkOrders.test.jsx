@@ -70,7 +70,9 @@ const COMPLAINT = {
  *
  * The 403 is not a pessimistic fixture, it is what production returns: the
  * departments router is guarded `require_admin_or_manager` and a
- * service-department supervisor holds a `worker` membership.
+ * service-department supervisor holds a `worker` membership. The screen now
+ * never asks under this portal — the responder stays as the tripwire that
+ * makes the "never asks" assertion mean something if the gate regresses.
  */
 function serve(communities, { jobs = [JOB], complaints = [] } = {}) {
   mocks.api.mockReset();
@@ -210,16 +212,21 @@ describe('the supervisor dispatch queue in the worker portal', () => {
     ).toBeVisible();
   });
 
-  it('does not show the department read’s 403 as a page failure', async () => {
+  it('never requests the admin-shaped department detail, and still explains the missing trade list', async () => {
+    // The read is guarded `require_admin_or_manager`, so under this portal it
+    // could only ever 403 — and react-query would retry and refetch that 403
+    // on every mount and focus. The screen must not ask at all.
     serve([ENGAGEMENT]);
     renderAt('/worker/work-orders');
 
     await screen.findByText('Kitchen tap leaking');
+    const asked = mocks.api.mock.calls.map(([path]) => path);
+    expect(asked).not.toContain('/departments/department-1');
     expect(
       screen.queryByText(/do not have permission for this community action/),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/trade list could not be read/),
+      screen.getByText(/trade list is not available here/),
     ).toBeVisible();
   });
 });

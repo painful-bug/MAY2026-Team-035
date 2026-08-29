@@ -16,6 +16,7 @@ import {
 } from '../../features/workOrders/workOrderVocabulary';
 import { usePortalScope } from '../../features/hiring/usePortalScope';
 import { hiringApi } from '../../features/hiring/hiringApi';
+import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { complaintRoutingApi } from '../../features/complaints/routingApi';
 import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 
@@ -935,11 +936,20 @@ export default function WorkOrderTriage() {
   // the `staff_assignments` row id, which is exactly what `assign` takes — and
   // `GET /departments/{id}` is the admin-or-manager read, unlike the departments
   // *list*, which is admin-only and would 403 for half the people on this page.
+  //
+  // Admin-or-*manager* — and a service-department supervisor holds a `worker`
+  // membership, so under the worker portal this read can only ever 403. It is
+  // not asked for there at all rather than asked and refused: react-query
+  // retries and refetches an error on every mount and focus, which showed up in
+  // the backend log as a stream of 403s tracking the supervisor around their
+  // own screen. The gate is the portal and not the person, because the portal
+  // is the one fact the browser holds that cannot drift from `_portal_for`.
+  const inWorkerPortal = basePath === AUTH_ROUTES.WORKER_DASHBOARD;
   const department = useQuery({
     queryKey: ['work-orders', departmentId, 'department'],
     queryFn: () => hiringApi.departmentDetail(departmentId),
     ...QUERY_POLICIES.detail,
-    enabled: Boolean(departmentId),
+    enabled: Boolean(departmentId) && !inWorkerPortal,
   });
 
   const complaints = useQuery({
@@ -1129,23 +1139,20 @@ export default function WorkOrderTriage() {
         </div>
       )}
 
-      {/* The department read is *context*, and its refusal is not a page
-          failure — it used to render as a bare "You do not have permission for
-          this community action." under the queue, which is both alarming and
-          untrue of the screen it appears on.
-          `GET /departments/{id}` is guarded `require_admin_or_manager`
+      {/* The department read is *context*, and its absence is not a page
+          failure. `GET /departments/{id}` is guarded `require_admin_or_manager`
           (`departments.py:47`), and a service-department supervisor holds a
-          `worker` membership — so the one population this screen was mounted in
-          the worker portal *for* cannot make this call, while every work-order
-          endpoint admits them. What is lost is the trade list; the roster is
-          not, because the assign box reads
-          `GET /work-orders/{id}/candidates`, which admits them. Said plainly
-          rather than branched on portal: an admin or a manager only reaches
-          this line on a genuine failure, and the sentence is true there too. */}
-      {department.error ? (
+          `worker` membership — so under the worker portal the read is gated off
+          above rather than fired and refused, while every work-order endpoint
+          admits them. What is lost is the trade list; the roster is not,
+          because the assign box reads `GET /work-orders/{id}/candidates`, which
+          admits them. One sentence for both arms, because it is true in both:
+          the supervisor whose portal never asks, and the admin or manager whose
+          ask genuinely failed. */}
+      {inWorkerPortal || department.error ? (
         <p className="rounded-2xl border border-slate-100 bg-white p-4 text-[11px] font-semibold text-slate-500">
-          This department&apos;s trade list could not be read, so the trade box
-          offers nothing to pick and the job takes the trade its complaint
+          This department&apos;s trade list is not available here, so the trade
+          box offers nothing to pick and the job takes the trade its complaint
           category implies. Nothing else on this screen is affected.
         </p>
       ) : null}
