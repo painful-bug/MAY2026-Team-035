@@ -48,8 +48,15 @@ competence with Postgres and Supabase, but no context on this branch's work.
 > independent of §29–§31; §33 touches none of their objects and depends only on
 > the long-applied §23-era state, but comes last because filename order is apply
 > order. Filename order — §29, then §30, then §31, then §32, then §33 —
-> satisfies all of it, as it always does. **§33 is the newest.** If the section
-> numbers below run past §33, this paragraph is what needs updating.
+> satisfies all of it, as it always does.
+>
+> **One more section has been written since — §34 `20260829120000` (drop the
+> legacy `approve_access_request` overload).** It touches no object any of
+> §29–§33 touches, and depends on none of them: the stray it drops is
+> hosted-only prototype code, absent from every migration in this tree, so §34
+> applies cleanly whether §33 has landed yet or not, and in either order.
+> Filename order puts it last regardless. **§34 is the newest.** If the section
+> numbers below run past §34, this paragraph is what needs updating.
 >
 > So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
@@ -4891,3 +4898,115 @@ suite in `test_leadership_exclusivity_migration.py`, both green beside it.
 `20260730170036`'s 4-argument body before the drop (pre-check (a)); that no
 community holds two units differing only by case (pre-check (b)); and that the
 hosted view is `0024`'s eleven columns (pre-check (c)).
+
+## 34. `20260829120000_drop_legacy_approve_overload.sql`
+
+**Filename order is apply order. This file sorts after §33
+`20260828090000_residence_claim_on_join.sql`, so apply it there — but applying
+it BEFORE §33 breaks nothing.** The drop targets only the stray 4-argument
+overload described below, which shares no name, no object and no dependency
+with §33's 6-argument `approve_access_request`. Apply in filename order
+regardless.
+
+**Where the stray came from.** The hosted database carries a prototype-era
+overload of `approve_access_request` that exists in **no migration in this
+tree**:
+
+```sql
+approve_access_request(p_access_request_id uuid, p_profile_id uuid,
+  p_default_invoice_amount numeric, p_due_at timestamptz)
+```
+
+`SECURITY DEFINER`, returns `uuid`. In one call it approves an access request
+and inserts a `community_membership`, a `unit_residencies` row, and an ISSUED
+`maintenance` invoice numbered `'MNT-YYYYMMDD-<request uuid>'`. It surfaced
+during §33's pre-check (a) on 2026-08-29: that query
+(`select p.oid::regprocedure, p.pronargs ... where p.proname =
+'approve_access_request'`) returns more than the one row §33 assumes it is
+replacing, because this stray has sat beside the real overload the whole time,
+undeclared anywhere in this repository.
+
+**Why it goes.** It is dead legacy code that, if ever invoked, writes real
+membership, residency and invoice rows nobody asked for. Nothing in this tree
+references its parameter names (`p_access_request_id`,
+`p_default_invoice_amount`, `p_due_at`) or its invoice prefix (`MNT-`) —
+verified by grep across the repository — and the current backend calls the
+residency-shaped overload by its own named parameters
+(`p_request_id`, `p_reviewer_profile_id`, ...), never this one's. Dropping it
+also makes `approve_access_request` unambiguous by signature: **after §33 and
+§34 are both applied, §33's post-check (a) finally returns its expected
+"exactly one row, pronargs = 6"** — before §34, the stray survives §33 (that
+file's drop only targets the residency-shaped 4-arg
+`(uuid, uuid, uuid, public.residency_relationship)`, not this numeric/timestamp
+one) and the census keeps reporting two rows.
+
+**What it does:** one statement of substance —
+`drop function if exists public.approve_access_request(uuid, uuid, numeric,
+timestamptz);` — idempotent (`if exists`, so a re-run or an already-clean
+database no-ops), followed by an in-transaction proof and a schema-cache
+reload. It does not create, drop or reference the 6-arg signature §33 installs
+— this file owns the stray alone, and applies whether or not §33 has run.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The overload census. Expect the stray plus whichever real overload is
+--     current: two rows if §33 has been applied (pronargs 4 and 6), or two
+--     4-arg rows if it has not (the stray, and the residency-shaped one §33
+--     has not yet replaced). Either is fine -- this file only removes the
+--     numeric/timestamptz stray, identified by name below, not by count.
+select p.oid::regprocedure, p.pronargs
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'approve_access_request';
+
+-- (b) Informational only: the stray's ACL, so there is a before-picture. Any
+--     result is fine and the drop proceeds regardless -- a SECURITY DEFINER
+--     function's grants do not change what dropping it costs.
+select proacl from pg_proc
+ where oid = 'public.approve_access_request(uuid,uuid,numeric,timestamptz)'::regprocedure;
+```
+
+There is no data risk to check for. The statement drops a function, writes no
+row, and touches no table, column, policy or constraint.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop function` — and it
+is safe to confirm: the file's only other statements are the in-transaction
+proof and the schema-cache reload, and the whole paste is one transaction, so
+a failure anywhere rolls it back. The only output expected is one notice:
+*"drop_legacy_approve_overload: the prototype 4-arg approve is gone;
+approve_access_request is unambiguous."*
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260829120000', 'drop_legacy_approve_overload')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- Re-run the overload census. Expect the stray absent. Once §33 is also
+-- applied, expect exactly one row, pronargs = 6 -- the result §33's own
+-- post-check (a) was written to find, and the reason this file exists.
+select p.oid::regprocedure, p.pronargs
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'approve_access_request';
+```
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_drop_legacy_approve_overload_migration.py` — the file
+exists under the frozen name and sorts after `20260828090000`; the drop
+statement names exactly the `(uuid, uuid, numeric, timestamptz)` signature
+with `if exists`; the in-transaction proof probes that exact signature via
+`to_regprocedure` and raises if it survives; the file contains
+`notify pgrst, 'reload schema'`; and the file does not name the 6-argument
+signature in any `drop` or `create`, proving its independence from §33.
+**Not verifiable statically:** that the stray actually exists on the hosted
+database before the apply (pre-checks (a) and (b) are the only proof of
+that), and that PostgREST's schema cache actually drops the stray signature
+rather than continuing to answer for it until the next restart.

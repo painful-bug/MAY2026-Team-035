@@ -17,6 +17,37 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-29 — hosted-only prototype `approve_access_request` overload dropped
+
+**A stray 4-argument overload of `approve_access_request` -- present on the hosted database but declared
+in no migration in this tree -- is dropped by a new migration.** `AUDIT`: discovered while checking §33's
+pre-check (a) (`docs/plans/MIGRATION_APPLY_RUNBOOK.md`), which expects the overload census on
+`approve_access_request` to name only the function §33 is about to replace. The stray --
+`approve_access_request(p_access_request_id uuid, p_profile_id uuid, p_default_invoice_amount numeric,
+p_due_at timestamptz)`, `SECURITY DEFINER` -- is prototype-era code that approves an access request and, in
+one call, inserts a membership, a residency and an ISSUED `maintenance` invoice numbered
+`'MNT-YYYYMMDD-<request uuid>'`. Grepped for across the repository: nothing references its parameter names
+or its invoice prefix, and the current backend calls the residency-shaped overload (§33's) by its own named
+parameters. Because §33's own drop only targets the residency-shaped 4-arg signature
+(`uuid, uuid, uuid, public.residency_relationship`), the stray survives §33 untouched, and the two together
+make `approve_access_request` ambiguous by signature until this file also applies.
+
+Ships as ONE hand-applied migration, `20260829120000_drop_legacy_approve_overload.sql` (runbook §34,
+appended after §33; the top-of-file pointer paragraph is updated to name §34 as the newest). One statement
+of substance -- `drop function if exists public.approve_access_request(uuid, uuid, numeric, timestamptz);`
+-- idempotent, applicable whether or not §33 has been applied yet, and in either order: it owns the stray
+alone and does not reference §33's 6-arg signature in any `drop` or `create`. After both §33 and §34 are
+applied, §33's own post-check (a) ("exactly one row, pronargs = 6") finally returns exactly what it was
+written to expect.
+
+**API surface unchanged.** No endpoint calls the dropped overload, so `docs/API.md`, `docs/openapi.yaml`
+and `docs/api_yaml_mapper.md` are deliberately NOT regenerated for this entry -- there is nothing in them to
+update, and running their generators over an unrelated change would just be diff noise.
+
+Static coverage: `backend/tests/test_drop_legacy_approve_overload_migration.py`.
+
+---
+
 ## 2026-08-29 — residence migration runbook section corrected
 
 **Migration `20260828090000_residence_claim_on_join.sql` header comments updated.** The file's
