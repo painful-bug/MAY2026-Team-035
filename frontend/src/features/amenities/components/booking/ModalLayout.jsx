@@ -1,4 +1,10 @@
 import React, { useEffect, useId } from 'react';
+// Rendered through a portal to document.body. In place, this overlay sat
+// inside a layout's `<main class="animate-fade-in">` — a fill-forwards opacity
+// animation keeps <main> a stacking context forever, so `z-[999]` here was
+// trapped at <main>'s own level and the sticky header's `z-40` painted above
+// it. Same fix as the departments modals (Departments.jsx).
+import { createPortal } from 'react-dom';
 
 export default function ModalLayout({
   title,
@@ -34,16 +40,19 @@ export default function ModalLayout({
     }
   };
 
-  return (
+  // items-start, not items-center: a centered child taller than the viewport
+  // loses its top edge — the title — so the panel anchors to the top and
+  // scrolls internally inside the remaining height instead.
+  return createPortal(
     <div
-      className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-[999] flex items-start justify-center bg-slate-900/60 px-4 py-8 backdrop-blur-sm animate-fade-in"
       onMouseDown={handleBackdropClick}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`max-h-[92vh] w-full ${maxWidth} overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-100 animate-slide-up`}
+        className={`max-h-[calc(100vh-4rem)] w-full ${maxWidth} overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-100 animate-slide-up`}
       >
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -71,6 +80,7 @@ export default function ModalLayout({
 
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

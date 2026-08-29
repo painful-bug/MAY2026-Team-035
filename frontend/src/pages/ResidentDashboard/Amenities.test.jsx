@@ -215,3 +215,39 @@ describe('resident booking dialog when availability cannot be checked', () => {
     ).toBeEnabled();
   });
 });
+
+// Pins the stacking-context escape for the booking modal. Rendered in place,
+// it sat inside ResidentLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever, so
+// the overlay's z-[999] was trapped below the sticky header's z-40. The portal
+// to document.body is what makes the overlay immune. (The manage-booking-days
+// modal takes the same portal; it needs a live booking group to open, so the
+// booking form stands in for the contract here.)
+describe('resident booking modal portal contract', () => {
+  it('portals the dialog to document.body, top-anchored with internal scroll', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = await openDialog(user);
+
+    const overlay = dialog.parentElement;
+    expect(overlay.parentElement).toBe(document.body);
+    expect(overlay.className).toContain('fixed inset-0');
+    expect(overlay.className).toContain('z-[999]');
+    // Top-anchored: a panel taller than the viewport clips at the bottom into
+    // its own scrollbar, never at the title.
+    expect(overlay.className).toContain('items-start');
+    expect(dialog.className).toContain('overflow-y-auto');
+    expect(dialog.className).toContain('max-h-[calc(100vh-4rem)]');
+  });
+
+  it('keeps the close-button behavior', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openDialog(user);
+
+    await user.click(
+      screen.getByRole('button', { name: 'Close booking form' })
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});

@@ -1,4 +1,10 @@
 import { useEffect, useState } from 'react';
+// The approve sheet renders through a portal to document.body. Under /admin
+// it sat inside AdminLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever, so
+// `z-[999]` was trapped at <main>'s own level and the sticky header's `z-40`
+// painted above it. Same fix as the departments modals (Departments.jsx).
+import { createPortal } from 'react-dom';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { QUERY_POLICIES } from '../../lib/api/queryClient';
@@ -105,8 +111,11 @@ function ApproveModal({ departure, busy, onApprove, onClose }) {
     });
   };
 
-  return (
+  return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Approve the leave"
       className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -165,7 +174,8 @@ function ApproveModal({ departure, busy, onApprove, onClose }) {
           {busy ? 'Approving…' : 'Approve'}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

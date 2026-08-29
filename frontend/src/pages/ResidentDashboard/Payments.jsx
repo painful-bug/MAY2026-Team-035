@@ -1,4 +1,10 @@
 import React, { useState } from 'react';
+// The pay modal renders through a portal to document.body. In place, it sat
+// inside ResidentLayout's `<main class="animate-fade-in">` — a fill-forwards
+// opacity animation keeps <main> a stacking context forever, so `z-[999]` was
+// trapped at <main>'s own level and the sticky header's `z-40` painted above
+// it. Same fix as the departments modals (AdminDashboard/Departments.jsx).
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle, Clock, Check, Receipt, ShieldCheck, CalendarClock } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
@@ -264,8 +270,13 @@ export default function Payments() {
         )}
       </div>
 
-      {payTarget && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+      {payTarget && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Society payment gateway"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4"
+        >
           <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-6 overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 animate-slide-up">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-extrabold text-slate-900">Society Payment Gateway</h3>
@@ -358,7 +369,8 @@ export default function Payments() {
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

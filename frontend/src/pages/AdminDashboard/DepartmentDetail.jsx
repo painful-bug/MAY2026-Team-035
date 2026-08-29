@@ -1,4 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
+// The complaint drawer renders through a portal to document.body. In place,
+// it sat inside AdminLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever, so
+// `z-[999]` was trapped at <main>'s own level and the sticky header's `z-40`
+// painted above it. Same fix as the departments modals (Departments.jsx).
+import { createPortal } from 'react-dom';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -577,8 +583,11 @@ export default function DepartmentDetail() {
         </aside>
       </div>
 
-      {selectedComplaint && (
+      {selectedComplaint && createPortal(
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Complaint ${selectedComplaint.title}`}
           className="fixed inset-0 z-[999] bg-slate-900/50 backdrop-blur-sm"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
@@ -759,7 +768,8 @@ export default function DepartmentDetail() {
               </form>
             )}
           </aside>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

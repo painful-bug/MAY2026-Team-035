@@ -1,4 +1,10 @@
 import React, { useState } from 'react';
+// The promote modal renders through a portal to document.body. In place, it
+// sat inside AdminLayout's `<main class="animate-fade-in">` — a fill-forwards
+// opacity animation keeps <main> a stacking context forever, so `z-[999]` was
+// trapped at <main>'s own level and the sticky header's `z-40` painted above
+// it. Same fix as the departments modals (Departments.jsx).
+import { createPortal } from 'react-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
 import { ShieldCheck, Plus, User, Mail, Phone, Users as UsersIcon } from 'lucide-react';
@@ -105,8 +111,13 @@ export default function Admins() {
       )}
 
       {/* Add Admin Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+      {modalOpen && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Promote to admin"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4"
+        >
           <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-6 overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 animate-slide-up">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-extrabold text-slate-900">Promote to Admin</h3>
@@ -219,7 +230,8 @@ export default function Admins() {
               </button>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

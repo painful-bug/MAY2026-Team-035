@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+// The leave modal renders through a portal to document.body, like every other
+// modal in the repo (see AdminDashboard/Departments.jsx). WorkerLayout's
+// <main> carries no animation today, so this overlay is not trapped the way
+// the admin and resident ones were — the portal is what keeps that true if
+// anyone ever animates the layout.
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import {
@@ -111,14 +117,18 @@ function LeaveModal({ engagement, busy, error, onSubmit, onClose }) {
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Leave ${engagement.communityName}`}
       className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
       <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
+
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-lg font-extrabold text-slate-900">
@@ -185,7 +195,8 @@ function LeaveModal({ engagement, busy, error, onSubmit, onClose }) {
           {busy ? 'Sending…' : 'Ask to leave'}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

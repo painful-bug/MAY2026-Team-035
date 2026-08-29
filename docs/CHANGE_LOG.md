@@ -17,6 +17,56 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-30 — Session 76: every remaining in-place overlay escapes the fade-in stacking trap
+
+**Every `fixed inset-0` overlay still rendered in place now renders through `createPortal(document.body)`,
+with `role="dialog"`, `aria-modal="true"` and an accessible name.** `DERIVED` — the sweep the departments
+fix (`frontend/src/pages/AdminDashboard/Departments.jsx`) flagged and did not take. `AdminLayout.jsx:149`
+and `ResidentLayout.jsx:157` still render `<main className="… animate-fade-in">`, and a fill-forwards
+opacity animation keeps `<main>` a stacking context *forever* — so an overlay's `z-[999]` was trapped at
+`<main>`'s own level and the sticky header's `z-40` painted over it. A portal to `document.body` is what
+makes an overlay immune, because no ancestor stacking context is left to capture it.
+
+Recovered from a stranded, never-committed 2026-08-12 worktree and re-targeted onto today's tree by
+content rather than by line offset; several of the files had moved substantially under unrelated
+complaint-engine and identity work in the intervening weeks. Ported: booking `ModalLayout` (which carries
+`BookingFormModal`, `ConfirmationDialog`, `BlockTimeModal` and `TransactionDetailsPanel`), security
+`GateModal` in `Primitives.jsx`, admin `Admins`, `Notices`, `Maintenance` (its shared `Modal` wrapper),
+`DepartmentDetail`'s complaint drawer and `EmployeeDetail`'s approve sheet, resident `Complaints` (drawer
+and raise form), `Payments`, `Visitors`' QR pass, the resident `Amenities` manage-booking-days modal, and
+the worker `JobDetailModal` and `Settings` leave modal. Two overlays needed nothing: `AmenityFormModal`
+and the resident `Amenities` booking modal were fixed independently between 08-12 and now, and were left
+untouched.
+
+`PO` extended the sweep past the trap: **the not-currently-trapped overlays are portalled too.** Only the
+admin and resident `<main>` elements carry `animate-fade-in`; `ManagerLayout`, `SecurityLayout` and
+`WorkerLayout` do not, so the worker and security modals were not trapped today. They render through the
+portal anyway, so a future animation on any layout's `<main>` cannot re-introduce the bug anywhere in the
+repo.
+
+Where an independent `max-h-[calc(100dvh-2rem)] overflow-y-auto` guard had already landed on the inner
+panel — admin `Admins`, `Notices`, `EmployeeDetail`, resident `Payments`, `Visitors`, and worker
+`Settings` — that guard is **kept as it stands**: `dvh` measures the dynamic viewport, so a mobile
+browser's collapsing URL bar cannot push the panel's bottom out of reach, and regressing it to the
+recovered patch's `vh` would have been a step backwards. Only the portal and the dialog semantics were
+added there. Panels with no guard at all gained `max-h-[calc(100vh-2rem)]`/`overflow-y-auto`; tall form
+panels anchor `items-start` with `py-8` and cap at `max-h-[calc(100vh-4rem)]`, because a centered child
+taller than the viewport loses its top edge — its title — rather than its bottom. Close, escape and
+backdrop-click behavior is unchanged everywhere.
+
+**`.animate-fade-in` itself is untouched**, per the standing constraint: other components rely on the
+class and its visuals, and the portals make the modals immune without editing shared CSS.
+
+Frontend only — no backend, migration, API-surface or database change. Twelve new component test files,
+plus two cases each appended to the existing `AdminDashboard/DepartmentDetail.test.jsx` and
+`ResidentDashboard/Amenities.test.jsx` (both already had suites of their own, so the recovered tests were
+grafted onto their existing harnesses rather than replacing them), pin the contract: each asserts
+`parentElement === document.body` alongside the overlay's cover classes and the panel's scroll guard.
+Stale mocks recovered alongside the tests were updated to the current module shapes rather than dropped —
+the selector-based `useApp` facade, `workerApi.snapshot`, and `sessionContext.identity.{full_name,email}`.
+
+---
+
 ## 2026-08-29 — hosted-only prototype `approve_access_request` overload dropped
 
 **A stray 4-argument overload of `approve_access_request` -- present on the hosted database but declared

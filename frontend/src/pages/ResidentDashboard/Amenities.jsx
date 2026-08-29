@@ -1361,7 +1361,7 @@ export default function Amenities() {
         document.body
       )}
 
-      {managedBookingGroup && (
+      {managedBookingGroup && createPortal(
         <div
           className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
@@ -1546,7 +1546,8 @@ export default function Amenities() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
