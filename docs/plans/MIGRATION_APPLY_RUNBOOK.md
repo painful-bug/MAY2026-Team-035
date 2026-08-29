@@ -38,14 +38,16 @@ competence with Postgres and Supabase, but no context on this branch's work.
 > an apply status is the copy that goes stale. **§28 is outstanding as of
 > 2026-08-23.**
 >
-> **Three more sections have been written since — §29 `20260823190000`
-> (assignment write repairs), §30 `20260824090000` (supervisor take-up) and
-> §31 `20260826090000` (realtime expansion).** §30 must follow §29 and §29
-> must follow §28 (each section says so, and re-issues the previous one's
-> function bodies); §31 is independent of both and sorts after them by
-> filename alone. Filename order — §29, then §30, then §31 — satisfies all of
-> it, as it always does. **§31 is the newest.** If the section numbers below
-> run past §31, this paragraph is what needs updating.
+> **Four more sections have been written since — §29 `20260823190000`
+> (assignment write repairs), §30 `20260824090000` (supervisor take-up), §31
+> `20260826090000` (realtime expansion) and §32 `20260827210000` (one live job
+> per complaint).** §30 must follow §29 and §29 must follow §28 (each section
+> says so, and re-issues the previous one's function bodies); §31 is
+> independent of all of them; §32 must follow §28, whose `create_work_order`
+> body it carries forward, and is independent of §29–§31. Filename order —
+> §29, then §30, then §31, then §32 — satisfies all of it, as it always does.
+> **§32 is the newest.** If the section numbers below run past §32, this
+> paragraph is what needs updating.
 >
 > So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
@@ -4343,3 +4345,291 @@ ascending. **Not verifiable statically:** that hosted's `sse_events` carries
 file and the ledger says they are applied, which is why pre-check (a) and (b)
 exist; and whether `pg_cron` is scheduling the pruner at all, which is
 pre-check (d).
+
+## 32. `20260827210000_one_live_job_per_complaint.sql`
+
+**Must follow §28 `20260823180000_resident_sets_the_time.sql`; independent of
+§29, §30 and §31.** It carries §28's `create_work_order` body forward whole and
+adds two things to it, so applying it against a database that has not yet had
+§28 would install the guard *and* silently roll the pick-mode fork forward on
+top of whatever was there — and applying §28 *after* it would roll the guard
+back out, with nothing in the apply output to say so. Filename order puts it
+last, which satisfies all of it. It declares nothing §29, §30 or §31 declares
+and fires on nothing they touch.
+
+**What breaks without it — and this one was observed, not reasoned about.**
+Complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` collected a **second**
+`awaiting_resident` work order fifteen seconds after the resident booked the
+first one's visit (live, 2026-08-27). Nothing refused it, because nothing has
+ever asked: `create_work_order` checks the department, the community and the
+shape of the slot, and then inserts. Two things then follow:
+
+- **The resident holds two open requests for one problem.** Both jobs notify
+  them, both arm a 24-hour deadline, and `get_schedule_request` returns
+  whichever live row it reaches first — so the screen can show the *other* one's
+  state than the one the resident answered.
+- **A technician's day goes to work another job already owns.** The second job
+  dispatches on its own, and nothing anywhere reconciles the two.
+
+The window is the triage screen's own: the "Raise it" form is drawn before the
+jobs list has finished loading, so a supervisor can raise against a complaint
+whose live job has not appeared on their screen yet. The frontend half of this
+ruling closes that window (`WorkOrderTriage.jsx`); **this file is the half that
+holds when the frontend is wrong, when two supervisors act at once, and when a
+button is double-clicked.**
+
+**The rule, in one sentence.** A complaint carries several work orders over its
+life and **one at a time** — a failed visit's replacement or a reopened
+complaint's new job comes after the previous job ends, never alongside it.
+
+**LIVE** = `draft`, `awaiting_resident`, `offered`, `scheduled`, `in_progress`.
+Terminal = `completed`, `failed`, `cancelled`. The eight are the closed list
+`work_orders_status_check` (`0036`) allows, so the two sets are exhaustive and
+this file adds no ninth word and touches no constraint. The five are exactly the
+tuple `app/services/work_orders_service.py::_OPEN_STATES` holds and the
+`get_schedule_request` resolver already calls live; the SQL list is inline with
+a comment naming that tuple, and the static suite derives the expected five
+**from the Python source** so the two cannot drift apart unnoticed.
+
+**What it does:** one `create or replace function public.create_work_order`,
+under the **unchanged eight-argument signature**, with §28's body and exactly
+two additions.
+
+1. **The complaint read takes a row lock.**
+   `select * into v_complaint from public.complaints where id = p_complaint_id
+   for update`. The guard below is a read followed by a write, which is the
+   shape that loses a race: without the lock, two concurrent raises both read
+   "no live job" and both insert, which is a fair description of what happened
+   on 2026-08-27. The **complaint** is locked, not the jobs — locking the empty
+   set the guard is checking would lock nothing at all. This is the lock
+   `resident_set_work_order_schedule` (§28) already takes on the job it is about
+   to move, for the same reason.
+2. **The refusal**, after the department and community checks and after the
+   slot-shape checks, in front of every write:
+
+   ```sql
+   raise exception
+     'A job is already live on this complaint. Finish, fail, or cancel it before raising another.'
+     using errcode = 'HB409';
+   ```
+
+   It sits *behind* the argument validation deliberately: a half-slot or a
+   backwards slot is the caller's own request being malformed and deserves its
+   422, while this is a statement about the world and deserves its 409.
+
+**The sentence is frozen** (`docs/plans/ONE_LIVE_JOB_SPEC.md` §2). `HB409` is
+the existing conflict signal — `app/core/pg_errors.py` maps it to HTTP 409 with
+envelope `code: "conflict"` and the message travels to the screen **verbatim**.
+No new envelope code, and no client parses the text. Rewording this string here
+is rewording it on a supervisor's screen.
+
+**Nothing else moves.** No table, no column, no policy, no constraint, no
+trigger, no second function, and no row is written. `complaints.status` is not
+touched and neither is any complaint-lifecycle code: the ruling is about
+`work_orders` liveness alone. The grant on the function
+(`to authenticated`, §28) survives untouched — `create or replace function`
+retains the existing ACL — and there is no `notify pgrst, 'reload schema'`
+because the signature does not change, so PostgREST's catalogue does not either.
+The only other statement in the file is a `comment on function`.
+
+**Existing duplicates are history and this file does not touch them.** The
+guard refuses **new** raises; it does not reach back. The leak complaint above
+already holds two live jobs and will keep holding them after the apply — and
+because it does, *no* further raise against that complaint will be accepted
+until one of them ends, which is the guard working. The extra
+`awaiting_resident` job `1f0bf129-d47d-4236-9082-ecf0a28b245c` is **the owner's
+to cancel from the UI**, not this file's to cancel by hand: which of two live
+jobs is the real one is a lifecycle decision that belongs to a person, and a
+migration that made it silently would be inventing it. Post-check (d) below is
+where to confirm the cancel landed.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) §28 is applied, and this is the body about to be carried forward. Expect
+--     ONE row, `has_pick_mode` true (the §28 fork is present),
+--     `has_row_lock` and `has_live_guard` both FALSE. If the two guards are
+--     already true, this section has been applied and the re-run is a no-op,
+--     which is fine. If `has_pick_mode` is false, STOP: §28 has not been
+--     applied and applying this file would install its body out of order.
+select p.oid::regprocedure                                   as signature,
+       pg_get_functiondef(p.oid) like '%''mode'', v_mode%'   as has_pick_mode,
+       pg_get_functiondef(p.oid) like '%for update%'         as has_row_lock,
+       pg_get_functiondef(p.oid) like '%A job is already live%' as has_live_guard
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'create_work_order'
+ order by 1;
+-- More than one row means an overload exists. This file replaces the
+-- eight-argument one only -- the one `work_orders_repository.create_work_order`
+-- calls -- so a second signature would keep an unguarded path open and is worth
+-- resolving before the apply, not after.
+
+-- (b) The status vocabulary is still the closed eight. The live set below is
+--     five of them and the terminal set is the other three; a ninth word would
+--     be a status this guard has no opinion about.
+select conname, pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conrelid = 'public.work_orders'::regclass
+   and conname  = 'work_orders_status_check';
+
+-- (c) Who is already carrying more than one live job. Informational, and it is
+--     the census the guard is about to stop growing. Expect at least
+--     f40e11d4-e322-4847-be2f-8f2caf6df722 with two.
+select w.complaint_id,
+       count(*)                              as live_jobs,
+       array_agg(w.id order by w.created_at) as job_ids,
+       array_agg(w.status order by w.created_at) as statuses
+  from public.work_orders w
+ where w.status in ('draft', 'awaiting_resident', 'offered',
+                    'scheduled', 'in_progress')
+ group by w.complaint_id
+having count(*) > 1
+ order by 2 desc, 1;
+
+-- (d) The two jobs of the observed leak, by name, so the post-check has a
+--     before-picture to compare against.
+select id, status, subject_kind, scheduled_start_at, resident_deadline_at,
+       created_at
+  from public.work_orders
+ where complaint_id = 'f40e11d4-e322-4847-be2f-8f2caf6df722'
+ order by created_at;
+```
+
+There is no data risk to check for. The file writes no row, drops nothing,
+alters no table and touches no policy; its one function lands via
+`create or replace` under a signature that does not change.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output is
+expected on success. The closing `do` block reads the installed definition back
+out of the catalogue — signature present, `for update` present, the refusal
+sentence present, `HB409` present, the guard scoped to `w.complaint_id =
+v_complaint.id`, and each of the five live states present — and raises if any of
+it is missing, so a half-pasted file cannot look like a successful one. The
+whole paste is one transaction, so a failure anywhere rolls it back.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260827210000', 'one_live_job_per_complaint')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) The installed body is this one. Expect ONE row, all three booleans true:
+--     §28's fork survived the carry-forward, and both additions are there.
+select p.oid::regprocedure                                   as signature,
+       pg_get_functiondef(p.oid) like '%''mode'', v_mode%'   as has_pick_mode,
+       pg_get_functiondef(p.oid) like '%for update%'         as has_row_lock,
+       pg_get_functiondef(p.oid) like '%A job is already live%' as has_live_guard
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'create_work_order'
+ order by 1;
+
+-- (b) The grant survived the replace, and the posture did not change. Expect
+--     `security_definer` true, `config` naming search_path=public, and an acl
+--     that still lists `authenticated=X` -- `create or replace function`
+--     retains the ACL, and this check is here because "it silently did not" is
+--     the failure that looks exactly like a 403 for every supervisor.
+select p.prosecdef                            as security_definer,
+       array_to_string(p.proconfig, ', ')     as config,
+       coalesce(array_to_string(p.proacl, ', '), '(owner only)') as acl,
+       obj_description(p.oid, 'pg_proc')      as comment
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.oid = 'public.create_work_order(uuid,uuid,uuid,text,text,'
+               'timestamptz,timestamptz,text)'::regprocedure;
+
+-- (c) Nothing else was rewritten. Expect both true -- the resident's own
+--     setter still takes its own lock (§28) and the projection still runs off
+--     the jobs, neither of them redefined by this file.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%for update%' as still_locks
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('resident_set_work_order_schedule',
+                     'respond_to_work_order_schedule')
+ order by 1;
+```
+
+**Post-check, functional — this is the one that proves the ruling, and it needs
+two complaints:**
+
+1. **The refusal.** Sign in as a supervisor of a department that owns a
+   complaint with a live job on it — any complaint in pre-check (c)'s census, or
+   raise a job on a fresh complaint and then try to raise a second. The second
+   raise must come back **409** with exactly:
+
+   > A job is already live on this complaint. Finish, fail, or cancel it before
+   > raising another.
+
+   Read the response in devtools → Network, not only the screen: the envelope
+   must be `{"code": "conflict", "message": "<the sentence>"}`, and a **500** or
+   a "Could not raise that job" means `HB409` is not reaching
+   `app/core/pg_errors.py` and the guard is raising into a generic handler.
+2. **The rule is one at a time, not one ever.** Cancel (or complete, or fail)
+   that live job, then raise again on the same complaint. It must succeed. This
+   is the half that makes the feature usable — a failed visit's replacement and
+   a reopened complaint's new job are exactly what `create_work_order` is for —
+   and a guard that refused here would be a complaint nobody can ever work
+   again.
+3. **A second complaint is unaffected.** Raise a job on a *different* complaint
+   in the same department while the first one's job is live. It must succeed:
+   the guard is scoped to `complaint_id` and to nothing else.
+4. **The lock.** Optional, and the only way to see it directly: open two SQL
+   editor sessions, `begin` in both, and call `create_work_order` for the same
+   complaint in each without committing. The second call must **block** until
+   the first commits, and then refuse. A second call that returns immediately
+   with a new id means the `for update` did not land — re-read post-check (a).
+
+**And (d), the housekeeping the guard deliberately does not do.** The leak
+complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` still holds two live jobs after
+this apply. Cancel the extra `awaiting_resident` one,
+`1f0bf129-d47d-4236-9082-ecf0a28b245c`, **from the UI** — the supervisor's
+"Cancel" on the work-order triage screen, which writes the cancellation reason,
+the event and the resident's notification the way every other cancellation does.
+Do not `update public.work_orders set status = 'cancelled'` by hand: that skips
+all three. Then re-run pre-check (c); the complaint should have dropped to one
+live job, and raising against it should be possible again once that one ends.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_one_live_job_migration.py` (18 tests) — the file exists
+under the frozen name and parses (`pglast`); it sorts after
+`20260823180000`, and is proved to be the **last** declarer of
+`create_work_order` in the directory, which is what decides which body the
+database ends up holding; the eight-argument signature is unchanged, parameter
+by parameter, and the function is still `security definer` with a pinned
+`search_path`; **the body is diffed line by line against §28's**, and the only
+removed line is the unlocked `select` while every added line is a comment, the
+`for update` continuation, or part of the guard — so the fork, the deadline in
+both modes, the event word and the notification are proved to have survived the
+carry-forward rather than spot-checked; the lock is proved to come before the
+guard and the guard before all three writes (`work_orders`,
+`complaint_events`, `notify_member`); the refusal sentence is pinned character
+for character with its `HB409`, and the file's whole SQLSTATE census is proved
+to be `{HB403, HB404, HB409, 22004}` — no new code invented; the five live
+states are **derived from `work_orders_service._OPEN_STATES`** and each asserted
+present in the guard, the three terminal states asserted absent, and the guard
+asserted scoped to `complaint_id` alone (no department, community or supervisor
+term); the file is proved to declare exactly one function and to contain no
+`create/alter/drop table`, no policy, no constraint, no trigger, no
+`update public.work_orders`, no `'cancelled'` and no
+`update public.complaints` — the last three being the "it does not touch history
+and does not touch the lifecycle" promise stated as absences; the closing
+`do` block is proved to probe by explicit signature and to check every clause it
+claims; and the route docstring is proved to carry the new 409 row and the
+corrected multiplicity prose. Plus the directory battery in
+`test_migration_directory_is_fresh_appliable.py`, and the whole backend suite.
+`test_resident_sets_the_time_migration.py` was amended in the same commit: its
+"last word on every function it redefines" check now excludes
+`create_work_order` and asserts instead that this file is its one successor,
+which is the property that is actually true after 2026-08-27.
+**Not verifiable statically:** that two concurrent raises actually serialize on
+the lock, and that `HB409` surfaces as a 409 with the sentence rather than a 500
+— post-checks 1 and 4 are the only proof of either.

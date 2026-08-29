@@ -16,9 +16,16 @@ import {
 let instances;
 
 class FakeEventSource {
+  static CONNECTING = 0;
+
+  static OPEN = 1;
+
+  static CLOSED = 2;
+
   constructor(url) {
     this.url = url;
     this.closed = false;
+    this.readyState = FakeEventSource.CONNECTING;
     this.listeners = new Map();
     instances.push(this);
   }
@@ -30,6 +37,7 @@ class FakeEventSource {
 
   close() {
     this.closed = true;
+    this.readyState = FakeEventSource.CLOSED;
   }
 
   /** Drive the fake the way the browser would. */
@@ -37,6 +45,27 @@ class FakeEventSource {
     for (const listener of this.listeners.get(type) || []) {
       listener(data === undefined ? { type } : { type, data });
     }
+  }
+
+  /** The handshake succeeded. */
+  succeed() {
+    this.readyState = FakeEventSource.OPEN;
+    this.fire('open');
+  }
+
+  /**
+   * What an HTTP error *response* does: one `error`, `readyState` parked at
+   * CLOSED, and the browser never retries. This is the 403 seen live.
+   */
+  fail() {
+    this.readyState = FakeEventSource.CLOSED;
+    this.fire('error');
+  }
+
+  /** A dropped connection the browser will retry by itself. */
+  drop() {
+    this.readyState = FakeEventSource.CONNECTING;
+    this.fire('error');
   }
 }
 
@@ -158,5 +187,101 @@ describe('connection state', () => {
     const stop = subscribeToStream(vi.fn());
     expect(isStreamLive()).toBe(false);
     stop();
+  });
+});
+
+// Proven live on 2026-08-27: a signed-in-but-not-yet-approved session opened
+// `GET /api/v1/events`, got a 403, and the tab's realtime was dead until every
+// subscriber unmounted and remounted — so the approval seconds later never
+// arrived. An HTTP error response parks `readyState` at CLOSED and the browser
+// does not retry; that is the one case this module has to retry for itself.
+describe('reopening after a fatal close', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('opens a new connection five seconds after an error that closed the stream', () => {
+    subscribeToStream(vi.fn());
+    expect(instances).toHaveLength(1);
+
+    instances[0].fail();
+    expect(instances).toHaveLength(1);
+
+    vi.advanceTimersByTime(4999);
+    expect(instances).toHaveLength(1);
+
+    vi.advanceTimersByTime(1);
+    expect(instances).toHaveLength(2);
+    expect(instances[1].url).toBe('/api/v1/events');
+    // The dead handle is let go of, not left holding a listener set.
+    expect(instances[0].closed).toBe(true);
+  });
+
+  it('doubles the wait on each repeated fatal close and stops doubling at a minute', () => {
+    subscribeToStream(vi.fn());
+
+    // 5 s, 10 s, 20 s, 40 s, then the 60 s cap twice over.
+    for (const [attempt, delay] of [5_000, 10_000, 20_000, 40_000, 60_000, 60_000].entries()) {
+      instances[instances.length - 1].fail();
+      vi.advanceTimersByTime(delay - 1);
+      expect(instances).toHaveLength(attempt + 1);
+      vi.advanceTimersByTime(1);
+      expect(instances).toHaveLength(attempt + 2);
+    }
+  });
+
+  it('starts the backoff over once a connection has actually opened', () => {
+    subscribeToStream(vi.fn());
+
+    instances[0].fail();
+    vi.advanceTimersByTime(5_000);
+    expect(instances).toHaveLength(2);
+
+    // Without the reset this second outage would wait 10 s.
+    instances[1].succeed();
+    expect(isStreamLive()).toBe(true);
+
+    instances[1].fail();
+    expect(isStreamLive()).toBe(false);
+    vi.advanceTimersByTime(4_999);
+    expect(instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(instances).toHaveLength(3);
+  });
+
+  it('drops the pending reopen when the last listener goes', () => {
+    const stop = subscribeToStream(vi.fn());
+    instances[0].fail();
+
+    stop();
+
+    vi.advanceTimersByTime(120_000);
+    expect(instances).toHaveLength(1);
+  });
+
+  it('keeps the reopen for the listeners that are still there', () => {
+    const stop = subscribeToStream(vi.fn());
+    subscribeToStream(vi.fn());
+    instances[0].fail();
+
+    stop();
+
+    vi.advanceTimersByTime(5_000);
+    expect(instances).toHaveLength(2);
+  });
+
+  it('schedules nothing for a transient error the browser retries itself', () => {
+    subscribeToStream(vi.fn());
+
+    instances[0].drop();
+    expect(isStreamLive()).toBe(false);
+
+    vi.advanceTimersByTime(120_000);
+    expect(instances).toHaveLength(1);
+    expect(instances[0].closed).toBe(false);
   });
 });

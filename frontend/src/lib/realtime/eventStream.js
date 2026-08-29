@@ -48,6 +48,19 @@ export const STREAM_TOPICS = Object.freeze([
   'stream.resync',
 ]);
 
+/**
+ * Reopen backoff, for the one error `EventSource` does not retry itself.
+ *
+ * An HTTP error *response* (403 for a signed-in-but-unapproved session, any
+ * 5xx) is fatal to an `EventSource`: the browser fires `error` once, parks
+ * `readyState` at `CLOSED`, and never tries again. Before this the tab's
+ * realtime simply died there — the membership approval that arrives seconds
+ * later has nowhere to land, and only a full unmount/remount of every
+ * subscriber would have rebuilt the connection.
+ */
+const REOPEN_BASE_MS = 5_000;
+const REOPEN_CAP_MS = 60_000;
+
 /** Subscriptions, as wrapper objects so two identical callbacks still count twice. */
 const subscribers = new Set();
 /** Connection-state watchers, for `useSseFallbackInterval`. */
@@ -55,6 +68,8 @@ const stateWatchers = new Set();
 
 let source = null;
 let live = false;
+let reopenTimer = null;
+let reopenDelay = REOPEN_BASE_MS;
 
 function setLive(next) {
   if (live === next) return;
@@ -101,6 +116,58 @@ function deliver(topic, event) {
   }
 }
 
+/**
+ * `EventSource.CLOSED` — read off the global so a polyfill that renumbers the
+ * states is still understood, with the spec's 2 as the fallback.
+ *
+ * The fallback matters for the negative case as much as the positive one: a
+ * stub or a polyfill that carries no `readyState` at all must read as "not
+ * fatal", never as "equal to undefined".
+ */
+function closedReadyState() {
+  const declared = typeof EventSource === 'undefined' ? undefined : EventSource.CLOSED;
+  return typeof declared === 'number' ? declared : 2;
+}
+
+/** Cancel a scheduled reopen. Safe to call when nothing is pending. */
+function cancelReopen() {
+  if (reopenTimer === null) return;
+  clearTimeout(reopenTimer);
+  reopenTimer = null;
+}
+
+/** Let go of a dead handle without touching the reopen schedule. */
+function discardSource() {
+  if (!source) return;
+  try {
+    source.close();
+  } catch {
+    // Already dead. Nothing to do.
+  }
+  source = null;
+  setLive(false);
+}
+
+/**
+ * Queue the reopen the browser will not do.
+ *
+ * Only while something is listening: a signed-out tab holds nothing open, and
+ * that promise would be worth little if a fatal 403 on the way out left a timer
+ * behind to reopen the stream nobody wants.
+ */
+function scheduleReopen() {
+  if (reopenTimer !== null) return;
+  if (subscribers.size === 0) return;
+
+  const delay = reopenDelay;
+  reopenDelay = Math.min(reopenDelay * 2, REOPEN_CAP_MS);
+  reopenTimer = setTimeout(() => {
+    reopenTimer = null;
+    if (subscribers.size === 0) return;
+    open();
+  }, delay);
+}
+
 function open() {
   if (source) return;
   if (typeof EventSource === 'undefined') {
@@ -118,28 +185,42 @@ function open() {
     return;
   }
 
-  source.addEventListener('open', () => setLive(true));
-  // `EventSource` retries on its own; `readyState` goes back to CONNECTING and
-  // `open` fires again. Until it does the tab is degraded, which is exactly
-  // what the fallback poll is for.
-  source.addEventListener('error', () => setLive(false));
+  // The handle this listener set belongs to. A dead connection can fire a late
+  // `error` after it has been replaced; that one must not close the live one.
+  const instance = source;
+
+  instance.addEventListener('open', () => {
+    if (source !== instance) return;
+    // A connection that got as far as `open` is a working one, so the next
+    // fatal close starts its backoff from 5 s again rather than from wherever
+    // the last outage climbed to.
+    reopenDelay = REOPEN_BASE_MS;
+    setLive(true);
+  });
+  instance.addEventListener('error', () => {
+    if (source !== instance) return;
+    setLive(false);
+    // Transient: `EventSource` retries on its own; `readyState` goes back to
+    // CONNECTING and `open` fires again. Until it does the tab is degraded,
+    // which is exactly what the fallback poll is for.
+    if (instance.readyState !== closedReadyState()) return;
+    // Fatal: an HTTP error response. The browser is done with this handle, so
+    // drop it and build a new one after the backoff.
+    discardSource();
+    scheduleReopen();
+  });
 
   for (const topic of STREAM_TOPICS) {
-    source.addEventListener(topic, (event) => deliver(topic, event));
+    instance.addEventListener(topic, (event) => deliver(topic, event));
   }
   // The unnamed frame — what a proxy that strips the event name leaves behind.
-  source.addEventListener('message', (event) => deliver(undefined, event));
+  instance.addEventListener('message', (event) => deliver(undefined, event));
 }
 
 function close() {
-  if (!source) return;
-  try {
-    source.close();
-  } catch {
-    // Already dead. Nothing to do.
-  }
-  source = null;
-  setLive(false);
+  cancelReopen();
+  reopenDelay = REOPEN_BASE_MS;
+  discardSource();
 }
 
 /**
@@ -176,7 +257,13 @@ export function isStreamLive() {
   return live;
 }
 
-/** Test seam: forget the connection and every listener. */
+/**
+ * Test seam: forget the connection and every listener.
+ *
+ * `close()` carries the rest of the state with it — the pending reopen timer is
+ * cancelled and the backoff goes back to 5 s — so one test's outage cannot set
+ * the next one's delay.
+ */
 export function __resetStreamForTests() {
   subscribers.clear();
   stateWatchers.clear();

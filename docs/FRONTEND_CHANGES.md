@@ -662,6 +662,89 @@ its place in the DOM order of the six sections, and the no-verb popup). The
 work-order vocabulary needed nothing: `awaiting_resident` has read *"Waiting on
 the resident"* since the day the queue shipped.
 
+## One job at a time, said before the button rather than after it
+
+Owner ruling 2026-08-27 (`docs/COMPLAINT_ENGINE_HANDOFF.md` §26); frozen
+interface in `docs/plans/ONE_LIVE_JOB_SPEC.md` §3. The database now refuses a
+raise while a job on the complaint is still live
+(`20260827210000_one_live_job_per_complaint.sql`, `HB409` → `409 conflict`), and
+this is the same refusal said on screen before the request is worth making.
+
+**The gate.** `AdminDashboard/WorkOrderTriage.jsx`'s `ComplaintWorkOrders`
+computes `liveJob` from the jobs list it has *already* fetched — no second read
+— using the new `LIVE_WORK_ORDER_STATUSES` export from
+`features/workOrders/workOrderVocabulary.js`: `draft`, `awaiting_resident`,
+`offered`, `scheduled`, `in_progress`. The list is shared with the database's
+guard on purpose, so the screen and the function that would refuse it cannot
+disagree about what *live* means — a narrower list here draws a form the server
+rejects, a wider one hides a form that would have worked.
+
+**What replaces the form.** An amber panel headed **"One job at a time"**
+carrying the frozen sentence verbatim — *"A job is already live on this
+complaint. Finish it, fail it, or cancel it before raising another."* — plus a
+button naming the blocker's state and opening it, **`Open the live job —
+{statusLabel}`** (e.g. *"Open the live job — Waiting on the resident"*; see
+the 2026-08-28 entry below), so the supervisor learns which job to finish, fail
+or cancel without scrolling up to find it in the list above.
+
+**It is drawn on no answer as well as on a live one.** While the jobs query is
+pending or errored, neither the form nor the panel renders. This is not
+defensive tidiness: the observed duplicate raise happened because the form was
+drawn under a list that had not finished loading, and a form rendered in that
+window *is* the duplicate-raise window. When the list resolves with no live job,
+`CreateForm` renders exactly as before. A raced `409` — two supervisors, both
+past the gate — still surfaces through the existing `Failure` renderer, which
+prints the server's sentence; there is no special handling, because the message
+is the same one.
+
+5 new tests in `WorkOrderTriage.test.jsx` (a new file): the frozen sentence
+replacing the form on a live job, the form returning when every job is terminal,
+the form on a complaint with no jobs at all, and no form drawn while the list is
+loading or after it has failed.
+
+## The one-job panel opens the live job directly
+
+Owner ruling 2026-08-28. The panel above named the live job's state but left
+the supervisor to scroll back up to the jobs-already-raised list to actually
+open it. `ComplaintWorkOrders` in `AdminDashboard/WorkOrderTriage.jsx` now
+draws that line as a button — **`Open the live job — {statusLabel}`** — that
+calls the same `onOpenJob(liveJob.id)` the list's own rows already call, so it
+lands on the identical `JobDetail` panel with no new navigation path to
+maintain. Nothing about the gate itself changed: `liveJob` is still derived
+from the jobs list already in hand, and the panel still only draws when that
+list has resolved with a live job on it.
+
+1 new test in `WorkOrderTriage.test.jsx`: clicking the button opens the live
+job's detail, and the existing frozen-copy test now asserts the button by its
+accessible name instead of the retired plain-text line.
+
+## The stream reopens the one close the browser will not
+
+`lib/realtime/eventStream.js`. An `EventSource` retries a dropped transport by
+itself, but an HTTP error **response** is fatal: the browser fires `error` once,
+parks `readyState` at `CLOSED`, and never tries again. Observed in the live app
+as the `403` a session gets on `GET /api/v1/events` between signing in and
+having its membership approved — after which the tab's realtime was dead for the
+life of the page, and the approval arriving seconds later had nowhere to land.
+
+The client now schedules its own reopen on a fatal close: **5 s, doubling to a
+60 s cap, reset to 5 s whenever a connection reaches `open`.** `CLOSED` is read
+off the global rather than hard-coded (spec `2` as the fallback), so a polyfill
+that renumbers the states is understood and a stub with no `readyState` reads as
+*not fatal*; a transient error returns early and is left to the browser. The
+reopen is scheduled only while `subscribers.size > 0` and re-checks that when
+the timer fires, and `close()` — the last unsubscribe — cancels the pending
+timer and resets the delay, so a signed-out tab still holds nothing open and
+schedules nothing. Through the whole wait the connection reads as not live, so
+`useSseFallbackInterval`'s degraded poll is already covering the screens; the
+reconnect is the upgrade back to live updates, never the only path to the data.
+Doctrine recorded in `docs/plans/REALTIME_AND_CACHING_STANDARD.md` §4.
+
+6 new tests in `eventStream.test.js`: the five-second reopen, the doubling and
+its one-minute ceiling, the reset after a successful `open`, the pending reopen
+dropped with the last listener and kept while others remain, and nothing
+scheduled for a transient error.
+
 ## Retired client code
 
 The following categories were removed after an import-graph audit:

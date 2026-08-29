@@ -232,6 +232,49 @@ old 20/30/90-second polls are gone: they are now the same call,
 `useSseFallbackInterval()`, and fire at the fast interval only when there is
 no live stream to trust instead.
 
+**The reconnect rule (doctrine, added 2026-08-27): the client reopens the one
+close the browser will not.** `EventSource` retries a *transport* failure by
+itself — the connection drops, `readyState` goes back to `CONNECTING`, `open`
+fires again, and nothing in this codebase should interfere with that. An HTTP
+error **response** is a different event: a `403` or any `5xx` on
+`GET /api/v1/events` makes the browser fire `error` once, park `readyState` at
+`CLOSED` (2), and never try again. The tab's realtime is then dead for the
+lifetime of the page, and only a full unmount and remount of every subscriber
+would rebuild it.
+
+The observed trigger is not hypothetical and is not an error: a session that
+signs in **before its membership is approved** gets a `403` from the stream
+endpoint, and the approval that arrives seconds later has nowhere to land. The
+same shape covers any deploy-window `5xx`.
+
+So `eventStream.js` schedules its own reopen on a fatal close, under four rules
+that any future change to this module keeps:
+
+1. **Only on a fatal close.** The `error` handler returns early unless
+   `readyState` equals `EventSource.CLOSED` — read off the global rather than
+   hard-coded, with the spec's `2` as the fallback, so a polyfill that
+   renumbers the states is still understood and a stub carrying no `readyState`
+   at all reads as *not fatal*. A transient error is left to the browser.
+2. **Backoff 5 s, doubling to a 60 s cap, reset on `open`.** A connection that
+   got as far as `open` was a working one, so the next outage starts from 5 s
+   again rather than from wherever the last one climbed to. The cap is what
+   keeps an unapproved tab left open all afternoon from being a poll.
+3. **Only while somebody is listening.** The reopen is scheduled only when
+   `subscribers.size > 0` and re-checks it when the timer fires; `close()` —
+   which runs when the last subscriber unsubscribes — cancels any pending timer
+   and resets the delay. The promise that a signed-out tab holds nothing open
+   is worth little if a fatal `403` on the way out leaves a timer behind to
+   reopen the stream nobody wants.
+4. **The wait is covered, not hidden.** `setLive(false)` fires on the way into
+   the outage, so `useSseFallbackInterval` is already polling at the degraded
+   interval through the whole backoff. The reconnect is an upgrade back to live
+   updates, never the only thing standing between a screen and its data — which
+   is the same reason §1 puts SSE in layer 3.
+
+A dead handle can also fire a late `error` after it has been replaced; every
+listener therefore checks `source !== instance` and returns, so the retiring
+connection cannot close the one that succeeded it.
+
 **`dashboard.refresh` is not `stream.resync`, and a map has to say so
 explicitly.** `dashboard.refresh` fires on every row change across twelve
 tables — treating it as "resync everything" would refetch a portal's whole

@@ -4205,6 +4205,17 @@ transition it describes.
 | [`POST /work-orders/{workOrderId}/take-up`](#post-apiv1work-ordersworkorderidtake-up) | Added 2026-08-24 with ruling R8: the department's manual valve. When the member-only eligibility rule leaves nobody able to hold a job, a supervisor puts themselves on it — and the resident is still told who is coming and when, which is the whole of what this story asks |
 | [`POST /complaints/{complaintId}/schedule-time`](#post-apiv1complaintscomplaintidschedule-time) | Added 2026-08-23 with ruling F1: *when to expect action* becomes the resident's own answer, so the visit happens when they said it could instead of at an hour a supervisor guessed and they had to ring up to move |
 
+> **No row moved on 2026-08-27, and one existing answer stopped being ambiguous.** The one-live-job
+> ruling ([`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md),
+> `20260827210000_one_live_job_per_complaint.sql`) added **no operation** — the surface is unchanged
+> at 211 across 180 paths, and `POST /complaints/{id}/work-orders` stays in the *no user story* table
+> below, where it has always been, for the reason given there. What it repairs belongs to this story:
+> with two live jobs on one complaint,
+> [`GET /complaints/{id}/schedule-request`](#get-apiv1complaintscomplaintidschedule-request) returns
+> whichever live row it reaches first, so *when to expect action* and *who is responsible* were being
+> answered from an arbitrary one of two. One live job at a time makes that resolver's answer the only
+> answer there is.
+
 > **Closed, 2026-08-04, by `0031`.** All three things the story asks for — who is responsible, when to
 > expect action, and overdue flagging — now reach the person who raised the complaint. `isOverdue` is
 > computed in `complaint_overview` rather than by a client, against the same clock and the same
@@ -4621,6 +4632,7 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-27 | **One live job per complaint — no operation added, one refusal added.** `POST /complaints/{complaintId}/work-orders` gains a second `409 conflict` cause: the raise is refused while any job on the complaint is still `draft`, `awaiting_resident`, `offered`, `scheduled` or `in_progress`. Surface **unchanged at 211 across 180 paths**; no new envelope code, no new SQLSTATE (`HB409` already maps to 409), no request or response field moved. Backed by `20260827210000_one_live_job_per_complaint.sql` and frozen in [`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md) under the owner's 2026-08-27 ruling. **The defect was observed, not theorised**: complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` collected a second `awaiting_resident` job fifteen seconds after the resident booked the first one's visit, because nothing asked whether a job was already running and the triage screen drew its raise form under a jobs list it had not finished reading. The live set is `work_orders_service._OPEN_STATES` verbatim — the same five the `get_schedule_request` resolver calls live — inlined in the guard rather than referenced, so a reader sees the whole rule; terminal is the remaining `completed`, `failed`, `cancelled` of `work_orders_status_check`. `create_work_order` also now opens with `select * from complaints ... for update`, which is what makes the guard unraceable: two supervisors, or one double-clicked button, are serialized on the complaint row, so the second transaction reads the first one's insert. **`complaints.status` is untouched** and no complaint-lifecycle code moved — this is a statement about work-order liveness and nothing else — and existing duplicates are left as history, since cancelling a row is a person's decision. `US-2.8` gains no row and loses an ambiguity: `GET /complaints/{id}/schedule-request` was answering *when to expect action* from whichever of two live jobs it reached first. |
 | 2026-08-24 | **Supervisor take-up — the manual valve behind the member-only rule.** One operation added — `POST /work-orders/{workOrderId}/take-up` (surface **210 → 211 across 180 paths**) — backed by `20260824090000_supervisor_take_up.sql` and frozen in [`plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`](plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md)'s *Addendum 2026-08-24*, under rulings R8–R13. The 2026-08-23 eligibility repair made every assignment path member-only, which leaves a thin department with work nobody may hold; ruling R8 answers it with **a separate deliberate verb**, not an exception inside the rule — the candidate list, the ping, the auto-book and the open board are all still member-only. The request carries **no `staffAssignmentId`**: the holder is the caller's own active `manager`/`supervisor` roster row on the job's department, resolved from the session inside Postgres, so the route cannot put anybody else on a job and refuses a community admin, who holds no roster row. Everything after the pick is `assign`'s — optional slot, withdraw-not-delete, `scheduled`, the resident told by name, the same double-booking `409`. The timeline gains **two** entries and one new `complaint_events` word, `job_taken_up` (distinct from `taken_up`, which is complaint triage ownership); the department hears `job.taken_up` minus the person who pressed the button. Two functions were re-issued verbatim beside it: `force_assign_work_order` now stamps the **acting caller** on its two timeline rows instead of the department's supervisor of record (ruling R12, closing the backlogged R7 — an attribution defect, no shape change), and `claim_open_work_order`'s leadership refusal now points at the new verb (R13). No new SQLSTATE: the whole migration raises only HB403/HB404/HB409, so `pg_errors.py` is unchanged. |
 | 2026-08-23 | **The resident sets the time, and the system books what nobody schedules.** One operation added — `POST /complaints/{complaintId}/schedule-time` (surface **209 → 210 across 179 paths**) — plus `mode` on `GET /complaints/{id}/schedule-request` and `awaitingResident` on `TriageSnapshot`, both additive. Backed by `20260823180000_resident_sets_the_time.sql` and frozen in [`plans/RESIDENT_SETS_THE_TIME_SPEC.md`](plans/RESIDENT_SETS_THE_TIME_SPEC.md) under the 2026-08-23 rulings F1–F3. **The raise form loses its date and time for everyone.** A resident-subject job now arrives as a request to the resident to name the hour, and only their answer puts it on the open pile; a facility job is booked by the system into the first free slot, but only after every urgent (`high`) resident job in the department has somebody on it. Twenty-four hours of resident silence and the dispatcher books the first hour a serviceman can take and assigns them — the existing `resident_timeout` timer, which the deadline already armed, branching on whether a slot exists. **No new work-order status and no new event word**: pick-mode is `awaiting_resident` with a **null slot**, approve-mode is the same status with one, and the distinctions ride in payloads (`mode`, `resident_set`, `auto_assigned`) because both vocabularies are closed CHECKs on live tables. The one constraint widened is `dispatch_tasks_kind_check`, for the new `facility_auto_assign` task. `dispatch_candidates` was **refactored, not forked**: the body moved to `dispatch_candidates_at`, parameterised by a hypothetical hour so `find_first_available_slot` can walk the calendar without writing trial slots to `work_orders` — six triggers fire on that table — and the three-argument entry point became a delegate with the same signature, ordering and grants. The triage snapshot gains a **sixth** array, `awaitingResident`, and `openRequests` narrows to `draft`/`offered`: a job waiting on a resident is not work the supervisor can pick up. `US-2.8` gains two rows; the board predicate, the supervisor's offer and force-assign paths, and `respond_to_work_order_schedule` are untouched. |
 | 2026-08-22 | **The supervisor's card actions — amendment 2, four operations and one flag.** `POST /complaints/{complaintId}/resolve`, `/priority-raise`, `/notes` and `/chat` (surface **203 → 207 across 176 paths**), plus `force` on `POST /work-orders/{workOrderId}/assign` and a guard widening on `GET /complaints/staff/complaints/{complaintId}` — backed by `20260822170000_supervisor_actions.sql` and frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md)'s *Amendment 2*, under four product rulings. **Resolve** cancels every other live job with its workers told why and refuses while one is `in_progress`; it moves the complaint to `resolved` and leaves the timeline entry, the resident's notification and both auto-close timers to `complaints_on_resolved`, which already writes them. **Priority** is one-way `Low → Medium → High`, carried onto the complaint's live jobs because a job's urgency *is* its complaint's, and it is the one new `complaint_events` word this amendment cost (`priority_changed` — an enumerating CHECK means a word is a migration, the lesson of `20260822150000`). **Notes** are internal by a payload flag, invisible to the resident and untouched for the admin's resident-visible ones. **Chat** is a real `dm_threads` thread of a third kind, one per complaint, shared by the raiser and the whole department, locked when the complaint closes and unlocked when it reopens. `force: true` on assign routes to `force_assign_work_order` — the dispatch engine's own forced mechanics with the picking removed and a supervisor's guard added — while `false` is the offer flow byte for byte. The snapshot was **re-bucketed into five arrays**: *engaged* became *committed* (an unaccepted offer no longer counts, ruling A3), `openRequests` was added, and the two complaint sections now exclude **any** live work order, so a complaint appears exactly once across the five. `TriageWorkOrder` gains `offeredToName`, additively. |
@@ -6442,11 +6454,22 @@ reason.
 | `cancelled` | Called off, with a reason. Terminal. | `POST /work-orders/{id}/cancel` |
 | `in_progress` · `completed` · `failed` | The worker's own transitions. | *Not yet reachable — see above* |
 
-**A complaint may carry several work orders**, and that is why the assignment is not columns on
-`complaints`. A failed visit is rescheduled and a reopened complaint goes to a different supervisor;
-both are a second job. Assignee columns on `complaints` would have been the smaller change and would
-also have closed `DECISIONS_NEEDED` **B2**, but one complaint could then only ever have one scheduled
-visit — and the second visit is the one that matters.
+**A complaint may carry several work orders over its life, one live at a time**, and that is why the
+assignment is not columns on `complaints`. A failed visit is rescheduled and a reopened complaint goes
+to a different supervisor; both are a second job, and each of them comes *after* the one before it
+ends rather than alongside it. Assignee columns on `complaints` would have been the smaller change and
+would also have closed `DECISIONS_NEEDED` **B2**, but one complaint could then only ever have one
+scheduled visit — and the second visit is the one that matters.
+
+> **Sequence, not concurrency — owner ruling 2026-08-27**
+> ([`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md)). "Several" was read as "several at
+> once" by both the raise path and the triage screen, and a complaint collected a second
+> `awaiting_resident` job fifteen seconds after the resident booked the first one's visit. Since
+> `20260827210000_one_live_job_per_complaint.sql`, `create_work_order` refuses the raise with `HB409`
+> → `409 conflict` while **any** job on the complaint is still `draft`, `awaiting_resident`,
+> `offered`, `scheduled` or `in_progress` — the same five `work_orders_service._OPEN_STATES` calls
+> open. Terminal (`completed`, `failed`, `cancelled`) releases the complaint for the next job. The
+> guard **does not touch `complaints.status`**: it is a statement about work-order liveness only.
 
 #### One asymmetry, stated because it is the only one
 
@@ -6538,12 +6561,25 @@ deliberately — so the only role filter that admits every legitimate caller adm
 The real check is `can_supervise_department(uuid)` inside Postgres, applied by every RPC on this
 surface. An id arriving in a URL is never an authorization decision.
 
+**One live job per complaint — since 2026-08-27.** The raise is refused while any job on the complaint
+is still `draft`, `awaiting_resident`, `offered`, `scheduled` or `in_progress`, with the message
+*"A job is already live on this complaint. Finish, fail, or cancel it before raising another."*
+carried verbatim in the `409 conflict` envelope. The guard lives in the database
+(`20260827210000_one_live_job_per_complaint.sql`), not in the router or the service: the same
+`create_work_order` call opens by locking the complaint row `for update`, so two supervisors — or one
+double-clicked button — are serialized and the second read sees the first insert. **It cannot race**,
+which a check in Python could not promise. The admin triage screen asks the same question off the
+jobs list it has already fetched and hides the raise form rather than letting the button be pressed
+([`FRONTEND_CHANGES.md`](FRONTEND_CHANGES.md)); a raced `409` still surfaces as an ordinary failure.
+Existing duplicates are untouched history — the guard refuses *new* raises and does not reach back.
+
 | Status | Code | Cause |
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
 | 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed; you do not supervise that department; or it belongs to another community |
 | 404 | `not_found` | No such complaint |
 | 409 | `conflict` | The complaint names no department and none was supplied |
+| 409 | `conflict` | A job on this complaint is still live — finish, fail or cancel it first |
 | 422 | `validation_error` | Half a slot, an end before its start, or an unknown `subjectKind` |
 | 500 | `internal_error` | Unhandled |
 

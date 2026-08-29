@@ -17,6 +17,149 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-28 — the one-job panel opens the live job, not just names it
+
+**`PO` — the ruling (product owner, in session 2026-08-28).** The 2026-08-27 panel below named
+the live job's state (`Live job: {statusLabel}.`) but left opening it to a scroll back up to the
+jobs-already-raised list above. The owner's ruling: the panel opens the job directly, the same way
+that list's own rows already do. `frontend/src/pages/AdminDashboard/WorkOrderTriage.jsx`'s
+`ComplaintWorkOrders` now draws that line as a button, **`Open the live job — {statusLabel}`**,
+wired to the same `onOpenJob(job.id)` callback the list's rows call — no new navigation path, and
+no change to the gate logic: `liveJob`'s derivation, the pending/errored no-render case, and the
+frozen heading and refusal sentence are all untouched. This overturns the unfrozen-copy wording
+recorded for that line in the 2026-08-27 entry immediately below and in `docs/FRONTEND_CHANGES.md`
+§"One job at a time" — both described `Live job: {statusLabel}.`, which the panel no longer renders;
+`FRONTEND_CHANGES.md` is updated in place to the new copy, this entry is the record for the change
+itself.
+
+1. **`frontend/src/pages/AdminDashboard/WorkOrderTriage.jsx`** — the button, styled in the panel's
+   existing amber family, `type="button"`, calling `onOpenJob(liveJob.id)`.
+2. **`frontend/src/pages/AdminDashboard/WorkOrderTriage.test.jsx`** — the existing frozen-copy test
+   now asserts the button by its accessible name instead of the retired plain-text line; one new
+   test clicks it and asserts the live job's `JobDetail` actually opens, proving the wiring through
+   the real `onOpenJob` path rather than a mocked prop.
+3. **`docs/FRONTEND_CHANGES.md`** — `DERIVED`, the "What replaces the form" paragraph updated to the
+   new button copy, plus a new dated subsection cross-referencing this ruling.
+
+No backend, migration, or API-surface change: `onOpenJob` is a frontend callback that already
+existed for the jobs-already-raised list, not a new endpoint.
+
+Housekeeping in this file: the 2026-08-27 heading below dropped its `(latest, …)` marker — this
+entry now sits above it, and the convention going forward (agreed with the residence-capture
+branch, 2026-08-28) is newest-first stacking with no "latest" marker at all.
+
+## 2026-08-27 (second session) — one live job per complaint, and the stream that stopped reconnecting
+
+**The defect was watched happening, not inferred.** In the live app, complaint
+`f40e11d4-e322-4847-be2f-8f2caf6df722` collected a **second** `awaiting_resident` work order fifteen
+seconds after the resident booked the first one's visit. Nothing refused it because nothing had ever
+asked: `create_work_order` checks the department, the community and the shape of the slot, and then
+inserts — and the triage screen draws its "Raise it" form before the jobs list it sits under has
+finished loading, so the supervisor could not see the job they were duplicating. The consequences are
+a resident holding two open requests for one problem (both notifying, both arming a 24-hour deadline,
+with `get_schedule_request` returning whichever live row it reaches first), and a technician's day
+spent on work the first job already owns. Found in the same live pass: a session that signs in before
+its membership is approved gets a `403` from `GET /api/v1/events`, which is fatal to an `EventSource`
+— the tab's realtime died there and the approval arriving seconds later had nowhere to land.
+
+**`PO` — the ruling (Lee, complaint-engine owner, in session 2026-08-27).** A supervisor must not be
+able to raise a new work order against a complaint while a job on that complaint is still live. A
+complaint still carries several jobs **over its life** — a failed visit's replacement, a reopened
+complaint's new job — **one at a time**, the successor after the predecessor ends and never alongside
+it. LIVE is frozen as `draft`, `awaiting_resident`, `offered`, `scheduled`, `in_progress` — exactly
+the five `work_orders_service._OPEN_STATES` already calls open and the `get_schedule_request`
+resolver already calls live — with `completed`, `failed` and `cancelled` the terminal remainder of
+`work_orders_status_check` (`0036`), so the ruling adds **no ninth status word**. The guard is a
+statement about `work_orders` liveness and **deliberately does not touch `complaints.status`**: the
+two state machines stay uncoupled. This overturns nothing in print; it corrects a sentence that had
+been read the wrong way — *"a complaint may carry several work orders"*, written in `API.md` and the
+router docstring to justify not putting the assignee on `complaints`, was being taken as permission
+for several **at once**.
+
+**The three code changes** (application code; git carries the detail, listed here because the docs
+below describe them): `backend/supabase/migrations/20260827210000_one_live_job_per_complaint.sql`
+re-issues `create_work_order` with the `20260823180000` body unchanged plus two additions — the
+opening complaint read becomes `select * ... for update`, and an `exists` over the live set refuses
+with the frozen sentence *"A job is already live on this complaint. Finish, fail, or cancel it before
+raising another."* under the existing `HB409` (→ `409 conflict`; no new SQLSTATE, no new envelope
+code, no signature change). `frontend/src/pages/AdminDashboard/WorkOrderTriage.jsx` replaces the raise
+form with an explanatory panel while a live job exists — and draws neither while the jobs list is
+pending or errored, because a form drawn before the answer arrives *is* the duplicate-raise window —
+reading the same five words from the new `LIVE_WORK_ORDER_STATUSES` export in
+`frontend/src/features/workOrders/workOrderVocabulary.js`.
+`frontend/src/lib/realtime/eventStream.js` reopens after a fatal close with 5 s→60 s doubling backoff,
+reset on `open`, only while subscribers exist, cancelled by `close()`. Existing duplicate rows are
+untouched history: the guard refuses *new* raises, and the extra `awaiting_resident` job
+`1f0bf129-d47d-4236-9082-ecf0a28b245c` is the owner's to cancel from the UI, because cancelling a job
+is a lifecycle decision that belongs to a person and not to a migration.
+
+1. **New: `docs/plans/ONE_LIVE_JOB_SPEC.md`.** `PO`, with the interfaces frozen by the orchestrator.
+   The live set as shared vocabulary (SQL inline list + the frozen frontend export name), the backend
+   contract (migration name, the `for update`, the frozen refusal sentence and its errcode, the
+   docstring correction, runbook §32), the frontend contract (the gate, the frozen panel copy, the
+   pending/errored case, the raced 409 left to the existing failure renderer) and the stream-reconnect
+   contract. Reason: four agents were to build against one another's edges in parallel — the exact
+   refusal string appears in a migration, a router docstring, `API.md` and a React component, and a
+   spec is the only thing that keeps four copies of a sentence identical.
+2. **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §32** (`20260827210000`) — written by the backend agent
+   earlier in this session and **left untouched by this docs pass**, cross-referenced from `API.md`,
+   the handoff and here. It records the ordering constraint (must follow §28, independent of §29–§31),
+   the observed defect, and the post-check note that the leak complaint already holds two live rows
+   the guard will not retroactively clean.
+3. **`docs/openapi.yaml` and `docs/api_yaml_mapper.md`** — `DERIVED`, regenerated through
+   `backend/scripts/export_openapi.py` and `backend/scripts/regen_mapper.py`, never hand-edited. The
+   spec picks up the router's corrected multiplicity prose and its second `409` row; the surface is
+   **unchanged at 211 operations across 180 paths**, because this ruling adds a refusal and not an
+   endpoint. The mapper rewrite also cleared **108 rows of pre-existing drift** — handler line numbers
+   and `API.md` line references that had gone stale under earlier commits (an offset of roughly twelve
+   lines across the whole file), which is the drift `regen_mapper.py` exists to make mechanical.
+   `backend/tests/test_openapi_spec.py` was red on the docstring drift and is green: 30 passed.
+4. **`docs/API.md`** — `DERIVED` from the ruling, four places:
+   - **§18's lifecycle prose.** *"A complaint may carry several work orders"* becomes *"…over its
+     life, one live at a time"*, with a blockquote naming the ruling, the migration, the five live
+     statuses, and the fact that the guard does not touch `complaints.status`. Reason: this sentence
+     is the one that was misread into the defect, and correcting the endpoint without correcting the
+     paragraph that licensed it would leave the wrong reading in print.
+   - **`POST /api/v1/complaints/{complaintId}/work-orders`** gains the second `409` `conflict` row and
+     a paragraph on where the guard lives — in the database, not the router or the service — and why
+     the `for update` on the complaint row means it **cannot race**, which a check in Python could not
+     have promised.
+   - **§16 US-2.8** gains a dated note: no row moved and no operation was added, but the guard repairs
+     something this story owns — `GET /complaints/{id}/schedule-request` was answering *when to expect
+     action* from whichever of two live jobs it reached first. The raise endpoint stays in the
+     *no user story* table, in the group it has always been in, whose counts are unchanged.
+   - **§17 changelog** gains the 2026-08-27 row, per this file's standing rule that a changed status
+     code updates `API.md` in the same commit.
+5. **`docs/COMPLAINT_ENGINE_HANDOFF.md` §26** — `PO`, appended in the file's ruling format. Records
+   the ruling, its date, the frozen live set, the two places the guard lives (the RPC and the triage
+   UI) and — the part the complaint engine's owner most needs on the record — that it touches no
+   complaint-lifecycle code and leaves existing duplicate rows alone. Reason: the standing rule that
+   every lifecycle call on this engine is ruled explicitly and written down where its owner will find
+   it, not left in a migration header.
+6. **`docs/plans/REALTIME_AND_CACHING_STANDARD.md` §4** — `DERIVED`, the reconnect doctrine added
+   beside the one-`EventSource`-per-tab architecture the previous session wrote: the distinction
+   between a transport failure the browser retries itself and an HTTP error *response* that parks
+   `readyState` at `CLOSED` forever, the observed `403` trigger, and the four rules any future change
+   keeps (fatal-only, 5 s→60 s reset-on-open, only while subscribers exist, and the degraded poll
+   covering the wait). Reason: the standard written yesterday described a client that gives up
+   silently on the one failure it is most likely to meet; a doctrine that survives the next
+   contributor has to say which close reopens and which is the browser's business.
+7. **`docs/FRONTEND_CHANGES.md`** — `DERIVED`, two entries in the file's existing style: the triage
+   gate (including the one line of unfrozen copy the panel adds beneath the frozen sentence,
+   `Live job: {statusLabel}.`, so a supervisor knows *which* job to finish, and the deliberate
+   no-form-while-loading case) and the eventStream reconnect. Both name their tests — five in the new
+   `WorkOrderTriage.test.jsx`, six added to `eventStream.test.js`.
+8. **`docs/ARCHITECTURE.md` § Live updates, "Guarantees and limits"** — `DERIVED`. The *Reconnects
+   are covered* bullet asserted the browser always retries, which is precisely the belief the
+   fatal-close fix corrects — true for transport blips, silently wrong for an HTTP error response.
+   The bullet now names the one close the browser will not retry and points at the §4 doctrine.
+   Reason: this is the sentence a backend reader would check before trusting the stream, and it was
+   the only place left saying the old, wrong thing.
+9. **`docs/COMPLAINT_ENGINE_STATE.md` §1** — `DERIVED`. "Several work orders over its life" gains
+   the ruled qualifier — one live at a time, in sequence, `HB409` behind it — with a pointer to
+   handoff §26. Reason: it is the engine's living state doc; a reader who stops there must not leave
+   with the pre-ruling picture.
+
 ## 2026-08-27 — the realtime/caching overhaul gets a written standard, and the runbook catches up to itself
 
 The 2026-08-27 session shipped, all verified green: routers converted `async` → `def` so sync Supabase

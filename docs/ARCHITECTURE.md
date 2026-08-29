@@ -172,7 +172,12 @@ a community-wide firehose and one unrelated write costs five hundred fetches.
 
 - **Ordering** is by `sse_events.id` within a community.
 - **Reconnects** are covered: the browser resends `Last-Event-ID`, and the
-  stream backfills from the database before attaching to the live feed. The
+  stream backfills from the database before attaching to the live feed. One
+  close the browser will *not* retry on its own — an HTTP error response
+  (a 403 between sign-in and approval, a 5xx) parks `EventSource` at `CLOSED`
+  permanently — is reopened by the client itself, with 5 s→60 s backoff
+  (`eventStream.js`, doctrine in
+  `docs/plans/REALTIME_AND_CACHING_STANDARD.md` §4, added 2026-08-27). The
   backfill applies the audience filter twice — once in the query, so a burst of
   admin traffic cannot fill the 100-row page and hide a resident's own events
   behind it, and again in Python, so a mistake in the hand-written PostgREST

@@ -28,7 +28,10 @@ owner, like the rest of the chain.
 
 A **complaint** is the resident's record of a problem; a **work order** is one
 staff response to it, and one complaint may carry several work orders over its
-life. The two have **separate status machines that are deliberately not
+life — **one live at a time, in sequence** (ruled 2026-08-27, handoff §26;
+`create_work_order` refuses a raise with `HB409` while a job on the complaint
+is still `draft`/`awaiting_resident`/`offered`/`scheduled`/`in_progress`).
+The two have **separate status machines that are deliberately not
 coupled** — completing a job does not resolve the complaint (handoff §0 and §1
 explain why, and how to couple them if you decide to). The single source of
 truth for "what has happened" is the **complaint timeline**

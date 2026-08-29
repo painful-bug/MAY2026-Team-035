@@ -1506,3 +1506,59 @@ Engine-lifecycle notes for your record:
 Migration hand-applied by the owner only; runbook §30 carries the
 pre/post-checks. Verified 2026-08-24: backend 1472 passed / 5 skipped,
 frontend 57 files / 384 tests, both on the orchestrator's own runs.
+
+## §26. Ruled 2026-08-27 — one live job per complaint, and it is a work-order rule
+
+Ruled by you, the complaint-engine owner, in session on 2026-08-27, on
+seeing it happen: **a supervisor must not be able to raise a new work
+order against a complaint while a job on that complaint is still live.**
+The observation was complaint `f40e11d4-e322-4847-be2f-8f2caf6df722`,
+which collected a SECOND `awaiting_resident` job fifteen seconds after
+the resident booked the first one's visit.
+
+**LIVE, frozen**: `draft`, `awaiting_resident`, `offered`, `scheduled`,
+`in_progress` — exactly the five `work_orders_service._OPEN_STATES`
+calls open and the `get_schedule_request` resolver calls live. Terminal
+is the remaining `completed`, `failed`, `cancelled` of
+`work_orders_status_check` (`0036`), so the two sets are exhaustive and
+this ruling adds no ninth word to your vocabulary. A complaint still
+carries several jobs over its life — a failed visit's replacement, a
+reopened complaint's new job — one at a time, the successor after the
+predecessor ends and never alongside it.
+
+**Where the rule lives, and where it deliberately does not.** The guard
+is on `work_orders` in two places and no third:
+
+- `create_work_order`, re-issued by
+  `20260827210000_one_live_job_per_complaint.sql` with the
+  `20260823180000` body unchanged apart from two additions — the opening
+  complaint read becomes `select * ... for update`, and an `exists` on
+  the live set refuses with the frozen sentence *"A job is already live
+  on this complaint. Finish, fail, or cancel it before raising
+  another."* under `HB409`. The lock is the half worth reading: the
+  guard is a read followed by a write, so without it two supervisors (or
+  one double-clicked button) both read "no live job" and both insert.
+  No new SQLSTATE, no new envelope code — `HB409` → 409 `conflict` is
+  yours already.
+- The admin triage screen (`WorkOrderTriage.jsx`), which asks the same
+  question off the jobs list it has already fetched and draws an
+  explanatory panel where the raise form was — including while that list
+  is still loading or has errored, because a form drawn before the
+  answer arrives *is* the duplicate-raise window.
+
+**It does not touch `complaints.status`, and that is the ruling, not an
+omission.** The two state machines stay uncoupled: nothing here says a
+complaint with a live job is `in_progress`, nothing reads or writes a
+complaint status, and no complaint-lifecycle code moved. A complaint's
+status remains yours to advance by the verbs that already advance it.
+
+**Existing duplicates are history and were left alone.** The guard
+refuses NEW raises and does not reach back. The leak complaint above
+still holds two live jobs, and the extra `awaiting_resident` one
+(`1f0bf129-d47d-4236-9082-ecf0a28b245c`) is yours to cancel from the UI
+— a migration that cancelled rows by hand would be inventing a lifecycle
+decision that belongs to a person.
+
+Frozen interfaces in `docs/plans/ONE_LIVE_JOB_SPEC.md`; migration
+hand-applied by you, with runbook §32 carrying the pre/post-checks and
+noting that the post-check will find those two pre-existing live rows.

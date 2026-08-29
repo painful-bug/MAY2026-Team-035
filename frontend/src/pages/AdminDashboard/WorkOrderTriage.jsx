@@ -7,6 +7,7 @@ import {
 
 import { workOrdersApi } from '../../features/workOrders/workOrdersApi';
 import {
+  LIVE_WORK_ORDER_STATUSES,
   WORK_ORDER_STATUSES,
   assignmentLabel,
   permittedActions,
@@ -785,6 +786,13 @@ function ComplaintWorkOrders({ complaintId, skills, onOpenJob, onChanged }) {
     ...QUERY_POLICIES.list,
   });
 
+  // The first live job on the complaint, if there is one. This is the same
+  // question `create_work_order`'s guard asks in Postgres, off the list this
+  // component has already fetched — so no extra read, and the two cannot
+  // disagree about what "live" means (`LIVE_WORK_ORDER_STATUSES`).
+  const liveJob = (jobs.data || []).find((job) =>
+    LIVE_WORK_ORDER_STATUSES.includes(job.status));
+
   return (
     <div className="space-y-3">
       <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
@@ -822,11 +830,48 @@ function ComplaintWorkOrders({ complaintId, skills, onOpenJob, onChanged }) {
         </ul>
       )}
 
-      {/* Several jobs on one complaint is normal and not a mistake: a failed
-          visit is rescheduled as a second job and a reopened complaint goes to
-          a different supervisor. That is why the assignment lives on the work
-          order and not in a column on the complaint. */}
-      <CreateForm complaintId={complaintId} skills={skills} onCreated={onChanged} />
+      {/* Several jobs over one complaint's *life* is normal and not a mistake —
+          one at a time, in sequence, never at once. A failed visit is
+          rescheduled as a second job and a reopened complaint goes to a
+          different supervisor, and each of those follows the one before it
+          closing. That sequence is why the assignment lives on the work order
+          and not in a column on the complaint.
+
+          Concurrency is the mistake, and it happened: a complaint collected a
+          second `awaiting_resident` job fifteen seconds after the resident
+          booked the first one's visit, because this form was drawn under a list
+          that already showed a live job. The database now refuses that raise
+          (`20260827210000_one_live_job_per_complaint.sql`, `HB409`); the gate
+          below is the same refusal said before the button rather than after it.
+
+          It is deliberately drawn on *no* answer as well as on a live one:
+          while the list is loading or has failed, this component cannot know
+          whether a job is live, and a form rendered in that window is the
+          duplicate-raise window itself. */}
+      {jobs.isPending || jobs.error ? null : liveJob ? (
+        <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-amber-600">
+            One job at a time
+          </p>
+          <p className="mt-1.5 text-xs font-semibold text-amber-800">
+            A job is already live on this complaint. Finish it, fail it, or
+            cancel it before raising another.
+          </p>
+          {/* The panel used to just name the live job; the owner's ruling
+              (2026-08-28) is that naming it is half the help — the other half
+              is not making the supervisor scroll up to the list above to reach
+              it, so this reuses the same `onOpenJob` the list already calls. */}
+          <button
+            type="button"
+            onClick={() => onOpenJob(liveJob.id)}
+            className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
+          >
+            Open the live job — {statusLabel(liveJob.status)}
+          </button>
+        </div>
+      ) : (
+        <CreateForm complaintId={complaintId} skills={skills} onCreated={onChanged} />
+      )}
     </div>
   );
 }

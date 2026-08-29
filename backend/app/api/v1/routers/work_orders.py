@@ -84,15 +84,19 @@ def create_work_order(
     job's urgency **is** the complaint's urgency, and a second copy is a second
     thing to keep in step.
 
-    A complaint may carry several work orders. A failed visit is rescheduled and
-    a reopened complaint goes to a different supervisor, and both of those are a
-    second job rather than an edit to the first.
+    A complaint may carry several work orders over its life, one live at a time
+    — a failed visit's replacement or a reopened complaint's new job comes after
+    the previous job ends, never alongside it. Each of those is a second job
+    rather than an edit to the first, and the raise is refused while any job on
+    the complaint is still `draft`, `awaiting_resident`, `offered`, `scheduled`
+    or `in_progress`.
 
     | Status | Code | Cause |
     |---|---|---|
     | 403 | `forbidden` | Not your department, or another community's |
     | 404 | `not_found` | No such complaint |
     | 409 | `conflict` | The complaint names no department and none was supplied |
+    | 409 | `conflict` | A job on this complaint is still live |
     | 422 | `validation_error` | Half a slot, a backwards slot, or a bad `subjectKind` |
     """
     return service.create(client, complaint_id=complaint_id, body=body)
