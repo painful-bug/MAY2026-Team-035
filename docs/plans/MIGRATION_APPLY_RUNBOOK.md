@@ -5010,3 +5010,472 @@ signature in any `drop` or `create`, proving its independence from §33.
 database before the apply (pre-checks (a) and (b) are the only proof of
 that), and that PostgREST's schema cache actually drops the stray signature
 rather than continuing to answer for it until the next restart.
+
+## 35. `20260830090000_hiring_skill_union.sql`
+
+**Independent of §32, §33 and §34, and of every file before them.** It replaces
+three functions none of those declare, touches no table, and fires on no
+trigger. Filename order puts it last; apply it there.
+
+**What breaks without it — reported from the live app, issue #55.** A community
+runs a security department. Its complaint category is named "Security" (or
+"Security Management"); the skills catalogue holds *Security Guard* and *Gate
+Officer*. `link_category_skill` (`0034` 216-233) fills
+`complaint_categories.skill_id` by **exact name match**, so that category
+derives no skill at all — `skill_id` stays null, silently, and every reader
+that gates on the category path alone concludes the department needs nothing.
+
+`20260812090100_skills_and_categories.sql` gave the department a way out of
+exactly this — `department_skills`, a list it declares for itself — and taught
+**one** reader about it: `search_hireable_service_providers`, whose `needed`
+CTE became the union of the two paths (that file's `-- CHANGED` note at 681,
+carried forward whole by §14 `20260821113000_location_labels.sql` 524-535).
+Three readers were left behind, and the result is a hiring flow that
+contradicts itself inside one screen:
+
+- **The manager is offered a candidate and then refused.** The candidate list
+  reads `department_skills`, so the guard appears on it. Pressing invite calls
+  `invite_service_provider`, which does not, and the manager is told *"This
+  person does not have a required skill."* about somebody the same screen just
+  recommended.
+- **The guard cannot find the community.** `search_serviceable_communities`
+  builds its `matching_departments` CTE from categories alone, so the community
+  either does not appear with a department to apply to, or appears with none.
+- **And could not apply if they did.** `apply_to_department` gates the same
+  way and answers *"Your skills do not match this department."*
+
+One table, four readers, one of them taught. A department in this position can
+hire nobody through either direction of the handshake, and nothing in the
+product says why.
+
+**The rule, in one sentence.** A department needs a skill if it has **declared**
+that skill, **or** if one of its complaint categories implies it — the union,
+in every function that asks the question.
+
+**UNION, not replacement.** A department that has declared no skills keeps
+hiring off its categories exactly as it did yesterday. This file adds a second
+way for a department to say what it needs; it withdraws neither the first nor
+anything else. Nobody who could be hired before this file can be refused after
+it.
+
+**What it does:** three `create or replace function` statements, each carrying
+its live body forward **whole** —
+`20260811162409_service_professional_onboarding.sql` 566 for
+`apply_to_department` and 648 for `invite_service_provider`,
+`20260812181443_search_nearby_communities.sql` 5 for
+`search_serviceable_communities` — with only the skill-gate predicate
+rewritten and marked `-- CHANGED` in place (the `20260812113000` convention).
+The two scalar guards gain a `needed` CTE spelled exactly as
+`search_hireable_service_providers` spells it; the search gains a
+`department_needs` CTE feeding `matching_departments` in place of its inlined
+category join. Then the three `revoke`/`grant` pairs, one refreshed
+`comment on function`, `notify pgrst, 'reload schema'`, and an in-transaction
+proof.
+
+**Signatures are byte-identical**, so the existing ACLs survive the replace
+untouched — the grants are reissued anyway, matching what both source files
+do. Nothing else moves: no table, no column, no policy, no constraint, no
+trigger, no fourth function. `department_skills` is only read.
+
+Idempotent: three `create or replace` statements and their grants may all be
+run again. One transaction — the SQL editor wraps the paste, so a failure
+anywhere rolls back everything.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The three deployed bodies are category-only. Expect three rows, each
+--     with reads_department_skills = false and reads_categories = true. A row
+--     already reading department_skills means somebody applied this file (or
+--     something like it) already; stop and find out which.
+select p.oid::regprocedure as signature,
+       position('department_skills' in pg_get_functiondef(p.oid)) > 0
+         as reads_department_skills,
+       position('complaint_categories' in pg_get_functiondef(p.oid)) > 0
+         as reads_categories
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities');
+
+-- (b) The signature census, so "unchanged" in the post-check has a
+--     before-picture. Expect exactly three rows, pronargs 2, 6 and 3
+--     respectively. More than one row for any name means an overload this
+--     file does not know about, and replacing the wrong one would leave the
+--     gate shut with every other check passing -- stop and report it.
+select p.proname, p.oid::regprocedure as signature, p.pronargs, p.proacl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities')
+ order by p.proname;
+
+-- (c) The fourth reader, for contrast -- the one that already knows. Expect
+--     true. If this is false, section 14 (20260821113000) has not been
+--     applied and the union shape this file copies is not on the database
+--     yet; that is not a blocker for the apply, but it means the candidate
+--     list and these three will still disagree afterwards, in the other
+--     direction.
+select position('department_skills' in pg_get_functiondef(
+         'public.search_hireable_service_providers(uuid, text, integer, integer)'
+         ::regprocedure)) > 0 as candidate_search_reads_department_skills;
+
+-- (d) Informational -- the departments this actually unblocks. Rows here are
+--     departments with declared skills whose categories derive none, which is
+--     the reported shape. Zero rows is fine; the guard is still wrong without
+--     it, and the reporter's community may be one you cannot see from here.
+select d.id, d.name, d.community_id,
+       count(distinct ds.skill_id) as declared_skills,
+       count(distinct cc.skill_id) as category_skills
+  from public.departments d
+  left join public.department_skills ds on ds.department_id = d.id
+  left join public.department_categories dc on dc.department_id = d.id
+  left join public.complaint_categories cc
+    on cc.id = dc.category_id and cc.skill_id is not null
+ where d.is_active
+ group by d.id, d.name, d.community_id
+having count(distinct ds.skill_id) > 0 and count(distinct cc.skill_id) = 0
+ order by d.name;
+```
+
+There is no data risk to check for. The file replaces three function bodies,
+writes no row, and touches no table, column, policy or constraint.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning will **not** fire — there is no `drop` in the
+file. The only output expected is one notice: *"hiring_skill_union:
+apply_to_department, invite_service_provider and search_serviceable_communities
+all read department_skills."* Anything else is a failure and the whole paste
+rolls back.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260830090000', 'hiring_skill_union')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) Re-run pre-check (a). Expect three rows with reads_department_skills
+--     AND reads_categories both true -- the union, not a replacement. A row
+--     with reads_categories = false would mean the category path was dropped
+--     and a department that has declared nothing just stopped hiring.
+select p.oid::regprocedure as signature,
+       position('department_skills' in pg_get_functiondef(p.oid)) > 0
+         as reads_department_skills,
+       position('complaint_categories' in pg_get_functiondef(p.oid)) > 0
+         as reads_categories
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities');
+
+-- (b) Re-run pre-check (b). Expect the SAME three rows, same signatures, same
+--     pronargs, same proacl. A fourth row is the failure this check exists
+--     for: `create or replace` with a changed argument list creates a SECOND
+--     function and leaves the category-only original standing for
+--     app/repositories/hiring_repository.py to keep calling.
+select p.proname, p.oid::regprocedure as signature, p.pronargs, p.proacl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities')
+ order by p.proname;
+```
+
+**Post-check, functional — this is the one that proves the ruling, and it needs
+a real department.** Pick a department from pre-check (d), or make one: attach
+a skill to a department whose categories derive none
+(`PUT /api/v1/departments/{id}/skills`), then, signed in as a manager of it:
+
+- **(c)** `GET /api/v1/departments/{id}/candidates` — a provider holding that
+  skill appears. This worked before the apply too; it is the control.
+- **(d)** `POST /api/v1/departments/{id}/invitations` for that provider —
+  **201**, where before the apply it was a **409** reading *"This person does
+  not have a required skill."* This is the contradiction the issue reported.
+- **(e)** Signed in as that provider, `GET /api/v1/worker/communities/search` —
+  the community appears with the department in its `departments` array and the
+  skill in `matchingSkillNames`.
+- **(f)** `POST /api/v1/worker/applications` with that `departmentId` —
+  **201**, where before the apply it was a **403** reading *"Your skills do not
+  match this department."*
+- **(g)** The other half of the union, and the half a careless fix breaks:
+  pick a department with categories that **do** derive skills and no declared
+  skills at all, and repeat (c) and (e). The same candidates and the same
+  community must still appear. Nobody who could be hired before this file may
+  be refused after it.
+
+**Rollback.** Re-apply the pre-image: the `apply_to_department` and
+`invite_service_provider` sections of
+`20260811162409_service_professional_onboarding.sql` (566-646 and 648-726,
+plus their `revoke`/`grant` pairs at 864-867) and
+`20260812181443_search_nearby_communities.sql` whole. Both hold the
+category-only bodies verbatim — which is exactly why this file copied rather
+than retyped them — and both are same-signature `create or replace`, so the
+ACLs survive the rollback as they survived the apply. Follow with
+`notify pgrst, 'reload schema'`. Rolling back restores the reported defect; it
+does not lose data, because this file never wrote any.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hiring_skill_union_migration.py` — the file exists under
+the frozen name, parses as PostgreSQL, and sorts after `20260829120000` and
+after all four files whose shapes it copies; it is the last declaration of
+each of the three functions in the tree; it re-issues **exactly** those three
+and no fourth; each signature block is compared character-for-character with
+its source and each body is **diffed line by line** against that source, so
+any change outside the marked skill gate fails the suite; all three bodies
+contain both `department_skills` and the category path joined by `union`; none
+of the three category-only join shapes survives anywhere in the file; the
+union fragment is asserted to be the same text `20260821113000` uses for
+`search_hireable_service_providers`, derived from that file rather than typed
+in; the two refusal sentences and their `HB403`/`HB409` codes are unchanged and
+no new SQLSTATE is invented; the file declares no other object, writes only the
+`service_applications` row those two functions always wrote, reloads the schema
+cache, and probes each installed definition by exact signature in an
+in-transaction `do` block. **Not verifiable statically:** everything post-check
+(c) through (g) covers — that a department whose categories derive no skill can
+now actually be found, applied to and hired from, and that a department with
+categories and no declared skills sees exactly what it saw before.
+
+## 36. `20260830093000_invoice_total_amount_generated.sql`
+
+**Filename order is apply order. This file sorts after
+`20260830090000_hiring_skill_union.sql` (§35, immediately above) and after §34
+`20260829120000_drop_legacy_approve_overload.sql`, so apply it there — but its
+order relative to either breaks nothing.** It touches one column of
+`public.invoice_line_items` and shares no table, view, function or constraint
+with them. Apply in filename order regardless.
+
+**What is wrong on hosted.** `0021_money_on_baseline.sql` declares
+`public.invoice_line_items.total_amount` as
+
+```sql
+total_amount numeric(12, 2)
+  generated always as (round(quantity * unit_amount, 2)) stored
+```
+
+and the hosted database carries it as a **plain `not null` column** —
+`pg_attribute.attgenerated = ''` rather than `'s'`. `0021` anticipated an older
+hosted shape and left `issue_invoice` a defence for it (lines 466-476: *"the
+older hosted schema has a stored total rather than the baseline's generated
+column; populate it only in that shape"*), but that defence is an `update` that
+runs **after** the line inserts. The insert at `0021`:450-462 lists
+`description, quantity, unit_amount, amount, sort_order` and does **not** list
+`total_amount`, because on the declared shape it must not. So on the drifted
+shape the first line insert violates the NOT NULL, the whole RPC rolls back, and
+the repair statement is never reached. Every invoice create on hosted has been
+failing there.
+
+This is the second half of issue #54. The first half — `money_service.create_invoice`
+building the payload with key `"lines"` where the RPC reads
+`p_payload -> 'line_items'` — is a backend-only code fix in the same change and
+needs no SQL. **Both are required:** with only the code fix, the RPC receives the
+lines and then dies on this NOT NULL; with only this migration, the RPC still
+refuses with *"An invoice needs at least one line item."*
+
+**What it does:** one guarded, idempotent `do` block. It reads `attgenerated`
+for that exact column and then:
+
+* `'s'` (already correct) — raises a notice and **returns without acting**. Safe
+  to re-run, and this is the branch every fresh replay of the migrations
+  directory takes, since `0021` creates the generated column a few files
+  earlier.
+* `''` (drifted) — probes `pg_depend` for dependents, counts the rows the
+  recomputation will change, then `drop column` + `add column … generated always
+  as (round(quantity * unit_amount, 2)) stored`.
+* column absent, or any other `attgenerated` — raises and stops, rather than
+  guessing at a third shape nobody has seen.
+
+Then a `comment on column`, an in-transaction read-back proving the column is
+generated with the right expression, and `notify pgrst, 'reload schema'`.
+
+**No `CASCADE`, by census and by probe.** The repository was enumerated first:
+`invoice_overview` (`0021`:216) and `resident_invoice_overview` (`0033`:211)
+both carry a column called `total_amount`, and in both it is
+**`invoices.total_amount`** — the invoice's own total, a different table.
+Neither view selects from `invoice_line_items` at all. The only index on the
+table is `invoice_line_items_invoice_idx (invoice_id, sort_order)` (`0021`:151).
+No materialized view, generated column or column default in
+`backend/supabase/migrations/` reads it. (`issue_invoice`,
+`money_repository.py` and `dashboard_repository.py` all read the column, and
+none of those is a DDL dependency: a plpgsql body is not parsed until it runs
+and a PostgREST select is a query. Neither blocks a `drop column`.) Because
+hosted has already proved it carries objects this tree never declared, the file
+does not rely on that census alone — it probes `pg_depend` for views,
+materialized views, rules and indexes attached to this exact column and
+**refuses the apply by name** if it finds one, rather than cascading it away.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The shape. Expect attgenerated = '' (drifted) -- which is what this file
+--     repairs. If it comes back 's', the database is already correct and the
+--     apply will be a no-op notice; run it anyway to keep the ledger honest.
+select a.attgenerated, a.attnotnull, format_type(a.atttypid, a.atttypmod)
+  from pg_attribute a
+ where a.attrelid = 'public.invoice_line_items'::regclass
+   and a.attname  = 'total_amount'
+   and a.attnum > 0
+   and not a.attisdropped;
+
+-- (b) THE DATA QUESTION. Re-adding the column as generated RECOMPUTES it for
+--     every row as round(quantity * unit_amount, 2). These are the rows whose
+--     stored value disagrees with their own inputs and will therefore CHANGE.
+--     Expect zero: issue_invoice has always written exactly that expression.
+--     A non-empty result is not a blocker, but read it before continuing --
+--     each row is a stored total that was written by something other than the
+--     RPC, and the apply overwrites it.
+select li.id,
+       li.invoice_id,
+       i.invoice_number,
+       li.description,
+       li.quantity,
+       li.unit_amount,
+       li.total_amount                       as stored_total,
+       round(li.quantity * li.unit_amount, 2) as recomputed_total,
+       li.amount                             as sibling_amount
+  from public.invoice_line_items li
+  join public.invoices i on i.id = li.invoice_id
+ where li.total_amount is distinct from round(li.quantity * li.unit_amount, 2)
+ order by i.invoice_number, li.sort_order;
+
+-- (c) The dependent census, on the live database. Expect zero rows. Any row is
+--     a view, materialized view, rule or index this repository never declared;
+--     the apply will REFUSE by name rather than cascade it away, and it must be
+--     re-issued around the swap by hand before this file can be applied.
+select distinct c.relname, c.relkind
+  from pg_depend d
+  join pg_rewrite r on r.oid = d.objid
+  join pg_class   c on c.oid = r.ev_class
+ where d.classid    = 'pg_rewrite'::regclass
+   and d.refclassid = 'pg_class'::regclass
+   and d.refobjid   = 'public.invoice_line_items'::regclass
+   and d.refobjsubid = (select attnum from pg_attribute
+                         where attrelid = 'public.invoice_line_items'::regclass
+                           and attname  = 'total_amount')
+   and c.oid <> 'public.invoice_line_items'::regclass
+union
+select c.relname, c.relkind
+  from pg_depend d
+  join pg_class c on c.oid = d.objid
+ where d.classid    = 'pg_class'::regclass
+   and d.refclassid = 'pg_class'::regclass
+   and d.refobjid   = 'public.invoice_line_items'::regclass
+   and d.refobjsubid = (select attnum from pg_attribute
+                         where attrelid = 'public.invoice_line_items'::regclass
+                           and attname  = 'total_amount')
+   and c.relkind = 'i';
+
+-- (d) Scale, so the notice the apply prints can be checked against something.
+select count(*) as line_items from public.invoice_line_items;
+```
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop column` — and it is
+safe to confirm once pre-check (b) has been read: the drop is immediately
+followed by the re-add in the same `do` block, the whole paste is one
+transaction, so a failure anywhere rolls back everything, and the column's
+values are computable from `quantity` and `unit_amount`, which are not touched.
+The sibling `amount` column is not touched either.
+
+Expected output on a drifted database, two notices:
+
+> *"invoice_total_amount_generated: repairing the drifted plain column; N row(s)
+> will be recomputed to round(quantity * unit_amount, 2)."*
+> *"invoice_total_amount_generated: total_amount is generated always as
+> round((quantity * unit_amount), 2) stored."*
+
+N must match the row count pre-check (b) returned. On an already-correct
+database the only notice is *"total_amount is already GENERATED ALWAYS AS
+STORED; nothing to repair."*
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260830093000', 'invoice_total_amount_generated')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) The shape, re-read. Expect attgenerated = 's'.
+select a.attgenerated,
+       pg_get_expr(d.adbin, d.adrelid) as generation_expression
+  from pg_attribute a
+  left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+ where a.attrelid = 'public.invoice_line_items'::regclass
+   and a.attname  = 'total_amount'
+   and a.attnum > 0
+   and not a.attisdropped;
+
+-- (b) Nothing disagrees with its own inputs any more. Expect zero rows --
+--     structurally, now, rather than by convention.
+select count(*) as still_drifted
+  from public.invoice_line_items
+ where total_amount is distinct from round(quantity * unit_amount, 2);
+
+-- (c) The index and the policies survived the column swap. Expect
+--     invoice_line_items_invoice_idx, and the read policy.
+select indexname from pg_indexes
+ where schemaname = 'public' and tablename = 'invoice_line_items';
+select polname from pg_policy
+ where polrelid = 'public.invoice_line_items'::regclass;
+```
+
+**Probe insert — the check that actually answers issue #54.** Do this from the
+app, not from SQL: sign in as a community admin and create an invoice with one
+line from the Maintenance screen. It must now succeed and the line's total must
+read `quantity × unit amount`. That single action exercises both halves — the
+payload key the backend now sends, and the generated column this file restored
+— and it is the only way to see them working together. A SQL-only equivalent is
+`select public.issue_invoice('<community uuid>', '{"title":"probe",
+"unit_code":"<an existing flat>","line_items":[{"description":"probe",
+"quantity":1,"unit_amount":1}]}'::jsonb);` run **as an admin of that community**
+(the RPC's first guard is `is_community_admin`, so the SQL editor's default role
+will be refused) — and if it is run, delete the probe invoice afterwards.
+
+**Rollback.** The declared shape is the correct one, so there is nothing worth
+rolling back to; the pre-repair state is the bug. Should it be needed, it is
+re-declaring the plain column, which is what the file header lists:
+
+```sql
+alter table public.invoice_line_items drop column total_amount;
+alter table public.invoice_line_items add column total_amount numeric(12, 2);
+update public.invoice_line_items
+   set total_amount = round(quantity * unit_amount, 2);
+alter table public.invoice_line_items alter column total_amount set not null;
+notify pgrst, 'reload schema';
+```
+
+No data is lost either way: the column's values are a function of `quantity` and
+`unit_amount`, which this file never touches.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_invoice_total_amount_migration.py` — the file exists under
+the frozen name, parses with `pglast`, sorts after `0021` and is the last
+migration to declare or alter this column; the guard reads
+`pg_attribute.attgenerated` for `public.invoice_line_items.total_amount` and
+excludes dropped columns; the `'s'` branch returns before the drop; an
+unrecognised `attgenerated` raises; the re-add carries `0021`'s expression
+**derived from `0021` itself** rather than typed into the test; no `cascade` on
+any drop; the `pg_depend` probe runs before the drop and refuses by name; the
+sibling `amount` column is not named in any drop, add or update; the file writes
+no row, alters no other table, and creates or drops no view, policy, trigger,
+constraint or function; the read-back block runs after the repair; and
+`notify pgrst, 'reload schema'` is present. The dependent-view census is
+re-derived in that suite too — every `create view` statement in the directory is
+extracted and none selects from `invoice_line_items`.
+**Not verifiable statically:** that the hosted column is in fact drifted before
+the apply (pre-check (a) is the only proof), that no hosted-only view or index
+depends on it (pre-check (c) and the file's own `pg_depend` probe), how many
+rows the recomputation changes (pre-check (b)), and that `issue_invoice` then
+succeeds end to end (the probe insert above).

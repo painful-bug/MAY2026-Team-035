@@ -798,6 +798,105 @@ gating, payload shape, the clear-on-reselect rule),
 match/create indicator, the posted body shape) and new `AdminHome.test.jsx`
 cases pinning that "undefined" never renders.
 
+## Worker settings hardening, and a department's `kind`
+
+Added 2026-08-30. `/worker/settings` is the only per-user notification control
+in the app — shared by workers, managers and supervisors — and it failed
+silently in two independent ways, plus two smaller defects on the same
+screen and one on the admin department form.
+
+**`src/lib/push/pushClient.js` now actually honors its own contract.** The
+module header has always promised it is "safe to call in a browser that
+supports none of it," with callers consuming `{ ok, reason }` — but six sites
+threw straight past that: `Notification.requestPermission()`,
+`navigator.serviceWorker.ready` (which also never *rejects*, so a wedged
+service worker hung the toggle's spinner forever), `existing.unsubscribe()`,
+`pushManager.subscribe()` (a real `AbortError` on Chromium when the push
+service is unreachable), the unwrapped subscribe-POST, and `disablePush`'s
+unwrapped unregister-POST. Every one of them is now caught and turned into a
+resolved `{ ok: false, reason }`; `pushEnabled()` resolves `false` instead of
+rejecting; and `enablePush()` races `serviceWorker.ready` against a 10s bound
+(`withTimeout`) so a browser that never finishes activating the worker still
+resolves rather than hanging. `AbortError` gets its own reason ("The push
+service could not be reached. Try again shortly.") since it is a known,
+recoverable Chromium condition rather than a generic failure.
+
+**`PushCard` in `src/pages/WorkerDashboard/Settings.jsx`** gained
+belt-and-suspenders guards over the above: the mount effect's `pushEnabled()`
+call now has a `.catch()` so an unexpected rejection cannot leave the toggle
+permanently disabled, and `toggle()` wraps both calls in try/catch/finally so
+`busy` always clears even if a future regression reintroduces a throw.
+
+**The registration-gate redirect in `src/layouts/WorkerLayout.jsx` now
+exempts `/worker/settings`.** The gate (added 2026-08-21) sends every deep
+link to `/worker` when the profile is incomplete and the caller holds no
+leadership engagement — which, applied to Settings, locked a worker with an
+incomplete profile out of the one screen that can fix it (trades, travel
+radius, location, and the push toggle all live there). Settings itself
+already renders correctly for both shapes of "incomplete": no `service_providers`
+row at all (`noMarketplaceProfile`, unchanged) and a present-but-incomplete
+one (the ordinary form, prefilled), so the layout only needed to stop
+redirecting the URL away from itself. Every other deep link is still
+redirected exactly as before.
+
+**The settings save is no longer un-atomic (C-iii).** The mutation used to
+`await updateProfile(...)` then `await setSkills(skillIds)`; a skills refusal
+(the RPC's `"Choose at least one skill."` on zero trades) landed *after* the
+profile half had already committed, so one red "Could not save" banner hid a
+save that had, in fact, half-succeeded. `setSkills` — the one call that can be
+refused — now runs first, and a failure there leaves nothing committed. If
+`updateProfile` fails afterward (skills already saved), the banner now reads
+`"Trades saved. <reason>"` rather than a bare "Could not save," so the two
+outcomes are distinguishable. Submit is also disabled at `skillIds.length === 0`,
+matching `RegisterProvider.jsx`'s existing pattern.
+
+**Admin-created security departments now actually carry `kind: 'security'`.**
+`Departments.jsx`'s `DepartmentForm` already computed an `isSecurityDepartment`
+heuristic (name contains "security", or a "Security" category is selected) to
+require a phone number and show a note — but `handleSubmit`, where the create
+and update payloads are actually assembled, never read it, so every
+admin-created department stored `kind = NULL` and
+`professional_membership_role(null)` resolved every member of it to `'worker'`
+regardless. `handleSubmit` now recomputes the same heuristic and sets
+`kind: isSecurityDepartment ? 'security' : null` on the payload it hands to
+`createDepartment/updateDepartment`; `createDepartmentsSlice.js` forwards
+`kind` on both the `POST /departments` and `PATCH /departments/{id}` bodies
+when it is truthy (`department_schemas.py`'s `CreateDepartmentRequest` and
+`UpdateDepartmentRequest` both accept `kind: "service" | "security"` — verified
+read-only, not changed here) and omits the key otherwise, so a `null` from a
+non-matching form neither errors nor silently overwrites an existing `kind` on
+edit.
+
+Judgment calls:
+- The registration-gate exemption lets `/worker/settings` render the full
+  portal chrome (sidebar included) for a profile-incomplete worker, rather
+  than rendering the bare `RegisterProvider` form under the settings path —
+  the alternative the brief offered. The chrome was judged the better fit: it
+  is the same screen a complete profile sees, Settings already handles both
+  incomplete shapes on its own, and a second bespoke rendering path would have
+  been more to maintain for no behavioral gain.
+- A department edited *away* from the heuristic (renamed off "security", its
+  Security category removed) sends no `kind` and therefore does not clear a
+  previously-set `kind: 'security'` on the server — `updateDepartment`'s
+  contract already treats an omitted key as "leave alone," and clearing it
+  would need an explicit `null` sent deliberately, which risks wiping a kind
+  the operator set through some other path. Left as an omission for a
+  possible follow-up rather than guessed at here.
+
+Tests: `pushClient.test.js` is new — 21 cases covering every failure mode
+listed above (`{ok:false}`, never a rejection) plus the ready-timeout and the
+full happy path, using `vi.stubGlobal`/`Object.defineProperty` to install a
+configurable service-worker/PushManager/Notification surface jsdom does not
+provide. `Settings.test.jsx` gained a `PushCard resilience` block (the file's
+other suites all stub `pushSupported: () => false`, so the interactive toggle
+path had never actually run) and `SettingsLocation.test.jsx` gained the
+skills-first-save and submit-disabled cases. `WorkerLayout.test.jsx`'s deep-link
+redirect test was repointed at `/worker/calendar` (still redirected) and two
+new cases pin that `/worker/settings` is not, for both the no-provider and the
+incomplete-provider shapes. `Departments.test.jsx` and new
+`createDepartmentsSlice.test.js` cover the `kind` payload from both the form
+and the slice.
+
 ## Retired client code
 
 The following categories were removed after an import-graph audit:

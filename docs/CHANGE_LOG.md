@@ -17,6 +17,121 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
+## 2026-08-30 (second session) — issues #53–#55: declared skills count everywhere, invoices can exist, and worker settings stop failing silently
+
+**A department needs a skill if it has declared it, or if a complaint category implies it — the union,
+in every function that asks.** `AUDIT` — issue #55. `20260812090100_skills_and_categories.sql` gave a
+department an explicit way to say what it needs — the `department_skills` table, written through
+`PUT /api/v1/departments/{id}/skills` — and taught exactly **one** reader about it:
+`search_hireable_service_providers`, whose `needed` CTE became the union of the category path with the
+new table (that file's `-- CHANGED` note at line 681, carried forward whole by
+`20260821113000_location_labels.sql` 524-535). Three functions were left gating on the category path
+alone: `invite_service_provider` (`20260811162409` 683-692, `HB409` *"This person does not have a
+required skill."*), `apply_to_department` (`20260811162409` 600-610, `HB403` *"Your skills do not match
+this department."*), and `search_serviceable_communities` (`20260812181443` 40-51, the
+`matching_departments` CTE). The category path runs through `complaint_categories.skill_id`, which
+`link_category_skill` (`0034` 216-233) fills by **exact name match** against the `skills` catalogue. A
+community naming its category "Security" or "Security Management" against catalogue entries *Security
+Guard* and *Gate Officer* derives nothing — no error, no warning at the point of use — and all three
+functions then behaved as though the department needed nothing at all. The reported symptom is a hiring
+flow that contradicts itself inside one screen: the candidate list offers the guard, the invite button
+refuses them, and the guard can neither find the community nor apply to it. The fix is UNION, not
+replacement: a department that has declared no skills keeps hiring off its categories exactly as
+before, so nobody who could be hired yesterday is refused today.
+
+- `backend/supabase/migrations/20260830090000_hiring_skill_union.sql` (new, 469 lines) —
+  `create or replace` on the three, each body carried forward WHOLE from its live definition with only
+  the skill-gate predicate rewritten and marked `-- CHANGED` in place (the `20260812113000`
+  convention). Signatures byte-identical so the ACLs survive; the `revoke`/`grant` pairs are reissued
+  anyway, matching both source files. One refreshed `comment on function`,
+  `notify pgrst, 'reload schema'`, and an in-transaction `do` block that reads each installed
+  definition back by exact signature. **Hand-applied by the owner — not applied by this change.**
+- `docs/plans/MIGRATION_APPLY_RUNBOOK.md` — §35 appended (pre-checks proving the three deployed bodies
+  are category-only, apply step, ledger insert for version `20260830090000`, read-only and functional
+  post-checks, rollback route).
+- `backend/tests/test_hiring_skill_union_migration.py` (new, 23 tests) — the static battery; each body
+  is **diffed line by line** against its source so any change outside the marked skill gate fails.
+- `backend/app/api/v1/routers/department_hiring.py` — the `GET /departments/{id}/candidates` docstring
+  said *"Holds a skill this department's categories need"*; it now describes the union and why the
+  category path can come up empty. `backend/app/api/v1/routers/worker_communities.py` — the same
+  correction on `GET /worker/communities/search`. `backend/app/domain/hiring_schemas.py` —
+  `matchingSkillNames`' attribute comment, stale since 2026-08-12 for the same reason.
+  `frontend/src/pages/AdminDashboard/DepartmentHiring.jsx` — the empty-state copy stops blaming
+  categories alone.
+- `docs/API.md` — §17 changelog row; the union explained under `GET /worker/communities/search`,
+  cross-referenced from `GET /departments/{id}/candidates`, and the "`skillName: null`" paragraph now
+  names `PUT /departments/{id}/skills` as the escape hatch. `docs/openapi.yaml`,
+  `docs/api_yaml_mapper.md` — regenerated. Surface **unchanged at 211 operations across 180 paths**;
+  `api_map_scan.py`'s 10 pre-recorded findings unchanged.
+
+No new operation, no new envelope code, no new SQLSTATE: the two refusal sentences and their
+`HB403`/`HB409` codes are untouched — this change moves when they fire, not what they say.
+
+**`create_invoice` names the RPC payload key `line_items`, not `lines`.** `AUDIT` — issue #54.
+`issue_invoice` (`0021_money_on_baseline.sql`:368) reads `p_payload -> 'line_items'` and raises *"An
+invoice needs at least one line item."* when that key is absent. `money_service.create_invoice` built
+the payload with `"lines"`, so **every** invoice create failed inside the RPC, on a request that
+carried its lines — and the error surfaced as a validation-shaped complaint about a missing line item,
+which is the most misleading form the failure could take. Backend-only; the HTTP request and response
+shapes do not change, so `docs/openapi.yaml` and `docs/api_yaml_mapper.md` are unaffected and were not
+regenerated.
+
+**`invoice_line_items.total_amount` is restored to a generated column on hosted.** `AUDIT` — new
+hand-applied migration `20260830093000_invoice_total_amount_generated.sql`, runbook §36. `0021`
+declares the column `generated always as (round(quantity * unit_amount, 2)) stored`; the hosted
+database carries it as a plain `not null` column (`pg_attribute.attgenerated = ''`). `issue_invoice`'s
+line insert (`0021`:450-462) omits `total_amount` because it does not have to on the declared shape,
+so on the drifted shape every line insert violates the NOT NULL and the whole RPC rolls back —
+**before** the drift-defence `update` at `0021`:466-476 that was written for exactly this shape can
+run. The defence could never fire, because nothing survived to reach it. This is the second half of
+issue #54 and the reason the payload-key fix alone would not have made invoice creation work on
+hosted. *Why a drop-and-re-add rather than an `alter`:* Postgres has no statement that adds
+`GENERATED ALWAYS` to an existing column. *Why no `CASCADE`:* the repository was enumerated first —
+`invoice_overview` (`0021`:216) and `resident_invoice_overview` (`0033`:211) both read
+`invoices.total_amount`, a different table's column, and neither selects from `invoice_line_items` at
+all; the only index on the table is `(invoice_id, sort_order)`. Nothing in this tree depends on the
+column, so a plain `drop column` is correct, and the migration additionally probes `pg_depend` at
+apply time and refuses **by name** if hosted carries a dependent this tree never declared. *Data note
+for the owner:* re-adding the column as generated recomputes it for every existing row; the sibling
+`amount` column is untouched.
+
+**`backend/scripts/seed_test_accounts.py` — confirmed QA accounts without the signup rate limit.**
+`DERIVED` — issue #53. Signing testers up through the product's own flow hits GoTrue's signup rate
+limit and then leaves each account waiting on a confirmation mail that never arrives at `@test.local`.
+`auth.admin.create_user(..., email_confirm=True)` is the admin path: no signup rate limit, and the
+account is born confirmed. Owner-run local tool, never CI and never a route — it authenticates with
+the service-role key from `backend/.env`, so the project that `.env` points at is the project it
+writes to. Creates **auth users only**; profile, community and membership stay with the product's own
+onboarding, because a QA run that skipped them would be testing a shape the app never produces.
+
+**Worker settings hardening + department `kind` (issue #55 A, C-ii, C-iii; `PO` on the `kind`
+ruling).** `frontend/src/lib/push/pushClient.js` now honors its own `{ ok, reason }` contract at every
+call site — `Notification.requestPermission()`, `navigator.serviceWorker.ready` (bounded with a 10s
+timeout; it never rejects on its own), `existing.unsubscribe()`, `pushManager.subscribe()`
+(AbortError on an unreachable push service gets its own reason), the subscribe-POST, and
+`disablePush`'s unregister-POST are all wrapped so neither `enablePush`, `disablePush`, nor
+`pushEnabled` can throw. `frontend/src/pages/WorkerDashboard/Settings.jsx`'s `PushCard` gained
+belt-and-suspenders mount/toggle guards, and its save mutation now calls `setSkills` before
+`updateProfile` (the refusable call first) so a zero-trades refusal no longer reports a profile save
+that actually half-committed; submit is disabled at zero skills.
+`frontend/src/layouts/WorkerLayout.jsx`'s registration-gate redirect now exempts `/worker/settings` —
+the one screen that can repair an incomplete profile — while every other deep link is still redirected
+as before. `frontend/src/pages/AdminDashboard/Departments.jsx` and
+`frontend/src/store/slices/createDepartmentsSlice.js`: the existing `isSecurityDepartment` heuristic
+now actually sets `kind: 'security'` on the create and update payloads (backend
+`department_schemas.py` accepts it on both — verified read-only), so an admin-created security
+department no longer stores `kind = NULL`. Tests: new `frontend/src/lib/push/pushClient.test.js`
+(21 cases) and `frontend/src/store/slices/createDepartmentsSlice.test.js` (4 cases); grafted cases
+into `Settings.test.jsx`, `SettingsLocation.test.jsx`, `WorkerLayout.test.jsx`, `Departments.test.jsx`.
+Docs: `docs/FRONTEND_CHANGES.md` § "Worker settings hardening, and a department's `kind`".
+
+Not acted on, by ruling: leadership ranks still have no editable profile anywhere (`PO` — deferred; a
+consequence of leadership exclusivity, recorded for a later product decision), and an edit that
+renames a department *away* from a security-sounding name does not clear a previously-set `kind`
+(follows the omitted-key-means-leave-alone contract; flagged in `FRONTEND_CHANGES.md`).
+
+---
+
 ## 2026-08-30 — Session 76: every remaining in-place overlay escapes the fade-in stacking trap
 
 **Every `fixed inset-0` overlay still rendered in place now renders through `createPortal(document.body)`,

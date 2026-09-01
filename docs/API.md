@@ -4799,6 +4799,7 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-30 | **A department's declared skills count everywhere it hires — no operation added, three refusals narrowed.** Surface **unchanged at 211 across 180 paths**; no new envelope code and no new SQLSTATE. `20260812090100_skills_and_categories.sql` gave a department an explicit skill list (`department_skills`, `PUT /departments/{id}/skills`) and taught exactly one reader about it: `search_hireable_service_providers`, behind `GET /departments/{id}/candidates`. Three others kept gating on the category path alone — and that path runs through `complaint_categories.skill_id`, filled by **exact name match** against the catalogue, so a category named "Security Management" against catalogue entries *Security Guard* and *Gate Officer* derives nothing at all. The result contradicted itself inside one screen: the candidate list offered a guard, `POST /departments/{id}/invitations` refused them `409` *"This person does not have a required skill."*, `GET /worker/communities/search` showed that guard no department to apply to, and `POST /worker/applications` would have answered `403` *"Your skills do not match this department."* `20260830090000_hiring_skill_union.sql` (runbook §35) re-issues `apply_to_department`, `invite_service_provider` and `search_serviceable_communities` with each body carried forward whole and only the skill gate rewritten to the union `search_hireable_service_providers` has used since 2026-08-12. **UNION, not replacement**: a department that has declared no skills matches on its categories exactly as before, so nobody who could be hired yesterday is refused today. Signatures are byte-identical, the two refusal sentences and their `HB403`/`HB409` codes are unchanged, and nothing else in the schema moves. Issue #55 (B+D). |
 | 2026-08-28 | **The join flow captures a residence, approval requires one — and §6 stops being "intentionally empty".** No operation added or removed (surface stays **211 across 180 paths**); what moved is shapes and prose. Backed by `20260828090000_residence_claim_on_join.sql` (runbook §33) under the three 2026-08-27 rulings: free-text residence claim at request time (`requested_building_text`/`requested_unit_text` on `CreateAccessRequest` and `AccessRequestResponse`, ≤120, blank→null — non-members still never see the unit list), **approval requires a unit** (new `422` `approval_requires_unit`, fail-fast in the API and SQLSTATE `HBUNT` in the RPC, refused before any row is written), and **find-or-create at approval** (`unit_code`/`building_code` on approve; case-insensitive match, `HB422` in words for an inactive unit, else the unit and its building are created in the founder RPC's shape). The three admin decision routes gain `AccessRequestDecisionResponse` `{request_id, status, membership_id?, unit_id?}`, retiring the raw `-> dict` bodies the mapper's §5.1 had flagged since 2026-08-08; the community summary gains `community_type`. **§6 now documents all seven access-request operations** — the mapper's §5.2 five-with-no-section finding, closed — and the banner above was found four sessions stale (201/170) and corrected in the same pass. SSE topics, triggers and the invitation path unchanged |
 | 2026-08-27 | **One live job per complaint — no operation added, one refusal added.** `POST /complaints/{complaintId}/work-orders` gains a second `409 conflict` cause: the raise is refused while any job on the complaint is still `draft`, `awaiting_resident`, `offered`, `scheduled` or `in_progress`. Surface **unchanged at 211 across 180 paths**; no new envelope code, no new SQLSTATE (`HB409` already maps to 409), no request or response field moved. Backed by `20260827210000_one_live_job_per_complaint.sql` and frozen in [`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md) under the owner's 2026-08-27 ruling. **The defect was observed, not theorised**: complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` collected a second `awaiting_resident` job fifteen seconds after the resident booked the first one's visit, because nothing asked whether a job was already running and the triage screen drew its raise form under a jobs list it had not finished reading. The live set is `work_orders_service._OPEN_STATES` verbatim — the same five the `get_schedule_request` resolver calls live — inlined in the guard rather than referenced, so a reader sees the whole rule; terminal is the remaining `completed`, `failed`, `cancelled` of `work_orders_status_check`. `create_work_order` also now opens with `select * from complaints ... for update`, which is what makes the guard unraceable: two supervisors, or one double-clicked button, are serialized on the complaint row, so the second transaction reads the first one's insert. **`complaints.status` is untouched** and no complaint-lifecycle code moved — this is a statement about work-order liveness and nothing else — and existing duplicates are left as history, since cancelling a row is a person's decision. `US-2.8` gains no row and loses an ambiguity: `GET /complaints/{id}/schedule-request` was answering *when to expect action* from whichever of two live jobs it reached first. |
 | 2026-08-24 | **Supervisor take-up — the manual valve behind the member-only rule.** One operation added — `POST /work-orders/{workOrderId}/take-up` (surface **210 → 211 across 180 paths**) — backed by `20260824090000_supervisor_take_up.sql` and frozen in [`plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`](plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md)'s *Addendum 2026-08-24*, under rulings R8–R13. The 2026-08-23 eligibility repair made every assignment path member-only, which leaves a thin department with work nobody may hold; ruling R8 answers it with **a separate deliberate verb**, not an exception inside the rule — the candidate list, the ping, the auto-book and the open board are all still member-only. The request carries **no `staffAssignmentId`**: the holder is the caller's own active `manager`/`supervisor` roster row on the job's department, resolved from the session inside Postgres, so the route cannot put anybody else on a job and refuses a community admin, who holds no roster row. Everything after the pick is `assign`'s — optional slot, withdraw-not-delete, `scheduled`, the resident told by name, the same double-booking `409`. The timeline gains **two** entries and one new `complaint_events` word, `job_taken_up` (distinct from `taken_up`, which is complaint triage ownership); the department hears `job.taken_up` minus the person who pressed the button. Two functions were re-issued verbatim beside it: `force_assign_work_order` now stamps the **acting caller** on its two timeline rows instead of the department's supervisor of record (ruling R12, closing the backlogged R7 — an attribution defect, no shape change), and `claim_open_work_order`'s leadership refusal now points at the new verb (R13). No new SQLSTATE: the whole migration raises only HB403/HB404/HB409, so `pg_errors.py` is unchanged. |
@@ -4982,9 +4983,15 @@ Every complaint category in the caller's community, with the trade each one reso
 **`skillName: null` is the row this endpoint exists to surface.** `complaint_categories.skill_id` is
 filled by exact name match against the catalogue (`link_category_skill`, `0034`), and a category
 matching no trade is not an error — a community may name one the catalogue has no word for. But it
-has a consequence nobody could see: that category matches no service person in
-`search_hireable_service_providers` or `search_serviceable_communities`, so complaints filed under it
-reach nobody, silently. The department form renders it as a warning.
+has a consequence nobody could see: that category contributes no skill to the hiring searches, so
+complaints filed under it reach nobody, silently. The department form renders it as a warning.
+
+**The escape hatch is `PUT /departments/{departmentId}/skills`**, and since
+`20260830090000_hiring_skill_union.sql` (runbook §35) every function that asks what a department
+needs reads the union of the two paths — `search_hireable_service_providers`,
+`search_serviceable_communities`, `apply_to_department` and `invite_service_provider`. A department
+whose category names find no catalogue entry declares its trades directly and hires normally. The
+warning stays, because a category with no skill still routes no complaint.
 
 `departmentCount` is how many departments claim the category. Zero means complaints filed under it
 route to no department at all.
@@ -5389,10 +5396,22 @@ built. Two parallel arrays were rejected as the fix: `array_agg(distinct …)` s
 argument, so the ids would arrive in uuid order and the names in alphabetical order and the two
 would correspond only by accident.
 
-Three rules, all applied in SQL: the community has a department whose categories need one of the
-caller's skills, it has not blacklisted them, and they are not already a member of it. That last one
+Three rules, all applied in SQL: the community has a department that needs one of the caller's
+skills, it has not blacklisted them, and they are not already a member of it. That last one
 is why a resident cannot apply to work in their own society — one person holds one live membership
 per community, so the hire would be refused and offering it would be offering a dead end.
+
+**"Needs" is a union of two paths, and it has been since 2026-08-30** (`20260830090000_hiring_skill_union.sql`,
+runbook §35). A department needs a skill it has **declared** for itself through
+`PUT /departments/{id}/skills`, **or** one its complaint categories imply.
+`complaint_categories.skill_id` is filled by exact name match against the catalogue, so a category
+called "Security Management" against catalogue entries *Security Guard* and *Gate Officer* derives
+nothing at all — and before that migration this search, `POST /worker/applications` and
+`POST /departments/{id}/invitations` all read the category path alone, so such a department was
+invisible here, unappliable, and unable to invite anybody. `GET /departments/{id}/candidates` had
+read the union since 2026-08-12, which is how a manager came to be offered a candidate one screen
+would then refuse. The union never narrows: a department that has declared no skills matches on its
+categories exactly as before.
 
 Only active matching departments in communities inside the provider-controlled service radius are
 returned. Missing community coordinates are excluded; a provider with missing coordinates receives
@@ -5532,7 +5551,11 @@ Service people this department could hire, nearest first. **Requires `admin` or 
 ```
 
 The mirror of `GET /worker/communities/search`: the same three rules seen from the other end, plus
-"not already on this roster".
+"not already on this roster". "Needs a skill the candidate holds" is the same union described
+there — declared through `PUT .../skills`, or implied by a complaint category. This endpoint has
+read both paths since 2026-08-12; the other three hiring functions only caught up on 2026-08-30
+(`20260830090000_hiring_skill_union.sql`, runbook §35), and until they did, a manager could be
+offered a candidate here and refused at `POST .../invitations`.
 
 **`locationLabel` (2026-08-21) is nullable and is not the coordinate.** `distanceKm` is measured
 from the community's pin and is the fact; the label is a coarse name the provider wrote for
