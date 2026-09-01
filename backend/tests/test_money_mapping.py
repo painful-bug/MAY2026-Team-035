@@ -9,7 +9,9 @@ plainly in DECISIONS_NEEDED E1 rather than implied to be covered.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -25,6 +27,7 @@ from app.domain.vocabularies import (
     payment_method_to_storage,
     payment_method_to_wire,
 )
+from app.services import money_service
 from app.services.money_service import _amount, _to_summary
 
 
@@ -293,5 +296,101 @@ def test_due_day_cannot_land_outside_february() -> None:
 def test_invoice_prefix_rejects_characters_that_would_break_a_number() -> None:
     with pytest.raises(PydanticValidationError):
         UpdateBillingSettingsRequest(invoiceNumberPrefix="IN V/2026")
+
+
+# ---------------------------------------------------------------------------
+# The `issue_invoice` payload key (issue #54)
+#
+# `create_invoice` spelled the lines `"lines"` while the RPC has always read
+# `p_payload -> 'line_items'`, so every create died on the RPC's own guard --
+# "An invoice needs at least one line item." -- with a request that carried its
+# lines. Nothing caught it because nothing here had ever looked at the payload
+# the service builds; a request schema and an RPC contract are two different
+# things and only one of them was tested.
+#
+# The expected key is READ OUT OF THE MIGRATION rather than typed here. A
+# literal `"line_items"` in this file would pin the service to whatever the RPC
+# said on the day it was written and then stop tracking it -- which is precisely
+# the failure mode being fixed.
+# ---------------------------------------------------------------------------
+_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase"
+    / "migrations"
+    / "0021_money_on_baseline.sql"
+)
+
+
+def _rpc_line_key() -> str:
+    """The `p_payload` key `issue_invoice` reads its line items out of.
+
+    Taken from the two places the function names it -- the emptiness guard and
+    the `jsonb_array_elements` loop that inserts the rows -- which must agree.
+    """
+    text = _MIGRATION.read_text(encoding="utf-8")
+    guard = re.search(
+        r"if p_payload -> '(\w+)' is null\s*\n\s*or jsonb_array_length", text
+    )
+    loop = re.search(r"jsonb_array_elements\(p_payload -> '(\w+)'\)", text)
+    assert guard is not None and loop is not None, "issue_invoice has changed shape"
+    assert guard.group(1) == loop.group(1), (guard.group(1), loop.group(1))
+    return guard.group(1)
+
+
+def _capture_issue_invoice(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Run `create_invoice` against a stubbed repository and return the payload
+    it handed to the RPC. Neither the RPC nor the read-back is real -- the
+    subject here is the dictionary, not the database."""
+    captured: dict = {}
+
+    def _issue(client: object, community_id: str, payload: dict) -> str:
+        captured.update(payload)
+        return "11111111-1111-1111-1111-111111111111"
+
+    monkeypatch.setattr(money_service.repo, "issue_invoice", _issue)
+    monkeypatch.setattr(money_service, "get_invoice", lambda *a, **k: "invoice")
+
+    money_service.create_invoice(
+        None,
+        "22222222-2222-2222-2222-222222222222",
+        CreateInvoiceRequest(
+            title="August maintenance",
+            flat="B-1204",
+            lineItems=[
+                {"description": "Maintenance", "quantity": 2, "unitAmount": 1250},
+            ],
+        ),
+    )
+    return captured
+
+
+def test_the_rpc_payload_names_the_lines_the_way_the_rpc_reads_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression. `issue_invoice` reads one key and refuses the call when
+    it is absent, so a payload spelled anything else is a create that cannot
+    succeed -- and the failure surfaces as a validation-shaped 4xx about a
+    missing line item, on a request that had one."""
+    payload = _capture_issue_invoice(monkeypatch)
+    key = _rpc_line_key()
+
+    assert key in payload, f"the RPC reads '{key}'; the payload has {sorted(payload)}"
+    assert "lines" not in payload, "the pre-#54 spelling is back"
+    assert payload[key] == [
+        {"description": "Maintenance", "quantity": 2.0, "unit_amount": 1250.0}
+    ]
+
+
+def test_the_line_payload_omits_the_total_the_database_computes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Description, quantity and unit amount, and nothing else. The line total
+    is `invoice_line_items.total_amount`, a generated column, and the invoice
+    total is summed by the RPC -- a caller-supplied total would be a second
+    answer to what the invoice is worth."""
+    payload = _capture_issue_invoice(monkeypatch)
+
+    for line in payload[_rpc_line_key()]:
+        assert set(line) == {"description", "quantity", "unit_amount"}, line
 
 

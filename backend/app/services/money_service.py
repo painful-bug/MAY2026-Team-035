@@ -182,7 +182,14 @@ def create_invoice(
     payload: dict = {
         "title": body.title.strip(),
         "invoice_type": body.invoice_type,
-        "lines": [
+        # `line_items`, not `lines`: `issue_invoice` reads `p_payload ->
+        # 'line_items'` and refuses with "An invoice needs at least one line
+        # item." when that key is absent (`0021_money_on_baseline.sql`). Under
+        # the old `lines` spelling every create failed there -- the request
+        # carried its lines and the RPC could not see them (issue #54). The key
+        # name is a contract with the RPC and is pinned in
+        # `tests/test_money_mapping.py` against the migration's own text.
+        "line_items": [
             {
                 "description": line.description.strip(),
                 "quantity": line.quantity,
