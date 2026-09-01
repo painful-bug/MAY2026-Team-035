@@ -98,10 +98,19 @@ def list_candidates(
     """The candidate search, nearest first.
 
     The mirror of `GET /worker/communities/search`: same three rules seen from
-    the other end. Holds a skill this department's categories need, not
-    blacklisted here, not already on this roster — and not already a member of
+    the other end. Holds a skill this department needs — one it has declared
+    for itself through `PUT .../skills`, **or** one its categories imply — not
+    blacklisted here, not already on this roster, and not already a member of
     the community in some other capacity, because the hire would be refused and
     offering a dead end is worse than an empty list.
+
+    **The two paths are a union, and both halves matter.** A category earns its
+    skill by exact name match against the catalogue (`link_category_skill`), so
+    a community that calls its department "Security Management" against
+    catalogue entries *Security Guard* and *Gate Officer* derives nothing at
+    all; the declared list is how such a department says what it needs. A
+    department that has declared nothing still hires off its categories exactly
+    as before.
 
     `matchingSkillNames` is the subset that put them on this list, which is not
     the same as `skillNames`. Showing only the second would leave a manager

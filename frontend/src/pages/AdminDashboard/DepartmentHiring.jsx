@@ -932,7 +932,7 @@ export default function DepartmentHiring() {
             <p role="alert" className="text-sm font-semibold text-rose-600">{candidates.error.message}</p>
           ) : (candidates.data || []).length === 0 ? (
             <Empty>
-              Nobody registered nearby holds a trade this department&apos;s categories need.
+              Nobody registered nearby holds a trade this department needs.
             </Empty>
           ) : (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

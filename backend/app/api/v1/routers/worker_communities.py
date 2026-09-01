@@ -82,8 +82,14 @@ def search_communities(
 
     A row is visible by proximity even if that community has not configured a
     matching department yet. Its application buttons still contain only active
-    departments whose categories need one of the caller's skills. Blacklisted
-    communities and communities the caller already belongs to stay hidden.
+    departments that need one of the caller's skills — a skill the department
+    has declared for itself, **or** one its complaint categories imply. The two
+    paths are a union: a department that has declared nothing matches off its
+    categories exactly as before, and a department whose category names find no
+    catalogue entry (`link_category_skill` matches by exact name, so
+    "Security Management" derives nothing) is reachable through the list it
+    declared. Blacklisted communities and communities the caller already
+    belongs to stay hidden.
 
     Results are limited to the caller's service radius. Communities without
     coordinates are excluded, and an incomplete legacy provider receives the
