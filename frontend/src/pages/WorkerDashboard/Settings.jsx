@@ -44,13 +44,26 @@ function PushCard() {
   const [state, setState] = useState({ on: false, busy: true, error: '' });
 
   useEffect(() => {
-    void pushEnabled().then((on) => setState({ on, busy: false, error: '' }));
+    // pushEnabled() resolves { false } rather than throwing per its own
+    // contract, but the mount effect is belt-and-suspenders: an unexpected
+    // rejection here must not leave `busy: true` painting a permanent
+    // spinner over the toggle.
+    void pushEnabled()
+      .then((on) => setState({ on, busy: false, error: '' }))
+      .catch(() => setState({ on: false, busy: false, error: '' }));
   }, []);
 
   const toggle = async () => {
     setState((current) => ({ ...current, busy: true, error: '' }));
-    const result = state.on ? await disablePush() : await enablePush();
-    setState({ on: result.ok ? !state.on : state.on, busy: false, error: result.ok ? '' : result.reason });
+    try {
+      const result = state.on ? await disablePush() : await enablePush();
+      setState({ on: result.ok ? !state.on : state.on, busy: false, error: result.ok ? '' : result.reason });
+    } catch {
+      // Both calls already return { ok, reason } instead of throwing; this
+      // catch only guards against a future regression re-introducing a throw
+      // site, so `busy` still clears and the toggle stays usable.
+      setState((current) => ({ ...current, busy: false, error: 'Could not update notifications.' }));
+    }
   };
 
   if (!pushSupported()) {
@@ -357,18 +370,37 @@ export default function WorkerSettings() {
 
   const save = useMutation({
     mutationFn: async () => {
+      // setSkills first: it is the call that can be refused ("Choose at least
+      // one skill.") and used to run second, after updateProfile had already
+      // committed — so a skills refusal showed one "Could not save" banner
+      // while the profile half had, in fact, saved. Doing the refusable call
+      // first means a failure here leaves nothing committed, and the profile
+      // update below only runs once skills are known-good.
+      try {
+        await workerApi.setSkills(skillIds);
+      } catch (error) {
+        throw new Error(error?.message || 'Could not save your trades.');
+      }
       // No displayName here, and none accepted: the name is identity, not a
       // setting (PATCH /service-providers/me refuses the field since 0045).
-      await workerApi.updateProfile({
-        headline: form.headline.trim() || null,
-        bio: form.bio.trim() || null,
-        phone: form.phone.trim() || null,
-        serviceRadiusKm: Number(form.serviceRadiusKm) || 15,
-        latitude: form.latitude === '' ? null : Number(form.latitude),
-        longitude: form.longitude === '' ? null : Number(form.longitude),
-        locationLabel: form.locationLabel?.trim() || null,
-      });
-      await workerApi.setSkills(skillIds);
+      try {
+        await workerApi.updateProfile({
+          headline: form.headline.trim() || null,
+          bio: form.bio.trim() || null,
+          phone: form.phone.trim() || null,
+          serviceRadiusKm: Number(form.serviceRadiusKm) || 15,
+          latitude: form.latitude === '' ? null : Number(form.latitude),
+          longitude: form.longitude === '' ? null : Number(form.longitude),
+          locationLabel: form.locationLabel?.trim() || null,
+        });
+      } catch (error) {
+        // Trades already committed above (setSkills is not rolled back on a
+        // later failure) — say so, so "Could not save" does not read as
+        // nothing happened.
+        throw new Error(
+          `Trades saved. ${error?.message || 'Could not save your other details.'}`
+        );
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['worker-profile'] });
@@ -586,7 +618,7 @@ export default function WorkerSettings() {
 
         <button
           type="submit"
-          disabled={save.isPending}
+          disabled={save.isPending || skillIds.length === 0}
           className="w-full rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
         >
           {save.isPending ? 'Saving…' : 'Save changes'}

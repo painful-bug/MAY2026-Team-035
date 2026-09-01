@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import WorkerSettings from './Settings';
@@ -10,7 +10,13 @@ import WorkerSettings from './Settings';
 // animation keeps <main> a permanent stacking context) — the portal to
 // document.body is what keeps that true if anyone ever animates the layout.
 
-const mocks = vi.hoisted(() => ({ myCommunities: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  myCommunities: vi.fn(),
+  pushSupported: vi.fn(() => false),
+  pushEnabled: vi.fn(),
+  enablePush: vi.fn(),
+  disablePush: vi.fn(),
+}));
 
 // `snapshot` gates the whole page since the marketplace-profile split: with
 // no `provider` on it the page renders `NoMarketplaceProfile` instead of the
@@ -29,12 +35,15 @@ vi.mock('../../features/worker/workerApi', () => ({
   },
 }));
 
-// Push needs a service worker registration jsdom does not have.
+// Push needs a service worker registration jsdom does not have — false by
+// default so the bulk of this file's tests see the "unsupported" card. The
+// PushCard describe block below flips `pushSupported` on and exercises the
+// interactive toggle and its failure paths.
 vi.mock('../../lib/push/pushClient', () => ({
-  pushSupported: () => false,
-  pushEnabled: vi.fn().mockResolvedValue(false),
-  enablePush: vi.fn(),
-  disablePush: vi.fn(),
+  pushSupported: mocks.pushSupported,
+  pushEnabled: mocks.pushEnabled,
+  enablePush: mocks.enablePush,
+  disablePush: mocks.disablePush,
 }));
 
 // `sessionContext.identity`, not the older `sessionContext.user`: the page
@@ -60,6 +69,10 @@ beforeEach(() => {
       departure: null,
     },
   ]);
+  mocks.pushSupported.mockReset().mockReturnValue(false);
+  mocks.pushEnabled.mockReset().mockResolvedValue(false);
+  mocks.enablePush.mockReset();
+  mocks.disablePush.mockReset();
 });
 
 const renderPage = () =>
@@ -103,5 +116,43 @@ describe('ask-to-leave modal portal contract', () => {
     await user.keyboard('{Escape}');
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+// PushCard resilience. The other suites in this file (and LeadershipScreens,
+// SettingsLocation) all stub `pushSupported: () => false`, which means the
+// interactive toggle path — the one with a real failure mode to guard against
+// — has never actually run. These tests flip it on.
+describe('PushCard resilience', () => {
+  it('renders the interactive toggle, with no permanent spinner, when pushEnabled() rejects', async () => {
+    mocks.pushSupported.mockReturnValue(true);
+    mocks.pushEnabled.mockRejectedValue(new Error('boom'));
+    renderPage();
+
+    const toggle = await screen.findByRole('button', { name: /turn on/i });
+    // The button renders (with its label) immediately, busy while the mount
+    // effect's pushEnabled() call is still in flight — the assertion is on
+    // what it settles to once that rejection is caught, not the first paint.
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
+  });
+
+  it('renders the reason and clears busy when enablePush resolves { ok: false }', async () => {
+    const user = userEvent.setup();
+    mocks.pushSupported.mockReturnValue(true);
+    mocks.pushEnabled.mockResolvedValue(false);
+    mocks.enablePush.mockResolvedValue({
+      ok: false,
+      reason: 'Notifications are blocked. Allow them in your browser settings.',
+    });
+    renderPage();
+
+    const toggle = await screen.findByRole('button', { name: /turn on/i });
+    await user.click(toggle);
+
+    expect(
+      await screen.findByText('Notifications are blocked. Allow them in your browser settings.')
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: /turn on/i })).not.toBeDisabled();
   });
 });

@@ -31,6 +31,13 @@ export const createDepartmentsSlice = (set, get) => ({
       },
       slaHours: Math.max(1, Number(departmentData.slaHours) || 24),
       status: departmentData.status || 'Active',
+      // 'security' when the caller's heuristic matched (Departments.jsx's
+      // isSecurityDepartment), else omitted so the backend default ('service')
+      // applies. Owner-approved product ruling: an admin-created security
+      // department must actually carry kind = 'security', not NULL, or
+      // `professional_membership_role(null)` resolves everyone in it to
+      // 'worker'.
+      ...(departmentData.kind ? { kind: departmentData.kind } : {}),
       staff: (departmentData.staff ?? []).map((member) => ({
         ...member,
         name: member.name?.trim() || '',
@@ -139,6 +146,11 @@ export const createDepartmentsSlice = (set, get) => ({
           operatingHours: updated.operatingHours,
           slaHours: updated.slaHours,
           status: updated.status,
+          // Same security-department ruling as create (see there): only sent
+          // when the caller computed one, so an edit that never touched the
+          // name/categories that drive the heuristic does not clobber an
+          // existing kind with an implicit null.
+          ...(departmentData.kind ? { kind: departmentData.kind } : {}),
           staff: departmentData.staff !== undefined ? updated.staff : undefined
         })
       });

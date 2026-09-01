@@ -64,6 +64,7 @@ function renderLayout(initialPath = '/worker') {
         children: [
           { index: true, element: <p>Dashboard home</p> },
           { path: 'settings', element: <p>Settings page</p> },
+          { path: 'calendar', element: <p>Calendar page</p> },
         ],
       },
     ],
@@ -123,13 +124,41 @@ describe('WorkerLayout registration gate', () => {
 
   it('redirects an unregistered professional from a deep link back to /worker', async () => {
     mocks.snapshot.mockResolvedValue({ provider: null, communities: [] });
-    const router = renderLayout('/worker/settings');
+    const router = renderLayout('/worker/calendar');
 
     expect(
       await screen.findByRole('heading', { name: 'Register as a service partner' }),
     ).toBeVisible();
     expect(router.state.location.pathname).toBe('/worker');
-    expect(screen.queryByText('Settings page')).not.toBeInTheDocument();
+    expect(screen.queryByText('Calendar page')).not.toBeInTheDocument();
+  });
+
+  // Settings is exempt from the registration-gate redirect (2026-08-30): it is
+  // the one screen that can repair an incomplete profile (trades, radius,
+  // location, the push toggle), so it must stay reachable by an unregistered
+  // professional instead of being deep-link-redirected away from itself. The
+  // portal chrome still renders — Settings.jsx's own `noMarketplaceProfile` /
+  // incomplete-provider branches decide what appears inside it.
+  it('does not redirect a deep link to /worker/settings, even with no provider row', async () => {
+    mocks.snapshot.mockResolvedValue({ provider: null, communities: [] });
+    const router = renderLayout('/worker/settings');
+
+    expect(await screen.findByText('Settings page')).toBeVisible();
+    expect(router.state.location.pathname).toBe('/worker/settings');
+    expect(
+      screen.queryByRole('heading', { name: 'Register as a service partner' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not redirect a deep link to /worker/settings for an incomplete-but-present provider', async () => {
+    mocks.snapshot.mockResolvedValue({
+      provider: { id: 'provider-1', displayName: 'Asha Devi', latitude: null, longitude: null, skillIds: [] },
+      communities: [],
+    });
+    const router = renderLayout('/worker/settings');
+
+    expect(await screen.findByText('Settings page')).toBeVisible();
+    expect(router.state.location.pathname).toBe('/worker/settings');
   });
 
   it('lets an invited supervisor with no provider row into the portal', async () => {

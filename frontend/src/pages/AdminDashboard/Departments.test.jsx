@@ -184,6 +184,56 @@ describe('manager entry (single generation)', () => {
   });
 });
 
+// Owner-approved product ruling (2026-08-30): `isSecurityDepartment` (the same
+// heuristic the phone-required note already uses, just below the invitation
+// block) now also decides the `kind` sent to `createDepartment` /
+// `updateDepartment`, so an admin-created security department actually stores
+// `kind = 'security'` instead of NULL.
+describe('department kind', () => {
+  it('sends kind: "security" for a department whose name matches the heuristic', async () => {
+    const user = userEvent.setup();
+    renderAt('/admin/departments?create=1');
+    await screen.findByRole('heading', { name: 'Create Department' });
+
+    await user.type(
+      screen.getByPlaceholderText('e.g. Electrical Services'),
+      'Security Services'
+    );
+    await addCategory(user, 'Patrol');
+    // Same heuristic as the phone-required note just below the invitation
+    // block, so filling the now-required phone in is what a real operator
+    // would have to do here too.
+    await user.type(screen.getByPlaceholderText('+91 98765 43210'), '+91 90000 00001');
+
+    await user.click(submitButton());
+
+    await waitFor(() =>
+      expect(mocks.state.createDepartment).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'security' })
+      )
+    );
+  });
+
+  it('sends no kind for a department that does not match the heuristic', async () => {
+    const user = userEvent.setup();
+    renderAt('/admin/departments?create=1');
+    await screen.findByRole('heading', { name: 'Create Department' });
+
+    await user.type(
+      screen.getByPlaceholderText('e.g. Electrical Services'),
+      'Plumbing Services'
+    );
+    await addCategory(user, 'Plumbing');
+    await user.click(submitButton());
+
+    await waitFor(() =>
+      expect(mocks.state.createDepartment).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: null })
+      )
+    );
+  });
+});
+
 describe('category validation timing', () => {
   it('shows no error on a freshly opened form', async () => {
     renderAt('/admin/departments?create=1');

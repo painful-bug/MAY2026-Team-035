@@ -224,11 +224,22 @@ export default function WorkerLayout() {
   // roster screen uses.
   const brand = leadership ? rankLabel(engagement.rank) : 'Service Partner';
 
-  if (!profileComplete && !leadership) {
-    // Deep links like /worker/settings redirect to /worker rather than
+  // Settings is exempt (2026-08-30): it is the one screen that can repair an
+  // incomplete profile — trades, radius, location, and the push toggle all
+  // live there — so gating it behind the same registration wall it exists to
+  // fix locked a worker who, say, saved zero trades out of the only page that
+  // could add one. `noMarketplaceProfile` inside Settings.jsx already renders
+  // a reduced, identity-plus-alerts view when `provider` is entirely absent
+  // (rather than merely incomplete), so this exemption does not need to
+  // distinguish the two cases itself.
+  const normalizedPath = location.pathname.replace(/\/+$/, '');
+  const onSettings = normalizedPath === `${AUTH_ROUTES.WORKER_DASHBOARD}/settings`;
+
+  if (!profileComplete && !leadership && !onSettings) {
+    // Deep links like /worker/calendar redirect to /worker rather than
     // rendering the form under a sub-path, so the URL always matches what is
     // on screen.
-    if (location.pathname.replace(/\/+$/, '') !== AUTH_ROUTES.WORKER_DASHBOARD) {
+    if (normalizedPath !== AUTH_ROUTES.WORKER_DASHBOARD) {
       return <Navigate to={AUTH_ROUTES.WORKER_DASHBOARD} replace />;
     }
     return (

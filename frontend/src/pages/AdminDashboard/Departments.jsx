@@ -357,9 +357,21 @@ export default function Departments() {
         form.leaders
           .find((leader) => leader.rank === 'manager' && leader.name.trim())
           ?.name.trim() || '';
+      // Same heuristic DepartmentForm uses to require a phone number and show
+      // the security note (isSecurityDepartment there) — recomputed here
+      // because that component only has the form for rendering, and this is
+      // the one place both create and update payloads are assembled. Owner-
+      // approved product ruling: a matching department must actually carry
+      // `kind: 'security'`, or `professional_membership_role(null)` resolves
+      // every member to 'worker' and none of the security-only screens ever
+      // see them.
+      const isSecurityDepartment =
+        form.name.toLowerCase().includes('security') ||
+        form.categories.some((entry) => entry.name === 'Security');
       const departmentData = {
         ...form,
         head: invitedManagerName || form.head || '',
+        kind: isSecurityDepartment ? 'security' : null,
         // The department wire takes category *names*: `upsert_category_names`
         // creates any it has not seen in this community, so choosing a new one
         // and saving is what creates it. There is no create-category endpoint
