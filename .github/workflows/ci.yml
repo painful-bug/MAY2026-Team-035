@@ -9,12 +9,14 @@ jobs:
   fast:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.32"
       - run: npm ci
       - run: uv sync --project backend --extra dev --locked
       - run: npm run test -w frontend
@@ -30,12 +32,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.32"
       - run: npm ci
       - run: uv sync --project backend --extra dev --locked
       - name: Apply every migration to local Supabase
@@ -67,7 +71,22 @@ jobs:
           FRONTEND_BASE_URL: http://127.0.0.1:4173
           RUN_FULL_STACK_E2E: "1"
         run: |
-          (cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000) &
+          # uv sync already installed the environment. A long-lived uv run
+          # would hold the cache lock during setup-uv's post-job pruning.
+          (cd backend && exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 10) &
+          backend_pid=$!
+          cleanup_backend() {
+            kill "$backend_pid" 2>/dev/null || true
+            for attempt in {1..15}; do
+              kill -0 "$backend_pid" 2>/dev/null || break
+              sleep 1
+            done
+            if kill -0 "$backend_pid" 2>/dev/null; then
+              kill -KILL "$backend_pid" 2>/dev/null || true
+            fi
+            wait "$backend_pid" 2>/dev/null || true
+          }
+          trap cleanup_backend EXIT
           for attempt in {1..30}; do
             curl --fail --silent http://127.0.0.1:8000/health && break
             sleep 1
@@ -75,7 +94,7 @@ jobs:
           curl --fail --silent http://127.0.0.1:8000/health
           npm run test:e2e -w frontend
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-failures
           path: |
