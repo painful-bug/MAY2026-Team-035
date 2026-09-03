@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import { Building2, LogOut, MapPin } from 'lucide-react';
 import CommunitySearch from '../../components/common/CommunitySearch';
 import { workerApi } from '../../features/worker/workerApi';
@@ -97,11 +98,16 @@ function Rosters() {
   // alone this panel told them no society employs them, which is false. The
   // snapshot carries the same roster rows and does not require registration, so
   // it is the source when there is no provider profile.
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
   const rosters = useQuery({
     queryKey: ['worker-communities'],
     queryFn: workerApi.myCommunities,
+    ...QUERY_POLICIES.list,
     enabled: snapshot.isSuccess && !noMarketplaceProfile,
   });
   const rows = noMarketplaceProfile
@@ -175,9 +181,22 @@ function Find({ onApplied }) {
   const results = useQuery({
     queryKey: ['worker-community-search', debouncedQuery],
     queryFn: () => workerApi.searchCommunities({ query: debouncedQuery }),
+    // A typeahead over a geo/community lookup: cache the catalog-like answer
+    // for a while, and keep the previous keystroke's results on screen
+    // (rather than flashing empty) while the next one resolves.
+    ...QUERY_POLICIES.reference,
+    ...PAGINATED,
   });
-  const profile = useQuery({ queryKey: ['worker-profile'], queryFn: workerApi.profile });
-  const applications = useQuery({ queryKey: ['worker-applications'], queryFn: workerApi.myApplications });
+  const profile = useQuery({
+    queryKey: ['worker-profile'],
+    queryFn: workerApi.profile,
+    ...QUERY_POLICIES.detail,
+  });
+  const applications = useQuery({
+    queryKey: ['worker-applications'],
+    queryFn: workerApi.myApplications,
+    ...QUERY_POLICIES.list,
+  });
   const openDepartments = new Set(
     (applications.data ?? []).filter((row) => row.status === 'pending').map((row) => row.departmentId),
   );
@@ -256,7 +275,11 @@ function Applications() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const refreshSession = useAuthStore((state) => state.refreshSession);
-  const applications = useQuery({ queryKey: ['worker-applications'], queryFn: workerApi.myApplications });
+  const applications = useQuery({
+    queryKey: ['worker-applications'],
+    queryFn: workerApi.myApplications,
+    ...QUERY_POLICIES.list,
+  });
   const withdraw = useMutation({
     mutationFn: (id) => workerApi.withdrawApplication(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['worker-applications'] }),

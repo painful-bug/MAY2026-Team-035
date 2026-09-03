@@ -34,6 +34,7 @@ request-specific credentials.
 
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 
 import httpx
@@ -41,18 +42,80 @@ import httpx
 from app.config import get_settings
 from supabase import Client, ClientOptions, create_client
 
+# Methods safe to replay after the request may already have reached the server.
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# Transport-level failures worth one more attempt. On Windows a stale
+# keep-alive connection to Supabase intermittently dies with
+# ``httpx.ReadError: [WinError 10035]`` (WSAEWOULDBLOCK); an immediate retry on
+# a fresh connection succeeds. Server disconnects on reused connections surface
+# as ``RemoteProtocolError`` and are the same class of transient failure.
+_RETRYABLE_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+)
+
+
+class _TransientRetryTransport(httpx.HTTPTransport):
+    """HTTPTransport that retries transient socket failures a bounded number of times.
+
+    Connection-establishment failures are retried for every method because the
+    request never reached the server. Read/write failures are retried only for
+    idempotent methods: a POST (e.g. a PostgREST RPC) whose response read fails
+    may already have executed server-side, so replaying it could double-apply.
+    """
+
+    def __init__(self, *args, transient_retries: int = 2, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._transient_retries = transient_retries
+
+    def _should_retry(self, request: httpx.Request, exc: Exception) -> bool:
+        if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+            return True
+        return request.method.upper() in _IDEMPOTENT_METHODS
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        for attempt in range(self._transient_retries + 1):
+            try:
+                return super().handle_request(request)
+            except _RETRYABLE_ERRORS as exc:
+                if attempt >= self._transient_retries or not self._should_retry(
+                    request, exc
+                ):
+                    raise
+                # The failed keep-alive connection is discarded by httpcore; a
+                # short pause lets the pool settle before the fresh attempt.
+                time.sleep(0.05 * (attempt + 1))
+        raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _build_http_client() -> httpx.Client:
+    """Create an httpx session on the retrying HTTP/1.1 transport.
+
+    HTTP/2 stays disabled: multiplexed streams against Supabase were resetting
+    in production, and pinning HTTP/1.1 is what fixed it. Every other setting is
+    left at the httpx default; the only behavior added here is the bounded
+    retry of transient socket failures.
+    """
+    return httpx.Client(transport=_TransientRetryTransport(http2=False))
+
 
 @lru_cache
 def _http_client() -> httpx.Client:
     """One shared HTTP/1.1 transport for the synchronous Supabase clients."""
-    return httpx.Client(http2=False)
+    return _build_http_client()
 
 
 def _build_client(key: str) -> Client:
     """Create a Supabase client for ``key`` with server-side options.
 
     Auto-refresh and session persistence are disabled: the backend is stateless
-    and holds no long-lived browser-style session of its own.
+    and holds no long-lived browser-style session of its own. A custom httpx
+    session is injected so transient Windows socket failures (WSAEWOULDBLOCK
+    surfacing as ``httpx.ReadError``) are retried instead of becoming 500s.
     """
     settings = get_settings()
     options = ClientOptions(

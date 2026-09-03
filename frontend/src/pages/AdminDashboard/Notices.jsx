@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
+// The post-notice modal renders through a portal to document.body. In place,
+// it sat inside AdminLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever, so
+// `z-[999]` was trapped at <main>'s own level and the sticky header's `z-40`
+// painted above it. Same fix as the departments modals (Departments.jsx).
+import { createPortal } from 'react-dom';
 import { useApp } from '../../store/useApp';
 import { Megaphone, Plus, Calendar } from 'lucide-react';
 import { api } from '../../lib/api/client';
 
 export default function Notices() {
-  const { notices, showToast } = useApp();
+  const notices = useApp((state) => state.notices);
+  const showToast = useApp((state) => state.showToast);
   const [modalOpen, setModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -101,8 +108,13 @@ export default function Notices() {
       </div>
 
       {/* Post Notice Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+      {modalOpen && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Post new notice"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4"
+        >
           <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-6 overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 animate-slide-up">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-extrabold text-slate-900">Post New Notice</h3>
@@ -181,7 +193,8 @@ export default function Notices() {
               </button>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

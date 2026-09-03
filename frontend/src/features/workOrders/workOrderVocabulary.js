@@ -39,6 +39,28 @@ export const WORK_ORDER_STATUSES = [
   'cancelled',
 ];
 
+/**
+ * The five states in which a job is still *live* — the complement of the three
+ * terminal ones (`completed`, `failed`, `cancelled`).
+ *
+ * This is the same set the backend has always called live:
+ * `work_orders_service._OPEN_STATES` and the `get_schedule_request` resolver.
+ * It is exported because one live job per complaint is now a **rule**, not a
+ * convention: `backend/supabase/migrations/20260827210000_one_live_job_per_complaint.sql`
+ * inlines this exact list in a guard on `create_work_order` and answers a
+ * second raise with `HB409`. So the screen that draws the raise form and the
+ * function that would refuse it must be reading the same five words — a
+ * narrower list here draws a form the database will reject, and a wider one
+ * hides a form that would have worked.
+ */
+export const LIVE_WORK_ORDER_STATUSES = [
+  'draft',
+  'awaiting_resident',
+  'offered',
+  'scheduled',
+  'in_progress',
+];
+
 // Closed to an *edit* of what the job is, and to calling it off. A job that has
 // already been called off cannot be called off again.
 const CLOSED_TO_EDIT = ['completed', 'cancelled'];

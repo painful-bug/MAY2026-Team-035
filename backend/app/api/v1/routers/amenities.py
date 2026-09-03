@@ -31,7 +31,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, Path, Query, status
 
 from app.api.admin_deps import require_admin, require_csrf_unsafe
-from app.api.deps import get_current_user, get_request_client
+from app.api.deps import get_active_membership, get_request_client
+from app.domain.schemas import MembershipContext
 from app.domain.amenity_schemas import (
     AddChargeRequest,
     AdminBookingRequest,
@@ -69,7 +70,7 @@ _admin = Depends(require_admin)
     summary="List an amenity's bookings",
     dependencies=[_admin],
 )
-async def list_amenity_bookings(
+def list_amenity_bookings(
     amenity_id: str = Path(...),
     booking_date: date | None = Query(None, alias="date"),
     date_from: date | None = Query(None, alias="from"),
@@ -84,7 +85,7 @@ async def list_amenity_bookings(
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[BookingSummary]:
     """The day timeline.
@@ -99,7 +100,7 @@ async def list_amenity_bookings(
     """
     return amenities_service.list_bookings(
         client,
-        principal.user_id,
+        membership.community_id,
         amenity_id=amenity_id,
         booking_date=booking_date,
         date_from=date_from,
@@ -117,10 +118,10 @@ async def list_amenity_bookings(
     summary="Create a booking on a resident's behalf",
     dependencies=[_admin],
 )
-async def create_admin_booking(
+def create_admin_booking(
     body: AdminBookingRequest,
     amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> BookingSummary:
     """The admin's Create Booking modal. Confirmed on creation, never pending.
@@ -134,7 +135,7 @@ async def create_admin_booking(
     does not waive the deposit, which is coming back.
     """
     return amenities_service.create_admin_booking(
-        client, principal.user_id, amenity_id, body
+        client, membership.community_id, amenity_id, body
     )
 
 
@@ -144,10 +145,10 @@ async def create_admin_booking(
     status_code=status.HTTP_201_CREATED,
     summary="Request a booking (resident)",
 )
-async def request_booking(
+def request_booking(
     body: ResidentBookingRequest,
     amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[BookingSummary]:
     """A resident asking for one or more days of the same slot.
@@ -166,7 +167,7 @@ async def request_booking(
     is how a resident is surprised by the other two.
     """
     return amenities_service.request_booking(
-        client, principal.user_id, amenity_id, body
+        client, membership.community_id, amenity_id, body
     )
 
 
@@ -177,10 +178,10 @@ async def request_booking(
     summary="Block a slot administratively",
     dependencies=[_admin],
 )
-async def block_slot(
+def block_slot(
     body: BlockSlotRequest,
     amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> BookingSummary:
     """Reserve a slot for maintenance or an association event.
@@ -188,7 +189,7 @@ async def block_slot(
     Always exclusive, whatever the amenity's booking mode says: a hall closed for
     repairs is closed to everybody. Carries no flat and no charges.
     """
-    return amenities_service.block_slot(client, principal.user_id, amenity_id, body)
+    return amenities_service.block_slot(client, membership.community_id, amenity_id, body)
 
 
 @router.get(
@@ -197,7 +198,7 @@ async def block_slot(
     summary="List booking requests awaiting a decision",
     dependencies=[_admin],
 )
-async def list_approvals(
+def list_approvals(
     amenity_id: str = Path(...),
     status_filter: str = Query(
         "pending",
@@ -206,7 +207,7 @@ async def list_approvals(
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[ApprovalRequest]:
     """The approvals tab -- **one row per request, not per day**.
@@ -223,7 +224,7 @@ async def list_approvals(
     """
     return amenities_service.list_approvals(
         client,
-        principal.user_id,
+        membership.community_id,
         amenity_id,
         status=status_filter,
         page=page,
@@ -237,9 +238,9 @@ async def list_approvals(
     summary="Approve a booking request",
     dependencies=[_admin],
 )
-async def approve_booking(
+def approve_booking(
     series_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[BookingSummary]:
     """Approve a whole request -- every day of it.
@@ -248,7 +249,7 @@ async def approve_booking(
     not resurrect a day somebody said they no longer wanted. Returns 409 if the
     request has already been decided.
     """
-    return amenities_service.approve_booking(client, principal.user_id, series_id)
+    return amenities_service.approve_booking(client, membership.community_id, series_id)
 
 
 @router.post(
@@ -257,10 +258,10 @@ async def approve_booking(
     summary="Reject a booking request",
     dependencies=[_admin],
 )
-async def reject_booking(
+def reject_booking(
     body: RejectBookingRequest,
     series_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[BookingSummary]:
     """Reject a whole request and release its slots.
@@ -270,7 +271,7 @@ async def reject_booking(
     refuses it as well. Returns 409 if the request has already been decided.
     """
     return amenities_service.reject_booking(
-        client, principal.user_id, series_id, body
+        client, membership.community_id, series_id, body
     )
 
 
@@ -279,7 +280,7 @@ async def reject_booking(
     response_model=MessageResult,
     summary="Cancel selected booking days",
 )
-async def cancel_bookings(
+def cancel_bookings(
     body: CancelBookingRequest,
     client: Client = Depends(get_request_client),
 ) -> MessageResult:
@@ -308,10 +309,10 @@ async def cancel_bookings(
     summary="Force-cancel a booking",
     dependencies=[_admin],
 )
-async def force_cancel_booking(
+def force_cancel_booking(
     body: ForceCancelRequest,
     occurrence_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> BookingSummary:
     """Override a booking the resident still wants.
@@ -322,7 +323,7 @@ async def force_cancel_booking(
     approved or confirmed.
     """
     return amenities_service.force_cancel_booking(
-        client, principal.user_id, occurrence_id, body
+        client, membership.community_id, occurrence_id, body
     )
 
 
@@ -337,7 +338,7 @@ async def force_cancel_booking(
     summary="List an amenity's financial transactions",
     dependencies=[_admin],
 )
-async def list_ledger(
+def list_ledger(
     amenity_id: str = Path(...),
     payment_status: str | None = Query(
         None,
@@ -350,7 +351,7 @@ async def list_ledger(
     search: str | None = Query(None, max_length=100, alias="q"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> Page[LedgerTransaction]:
     """The ledger tab.
@@ -366,7 +367,7 @@ async def list_ledger(
     """
     return amenities_service.list_ledger(
         client,
-        principal.user_id,
+        membership.community_id,
         amenity_id=amenity_id,
         payment_status=payment_status,
         search=search,
@@ -381,9 +382,9 @@ async def list_ledger(
     summary="Amenity ledger totals",
     dependencies=[_admin],
 )
-async def get_ledger_summary(
+def get_ledger_summary(
     amenity_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> LedgerSummary:
     """The eight cards above the ledger table.
@@ -393,7 +394,7 @@ async def get_ledger_summary(
     zeros with HTTP 200, never a 404.
     """
     return amenities_service.get_ledger_summary(
-        client, principal.user_id, amenity_id
+        client, membership.community_id, amenity_id
     )
 
 
@@ -404,10 +405,10 @@ async def get_ledger_summary(
     summary="Record a payment against a booking",
     dependencies=[_admin],
 )
-async def record_payment(
+def record_payment(
     body: RecordAmenityPaymentRequest,
     occurrence_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> LedgerTransaction:
     """Record money received against one charge -- the booking fee or the deposit.
@@ -417,7 +418,7 @@ async def record_payment(
     rather than being clamped, because clamping accepts money and then loses it.
     """
     return amenities_service.record_payment(
-        client, principal.user_id, occurrence_id, body
+        client, membership.community_id, occurrence_id, body
     )
 
 
@@ -428,10 +429,10 @@ async def record_payment(
     summary="Refund a booking deposit",
     dependencies=[_admin],
 )
-async def refund_deposit(
+def refund_deposit(
     body: RefundDepositRequest,
     occurrence_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> LedgerTransaction:
     """Return what is left of the deposit.
@@ -442,7 +443,7 @@ async def refund_deposit(
     while the booking is still ahead of it, or once nothing is left.
     """
     return amenities_service.refund_deposit(
-        client, principal.user_id, occurrence_id, body
+        client, membership.community_id, occurrence_id, body
     )
 
 
@@ -453,10 +454,10 @@ async def refund_deposit(
     summary="Deduct damage from a booking deposit",
     dependencies=[_admin],
 )
-async def deduct_damage(
+def deduct_damage(
     body: DamageDeductionRequest,
     occurrence_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> LedgerTransaction:
     """Take damage out of the held deposit.
@@ -467,7 +468,7 @@ async def deduct_damage(
     hiding the error. Returns 409 instead. A reason is required.
     """
     return amenities_service.deduct_damage(
-        client, principal.user_id, occurrence_id, body
+        client, membership.community_id, occurrence_id, body
     )
 
 
@@ -478,10 +479,10 @@ async def deduct_damage(
     summary="Add a charge to a booking",
     dependencies=[_admin],
 )
-async def add_charge(
+def add_charge(
     body: AddChargeRequest,
     occurrence_id: str = Path(...),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> LedgerTransaction:
     """Bill something after the fact -- housekeeping, or a late-cancellation fee.
@@ -491,7 +492,7 @@ async def add_charge(
     on Tuesday is two things, not the later one.
     """
     return amenities_service.add_charge(
-        client, principal.user_id, occurrence_id, body
+        client, membership.community_id, occurrence_id, body
     )
 
 
@@ -506,14 +507,14 @@ async def add_charge(
     summary="Amenity activity report",
     dependencies=[_admin],
 )
-async def get_report(
+def get_report(
     start_date: date | None = Query(None, alias="startDate"),
     end_date: date | None = Query(None, alias="endDate"),
     amenity_id: str | None = Query(None, alias="amenityId"),
     booking_status: str | None = Query(None, alias="bookingStatus"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> AmenityReport:
     """The reports page.
@@ -528,7 +529,7 @@ async def get_report(
     """
     return amenities_service.build_report(
         client,
-        principal.user_id,
+        membership.community_id,
         start_date=start_date,
         end_date=end_date,
         amenity_id=amenity_id,

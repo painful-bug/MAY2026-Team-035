@@ -82,6 +82,19 @@ function renderCard() {
 
 const picker = () => document.querySelectorAll('input[type="datetime-local"]');
 
+// The card's inputs carry `min={localNow()}`, so a calendar-fixed literal here
+// silently blocks submission once the real clock passes it. Type a slot a few
+// days out from whenever the suite runs instead.
+const localSlot = (daysAhead, hour) => {
+  const d = new Date();
+  d.setDate(d.getDate() + daysAhead);
+  d.setHours(hour, 0, 0, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const SLOT_START = localSlot(3, 10);
+const SLOT_END = localSlot(3, 11);
+
 beforeEach(() => {
   mocks.api.mockReset();
 });
@@ -114,8 +127,8 @@ describe('pick-mode — the resident names the hour', () => {
     renderCard();
 
     await screen.findByText('Pick a time for this visit');
-    await user.type(screen.getByLabelText('Starts'), '2026-08-25T10:00');
-    await user.type(screen.getByLabelText('Ends'), '2026-08-25T11:00');
+    await user.type(screen.getByLabelText('Starts'), SLOT_START);
+    await user.type(screen.getByLabelText('Ends'), SLOT_END);
     await user.click(screen.getByRole('button', { name: 'Set this time' }));
 
     await waitFor(() =>
@@ -125,8 +138,8 @@ describe('pick-mode — the resident names the hour', () => {
         // the browser's own zone on it rather than handing the server a naive
         // literal to guess at.
         body: JSON.stringify({
-          startAt: new Date('2026-08-25T10:00').toISOString(),
-          endAt: new Date('2026-08-25T11:00').toISOString(),
+          startAt: new Date(SLOT_START).toISOString(),
+          endAt: new Date(SLOT_END).toISOString(),
         }),
       }));
   });
@@ -137,8 +150,8 @@ describe('pick-mode — the resident names the hour', () => {
     renderCard();
 
     await screen.findByText('Pick a time for this visit');
-    await user.type(screen.getByLabelText('Starts'), '2026-08-25T11:00');
-    await user.type(screen.getByLabelText('Ends'), '2026-08-25T10:00');
+    await user.type(screen.getByLabelText('Starts'), SLOT_END);
+    await user.type(screen.getByLabelText('Ends'), SLOT_START);
 
     expect(screen.getByText('The visit has to end after it starts.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Set this time' })).toBeDisabled();
@@ -163,8 +176,8 @@ describe('pick-mode — the resident names the hour', () => {
     renderCard();
 
     await screen.findByText('Pick a time for this visit');
-    await user.type(screen.getByLabelText('Starts'), '2026-08-25T10:00');
-    await user.type(screen.getByLabelText('Ends'), '2026-08-25T11:00');
+    await user.type(screen.getByLabelText('Starts'), SLOT_START);
+    await user.type(screen.getByLabelText('Ends'), SLOT_END);
     await user.click(screen.getByRole('button', { name: 'Set this time' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Inbox } from 'lucide-react';
 
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { complaintRoutingApi } from '../../features/complaints/routingApi';
 import { Empty, Pill } from '../../features/security/components/Primitives';
 
@@ -43,11 +44,13 @@ export default function ComplaintTriage() {
   const complaints = useQuery({
     queryKey: ['unassigned-complaints'],
     queryFn: complaintRoutingApi.unassigned,
+    ...QUERY_POLICIES.list,
   });
 
   const departments = useQuery({
     queryKey: ['department-options'],
     queryFn: complaintRoutingApi.departmentOptions,
+    ...QUERY_POLICIES.reference,
   });
 
   const allot = useMutation({

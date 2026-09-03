@@ -14,6 +14,7 @@ who leaves does not take the flat's arrears with them.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 
 from app.core.exceptions import ValidationError
@@ -36,7 +37,7 @@ from app.domain.vocabularies import (
     payment_method_to_wire,
 )
 from app.repositories import money_repository as repo
-from app.repositories import tenancy_repository as tenancy_repo
+from app.services import settings_service
 from supabase import Client
 
 _VALID_INVOICE_TYPES = ("maintenance", "amenity", "penalty", "misc")
@@ -142,22 +143,31 @@ def _to_detail(row: dict, lines: list[dict], payments: list[dict]) -> InvoiceDet
     )
 
 
-def get_invoice(client: Client, user_id: str, invoice_id: str) -> InvoiceDetail:
-    """One invoice with its line items and every payment against it."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
-    row = repo.get_invoice(client, community_id, invoice_id)
-    lines = repo.list_line_items(client, community_id, invoice_id)
-    payments, _ = repo.list_payments(
-        client, community_id, invoice_id=invoice_id, limit=100
-    )
+def get_invoice(client: Client, community_id: str, invoice_id: str) -> InvoiceDetail:
+    """One invoice with its line items and every payment against it.
+
+    The three reads are independent, so they run concurrently (the pattern
+    ``dashboard_service.snapshot`` set). ``row_f.result()`` is taken first: a
+    missing invoice raises its ``NotFoundError`` from there, exactly as the
+    sequential version did -- the sibling reads just return empty lists that
+    are then discarded.
+    """
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="invoice") as pool:
+        row_f = pool.submit(repo.get_invoice, client, community_id, invoice_id)
+        lines_f = pool.submit(repo.list_line_items, client, community_id, invoice_id)
+        payments_f = pool.submit(
+            repo.list_payments, client, community_id, invoice_id=invoice_id, limit=100
+        )
+        row = row_f.result()
+        lines = lines_f.result()
+        payments, _ = payments_f.result()
     return _to_detail(row, lines, payments)
 
 
 def create_invoice(
-    client: Client, user_id: str, body: CreateInvoiceRequest
+    client: Client, community_id: str, body: CreateInvoiceRequest
 ) -> InvoiceDetail:
     """Issue one invoice against one flat, with its lines, atomically."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
 
     if body.invoice_type not in _VALID_INVOICE_TYPES:
         raise ValidationError(
@@ -172,7 +182,14 @@ def create_invoice(
     payload: dict = {
         "title": body.title.strip(),
         "invoice_type": body.invoice_type,
-        "lines": [
+        # `line_items`, not `lines`: `issue_invoice` reads `p_payload ->
+        # 'line_items'` and refuses with "An invoice needs at least one line
+        # item." when that key is absent (`0021_money_on_baseline.sql`). Under
+        # the old `lines` spelling every create failed there -- the request
+        # carried its lines and the RPC could not see them (issue #54). The key
+        # name is a contract with the RPC and is pinned in
+        # `tests/test_money_mapping.py` against the migration's own text.
+        "line_items": [
             {
                 "description": line.description.strip(),
                 "quantity": line.quantity,
@@ -202,11 +219,11 @@ def create_invoice(
         payload["notes"] = body.notes
 
     invoice_id = repo.issue_invoice(client, community_id, payload)
-    return get_invoice(client, user_id, invoice_id)
+    return get_invoice(client, community_id, invoice_id)
 
 
 def record_payment(
-    client: Client, user_id: str, invoice_id: str, body: RecordPaymentRequest
+    client: Client, community_id: str, invoice_id: str, body: RecordPaymentRequest
 ) -> InvoiceDetail:
     """Record money received and return the invoice as it now stands.
 
@@ -214,8 +231,6 @@ def record_payment(
     question is always "is it settled now" -- and answering it here saves the
     screen a second request to find out.
     """
-    tenancy_repo.get_caller_community_id(client, user_id)
-
     method = payment_method_to_storage(body.method)
     if method is None:
         raise ValidationError(
@@ -235,17 +250,16 @@ def record_payment(
         payload["notes"] = body.notes
 
     repo.record_payment(client, invoice_id, payload)
-    return get_invoice(client, user_id, invoice_id)
+    return get_invoice(client, community_id, invoice_id)
 
 
-def get_billing_settings(client: Client, user_id: str) -> BillingSettings:
+def get_billing_settings(client: Client, community_id: str) -> BillingSettings:
     """The community's billing configuration.
 
     Reports the defaults for a community that has never saved any, rather than
     404ing -- the row is created lazily on first write, and a screen asking what
     the settings are should not have to know that.
     """
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
     row = repo.fetch_billing_settings(client, community_id)
     if row is None:
         return BillingSettings(
@@ -270,10 +284,9 @@ def get_billing_settings(client: Client, user_id: str) -> BillingSettings:
 
 
 def update_billing_settings(
-    client: Client, user_id: str, body: UpdateBillingSettingsRequest
+    client: Client, community_id: str, body: UpdateBillingSettingsRequest
 ) -> BillingSettings:
     """Patch the billing configuration. Omitted fields are left unchanged."""
-    community_id = tenancy_repo.get_caller_community_id(client, user_id)
 
     supplied = body.model_dump(exclude_unset=True)
     patch: dict = {}
@@ -314,7 +327,14 @@ def update_billing_settings(
 
     if patch:
         repo.update_billing_settings(client, community_id, patch)
-    return get_billing_settings(client, user_id)
+        # `community_settings_overview` -- and therefore
+        # `settings_service.get_settings_snapshot`'s cache -- carries these
+        # same columns (auto-billing, late fee, default maintenance amount).
+        # This is the only writer of them; without this the settings
+        # snapshot would show the old billing toggles for up to the cache's
+        # TTL after this endpoint, not just this one, returned the new ones.
+        settings_service.invalidate_settings_cache(community_id)
+    return get_billing_settings(client, community_id)
 
 
 def _to_settings(row: dict) -> BillingSettings:

@@ -4,7 +4,7 @@ import { useApp } from '../../store/useApp';
 import { Building, User, Mail, Phone, Lock, ClipboardCheck, ArrowLeft, ArrowRight } from 'lucide-react';
 
 export default function SignupPage() {
-  const { addPendingRequest } = useApp();
+  const addPendingRequest = useApp((state) => state.addPendingRequest);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');

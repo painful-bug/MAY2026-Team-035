@@ -1,5 +1,12 @@
 import { useState } from 'react';
+// The sheet renders through a portal to document.body, like every other modal
+// in the repo (see AdminDashboard/Departments.jsx). WorkerLayout's <main>
+// carries no animation today, so this overlay is not trapped the way the
+// admin and resident ones were — the portal is what keeps that true if
+// anyone ever animates the layout.
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { MapPin, Phone, User, X } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
@@ -28,6 +35,7 @@ export default function JobDetailModal({ workOrderId, onClose }) {
   const job = useQuery({
     queryKey: ['worker-job', workOrderId],
     queryFn: () => workerApi.job(workOrderId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(workOrderId),
   });
 
@@ -75,8 +83,13 @@ export default function JobDetailModal({ workOrderId, onClose }) {
           ? ['start', 'unable']
           : [];
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm sm:items-center sm:p-6">
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={data?.complaintTitle || data?.skillName || 'Job details'}
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+    >
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white sm:rounded-3xl">
         <div className="sticky top-0 flex items-start justify-between gap-3 border-b border-slate-100 bg-white px-5 py-4">
           <div className="min-w-0">
@@ -212,6 +225,7 @@ export default function JobDetailModal({ workOrderId, onClose }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -19,15 +19,23 @@ def test_api_005_resident_creates_access_request(
         "requested_unit_id": "unit-id",
         "requested_relationship": "tenant",
         "phone": "+919876543210",
+        "requested_building_text": "C",
+        "requested_unit_text": "505",
     }
     expected_output = {
         "status_code": 201,
         "body": {
             "id": "request-id",
-            "community": {"id": "community-id", "name": "Palm Residency"},
+            "community": {
+                "id": "community-id",
+                "name": "Palm Residency",
+                "community_type": "apartment",
+            },
             "status": "pending",
             "requested_relationship": "tenant",
             "requested_unit_id": "unit-id",
+            "requested_building_text": "C",
+            "requested_unit_text": "505",
             "applicant_name": "Test Resident",
             "applicant_email": "resident@example.com",
             "applicant_phone_e164": "+919876543210",
@@ -46,10 +54,13 @@ def test_api_005_resident_creates_access_request(
             community=AccessRequestCommunity(
                 id="community-id",
                 name="Palm Residency",
+                community_type="apartment",
             ),
             status="pending",
             requested_relationship="tenant",
             requested_unit_id="unit-id",
+            requested_building_text="C",
+            requested_unit_text="505",
             applicant_name="Test Resident",
             applicant_email="resident@example.com",
             applicant_phone_e164="+919876543210",
@@ -80,13 +91,19 @@ def test_api_006_admin_approves_access_request(
     from app.api.v1.routers import access_requests as access_router
 
     endpoint = "POST /api/v1/admin/access-requests/request-id/approve"
-    input_data = {"unit_id": "unit-id", "relationship": "tenant"}
+    input_data = {
+        "unit_id": "unit-id",
+        "relationship": "tenant",
+        "unit_code": "C-505",
+        "building_code": "C",
+    }
     expected_output = {
         "status_code": 200,
         "body": {
             "request_id": "request-id",
             "status": "approved",
             "membership_id": "resident-membership-id",
+            "unit_id": "unit-id",
         },
     }
     captured_input: dict[str, object] = {}
@@ -328,3 +345,164 @@ def test_api_260_a_registered_professional_cannot_file_a_join_request(
     assert "separate account" in body["message"]
     # Refused before the request row is even considered.
     assert "access_requests" not in client.seen
+
+
+# ---------------------------------------------------------------------------
+# Residence claim on the join flow (2026-08-27 rulings)
+#
+# Approval now requires a unit: `unit_id`, or a tower/flat text pair the RPC
+# finds-or-creates. The service refuses an empty approval before the RPC is
+# ever called, and canonicalises the pair with `normalize_unit_code` so the
+# documented C-C-505 double-prefix hazard cannot reach the database.
+# ---------------------------------------------------------------------------
+
+
+def _real_approve_service(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Run the real service.approve against stubs; capture the repo call."""
+    from app.services import access_request_service
+
+    monkeypatch.setattr(access_request_service, "get_service_client", _ServiceClient)
+    monkeypatch.setattr(
+        access_request_service.access_requests_repository,
+        "get",
+        lambda _client, _request_id: {
+            "id": "request-id",
+            "community_id": "community-id",
+        },
+    )
+    captured_input: dict[str, object] = {}
+
+    def approve(_client: object, **kwargs: object) -> dict:
+        captured_input.update(kwargs)
+        return {
+            "request_id": "request-id",
+            "status": "approved",
+            "membership_id": "resident-membership-id",
+            "unit_id": "created-unit-id",
+        }
+
+    monkeypatch.setattr(
+        access_request_service.access_requests_repository, "approve", approve
+    )
+    return captured_input
+
+
+def test_api_261_approving_without_any_unit_is_refused_before_the_rpc(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = "POST /api/v1/admin/access-requests/request-id/approve"
+    input_data: dict[str, object] = {}
+    expected_output = {"status_code": 422, "code": "approval_requires_unit"}
+    captured_input = _real_approve_service(monkeypatch)
+
+    response = admin_api_client.post(
+        "/api/v1/admin/access-requests/request-id/approve",
+        json=input_data,
+        headers=csrf_headers,
+    )
+    actual_output = {
+        "status_code": response.status_code,
+        "code": response.json()["error"]["code"],
+    }
+
+    assert endpoint.endswith("/request-id/approve")
+    assert actual_output == expected_output
+    # The refusal happened in the service, not the database.
+    assert captured_input == {}
+
+
+def test_api_262_blank_unit_text_counts_as_no_unit(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whitespace is not a residence."""
+    captured_input = _real_approve_service(monkeypatch)
+
+    response = admin_api_client.post(
+        "/api/v1/admin/access-requests/request-id/approve",
+        json={"unit_code": "   ", "building_code": "C"},
+        headers=csrf_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "approval_requires_unit"
+    assert captured_input == {}
+
+
+def test_api_263_approval_canonicalises_the_tower_flat_pair(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """('C', 'C-505') reaches the repository as 'C-505', never 'C-C-505'."""
+    endpoint = "POST /api/v1/admin/access-requests/request-id/approve"
+    input_data = {"unit_code": "C-505", "building_code": "C"}
+    expected_output = {
+        "status_code": 200,
+        "body": {
+            "request_id": "request-id",
+            "status": "approved",
+            "membership_id": "resident-membership-id",
+            "unit_id": "created-unit-id",
+        },
+    }
+    captured_input = _real_approve_service(monkeypatch)
+
+    response = admin_api_client.post(
+        "/api/v1/admin/access-requests/request-id/approve",
+        json=input_data,
+        headers=csrf_headers,
+    )
+    actual_output = {"status_code": response.status_code, "body": response.json()}
+
+    assert endpoint.endswith("/request-id/approve")
+    assert actual_output == expected_output
+    assert captured_input == {
+        "request_id": "request-id",
+        "reviewer_profile_id": "admin-profile-id",
+        "unit_id": None,
+        "relationship": None,
+        "unit_code": "C-505",
+        "building_code": "C",
+    }
+
+
+def test_api_264_reject_and_blacklist_answer_with_the_typed_decision_shape(
+    admin_api_client: TestClient,
+    csrf_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All three decisions share one response model; the RPCs that return only
+    `{request_id, status}` still serialise the optional fields as null."""
+    from app.api.v1.routers import access_requests as access_router
+
+    expected_output = {
+        "status_code": 200,
+        "body": {
+            "request_id": "request-id",
+            "status": "rejected",
+            "membership_id": None,
+            "unit_id": None,
+        },
+    }
+
+    for action, status in (("reject", "rejected"), ("blacklist", "blacklisted")):
+        monkeypatch.setattr(
+            access_router.access_request_service,
+            action,
+            lambda _rid, _body, _principal, status=status: {
+                "request_id": "request-id",
+                "status": status,
+            },
+        )
+        response = admin_api_client.post(
+            f"/api/v1/admin/access-requests/request-id/{action}",
+            json={"reason": "Not a resident of this community."},
+            headers=csrf_headers,
+        )
+        expected_output["body"]["status"] = status
+        actual_output = {"status_code": response.status_code, "body": response.json()}
+        assert actual_output == expected_output

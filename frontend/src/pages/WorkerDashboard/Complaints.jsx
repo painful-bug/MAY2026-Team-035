@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 import DepartmentComplaintList from '../../features/complaints/components/DepartmentComplaintList';
 import { PageHeading } from '../../features/security/components/Primitives';
@@ -38,6 +39,7 @@ export default function WorkerComplaints() {
   const snapshot = useQuery({
     queryKey: ['worker-snapshot'],
     queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
   });
 
   // `?complaint=` is on every `notify_complaint_staff` row, and since

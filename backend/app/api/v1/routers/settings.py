@@ -43,7 +43,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.admin_deps import require_admin, require_csrf_unsafe
-from app.api.deps import get_current_user, get_request_client
+from app.api.deps import get_active_membership, get_request_client
+from app.domain.schemas import MembershipContext
 from app.domain.settings_schemas import SettingsSnapshot, UpdateSettingsRequest
 from app.services import settings_service
 from supabase import Client
@@ -59,8 +60,8 @@ _admin = Depends(require_admin)
     summary="The community settings snapshot",
     dependencies=[_admin],
 )
-async def get_settings(
-    principal=Depends(get_current_user),
+def get_settings(
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> SettingsSnapshot:
     """Everything the settings screen needs, in one request.
@@ -69,7 +70,7 @@ async def get_settings(
     values are then defaults rather than choices, and rendering the two the same
     way tells an admin they picked a timezone they have never seen.
     """
-    return settings_service.get_settings_snapshot(client, principal.user_id)
+    return settings_service.get_settings_snapshot(client, membership.community_id)
 
 
 @router.put(
@@ -78,9 +79,9 @@ async def get_settings(
     summary="Patch the community preferences",
     dependencies=[_admin],
 )
-async def update_settings(
+def update_settings(
     body: UpdateSettingsRequest,
-    principal=Depends(get_current_user),
+    membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
 ) -> SettingsSnapshot:
     """Patch the community preferences. Omitted fields are left unchanged.
@@ -88,6 +89,6 @@ async def update_settings(
     ``unitLabelSingular: null`` clears the override and goes back to deriving the
     word from the community type, which is not what omitting the field does.
     """
-    return settings_service.update_settings(client, principal.user_id, body)
+    return settings_service.update_settings(client, membership.community_id, body)
 
 

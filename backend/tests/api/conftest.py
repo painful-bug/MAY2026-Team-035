@@ -55,7 +55,14 @@ def api_client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, N
         "COOKIE_SIGNING_SECRET": "placeholder-cookie-signing-secret-0123456789",
         "AUTH_PRIMARY_METHOD": "google",
         "AUTH_ENABLED_METHODS": "google,email_password",
-        "AUTH_PROVIDER_TIMEOUT_SECONDS": "0.001",
+        # A real budget. This used to be "0.001" so the timeout test could
+        # prove the 503 path, but that put every provider call in the suite
+        # inside a one-millisecond `asyncio.wait_for` -- and the threadpool
+        # handoff alone can take ~5ms under a Windows scheduler quantum, so
+        # any auth test could sporadically 503 in a full-suite run
+        # (test_api_006 was the one observed). The timeout test now pins the
+        # millisecond budget on the cached settings object itself.
+        "AUTH_PROVIDER_TIMEOUT_SECONDS": "10",
         "FRONTEND_BASE_URL": FRONTEND_ORIGIN,
         "CORS_ORIGINS": FRONTEND_ORIGIN,
         "ENV": "testing",

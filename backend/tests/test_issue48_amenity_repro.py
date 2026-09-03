@@ -285,11 +285,6 @@ def _patch_read_back(monkeypatch: pytest.MonkeyPatch) -> None:
     """The money endpoints read the ledger row back after every write; feed
     that read-back a canned row so the write path can be exercised alone."""
     monkeypatch.setattr(
-        amenities_service.tenancy_repo,
-        "get_caller_community_id",
-        lambda client, user_id: "community-1",
-    )
-    monkeypatch.setattr(
         amenities_service.repo,
         "get_ledger_row",
         lambda client, community_id, occurrence_id: _ledger_row(),
@@ -497,11 +492,6 @@ def test_report_filters_send_keys_the_rpc_reads(
         ledger_filters.update(kwargs)
         return [], 0
 
-    monkeypatch.setattr(
-        amenities_service.tenancy_repo,
-        "get_caller_community_id",
-        lambda client, user_id: "community-1",
-    )
     monkeypatch.setattr(amenities_service.repo, "fetch_report_totals", _capture)
     monkeypatch.setattr(amenities_service.repo, "list_ledger", _capture_ledger)
     monkeypatch.setattr(
@@ -624,11 +614,6 @@ def test_report_kpi_keys_cover_what_build_report_reads(
     """
     totals = _KeyRecordingTotals()
 
-    monkeypatch.setattr(
-        amenities_service.tenancy_repo,
-        "get_caller_community_id",
-        lambda client, user_id: "community-1",
-    )
     monkeypatch.setattr(
         amenities_service.repo,
         "fetch_report_totals",
@@ -863,11 +848,6 @@ def _report_with_status(monkeypatch: pytest.MonkeyPatch, status: str | None):
         ledger_filters.update(kwargs)
         return [], 0
 
-    monkeypatch.setattr(
-        amenities_service.tenancy_repo,
-        "get_caller_community_id",
-        lambda client, user_id: "community-1",
-    )
     monkeypatch.setattr(
         amenities_service.repo,
         "fetch_report_totals",

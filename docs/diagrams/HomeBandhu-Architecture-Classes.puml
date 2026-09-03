@@ -36,7 +36,14 @@ package "Browser (React/Vite)\nNo Supabase SDK or provider tokens" #E8F1FF {
   class RegistrationApi <<module>> {
     + searchCommunities(query)
     + createAccessRequest(body)
+    + approveAccessRequest(id, {unit_code, building_code})
+    + adminUnits()
     + createInvitation(body)
+    .. createAccessRequest carries the free-text ..
+    .. residence claim (requested_unit_text, ..
+    .. + requested_building_text for apartments); ..
+    .. adminUnits feeds the approval panel's ..
+    .. matches-existing / will-create indicator ..
   }
   class AmenitiesService <<module>> {
     + listAmenities()
@@ -77,13 +84,17 @@ package "Presentation / API (FastAPI /api/v1)" #F1F5F9 {
     + mine()
     + withdraw()
     + admin_access_requests()
-    + approve()
-    + reject()
-    + blacklist()
+    + approve() : AccessRequestDecisionResponse
+    + reject() : AccessRequestDecisionResponse
+    + blacklist() : AccessRequestDecisionResponse
     .. create() refuses a registered service ..
     .. professional (HBSEP): the separate- ..
     .. account rule looks both ways since ..
     .. 20260812113000 ..
+    .. the three decision verbs answer the ..
+    .. typed {request_id, status, ..
+    .. membership_id?, unit_id?} shape since ..
+    .. 20260828090000, not a raw RPC dict ..
   }
   class InvitationsRouter <<router>> {
     + prepare()
@@ -132,9 +143,15 @@ package "Application services" #FFF3E0 {
     + create()
     + mine()
     + withdraw()
-    + approve()
+    + approve(unit_id?, unit_code?, building_code?, relationship?)
     + reject()
     + blacklist()
+    .. create() stores the applicant's free-text ..
+    .. residence claim; approve() canonicalises ..
+    .. building+unit via normalize_unit_code and ..
+    .. refuses with 422 approval_requires_unit ..
+    .. when no unit resolves (RPC HBUNT is the ..
+    .. backstop; find-or-create at approval) ..
   }
   class InvitationService <<service>> {
     + create_invitation()

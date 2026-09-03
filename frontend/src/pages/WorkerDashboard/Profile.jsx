@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { MapPin, Pencil, Phone } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
@@ -18,11 +19,16 @@ import NoMarketplaceProfile from '../../features/worker/NoMarketplaceProfile';
 // /service-providers/me` would only 404 at them.
 
 export default function WorkerProfile() {
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const noMarketplaceProfile = snapshot.isSuccess && !snapshot.data?.provider;
   const profile = useQuery({
     queryKey: ['worker-profile'],
     queryFn: workerApi.profile,
+    ...QUERY_POLICIES.detail,
     enabled: snapshot.isSuccess && !noMarketplaceProfile,
   });
 

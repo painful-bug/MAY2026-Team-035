@@ -18,6 +18,20 @@ import {
 // field lands in parallel, so `weeklyNew` may be missing entirely — and a
 // missing field, a zero, or garbage all render nothing rather than a fake
 // trend.
+// Snapshot pendingRequests rows are snake_case view rows (applicant_name,
+// requested_unit_code, requested_building_text, requested_unit_text) — the
+// demo-era `req.name` / `req.flat` / `req.tower` keys never existed on them,
+// so this card used to render "Flat undefined • Tower undefined". Prefer the
+// resolved unit code, then the applicant's free-text claim, then a dash.
+function residenceLabel(req) {
+  if (req.requested_unit_code) return req.requested_unit_code;
+  const building = (req.requested_building_text || '').trim();
+  const unit = (req.requested_unit_text || '').trim();
+  if (building && unit) return `Tower ${building} · Flat ${unit}`;
+  if (unit) return unit;
+  return '—';
+}
+
 function TrendChip({ count }) {
   const value = Number(count);
   if (!Number.isFinite(value) || value <= 0) return null;
@@ -29,7 +43,12 @@ function TrendChip({ count }) {
 }
 
 export default function AdminHome() {
-  const { users, pendingRequests, complaints, payments, activities, weeklyNew } = useApp();
+  const users = useApp((state) => state.users);
+  const pendingRequests = useApp((state) => state.pendingRequests);
+  const complaints = useApp((state) => state.complaints);
+  const payments = useApp((state) => state.payments);
+  const activities = useApp((state) => state.activities);
+  const weeklyNew = useApp((state) => state.weeklyNew);
   const navigate = useNavigate();
 
   // Stats Calculations
@@ -165,8 +184,8 @@ export default function AdminHome() {
               {pendingRequests.slice(0, 3).map((req) => (
                 <div key={req.id} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-xs font-bold text-slate-800">{req.name}</p>
-                    <p className="text-[10px] text-slate-450 font-semibold mt-0.5">Flat {req.flat} • Tower {req.tower}</p>
+                    <p className="text-xs font-bold text-slate-800">{req.applicant_name}</p>
+                    <p className="text-[10px] text-slate-450 font-semibold mt-0.5">{residenceLabel(req)}</p>
                   </div>
                   <button
                     onClick={() => navigate('/admin/pending')}

@@ -17,7 +17,503 @@ that overturns something already written says so explicitly, including what it o
 
 ---
 
-## 2026-08-24 (latest, third session) — the branch and main stop disagreeing about how migrations are ordered
+## 2026-08-30 (second session) — issues #53–#55: declared skills count everywhere, invoices can exist, and worker settings stop failing silently
+
+**A department needs a skill if it has declared it, or if a complaint category implies it — the union,
+in every function that asks.** `AUDIT` — issue #55. `20260812090100_skills_and_categories.sql` gave a
+department an explicit way to say what it needs — the `department_skills` table, written through
+`PUT /api/v1/departments/{id}/skills` — and taught exactly **one** reader about it:
+`search_hireable_service_providers`, whose `needed` CTE became the union of the category path with the
+new table (that file's `-- CHANGED` note at line 681, carried forward whole by
+`20260821113000_location_labels.sql` 524-535). Three functions were left gating on the category path
+alone: `invite_service_provider` (`20260811162409` 683-692, `HB409` *"This person does not have a
+required skill."*), `apply_to_department` (`20260811162409` 600-610, `HB403` *"Your skills do not match
+this department."*), and `search_serviceable_communities` (`20260812181443` 40-51, the
+`matching_departments` CTE). The category path runs through `complaint_categories.skill_id`, which
+`link_category_skill` (`0034` 216-233) fills by **exact name match** against the `skills` catalogue. A
+community naming its category "Security" or "Security Management" against catalogue entries *Security
+Guard* and *Gate Officer* derives nothing — no error, no warning at the point of use — and all three
+functions then behaved as though the department needed nothing at all. The reported symptom is a hiring
+flow that contradicts itself inside one screen: the candidate list offers the guard, the invite button
+refuses them, and the guard can neither find the community nor apply to it. The fix is UNION, not
+replacement: a department that has declared no skills keeps hiring off its categories exactly as
+before, so nobody who could be hired yesterday is refused today.
+
+- `backend/supabase/migrations/20260830090000_hiring_skill_union.sql` (new, 469 lines) —
+  `create or replace` on the three, each body carried forward WHOLE from its live definition with only
+  the skill-gate predicate rewritten and marked `-- CHANGED` in place (the `20260812113000`
+  convention). Signatures byte-identical so the ACLs survive; the `revoke`/`grant` pairs are reissued
+  anyway, matching both source files. One refreshed `comment on function`,
+  `notify pgrst, 'reload schema'`, and an in-transaction `do` block that reads each installed
+  definition back by exact signature. **Hand-applied by the owner — not applied by this change.**
+- `docs/plans/MIGRATION_APPLY_RUNBOOK.md` — §35 appended (pre-checks proving the three deployed bodies
+  are category-only, apply step, ledger insert for version `20260830090000`, read-only and functional
+  post-checks, rollback route).
+- `backend/tests/test_hiring_skill_union_migration.py` (new, 23 tests) — the static battery; each body
+  is **diffed line by line** against its source so any change outside the marked skill gate fails.
+- `backend/app/api/v1/routers/department_hiring.py` — the `GET /departments/{id}/candidates` docstring
+  said *"Holds a skill this department's categories need"*; it now describes the union and why the
+  category path can come up empty. `backend/app/api/v1/routers/worker_communities.py` — the same
+  correction on `GET /worker/communities/search`. `backend/app/domain/hiring_schemas.py` —
+  `matchingSkillNames`' attribute comment, stale since 2026-08-12 for the same reason.
+  `frontend/src/pages/AdminDashboard/DepartmentHiring.jsx` — the empty-state copy stops blaming
+  categories alone.
+- `docs/API.md` — §17 changelog row; the union explained under `GET /worker/communities/search`,
+  cross-referenced from `GET /departments/{id}/candidates`, and the "`skillName: null`" paragraph now
+  names `PUT /departments/{id}/skills` as the escape hatch. `docs/openapi.yaml`,
+  `docs/api_yaml_mapper.md` — regenerated. Surface **unchanged at 211 operations across 180 paths**;
+  `api_map_scan.py`'s 10 pre-recorded findings unchanged.
+
+No new operation, no new envelope code, no new SQLSTATE: the two refusal sentences and their
+`HB403`/`HB409` codes are untouched — this change moves when they fire, not what they say.
+
+**`create_invoice` names the RPC payload key `line_items`, not `lines`.** `AUDIT` — issue #54.
+`issue_invoice` (`0021_money_on_baseline.sql`:368) reads `p_payload -> 'line_items'` and raises *"An
+invoice needs at least one line item."* when that key is absent. `money_service.create_invoice` built
+the payload with `"lines"`, so **every** invoice create failed inside the RPC, on a request that
+carried its lines — and the error surfaced as a validation-shaped complaint about a missing line item,
+which is the most misleading form the failure could take. Backend-only; the HTTP request and response
+shapes do not change, so `docs/openapi.yaml` and `docs/api_yaml_mapper.md` are unaffected and were not
+regenerated.
+
+**`invoice_line_items.total_amount` is restored to a generated column on hosted.** `AUDIT` — new
+hand-applied migration `20260830093000_invoice_total_amount_generated.sql`, runbook §36. `0021`
+declares the column `generated always as (round(quantity * unit_amount, 2)) stored`; the hosted
+database carries it as a plain `not null` column (`pg_attribute.attgenerated = ''`). `issue_invoice`'s
+line insert (`0021`:450-462) omits `total_amount` because it does not have to on the declared shape,
+so on the drifted shape every line insert violates the NOT NULL and the whole RPC rolls back —
+**before** the drift-defence `update` at `0021`:466-476 that was written for exactly this shape can
+run. The defence could never fire, because nothing survived to reach it. This is the second half of
+issue #54 and the reason the payload-key fix alone would not have made invoice creation work on
+hosted. *Why a drop-and-re-add rather than an `alter`:* Postgres has no statement that adds
+`GENERATED ALWAYS` to an existing column. *Why no `CASCADE`:* the repository was enumerated first —
+`invoice_overview` (`0021`:216) and `resident_invoice_overview` (`0033`:211) both read
+`invoices.total_amount`, a different table's column, and neither selects from `invoice_line_items` at
+all; the only index on the table is `(invoice_id, sort_order)`. Nothing in this tree depends on the
+column, so a plain `drop column` is correct, and the migration additionally probes `pg_depend` at
+apply time and refuses **by name** if hosted carries a dependent this tree never declared. *Data note
+for the owner:* re-adding the column as generated recomputes it for every existing row; the sibling
+`amount` column is untouched.
+
+**`backend/scripts/seed_test_accounts.py` — confirmed QA accounts without the signup rate limit.**
+`DERIVED` — issue #53. Signing testers up through the product's own flow hits GoTrue's signup rate
+limit and then leaves each account waiting on a confirmation mail that never arrives at `@test.local`.
+`auth.admin.create_user(..., email_confirm=True)` is the admin path: no signup rate limit, and the
+account is born confirmed. Owner-run local tool, never CI and never a route — it authenticates with
+the service-role key from `backend/.env`, so the project that `.env` points at is the project it
+writes to. Creates **auth users only**; profile, community and membership stay with the product's own
+onboarding, because a QA run that skipped them would be testing a shape the app never produces.
+
+**Worker settings hardening + department `kind` (issue #55 A, C-ii, C-iii; `PO` on the `kind`
+ruling).** `frontend/src/lib/push/pushClient.js` now honors its own `{ ok, reason }` contract at every
+call site — `Notification.requestPermission()`, `navigator.serviceWorker.ready` (bounded with a 10s
+timeout; it never rejects on its own), `existing.unsubscribe()`, `pushManager.subscribe()`
+(AbortError on an unreachable push service gets its own reason), the subscribe-POST, and
+`disablePush`'s unregister-POST are all wrapped so neither `enablePush`, `disablePush`, nor
+`pushEnabled` can throw. `frontend/src/pages/WorkerDashboard/Settings.jsx`'s `PushCard` gained
+belt-and-suspenders mount/toggle guards, and its save mutation now calls `setSkills` before
+`updateProfile` (the refusable call first) so a zero-trades refusal no longer reports a profile save
+that actually half-committed; submit is disabled at zero skills.
+`frontend/src/layouts/WorkerLayout.jsx`'s registration-gate redirect now exempts `/worker/settings` —
+the one screen that can repair an incomplete profile — while every other deep link is still redirected
+as before. `frontend/src/pages/AdminDashboard/Departments.jsx` and
+`frontend/src/store/slices/createDepartmentsSlice.js`: the existing `isSecurityDepartment` heuristic
+now actually sets `kind: 'security'` on the create and update payloads (backend
+`department_schemas.py` accepts it on both — verified read-only), so an admin-created security
+department no longer stores `kind = NULL`. Tests: new `frontend/src/lib/push/pushClient.test.js`
+(21 cases) and `frontend/src/store/slices/createDepartmentsSlice.test.js` (4 cases); grafted cases
+into `Settings.test.jsx`, `SettingsLocation.test.jsx`, `WorkerLayout.test.jsx`, `Departments.test.jsx`.
+Docs: `docs/FRONTEND_CHANGES.md` § "Worker settings hardening, and a department's `kind`".
+
+Not acted on, by ruling: leadership ranks still have no editable profile anywhere (`PO` — deferred; a
+consequence of leadership exclusivity, recorded for a later product decision), and an edit that
+renames a department *away* from a security-sounding name does not clear a previously-set `kind`
+(follows the omitted-key-means-leave-alone contract; flagged in `FRONTEND_CHANGES.md`).
+
+---
+
+## 2026-08-30 — Session 76: every remaining in-place overlay escapes the fade-in stacking trap
+
+**Every `fixed inset-0` overlay still rendered in place now renders through `createPortal(document.body)`,
+with `role="dialog"`, `aria-modal="true"` and an accessible name.** `DERIVED` — the sweep the departments
+fix (`frontend/src/pages/AdminDashboard/Departments.jsx`) flagged and did not take. `AdminLayout.jsx:149`
+and `ResidentLayout.jsx:157` still render `<main className="… animate-fade-in">`, and a fill-forwards
+opacity animation keeps `<main>` a stacking context *forever* — so an overlay's `z-[999]` was trapped at
+`<main>`'s own level and the sticky header's `z-40` painted over it. A portal to `document.body` is what
+makes an overlay immune, because no ancestor stacking context is left to capture it.
+
+Recovered from a stranded, never-committed 2026-08-12 worktree and re-targeted onto today's tree by
+content rather than by line offset; several of the files had moved substantially under unrelated
+complaint-engine and identity work in the intervening weeks. Ported: booking `ModalLayout` (which carries
+`BookingFormModal`, `ConfirmationDialog`, `BlockTimeModal` and `TransactionDetailsPanel`), security
+`GateModal` in `Primitives.jsx`, admin `Admins`, `Notices`, `Maintenance` (its shared `Modal` wrapper),
+`DepartmentDetail`'s complaint drawer and `EmployeeDetail`'s approve sheet, resident `Complaints` (drawer
+and raise form), `Payments`, `Visitors`' QR pass, the resident `Amenities` manage-booking-days modal, and
+the worker `JobDetailModal` and `Settings` leave modal. Two overlays needed nothing: `AmenityFormModal`
+and the resident `Amenities` booking modal were fixed independently between 08-12 and now, and were left
+untouched.
+
+`PO` extended the sweep past the trap: **the not-currently-trapped overlays are portalled too.** Only the
+admin and resident `<main>` elements carry `animate-fade-in`; `ManagerLayout`, `SecurityLayout` and
+`WorkerLayout` do not, so the worker and security modals were not trapped today. They render through the
+portal anyway, so a future animation on any layout's `<main>` cannot re-introduce the bug anywhere in the
+repo.
+
+Where an independent `max-h-[calc(100dvh-2rem)] overflow-y-auto` guard had already landed on the inner
+panel — admin `Admins`, `Notices`, `EmployeeDetail`, resident `Payments`, `Visitors`, and worker
+`Settings` — that guard is **kept as it stands**: `dvh` measures the dynamic viewport, so a mobile
+browser's collapsing URL bar cannot push the panel's bottom out of reach, and regressing it to the
+recovered patch's `vh` would have been a step backwards. Only the portal and the dialog semantics were
+added there. Panels with no guard at all gained `max-h-[calc(100vh-2rem)]`/`overflow-y-auto`; tall form
+panels anchor `items-start` with `py-8` and cap at `max-h-[calc(100vh-4rem)]`, because a centered child
+taller than the viewport loses its top edge — its title — rather than its bottom. Close, escape and
+backdrop-click behavior is unchanged everywhere.
+
+**`.animate-fade-in` itself is untouched**, per the standing constraint: other components rely on the
+class and its visuals, and the portals make the modals immune without editing shared CSS.
+
+Frontend only — no backend, migration, API-surface or database change. Twelve new component test files,
+plus two cases each appended to the existing `AdminDashboard/DepartmentDetail.test.jsx` and
+`ResidentDashboard/Amenities.test.jsx` (both already had suites of their own, so the recovered tests were
+grafted onto their existing harnesses rather than replacing them), pin the contract: each asserts
+`parentElement === document.body` alongside the overlay's cover classes and the panel's scroll guard.
+Stale mocks recovered alongside the tests were updated to the current module shapes rather than dropped —
+the selector-based `useApp` facade, `workerApi.snapshot`, and `sessionContext.identity.{full_name,email}`.
+
+---
+
+## 2026-08-29 — hosted-only prototype `approve_access_request` overload dropped
+
+**A stray 4-argument overload of `approve_access_request` -- present on the hosted database but declared
+in no migration in this tree -- is dropped by a new migration.** `AUDIT`: discovered while checking §33's
+pre-check (a) (`docs/plans/MIGRATION_APPLY_RUNBOOK.md`), which expects the overload census on
+`approve_access_request` to name only the function §33 is about to replace. The stray --
+`approve_access_request(p_access_request_id uuid, p_profile_id uuid, p_default_invoice_amount numeric,
+p_due_at timestamptz)`, `SECURITY DEFINER` -- is prototype-era code that approves an access request and, in
+one call, inserts a membership, a residency and an ISSUED `maintenance` invoice numbered
+`'MNT-YYYYMMDD-<request uuid>'`. Grepped for across the repository: nothing references its parameter names
+or its invoice prefix, and the current backend calls the residency-shaped overload (§33's) by its own named
+parameters. Because §33's own drop only targets the residency-shaped 4-arg signature
+(`uuid, uuid, uuid, public.residency_relationship`), the stray survives §33 untouched, and the two together
+make `approve_access_request` ambiguous by signature until this file also applies.
+
+Ships as ONE hand-applied migration, `20260829120000_drop_legacy_approve_overload.sql` (runbook §34,
+appended after §33; the top-of-file pointer paragraph is updated to name §34 as the newest). One statement
+of substance -- `drop function if exists public.approve_access_request(uuid, uuid, numeric, timestamptz);`
+-- idempotent, applicable whether or not §33 has been applied yet, and in either order: it owns the stray
+alone and does not reference §33's 6-arg signature in any `drop` or `create`. After both §33 and §34 are
+applied, §33's own post-check (a) ("exactly one row, pronargs = 6") finally returns exactly what it was
+written to expect.
+
+**API surface unchanged.** No endpoint calls the dropped overload, so `docs/API.md`, `docs/openapi.yaml`
+and `docs/api_yaml_mapper.md` are deliberately NOT regenerated for this entry -- there is nothing in them to
+update, and running their generators over an unrelated change would just be diff noise.
+
+Static coverage: `backend/tests/test_drop_legacy_approve_overload_migration.py`.
+
+---
+
+## 2026-08-29 — residence migration runbook section corrected
+
+**Migration `20260828090000_residence_claim_on_join.sql` header comments updated.** The file's
+header comment and post-checks section stated "Runbook section 31", but the runbook lists this
+migration under section 33. The numbers have been corrected in both locations; no SQL semantics
+changed. `DERIVED` (runbook numbering settled after merge).
+
+---
+
+## 2026-08-28 — the join flow finally asks where you live
+
+**Joining a community now captures a residence, and approving one now requires it.** Live testing
+(2026-08-27) surfaced the product gap: the wire contract for a unit existed end to end
+(`requested_unit_id`, the approve RPC's `p_unit_id`, the `unit_residencies` insert) and both ends
+sent null — the join form had no unit field, the admin's Accept posted `{}` — so every self-service
+approval minted a membership with no residency, `membership.unit` rendered `—` everywhere, and
+`_has_active_residency` 403'd people who genuinely live there. Ships as ONE hand-applied migration,
+`20260828090000_residence_claim_on_join.sql` (runbook §33; §32 is reserved for `live-app-fixes`'s pending one-live-job section), plus backend shapes, the join-form and
+approval UI, and this docs pass. `PO` rulings (2026-08-27, plan-mode Q&A), verbatim:
+
+1. Applicant states their residence as **free text at request time** — Tower/Block + Flat for
+   `apartment`, Villa number for `layout_villa` — stored on `access_requests`. No unit exposure to
+   non-members; the privacy invariant stands.
+2. **Approval requires a unit**: the RPC refuses a resident approval without one, so every approved
+   resident gets a `unit_residencies` row.
+3. Inventory gap solved by **find-or-create at approval**: admin confirms/edits the claimed
+   residence; the RPC matches an existing active unit in that community or creates it (with its
+   building) inline. No unit-management screen in this work.
+
+Consequences and findings, by artifact:
+
+1. **One new SQLSTATE and one new error code.** `DERIVED` (ruling 2): `HBUNT` →
+   `422 approval_requires_unit`, mapped in `pg_errors.py` in the same commit, raised by the RPC
+   **before any row is written** so a refused approval leaves the request cleanly pending; the API
+   fails fast with the same code when neither `unit_id` nor unit text is given. An existing but
+   inactive unit named by code is `HB422` in words. Documented in API.md §6.1 and the approve
+   section's error table.
+2. **Find-or-create mirrors the founder RPC's shape.** `DERIVED` (ruling 3, from `20260805144502`):
+   apartment gets a `block` building from `building_code` and a `flat` unit; `layout_villa` gets one
+   `villa` building per villa — its code defaulting to the unit code itself — and a `villa` unit.
+   Both inserts are on-conflict-do-nothing with a re-select, race-safe against two admins approving
+   into the same new tower. Case-insensitive match, exact-case create, and the Python side
+   canonicalises the pair with `normalize_unit_code` (the C-C-505 guard), one normalizer shared
+   with a JS preview mirror (`frontend/src/features/registration/utils/unitCode.js`).
+3. **The `audit_events` insert is NOT restored.** `DERIVED`: `20260730170036` dropped it as a
+   hosted-compat decision, the new 6-arg body is that body carried forward, and the decision
+   stands — recorded here so its absence reads as deliberate, not as a regression.
+4. **The three admin decision routes answer a typed shape.** `DERIVED`:
+   `AccessRequestDecisionResponse {request_id, status, membership_id?, unit_id?}` replaces the raw
+   `-> dict` RPC passthrough on approve/reject/blacklist — closing the mapper's §5.1
+   "Under-documented" defect, flagged since the mapper existed (2026-08-08). `unit_id` is tolerated
+   absent until the hand-applied RPC returns it.
+5. **The pending view was extended append-only.** `DERIVED`: `pending_access_request_overview`
+   re-issued column-for-column with `requested_building_text`, `requested_unit_text` and
+   `community_type` APPENDED — `create or replace view` permits exactly that — and the migration's
+   in-transaction proof checks the tail so a reorder cannot land silently.
+6. **The repository sends the new RPC params only when non-null.** `DERIVED`: a backend deployed
+   before the owner hand-applies §33 still matches the old 4-argument RPC shape, so
+   deploy-before-apply degrades gracefully (the runbook still says apply first).
+7. **AdminHome rendered "Flat undefined • Tower undefined".** `AUDIT` (live app): the pending card
+   read demo-era `req.name`/`req.flat`/`req.tower` keys that never existed on the snapshot's
+   snake_case view rows. Fixed to `applicant_name` plus a residence label (resolved unit code, else
+   the claimed text, else `—`), pinned by tests that assert "undefined" never renders.
+8. **All seven access-request routes were missing from API.md.** `AUDIT` (mapper §5.2, standing
+   since 2026-08-08): five had no `###` section anywhere and two only a passing sentence in a §6
+   that called itself "intentionally empty". API.md §6 now documents the whole join flow — the
+   create-time refusal table, approve's unit-resolution precedence, the typed decision responses,
+   the SSE topics — and the mapper's finding count moved **18 → 10**, its first downward move. In
+   the same pass API.md's banner (stale at 201/170 since 2026-08-21) and §16.6's headline (stale
+   at 124/199) were corrected to **211 across 180** and **81 mapped / 130 unmapped**, off the
+   exporter's own summary and §6.3's recount command.
+
+**Five gates, all touched.** Frontend: `FRONTEND_CHANGES.md` (join-tab residence capture; the
+admin's inline resolution panel with its matches/creates indicator; the AdminHome fix). ERD:
+`docs/diagrams/homebandhu_submission_erd.dbml` — the two claim columns on `access_requests` with
+the ruling recorded, and the overview-view note (the frozen milestone ERD untouched). Class
+diagram: `docs/diagrams/HomeBandhu-Architecture-Classes.puml` — router/service members carry the
+typed decision response and the approve parameters, `RegistrationApi` the approval call and
+`adminUnits()`; known drift NOT fixed here: `docs/class-diagram/homebandhu-domain.puml` still shows
+`approve()` returning `ResidentInvite`, which predates this work. Component design:
+`docs/design-of-components.md` §3 already requires residents' records to carry "flats, towers" and
+administrators to approve access requests — this change is that requirement finally holding on the
+self-service path, no edit needed. Supabase: migration `20260828090000_residence_claim_on_join.sql`,
+hand-applied per runbook §33.
+
+**Caching/realtime checklist** (REALTIME_AND_CACHING_STANDARD): no new tables and no new SSE
+topics — the `0024` triggers on `access_requests` already fire on the writes this flow makes, and
+the updated view carries the new fields to the existing refetch; React Query invalidation is
+unchanged (`['admin-units']` is a new read-only query fetched only while an approval panel is
+open); no scheduler involvement.
+
+**Verification (docs pass, run at the end, after the migration's final rename to
+`20260828090000`):** backend `cd backend && uv run pytest -q` → **1502 passed, 5 skipped** (2026-08-24
+baseline was 1472/5; the +30 are this feature's — 21 static migration tests in
+`test_residence_claim_migration.py` plus the residence/API additions in
+`test_access_request_residence.py` and `test_access_requests.py`), including
+`tests/test_openapi_spec.py` (30 passed), which had been the one failing test until the spec was
+regenerated in this pass. Docs battery: `export_openapi.py` → **180 paths, 211 operations**;
+`export_openapi.py --check` and `regen_mapper.py --check` both clean; `api_map_scan.py` → **10
+findings** (down from 18 — all ten pre-recorded in mapper §5), all 24 stories agreeing. Frontend
+`cd frontend && npx vitest run` → **396 passed, 2 failed of 398 (59 of 60 files passed)**; the two
+failures are the known pre-existing date-sensitive pair in
+`src/pages/ResidentDashboard/ProposedVisit.test.jsx` (two pick-mode cases sensitive to the
+wall-clock date) — not this change's, and stated plainly rather than rounded off.
+
+## 2026-08-28 — the one-job panel opens the live job, not just names it
+
+**`PO` — the ruling (product owner, in session 2026-08-28).** The 2026-08-27 panel below named
+the live job's state (`Live job: {statusLabel}.`) but left opening it to a scroll back up to the
+jobs-already-raised list above. The owner's ruling: the panel opens the job directly, the same way
+that list's own rows already do. `frontend/src/pages/AdminDashboard/WorkOrderTriage.jsx`'s
+`ComplaintWorkOrders` now draws that line as a button, **`Open the live job — {statusLabel}`**,
+wired to the same `onOpenJob(job.id)` callback the list's rows call — no new navigation path, and
+no change to the gate logic: `liveJob`'s derivation, the pending/errored no-render case, and the
+frozen heading and refusal sentence are all untouched. This overturns the unfrozen-copy wording
+recorded for that line in the 2026-08-27 entry immediately below and in `docs/FRONTEND_CHANGES.md`
+§"One job at a time" — both described `Live job: {statusLabel}.`, which the panel no longer renders;
+`FRONTEND_CHANGES.md` is updated in place to the new copy, this entry is the record for the change
+itself.
+
+1. **`frontend/src/pages/AdminDashboard/WorkOrderTriage.jsx`** — the button, styled in the panel's
+   existing amber family, `type="button"`, calling `onOpenJob(liveJob.id)`.
+2. **`frontend/src/pages/AdminDashboard/WorkOrderTriage.test.jsx`** — the existing frozen-copy test
+   now asserts the button by its accessible name instead of the retired plain-text line; one new
+   test clicks it and asserts the live job's `JobDetail` actually opens, proving the wiring through
+   the real `onOpenJob` path rather than a mocked prop.
+3. **`docs/FRONTEND_CHANGES.md`** — `DERIVED`, the "What replaces the form" paragraph updated to the
+   new button copy, plus a new dated subsection cross-referencing this ruling.
+
+No backend, migration, or API-surface change: `onOpenJob` is a frontend callback that already
+existed for the jobs-already-raised list, not a new endpoint.
+
+Housekeeping in this file: the 2026-08-27 heading below dropped its `(latest, …)` marker — this
+entry now sits above it, and the convention going forward (agreed with the residence-capture
+branch, 2026-08-28) is newest-first stacking with no "latest" marker at all.
+
+## 2026-08-27 (second session) — one live job per complaint, and the stream that stopped reconnecting
+
+**The defect was watched happening, not inferred.** In the live app, complaint
+`f40e11d4-e322-4847-be2f-8f2caf6df722` collected a **second** `awaiting_resident` work order fifteen
+seconds after the resident booked the first one's visit. Nothing refused it because nothing had ever
+asked: `create_work_order` checks the department, the community and the shape of the slot, and then
+inserts — and the triage screen draws its "Raise it" form before the jobs list it sits under has
+finished loading, so the supervisor could not see the job they were duplicating. The consequences are
+a resident holding two open requests for one problem (both notifying, both arming a 24-hour deadline,
+with `get_schedule_request` returning whichever live row it reaches first), and a technician's day
+spent on work the first job already owns. Found in the same live pass: a session that signs in before
+its membership is approved gets a `403` from `GET /api/v1/events`, which is fatal to an `EventSource`
+— the tab's realtime died there and the approval arriving seconds later had nowhere to land.
+
+**`PO` — the ruling (Lee, complaint-engine owner, in session 2026-08-27).** A supervisor must not be
+able to raise a new work order against a complaint while a job on that complaint is still live. A
+complaint still carries several jobs **over its life** — a failed visit's replacement, a reopened
+complaint's new job — **one at a time**, the successor after the predecessor ends and never alongside
+it. LIVE is frozen as `draft`, `awaiting_resident`, `offered`, `scheduled`, `in_progress` — exactly
+the five `work_orders_service._OPEN_STATES` already calls open and the `get_schedule_request`
+resolver already calls live — with `completed`, `failed` and `cancelled` the terminal remainder of
+`work_orders_status_check` (`0036`), so the ruling adds **no ninth status word**. The guard is a
+statement about `work_orders` liveness and **deliberately does not touch `complaints.status`**: the
+two state machines stay uncoupled. This overturns nothing in print; it corrects a sentence that had
+been read the wrong way — *"a complaint may carry several work orders"*, written in `API.md` and the
+router docstring to justify not putting the assignee on `complaints`, was being taken as permission
+for several **at once**.
+
+**The three code changes** (application code; git carries the detail, listed here because the docs
+below describe them): `backend/supabase/migrations/20260827210000_one_live_job_per_complaint.sql`
+re-issues `create_work_order` with the `20260823180000` body unchanged plus two additions — the
+opening complaint read becomes `select * ... for update`, and an `exists` over the live set refuses
+with the frozen sentence *"A job is already live on this complaint. Finish, fail, or cancel it before
+raising another."* under the existing `HB409` (→ `409 conflict`; no new SQLSTATE, no new envelope
+code, no signature change). `frontend/src/pages/AdminDashboard/WorkOrderTriage.jsx` replaces the raise
+form with an explanatory panel while a live job exists — and draws neither while the jobs list is
+pending or errored, because a form drawn before the answer arrives *is* the duplicate-raise window —
+reading the same five words from the new `LIVE_WORK_ORDER_STATUSES` export in
+`frontend/src/features/workOrders/workOrderVocabulary.js`.
+`frontend/src/lib/realtime/eventStream.js` reopens after a fatal close with 5 s→60 s doubling backoff,
+reset on `open`, only while subscribers exist, cancelled by `close()`. Existing duplicate rows are
+untouched history: the guard refuses *new* raises, and the extra `awaiting_resident` job
+`1f0bf129-d47d-4236-9082-ecf0a28b245c` is the owner's to cancel from the UI, because cancelling a job
+is a lifecycle decision that belongs to a person and not to a migration.
+
+1. **New: `docs/plans/ONE_LIVE_JOB_SPEC.md`.** `PO`, with the interfaces frozen by the orchestrator.
+   The live set as shared vocabulary (SQL inline list + the frozen frontend export name), the backend
+   contract (migration name, the `for update`, the frozen refusal sentence and its errcode, the
+   docstring correction, runbook §32), the frontend contract (the gate, the frozen panel copy, the
+   pending/errored case, the raced 409 left to the existing failure renderer) and the stream-reconnect
+   contract. Reason: four agents were to build against one another's edges in parallel — the exact
+   refusal string appears in a migration, a router docstring, `API.md` and a React component, and a
+   spec is the only thing that keeps four copies of a sentence identical.
+2. **`docs/plans/MIGRATION_APPLY_RUNBOOK.md` §32** (`20260827210000`) — written by the backend agent
+   earlier in this session and **left untouched by this docs pass**, cross-referenced from `API.md`,
+   the handoff and here. It records the ordering constraint (must follow §28, independent of §29–§31),
+   the observed defect, and the post-check note that the leak complaint already holds two live rows
+   the guard will not retroactively clean.
+3. **`docs/openapi.yaml` and `docs/api_yaml_mapper.md`** — `DERIVED`, regenerated through
+   `backend/scripts/export_openapi.py` and `backend/scripts/regen_mapper.py`, never hand-edited. The
+   spec picks up the router's corrected multiplicity prose and its second `409` row; the surface is
+   **unchanged at 211 operations across 180 paths**, because this ruling adds a refusal and not an
+   endpoint. The mapper rewrite also cleared **108 rows of pre-existing drift** — handler line numbers
+   and `API.md` line references that had gone stale under earlier commits (an offset of roughly twelve
+   lines across the whole file), which is the drift `regen_mapper.py` exists to make mechanical.
+   `backend/tests/test_openapi_spec.py` was red on the docstring drift and is green: 30 passed.
+4. **`docs/API.md`** — `DERIVED` from the ruling, four places:
+   - **§18's lifecycle prose.** *"A complaint may carry several work orders"* becomes *"…over its
+     life, one live at a time"*, with a blockquote naming the ruling, the migration, the five live
+     statuses, and the fact that the guard does not touch `complaints.status`. Reason: this sentence
+     is the one that was misread into the defect, and correcting the endpoint without correcting the
+     paragraph that licensed it would leave the wrong reading in print.
+   - **`POST /api/v1/complaints/{complaintId}/work-orders`** gains the second `409` `conflict` row and
+     a paragraph on where the guard lives — in the database, not the router or the service — and why
+     the `for update` on the complaint row means it **cannot race**, which a check in Python could not
+     have promised.
+   - **§16 US-2.8** gains a dated note: no row moved and no operation was added, but the guard repairs
+     something this story owns — `GET /complaints/{id}/schedule-request` was answering *when to expect
+     action* from whichever of two live jobs it reached first. The raise endpoint stays in the
+     *no user story* table, in the group it has always been in, whose counts are unchanged.
+   - **§17 changelog** gains the 2026-08-27 row, per this file's standing rule that a changed status
+     code updates `API.md` in the same commit.
+5. **`docs/COMPLAINT_ENGINE_HANDOFF.md` §26** — `PO`, appended in the file's ruling format. Records
+   the ruling, its date, the frozen live set, the two places the guard lives (the RPC and the triage
+   UI) and — the part the complaint engine's owner most needs on the record — that it touches no
+   complaint-lifecycle code and leaves existing duplicate rows alone. Reason: the standing rule that
+   every lifecycle call on this engine is ruled explicitly and written down where its owner will find
+   it, not left in a migration header.
+6. **`docs/plans/REALTIME_AND_CACHING_STANDARD.md` §4** — `DERIVED`, the reconnect doctrine added
+   beside the one-`EventSource`-per-tab architecture the previous session wrote: the distinction
+   between a transport failure the browser retries itself and an HTTP error *response* that parks
+   `readyState` at `CLOSED` forever, the observed `403` trigger, and the four rules any future change
+   keeps (fatal-only, 5 s→60 s reset-on-open, only while subscribers exist, and the degraded poll
+   covering the wait). Reason: the standard written yesterday described a client that gives up
+   silently on the one failure it is most likely to meet; a doctrine that survives the next
+   contributor has to say which close reopens and which is the browser's business.
+7. **`docs/FRONTEND_CHANGES.md`** — `DERIVED`, two entries in the file's existing style: the triage
+   gate (including the one line of unfrozen copy the panel adds beneath the frozen sentence,
+   `Live job: {statusLabel}.`, so a supervisor knows *which* job to finish, and the deliberate
+   no-form-while-loading case) and the eventStream reconnect. Both name their tests — five in the new
+   `WorkOrderTriage.test.jsx`, six added to `eventStream.test.js`.
+8. **`docs/ARCHITECTURE.md` § Live updates, "Guarantees and limits"** — `DERIVED`. The *Reconnects
+   are covered* bullet asserted the browser always retries, which is precisely the belief the
+   fatal-close fix corrects — true for transport blips, silently wrong for an HTTP error response.
+   The bullet now names the one close the browser will not retry and points at the §4 doctrine.
+   Reason: this is the sentence a backend reader would check before trusting the stream, and it was
+   the only place left saying the old, wrong thing.
+9. **`docs/COMPLAINT_ENGINE_STATE.md` §1** — `DERIVED`. "Several work orders over its life" gains
+   the ruled qualifier — one live at a time, in sequence, `HB409` behind it — with a pointer to
+   handoff §26. Reason: it is the engine's living state doc; a reader who stops there must not leave
+   with the pre-ruling picture.
+
+## 2026-08-27 — the realtime/caching overhaul gets a written standard, and the runbook catches up to itself
+
+The 2026-08-27 session shipped, all verified green: routers converted `async` → `def` so sync Supabase
+calls leave the event loop; a bounded per-process TTL cache (`backend/app/core/ttl_cache.py`) over
+reference data; three new SSE topics plus a reconnect guard for resume points older than the outbox's
+retention; and a frontend consolidation to one `EventSource` per tab. `DERIVED` from that session
+(no new product-owner ruling — this is the documentation half of already-approved work) unless noted.
+
+1. **New: `docs/plans/REALTIME_AND_CACHING_STANDARD.md`.** The team-visible standard the session's three
+   workstreams add up to: the four-layer rule (client React Query cache primary → SSE invalidation for
+   coherence → server TTL cache for reference data only, write-through invalidated → authenticated HTTP
+   stays no-store throughout), the `QUERY_POLICIES` bucket table, the SSE audience rules (community/role/
+   member, over-delivery safe, under-scoping the real risk, `work_order.changed`'s department-scoped
+   narrowing recorded as future work), the one-`EventSource`-per-tab frontend architecture and the
+   uniform 5-minute degraded-poll fallback, the four scheduler non-interference rules, the accepted-
+   staleness list the server cache trades for its 60-second window, and a new-feature checklist. Reason:
+   three independently defensible workstreams read as three ad hoc optimizations unless the layering they
+   jointly impose on every future read, mutable surface and time-based feature is written down once,
+   in one place, rather than re-derived per PR.
+2. **`docs/plans/README.md`** gains the new document's row in the index table, per this file's own rule
+   (`docs/design/README.md`'s "moving or adding a document here means a change-log entry") extended to
+   the sibling `plans/` index.
+3. **`docs/ARCHITECTURE.md` § Live updates.** `DERIVED` from the 2026-08-26 migration
+   (`20260826090000_realtime_expansion.sql`) and the same-day frontend consolidation, both of which made
+   the section factually stale:
+   - A pointer paragraph at the top of the section to the new standard document, so the backend/transport
+     reference and the build-on-top-of-it standard don't drift into duplicating each other.
+   - The **Reconnects** guarantee gained a second bullet: a resume point older than the outbox's two-hour
+     retention now triggers `stream.resync` on backfill (probing `dashboard_repository.oldest_event_id()`,
+     failing open on a probe error) instead of silently backfilling from the middle of the client's history.
+   - The **Topics** table gained `work_order.changed`, `amenity.changed` and `message.created`
+     (`20260826090000`), plus a paragraph on why the first two are community-scoped rather than role-scoped
+     (the readership doesn't collapse onto a role list; over-delivery is safe, guessing narrow is not).
+   - A new paragraph documents the frontend's one-`EventSource`-per-tab consolidation
+     (`frontend/src/lib/realtime/`), which portals mount it, and that the security portal is deferred —
+     this section previously said nothing about the client side at all.
+4. **`docs/plans/MIGRATION_APPLY_RUNBOOK.md`.** §31 (`20260826090000_realtime_expansion.sql` — three
+   emitters, the topic census, the pre/post-checks) was written earlier in the 2026-08-27 session, before
+   this docs pass; this session's own contribution is the preamble fix: the "if the section numbers below
+   run past §28, this paragraph is what needs updating" sentence was still pointing at §28 while the file
+   had grown three more sections (§29 assignment write repairs, §30 supervisor take-up, §31 realtime
+   expansion) past it. Reworded to name all three and point the trigger at §31, matching the pattern the
+   preamble already uses for its own prior extensions. `AUDIT` — found by reading the preamble against the
+   file's actual section count.
+5. **`docs/API.md` §5.1 (`GET /events`).** Frame table gained the same three topics, plus a paragraph on
+   the prune-horizon resync behavior, matching the existing table's format and the `stream.resync`/
+   `dashboard.refresh`-with-`resync` framing already there. **`docs/openapi.yaml` and
+   `docs/api_yaml_mapper.md` were checked and left untouched** — neither encodes a topic list or a topic-
+   specific description of `GET /events`; both simply point at `API.md` §5.1 by section reference or line
+   number, and that reference still resolves since nothing was inserted before it. No endpoint request or
+   response shape changed this session, so there was nothing for the generated spec to regenerate.
+
+## 2026-08-24 (third session) — the branch and main stop disagreeing about how migrations are ordered
 
 **PR #51 retracted and the branch reconciled with main.** `PO` (2026-08-24: retract the conflicting
 PR, resolve, merge from main only if required — it was). Main's `4e5dfce` and this branch had

@@ -96,6 +96,11 @@ components:
   schemas:
     AccessRequestCommunity:
       properties:
+        community_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Community Type
         id:
           title: Id
           type: string
@@ -106,6 +111,37 @@ components:
       - id
       - name
       title: AccessRequestCommunity
+      type: object
+    AccessRequestDecisionResponse:
+      description: 'The typed answer of an admin decision (approve, reject, blacklist).
+
+
+        `membership_id` and `unit_id` are populated only by an approval -- and
+
+        `unit_id` only once the residence-claim migration teaches the RPC to
+
+        return it, so absence is tolerated.'
+      properties:
+        membership_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Membership Id
+        request_id:
+          title: Request Id
+          type: string
+        status:
+          title: Status
+          type: string
+        unit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit Id
+      required:
+      - request_id
+      - status
+      title: AccessRequestDecisionResponse
       type: object
     AccessRequestListResponse:
       properties:
@@ -149,6 +185,11 @@ components:
           - type: string
           - type: 'null'
           title: Rejection Reason
+        requested_building_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requested Building Text
         requested_relationship:
           title: Requested Relationship
           type: string
@@ -157,6 +198,11 @@ components:
           - type: string
           - type: 'null'
           title: Requested Unit Id
+        requested_unit_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requested Unit Text
         reviewed_at:
           anyOf:
           - format: date-time
@@ -904,6 +950,12 @@ components:
     ApproveAccessRequest:
       additionalProperties: false
       properties:
+        building_code:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Building Code
         relationship:
           anyOf:
           - enum:
@@ -915,6 +967,12 @@ components:
             type: string
           - type: 'null'
           title: Relationship
+        unit_code:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Unit Code
         unit_id:
           anyOf:
           - type: string
@@ -2773,6 +2831,12 @@ components:
             type: string
           - type: 'null'
           title: Phone
+        requested_building_text:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Requested Building Text
         requested_relationship:
           default: tenant
           enum:
@@ -2788,6 +2852,12 @@ components:
           - type: string
           - type: 'null'
           title: Requested Unit Id
+        requested_unit_text:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Requested Unit Text
       required:
       - community_id
       title: CreateAccessRequest
@@ -11370,6 +11440,13 @@ paths:
       description: 'Apply to join a community. Answers **201**.
 
 
+        The applicant states where they live as free text -- `requested_building_text` (tower/block) and
+        `requested_unit_text` (flat or villa number), each up to 120 characters, blank stripped to null.
+        Free text by product ruling (2026-08-27): non-members are never shown the community''s unit inventory,
+        so there is nothing to validate the claim against here. The admin resolves it into a real unit
+        at approval.
+
+
         Four distinct refusals, deliberately separated: an unknown community is **404**; already being
         a member, or already having a request pending, is **409**; a rejected application inside the cool-off
         window is **409**; and a unit that belongs to a different community is **422**, because the request
@@ -11545,7 +11622,14 @@ paths:
       x-user-stories: []
   /api/v1/admin/access-requests/{request_id}/approve:
     post:
-      description: 'Approve a join request, creating the membership.
+      description: 'Approve a join request, creating the membership AND its residency.
+
+
+        Approval requires a unit (product ruling, 2026-08-27). Precedence: `unit_id`, then the request''s
+        own validated `requested_unit_id`, then `unit_code` (+ optional `building_code`), which is matched
+        case-insensitively against the community''s units or **finds-or-creates** the unit with its building.
+        Neither given is **422** `approval_requires_unit` -- refused in the API and again in the RPC (`HBUNT`),
+        before anything is written. A code naming an existing but inactive unit is **422** too, in words.
 
 
         Approving a request that is not pending is **409** -- which is what two administrators clicking
@@ -11570,10 +11654,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Response Approve Access Request Api V1 Admin Access Requests  Request Id  Approve
-                  Post
-                type: object
+                $ref: '#/components/schemas/AccessRequestDecisionResponse'
           description: Successful Response
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -11625,10 +11706,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Response Blacklist Access Request Api V1 Admin Access Requests  Request Id  Blacklist
-                  Post
-                type: object
+                $ref: '#/components/schemas/AccessRequestDecisionResponse'
           description: Successful Response
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -11658,8 +11736,8 @@ paths:
       description: 'Reject a join request, with a reason recorded against it.
 
 
-        The applicant may apply again after the cool-off window; see `POST /access-requests`, which enforces
-        it.'
+        Answers with the typed decision shape shared by the three admin verbs. The applicant may apply
+        again after the cool-off window; see `POST /access-requests`, which enforces it.'
       operationId: reject_access_request_api_v1_admin_access_requests__request_id__reject_post
       parameters:
       - description: Access-request id.
@@ -11680,10 +11758,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Response Reject Access Request Api V1 Admin Access Requests  Request Id  Reject
-                  Post
-                type: object
+                $ref: '#/components/schemas/AccessRequestDecisionResponse'
           description: Successful Response
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -13851,8 +13926,9 @@ paths:
       description: 'List the units in the caller''s community, for pickers.
 
 
-        Feeds the unit selector on the join-request and invitation screens; the ids returned here are
-        the ones `POST /access-requests` accepts.'
+        Feeds the unit selector on the join-request and invitation screens -- the ids returned here are
+        the ones `POST /access-requests` accepts -- and, since 2026-08-28, the approval panel''s *matches
+        existing unit / will create unit* indicator.'
       operationId: list_admin_units_api_v1_communities_admin_units_get
       responses:
         '200':
@@ -15794,11 +15870,17 @@ paths:
         thing to keep in step.
 
 
-        A complaint may carry several work orders. A failed visit is rescheduled and
+        A complaint may carry several work orders over its life, one live at a time
 
-        a reopened complaint goes to a different supervisor, and both of those are a
+        — a failed visit''s replacement or a reopened complaint''s new job comes after
 
-        second job rather than an edit to the first.
+        the previous job ends, never alongside it. Each of those is a second job
+
+        rather than an edit to the first, and the raise is refused while any job on
+
+        the complaint is still `draft`, `awaiting_resident`, `offered`, `scheduled`
+
+        or `in_progress`.
 
 
         | Status | Code | Cause |
@@ -15810,6 +15892,8 @@ paths:
         | 404 | `not_found` | No such complaint |
 
         | 409 | `conflict` | The complaint names no department and none was supplied |
+
+        | 409 | `conflict` | A job on this complaint is still live |
 
         | 422 | `validation_error` | Half a slot, a backwards slot, or a bad `subjectKind` |'
       operationId: create_work_order_api_v1_complaints__complaint_id__work_orders_post
@@ -16967,13 +17051,30 @@ paths:
 
         The mirror of `GET /worker/communities/search`: same three rules seen from
 
-        the other end. Holds a skill this department''s categories need, not
+        the other end. Holds a skill this department needs — one it has declared
 
-        blacklisted here, not already on this roster — and not already a member of
+        for itself through `PUT .../skills`, **or** one its categories imply — not
+
+        blacklisted here, not already on this roster, and not already a member of
 
         the community in some other capacity, because the hire would be refused and
 
         offering a dead end is worse than an empty list.
+
+
+        **The two paths are a union, and both halves matter.** A category earns its
+
+        skill by exact name match against the catalogue (`link_category_skill`), so
+
+        a community that calls its department "Security Management" against
+
+        catalogue entries *Security Guard* and *Gate Officer* derives nothing at
+
+        all; the declared list is how such a department says what it needs. A
+
+        department that has declared nothing still hires off its categories exactly
+
+        as before.
 
 
         `matchingSkillNames` is the subset that put them on this list, which is not
@@ -23838,9 +23939,21 @@ paths:
 
         matching department yet. Its application buttons still contain only active
 
-        departments whose categories need one of the caller''s skills. Blacklisted
+        departments that need one of the caller''s skills — a skill the department
 
-        communities and communities the caller already belongs to stay hidden.
+        has declared for itself, **or** one its complaint categories imply. The two
+
+        paths are a union: a department that has declared nothing matches off its
+
+        categories exactly as before, and a department whose category names find no
+
+        catalogue entry (`link_category_skill` matches by exact name, so
+
+        "Security Management" derives nothing) is reachable through the list it
+
+        declared. Blacklisted communities and communities the caller already
+
+        belongs to stay hidden.
 
 
         Results are limited to the caller''s service radius. Communities without

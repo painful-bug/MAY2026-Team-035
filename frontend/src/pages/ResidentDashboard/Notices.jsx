@@ -2,6 +2,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar, Megaphone } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 // Wired to `GET /api/v1/notices` (`docs/API.md` §14,
 // `backend/app/api/v1/routers/resident_home.py`).
@@ -29,6 +30,7 @@ export default function Notices() {
   const noticesQuery = useQuery({
     queryKey: ['resident', 'notices'],
     queryFn: () => residentApi.notices(),
+    ...QUERY_POLICIES.list,
   });
 
   const notices = noticesQuery.data?.items || [];

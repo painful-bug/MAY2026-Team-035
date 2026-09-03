@@ -70,11 +70,12 @@ def department_row(**overrides: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def departments(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
-    """Replace the repository and the tenancy lookup, recording every call."""
-    captured: dict = {"rows": [department_row()], "staff": [], "calls": []}
+    """Replace the repository, recording every call.
 
-    def fake_community(client: Any, user_id: str) -> str:
-        return "community-id"
+    The community id no longer needs stubbing: the routers thread the
+    ``MembershipContext.community_id`` the conftest override already supplies.
+    """
+    captured: dict = {"rows": [department_row()], "staff": [], "calls": []}
 
     def fake_list(client: Any, community_id: str, **kwargs: Any) -> tuple[list, int]:
         captured["listed"] = kwargs
@@ -98,9 +99,6 @@ def departments(monkeypatch: pytest.MonkeyPatch) -> Generator[dict, None, None]:
 
     repo = departments_service.repo
     monkeypatch.setattr(repo, "can_hire", fake_can_hire)
-    monkeypatch.setattr(
-        departments_service.tenancy_repo, "get_caller_community_id", fake_community
-    )
     monkeypatch.setattr(repo, "list_departments", fake_list)
     monkeypatch.setattr(repo, "get_department", fake_get)
     monkeypatch.setattr(repo, "list_staff", fake_staff)

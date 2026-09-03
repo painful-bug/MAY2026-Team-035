@@ -14,6 +14,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 // whole app (the tile was added with the category-picker rework, the import
 // was not).
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import {
   AlertTriangle,
   BriefcaseBusiness,
@@ -116,13 +117,11 @@ const getDepartmentComplaints = (department, complaints) =>
   });
 
 export default function Departments() {
-  const {
-    complaints,
-    createDepartment,
-    updateDepartment,
-    setDepartmentStatus,
-    deleteDepartment,
-  } = useApp();
+  const complaints = useApp((state) => state.complaints);
+  const createDepartment = useApp((state) => state.createDepartment);
+  const updateDepartment = useApp((state) => state.updateDepartment);
+  const setDepartmentStatus = useApp((state) => state.setDepartmentStatus);
+  const deleteDepartment = useApp((state) => state.deleteDepartment);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -147,6 +146,7 @@ export default function Departments() {
   const departmentsQuery = useQuery({
     queryKey: ['departments'],
     queryFn: departmentsApi.list,
+    ...QUERY_POLICIES.list,
   });
   const departments = useMemo(
     () => departmentsQuery.data ?? [],
@@ -244,7 +244,10 @@ export default function Departments() {
   const categories = useQuery({
     queryKey: ['complaint-categories'],
     queryFn: departmentsApi.categories,
-    staleTime: 60_000,
+    // Named reference-data domain (task calls this out explicitly): was a
+    // bespoke 60s staleTime, upgraded to the shared 30-minute policy every
+    // other reader of this catalogue now uses.
+    ...QUERY_POLICIES.reference,
   });
   const unassignedCategoryCount = (categories.data || []).filter(
     (category) => (category.departmentCount ?? 0) === 0
@@ -264,6 +267,7 @@ export default function Departments() {
     queryKey: ['departments', selectedDepartmentId, 'staff-invitations'],
     queryFn: () =>
       departmentsApi.staffInvitations(selectedDepartmentId, { status: 'pending' }),
+    ...QUERY_POLICIES.list,
     // `isLoading` rather than `isPending` is what the form is handed below: a
     // disabled query stays `pending` for as long as it is off, so the create
     // modal would otherwise render a spinner that never resolves.
@@ -353,9 +357,21 @@ export default function Departments() {
         form.leaders
           .find((leader) => leader.rank === 'manager' && leader.name.trim())
           ?.name.trim() || '';
+      // Same heuristic DepartmentForm uses to require a phone number and show
+      // the security note (isSecurityDepartment there) — recomputed here
+      // because that component only has the form for rendering, and this is
+      // the one place both create and update payloads are assembled. Owner-
+      // approved product ruling: a matching department must actually carry
+      // `kind: 'security'`, or `professional_membership_role(null)` resolves
+      // every member to 'worker' and none of the security-only screens ever
+      // see them.
+      const isSecurityDepartment =
+        form.name.toLowerCase().includes('security') ||
+        form.categories.some((entry) => entry.name === 'Security');
       const departmentData = {
         ...form,
         head: invitedManagerName || form.head || '',
+        kind: isSecurityDepartment ? 'security' : null,
         // The department wire takes category *names*: `upsert_category_names`
         // creates any it has not seen in this community, so choosing a new one
         // and saving is what creates it. There is no create-category endpoint

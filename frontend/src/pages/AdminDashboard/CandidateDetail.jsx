@@ -5,6 +5,7 @@ import {
   ArrowLeft, Ban, Check, MapPin, MessageCircle, Phone, UserPlus, X,
 } from 'lucide-react';
 
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { hiringApi } from '../../features/hiring/hiringApi';
 import { usePortalScope } from '../../features/hiring/usePortalScope';
 import { JOB_TITLES } from '../../lib/staffVocabulary';
@@ -74,6 +75,7 @@ export default function CandidateDetail() {
   const candidate = useQuery({
     queryKey: ['hiring', 'candidate', providerId],
     queryFn: () => hiringApi.candidate(providerId),
+    ...QUERY_POLICIES.detail,
   });
 
   // The department's own view of them. Only for the strip: nothing on this page
@@ -83,6 +85,7 @@ export default function CandidateDetail() {
   const listRow = useQuery({
     queryKey: ['hiring', departmentId, 'candidates', ''],
     queryFn: () => hiringApi.candidates(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
     select: (rows) => (rows || []).find((row) => row.id === providerId) || null,
   });
@@ -90,6 +93,7 @@ export default function CandidateDetail() {
   const applications = useQuery({
     queryKey: ['hiring', departmentId, 'applications'],
     queryFn: () => hiringApi.applications(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
     select: (rows) =>
       (rows || []).find((row) =>

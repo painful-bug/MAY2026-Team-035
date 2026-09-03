@@ -100,7 +100,7 @@ def _require_enabled(method: str) -> None:
 
 
 @router.get("/methods")
-async def auth_methods(request: Request) -> Response:
+def auth_methods(request: Request) -> Response:
     payload = _methods().model_dump(mode="json")
     etag = '"' + hashlib.sha256(repr(payload).encode()).hexdigest() + '"'
     if request.headers.get("if-none-match") == etag:
@@ -109,13 +109,13 @@ async def auth_methods(request: Request) -> Response:
 
 
 @router.get("/csrf", response_model=MessageResponse)
-async def csrf(response: Response) -> MessageResponse:
+def csrf(response: Response) -> MessageResponse:
     establish_preauth_csrf(response)
     return MessageResponse(message="CSRF protection ready.")
 
 
 @router.get("/oauth/{provider}/start", status_code=307)
-async def oauth_start(provider: str, next: str | None = Query(None), remember: bool = Query(False)) -> RedirectResponse:
+def oauth_start(provider: str, next: str | None = Query(None), remember: bool = Query(False)) -> RedirectResponse:
     _require_enabled(provider)
     return_path = auth_service.safe_return_path(next)
     url, transaction = auth_service.start_oauth(provider)

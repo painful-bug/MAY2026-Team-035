@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DepartmentDetail from './DepartmentDetail';
@@ -20,7 +21,9 @@ import DepartmentDetail from './DepartmentDetail';
 const mocks = vi.hoisted(() => ({ api: vi.fn(), state: {} }));
 
 vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
-vi.mock('../../store/useApp', () => ({ useApp: () => mocks.state }));
+vi.mock('../../store/useApp', () => ({
+  useApp: (selector) => (selector ? selector(mocks.state) : mocks.state),
+}));
 
 const complaint = {
   id: 'complaint-1',
@@ -106,5 +109,39 @@ describe('a department’s complaint rows', () => {
     await screen.findByText('Ravi Kumar');
 
     expect(screen.queryByText(/\d+ active/)).toBeNull();
+  });
+});
+
+// Pins the stacking-context escape for the complaint drawer. Rendered in
+// place, it sat inside AdminLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever,
+// so the overlay's z-[999] was trapped below the sticky header's z-40. The
+// portal to document.body is what makes the overlay immune.
+describe('complaint drawer portal contract', () => {
+  it('portals the drawer to document.body with a full-cover overlay', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.click(await screen.findByRole('button', { name: /chat/i }));
+
+    const dialog = screen.getByRole('dialog', {
+      name: 'Complaint Leaking tap',
+    });
+    expect(dialog.parentElement).toBe(document.body);
+    expect(dialog.className).toContain('fixed inset-0');
+    expect(dialog.className).toContain('z-[999]');
+  });
+
+  it('keeps the close and escape behavior', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.click(await screen.findByRole('button', { name: /chat/i }));
+    await user.click(screen.getByRole('button', { name: 'Close complaint' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /chat/i }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

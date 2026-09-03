@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 import WorkOrderTriage from '../AdminDashboard/WorkOrderTriage';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
@@ -44,6 +45,7 @@ export default function WorkerWorkOrders() {
   const snapshot = useQuery({
     queryKey: ['worker-snapshot'],
     queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
   });
 
   const engagement = supervisedEngagement(snapshot.data?.communities);

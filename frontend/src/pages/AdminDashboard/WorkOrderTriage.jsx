@@ -7,6 +7,7 @@ import {
 
 import { workOrdersApi } from '../../features/workOrders/workOrdersApi';
 import {
+  LIVE_WORK_ORDER_STATUSES,
   WORK_ORDER_STATUSES,
   assignmentLabel,
   permittedActions,
@@ -15,7 +16,9 @@ import {
 } from '../../features/workOrders/workOrderVocabulary';
 import { usePortalScope } from '../../features/hiring/usePortalScope';
 import { hiringApi } from '../../features/hiring/hiringApi';
+import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { complaintRoutingApi } from '../../features/complaints/routingApi';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 
 // Work-order triage: the hand path behind the dispatch engine.
 //
@@ -187,6 +190,8 @@ function AssignForm({ order, roster, onSubmit, pending, error }) {
   const candidates = useQuery({
     queryKey: ['work-orders', 'candidates', order.id, includeExcluded],
     queryFn: () => workOrdersApi.candidates(order.id, { includeExcluded }),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
   const { slotRequiredToAssign } = permittedActions(order);
 
@@ -455,6 +460,7 @@ function JobDetail({ jobId, roster, skills, onChanged, onClose }) {
   const job = useQuery({
     queryKey: ['work-orders', 'job', jobId],
     queryFn: () => workOrdersApi.detail(jobId),
+    ...QUERY_POLICIES.detail,
   });
 
   const settle = () => { setOpen(null); onChanged(); };
@@ -778,7 +784,15 @@ function ComplaintWorkOrders({ complaintId, skills, onOpenJob, onChanged }) {
   const jobs = useQuery({
     queryKey: ['work-orders', 'complaint', complaintId],
     queryFn: () => workOrdersApi.forComplaint(complaintId),
+    ...QUERY_POLICIES.list,
   });
+
+  // The first live job on the complaint, if there is one. This is the same
+  // question `create_work_order`'s guard asks in Postgres, off the list this
+  // component has already fetched — so no extra read, and the two cannot
+  // disagree about what "live" means (`LIVE_WORK_ORDER_STATUSES`).
+  const liveJob = (jobs.data || []).find((job) =>
+    LIVE_WORK_ORDER_STATUSES.includes(job.status));
 
   return (
     <div className="space-y-3">
@@ -817,11 +831,48 @@ function ComplaintWorkOrders({ complaintId, skills, onOpenJob, onChanged }) {
         </ul>
       )}
 
-      {/* Several jobs on one complaint is normal and not a mistake: a failed
-          visit is rescheduled as a second job and a reopened complaint goes to
-          a different supervisor. That is why the assignment lives on the work
-          order and not in a column on the complaint. */}
-      <CreateForm complaintId={complaintId} skills={skills} onCreated={onChanged} />
+      {/* Several jobs over one complaint's *life* is normal and not a mistake —
+          one at a time, in sequence, never at once. A failed visit is
+          rescheduled as a second job and a reopened complaint goes to a
+          different supervisor, and each of those follows the one before it
+          closing. That sequence is why the assignment lives on the work order
+          and not in a column on the complaint.
+
+          Concurrency is the mistake, and it happened: a complaint collected a
+          second `awaiting_resident` job fifteen seconds after the resident
+          booked the first one's visit, because this form was drawn under a list
+          that already showed a live job. The database now refuses that raise
+          (`20260827210000_one_live_job_per_complaint.sql`, `HB409`); the gate
+          below is the same refusal said before the button rather than after it.
+
+          It is deliberately drawn on *no* answer as well as on a live one:
+          while the list is loading or has failed, this component cannot know
+          whether a job is live, and a form rendered in that window is the
+          duplicate-raise window itself. */}
+      {jobs.isPending || jobs.error ? null : liveJob ? (
+        <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-amber-600">
+            One job at a time
+          </p>
+          <p className="mt-1.5 text-xs font-semibold text-amber-800">
+            A job is already live on this complaint. Finish it, fail it, or
+            cancel it before raising another.
+          </p>
+          {/* The panel used to just name the live job; the owner's ruling
+              (2026-08-28) is that naming it is half the help — the other half
+              is not making the supervisor scroll up to the list above to reach
+              it, so this reuses the same `onOpenJob` the list already calls. */}
+          <button
+            type="button"
+            onClick={() => onOpenJob(liveJob.id)}
+            className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
+          >
+            Open the live job — {statusLabel(liveJob.status)}
+          </button>
+        </div>
+      ) : (
+        <CreateForm complaintId={complaintId} skills={skills} onCreated={onChanged} />
+      )}
     </div>
   );
 }
@@ -854,13 +905,30 @@ export default function WorkOrderTriage() {
     }, { replace: true });
   };
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['work-orders'] });
+  // Scoped to what a job change can actually affect, rather than the whole
+  // ['work-orders'] prefix — which used to also refetch every other job's
+  // detail, every other job's candidate list, and (via the shared prefix)
+  // this department's roster read, on every single assign/reschedule/edit/
+  // cancel/create anywhere on the screen.
+  const invalidateQueue = () =>
+    queryClient.invalidateQueries({ queryKey: ['work-orders', departmentId, 'queue'] });
+  const invalidateJob = (id) => {
+    if (!id) return;
+    queryClient.invalidateQueries({ queryKey: ['work-orders', 'job', id] });
+    queryClient.invalidateQueries({ queryKey: ['work-orders', 'candidates', id] });
+  };
+  const invalidateComplaintJobs = (id) => {
+    if (!id) return;
+    queryClient.invalidateQueries({ queryKey: ['work-orders', 'complaint', id] });
   };
 
   const queue = useQuery({
     queryKey: ['work-orders', departmentId, 'queue', statusFilter],
     queryFn: () => workOrdersApi.forDepartment(departmentId, { status: statusFilter || undefined }),
+    ...QUERY_POLICIES.list,
+    // The status filter chips re-key this query; keep the previous filter's
+    // rows on screen while the next one loads.
+    ...PAGINATED,
     enabled: Boolean(departmentId),
   });
 
@@ -868,15 +936,26 @@ export default function WorkOrderTriage() {
   // the `staff_assignments` row id, which is exactly what `assign` takes — and
   // `GET /departments/{id}` is the admin-or-manager read, unlike the departments
   // *list*, which is admin-only and would 403 for half the people on this page.
+  //
+  // Admin-or-*manager* — and a service-department supervisor holds a `worker`
+  // membership, so under the worker portal this read can only ever 403. It is
+  // not asked for there at all rather than asked and refused: react-query
+  // retries and refetches an error on every mount and focus, which showed up in
+  // the backend log as a stream of 403s tracking the supervisor around their
+  // own screen. The gate is the portal and not the person, because the portal
+  // is the one fact the browser holds that cannot drift from `_portal_for`.
+  const inWorkerPortal = basePath === AUTH_ROUTES.WORKER_DASHBOARD;
   const department = useQuery({
     queryKey: ['work-orders', departmentId, 'department'],
     queryFn: () => hiringApi.departmentDetail(departmentId),
-    enabled: Boolean(departmentId),
+    ...QUERY_POLICIES.detail,
+    enabled: Boolean(departmentId) && !inWorkerPortal,
   });
 
   const complaints = useQuery({
     queryKey: ['work-orders', departmentId, 'complaints'],
     queryFn: () => complaintRoutingApi.departmentComplaints(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId) && tab === 'raise',
   });
 
@@ -957,7 +1036,7 @@ export default function WorkOrderTriage() {
               jobId={jobId}
               roster={roster}
               skills={skills}
-              onChanged={invalidate}
+              onChanged={() => { invalidateQueue(); invalidateJob(jobId); }}
               onClose={() => setParam('job', null)}
             />
           ) : null}
@@ -992,7 +1071,11 @@ export default function WorkOrderTriage() {
               jobId={jobId}
               roster={roster}
               skills={skills}
-              onChanged={invalidate}
+              onChanged={() => {
+                invalidateJob(jobId);
+                invalidateComplaintJobs(complaintId);
+                invalidateQueue();
+              }}
               onClose={() => setParam('job', null)}
             />
           ) : null}
@@ -1043,7 +1126,10 @@ export default function WorkOrderTriage() {
                       complaintId={complaint.id}
                       skills={skills}
                       onOpenJob={(id) => setParam('job', id)}
-                      onChanged={invalidate}
+                      onChanged={() => {
+                        invalidateComplaintJobs(complaint.id);
+                        invalidateQueue();
+                      }}
                     />
                   ) : null}
                 </article>
@@ -1053,23 +1139,20 @@ export default function WorkOrderTriage() {
         </div>
       )}
 
-      {/* The department read is *context*, and its refusal is not a page
-          failure — it used to render as a bare "You do not have permission for
-          this community action." under the queue, which is both alarming and
-          untrue of the screen it appears on.
-          `GET /departments/{id}` is guarded `require_admin_or_manager`
+      {/* The department read is *context*, and its absence is not a page
+          failure. `GET /departments/{id}` is guarded `require_admin_or_manager`
           (`departments.py:47`), and a service-department supervisor holds a
-          `worker` membership — so the one population this screen was mounted in
-          the worker portal *for* cannot make this call, while every work-order
-          endpoint admits them. What is lost is the trade list; the roster is
-          not, because the assign box reads
-          `GET /work-orders/{id}/candidates`, which admits them. Said plainly
-          rather than branched on portal: an admin or a manager only reaches
-          this line on a genuine failure, and the sentence is true there too. */}
-      {department.error ? (
+          `worker` membership — so under the worker portal the read is gated off
+          above rather than fired and refused, while every work-order endpoint
+          admits them. What is lost is the trade list; the roster is not,
+          because the assign box reads `GET /work-orders/{id}/candidates`, which
+          admits them. One sentence for both arms, because it is true in both:
+          the supervisor whose portal never asks, and the admin or manager whose
+          ask genuinely failed. */}
+      {inWorkerPortal || department.error ? (
         <p className="rounded-2xl border border-slate-100 bg-white p-4 text-[11px] font-semibold text-slate-500">
-          This department&apos;s trade list could not be read, so the trade box
-          offers nothing to pick and the job takes the trade its complaint
+          This department&apos;s trade list is not available here, so the trade
+          box offers nothing to pick and the job takes the trade its complaint
           category implies. Nothing else on this screen is affected.
         </p>
       ) : null}

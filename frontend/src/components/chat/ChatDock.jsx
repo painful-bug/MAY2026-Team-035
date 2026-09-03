@@ -13,6 +13,8 @@ import { messagesApi } from '../../features/messages/messagesApi';
 import { workerApi } from '../../features/worker/workerApi';
 import { isProviderProfileComplete } from '../../features/worker/providerProfile';
 import { holdsLeadershipEngagement } from '../../lib/staffVocabulary';
+import { CHAT_EVENT_MAP } from '../../lib/realtime/portalMaps';
+import { useLiveUpdates, useSseFallbackInterval } from '../../lib/realtime/useLiveUpdates';
 import { AUTH_ROUTES } from '../../routes/authRoutes';
 import { useAuthStore } from '../../store/authStore';
 
@@ -192,10 +194,15 @@ function ThreadView({ threadId, myProfileId, onBack }) {
   const [draft, setDraft] = useState('');
   const endRef = useRef(null);
 
+  // `message.created` is addressed to the recipient membership, so the reply
+  // lands here the moment it is written; the dock's own subscription (see
+  // `ChatDock` below) stales `['dm-thread']` as a prefix, which is this key.
+  // The 20-second poll it replaces is now the uniform degraded fallback.
+  const refetchInterval = useSseFallbackInterval();
   const thread = useQuery({
     queryKey: ['dm-thread', threadId],
     queryFn: () => messagesApi.thread(threadId),
-    refetchInterval: 20_000,
+    refetchInterval,
   });
   const send = useMutation({
     mutationFn: (body) => messagesApi.send(threadId, body),
@@ -327,11 +334,24 @@ export default function ChatDock() {
     enabled: signedIn && onWorkerSurface,
   });
 
+  // The dock's live half. Its own subscription rather than a layout's, for the
+  // reason the bell has one: the dock mounts in App.jsx outside <Routes>, so it
+  // is on screen in portals — admin, security — that have no layout-level
+  // mount. `enabled: signedIn` keeps a signed-out tab from opening the stream
+  // at all; the shared `EventSource` is ref-counted, so nothing is held open
+  // for a visitor sitting on the landing page.
+  //
+  // Two keys, one frame: `['dm-threads']` is the mailbox and `['dm-thread']` is
+  // a prefix over every open conversation. The 30/90-second poll pair this
+  // replaces was the dock's whole notion of a new message arriving.
+  useLiveUpdates(CHAT_EVENT_MAP, { enabled: signedIn });
+  const refetchInterval = useSseFallbackInterval();
+
   const threads = useQuery({
     queryKey: ['dm-threads'],
     queryFn: messagesApi.threads,
     enabled: signedIn,
-    refetchInterval: open ? 30_000 : 90_000,
+    refetchInterval,
   });
 
   // Screens elsewhere ask the dock to open. An event, because the dock lives

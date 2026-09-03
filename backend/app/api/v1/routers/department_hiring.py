@@ -61,7 +61,7 @@ _MANAGEMENT_DEPENDENCIES = [Depends(require_admin_or_manager)]
     summary="This department's applications and invitations",
     dependencies=_HIRING_DEPENDENCIES,
 )
-async def list_applications(
+def list_applications(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
     status_filter: str | None = Query(None, alias="status", max_length=20),
@@ -88,7 +88,7 @@ async def list_applications(
     summary="Service people this department could hire",
     dependencies=_HIRING_DEPENDENCIES,
 )
-async def list_candidates(
+def list_candidates(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
     query: str | None = Query(None, alias="q", max_length=120),
@@ -98,10 +98,19 @@ async def list_candidates(
     """The candidate search, nearest first.
 
     The mirror of `GET /worker/communities/search`: same three rules seen from
-    the other end. Holds a skill this department's categories need, not
-    blacklisted here, not already on this roster — and not already a member of
+    the other end. Holds a skill this department needs — one it has declared
+    for itself through `PUT .../skills`, **or** one its categories imply — not
+    blacklisted here, not already on this roster, and not already a member of
     the community in some other capacity, because the hire would be refused and
     offering a dead end is worse than an empty list.
+
+    **The two paths are a union, and both halves matter.** A category earns its
+    skill by exact name match against the catalogue (`link_category_skill`), so
+    a community that calls its department "Security Management" against
+    catalogue entries *Security Guard* and *Gate Officer* derives nothing at
+    all; the declared list is how such a department says what it needs. A
+    department that has declared nothing still hires off its categories exactly
+    as before.
 
     `matchingSkillNames` is the subset that put them on this list, which is not
     the same as `skillNames`. Showing only the second would leave a manager
@@ -126,7 +135,7 @@ async def list_candidates(
     summary="Invite a service person to this department",
     dependencies=_HIRING_DEPENDENCIES,
 )
-async def invite(
+def invite(
     body: InviteRequest,
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -161,7 +170,7 @@ async def invite(
     summary="Accept or reject an application",
     dependencies=_HIRING_DEPENDENCIES,
 )
-async def decide(
+def decide(
     body: DecideApplicationRequest,
     department_id: str = Path(...),
     application_id: str = Path(...),
@@ -199,7 +208,7 @@ async def decide(
     summary="Remove someone from this department",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def remove_member(
+def remove_member(
     body: RemoveMemberRequest,
     department_id: str = Path(...),
     staff_id: str = Path(...),
@@ -233,7 +242,7 @@ async def remove_member(
     summary="Bar a service person from this community",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def blacklist(
+def blacklist(
     body: BlacklistRequest,
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -278,7 +287,7 @@ async def blacklist(
     summary="Departures from this department",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def list_departures(
+def list_departures(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
     status_filter: str | None = Query(None, alias="status", max_length=20),
@@ -305,7 +314,7 @@ async def list_departures(
     summary="One departure and its handover list",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def get_departure(
+def get_departure(
     department_id: str = Path(...),
     departure_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -333,7 +342,7 @@ async def get_departure(
     summary="Start a handover for someone on this roster",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def open_departure(
+def open_departure(
     body: RequestDepartureRequest,
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -371,7 +380,7 @@ async def open_departure(
     summary="Hand one job or shift to somebody else",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def reassign_item(
+def reassign_item(
     body: ReassignItemRequest,
     department_id: str = Path(...),
     departure_id: str = Path(...),
@@ -409,7 +418,7 @@ async def reassign_item(
     summary="Approve or reject a departure",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def decide_departure(
+def decide_departure(
     body: DecideDepartureRequest,
     department_id: str = Path(...),
     departure_id: str = Path(...),
@@ -445,7 +454,7 @@ async def decide_departure(
     summary="One employee, with any departure heading their way",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def get_staff_member(
+def get_staff_member(
     department_id: str = Path(...),
     staff_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -472,7 +481,7 @@ async def get_staff_member(
     summary="One employee's jobs and shifts in a window",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def get_staff_schedule(
+def get_staff_schedule(
     department_id: str = Path(...),
     staff_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -508,7 +517,7 @@ async def get_staff_schedule(
     summary="Who could take each item this departure would strand",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def get_departure_coverage(
+def get_departure_coverage(
     department_id: str = Path(...),
     departure_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -554,7 +563,7 @@ async def get_departure_coverage(
     summary="Leadership created for this department",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def list_staff_invitations(
+def list_staff_invitations(
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
     status_filter: str | None = Query(None, alias="status", max_length=20),
@@ -584,7 +593,7 @@ async def list_staff_invitations(
     summary="Create a manager or supervisor",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def invite_staff_member(
+def invite_staff_member(
     body: InviteStaffRequest,
     department_id: str = Path(...),
     client: Client = Depends(get_request_client),
@@ -620,7 +629,7 @@ async def invite_staff_member(
     summary="Correct an unclaimed invitation",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def update_staff_invitation(
+def update_staff_invitation(
     body: UpdateStaffInvitationRequest,
     department_id: str = Path(...),
     invitation_id: str = Path(...),
@@ -664,7 +673,7 @@ async def update_staff_invitation(
     summary="Withdraw an unclaimed invitation",
     dependencies=_MANAGEMENT_DEPENDENCIES,
 )
-async def revoke_staff_invitation(
+def revoke_staff_invitation(
     department_id: str = Path(...),
     invitation_id: str = Path(...),
     client: Client = Depends(get_request_client),

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Phone, PhoneCall, Plus, Users } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
 import { useAuthStore } from '../../store/authStore';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 
 // Wired to `docs/API.md` §14 / `backend/app/api/v1/routers/resident_home.py`.
 //
@@ -30,10 +31,12 @@ export default function Profile() {
   const householdQuery = useQuery({
     queryKey: ['resident', 'household'],
     queryFn: () => residentApi.household(),
+    ...QUERY_POLICIES.detail,
   });
   const contactsQuery = useQuery({
     queryKey: ['resident', 'directory-contacts'],
     queryFn: () => residentApi.directoryContacts(),
+    ...QUERY_POLICIES.list,
   });
 
   const addPhone = useMutation({

@@ -152,9 +152,11 @@ class HireableProvider(CamelModel):
     #: because "12.4 km away" does not tell a manager *which direction*, and a
     #: candidate card had nothing else to say about where somebody is.
     location_label: str | None = None
-    #: The subset of their trades this department's categories actually need.
-    #: Separate from ``skillNames`` because the reason a candidate is on this
-    #: list is not the same as everything they can do.
+    #: The subset of their trades this department actually needs -- skills it
+    #: declared for itself, or ones its complaint categories imply, whichever
+    #: put this candidate on the list. Separate from ``skillNames`` because the
+    #: reason a candidate is on this list is not the same as everything they
+    #: can do.
     matching_skill_names: list[str] = Field(default_factory=list)
     skill_names: list[str] = Field(default_factory=list)
     community_count: int = 0

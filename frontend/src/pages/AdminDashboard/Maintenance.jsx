@@ -1,4 +1,10 @@
 import React, { useState } from 'react';
+// Modal renders through a portal to document.body. In place, it sat inside
+// AdminLayout's `<main class="animate-fade-in">` — a fill-forwards opacity
+// animation keeps <main> a stacking context forever, so `z-[999]` was trapped
+// at <main>'s own level and the sticky header's `z-40` painted above it. Same
+// fix as the departments modals (Departments.jsx).
+import { createPortal } from 'react-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
 import {
@@ -13,9 +19,14 @@ const PAYMENT_METHODS = ['Cash', 'UPI', 'Credit Card', 'Net Banking', 'Cheque', 
 const fieldClass = 'w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-700 font-semibold';
 
 function Modal({ title, icon: Icon, onClose, children }) {
-  return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-100 max-w-lg w-full p-6 space-y-5 animate-slide-up max-h-[90vh] overflow-y-auto">
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4"
+    >
+      <div className="bg-white rounded-3xl border border-slate-100 max-w-lg w-full p-6 space-y-5 animate-slide-up max-h-[calc(100vh-2rem)] overflow-y-auto">
         <div className="flex justify-between items-center">
           <h3 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
             {Icon ? <Icon className="w-5 h-5 text-indigo-600" /> : null}
@@ -27,7 +38,8 @@ function Modal({ title, icon: Icon, onClose, children }) {
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -277,7 +289,10 @@ function RecordPaymentModal({ invoice, onClose, onRecorded }) {
 }
 
 export default function Maintenance() {
-  const { payments, users, hydrateDashboard, showToast } = useApp();
+  const payments = useApp((state) => state.payments);
+  const users = useApp((state) => state.users);
+  const hydrateDashboard = useApp((state) => state.hydrateDashboard);
+  const showToast = useApp((state) => state.showToast);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [creating, setCreating] = useState(false);

@@ -1,15 +1,16 @@
 """The dashboard live-update path: frame format, fan-out, and tenant isolation.
 
-Nothing here touches Supabase. The hub's only contact with the database is two
-repository functions, so the tests substitute those and drive the rest for real
--- including the asyncio queues, so the concurrency being asserted is the
-concurrency that ships.
+Nothing here touches Supabase. The hub's only contact with the database is
+three repository functions, so the tests substitute those and drive the rest
+for real -- including the asyncio queues, so the concurrency being asserted is
+the concurrency that ships.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 from app.core import realtime
 from app.core.realtime import Event, RealtimeHub, _Subscriber
@@ -459,6 +460,9 @@ def test_the_backfill_uses_the_same_filter_as_live_dispatch(monkeypatch):
         return [_JOIN_REQUEST, _row(2, audience="member", recipient=RESIDENT_M)]
 
     monkeypatch.setattr(dashboard_repository, "read_events", fake_read_events)
+    # No gap: the horizon probe is exercised on its own below, and leaving it
+    # to hit the stub client would make this assertion depend on that failure.
+    monkeypatch.setattr(dashboard_repository, "oldest_event_id", lambda client: 1)
     monkeypatch.setattr(supabase_client, "get_service_client", lambda: object())
 
     async def body():
@@ -484,12 +488,203 @@ def test_a_failing_backfill_yields_no_frames_not_an_exception(monkeypatch):
         raise RuntimeError("supabase is having a moment")
 
     monkeypatch.setattr(dashboard_repository, "read_events", explode)
+    monkeypatch.setattr(dashboard_repository, "oldest_event_id", lambda client: 1)
     monkeypatch.setattr(supabase_client, "get_service_client", lambda: object())
 
     async def body():
         assert await RealtimeHub()._backfill(sub(), last_event_id=1) == []
 
     run(body)
+
+
+# ---------------------------------------------------------------------------
+# The prune horizon
+#
+# `prune_sse_events` (`0024`) drops rows older than two hours. A client away
+# longer than that reconnects with a `Last-Event-ID` from before the oldest
+# surviving row, and an `id > last_event_id` read hands back the tail of the
+# outbox as though nothing were missing -- a gap with no symptom, which is the
+# one failure the at-most-once doctrine does not already cover, because the
+# client believes it is caught up. The guard turns that into a resync.
+# ---------------------------------------------------------------------------
+
+
+def _patch_outbox(monkeypatch, *, oldest, rows=()):
+    """Stub both reads `_backfill` makes. `oldest` may be an exception to raise."""
+    from app.core import supabase_client
+    from app.repositories import dashboard_repository
+
+    def fake_oldest(client):
+        if isinstance(oldest, BaseException):
+            raise oldest
+        return oldest
+
+    monkeypatch.setattr(dashboard_repository, "oldest_event_id", fake_oldest)
+    monkeypatch.setattr(
+        dashboard_repository, "read_events", lambda client, **kwargs: list(rows)
+    )
+    monkeypatch.setattr(supabase_client, "get_service_client", lambda: object())
+
+
+def test_a_reconnect_from_before_the_prune_horizon_is_told_to_resync(monkeypatch):
+    """Events 11..49 were pruned while this client was away. It must be told to
+    re-read rather than handed row 50 as if it were the next one."""
+    _patch_outbox(monkeypatch, oldest=50, rows=[_row(50), _row(51)])
+
+    async def body():
+        resident = sub(role="resident", membership_id=RESIDENT_M)
+        frames = await RealtimeHub()._backfill(resident, last_event_id=10)
+
+        assert len(frames) == 3
+        # The resync comes FIRST: a client that applied the two backfilled rows
+        # and only then learned to refetch would render a hole in the meantime.
+        assert "event: stream.resync" in frames[0]
+        assert json.loads(frames[0].split("data: ")[1].strip()) == {"resync": True}
+        assert ["id: 50" in frames[1], "id: 51" in frames[2]] == [True, True]
+
+    run(body)
+
+
+def test_the_resync_frame_carries_the_clients_own_id_not_the_horizon(monkeypatch):
+    """Ids on the stream only ever go up. Stamping the frame with the horizon
+    (50) would put it ahead of nothing that follows and, worse, would move the
+    client's resume point past events it has not seen."""
+    _patch_outbox(monkeypatch, oldest=50, rows=[])
+
+    async def body():
+        frames = await RealtimeHub()._backfill(sub(role="resident"), last_event_id=10)
+
+        assert frames[0].startswith("id: 10\n")
+
+    run(body)
+
+
+def test_the_resync_topic_follows_the_role_the_way_the_lag_resync_does(monkeypatch):
+    """Same `_resync_event` the slow-consumer path uses, so an admin keeps the
+    `dashboard.refresh` its shipped listener is already wired to."""
+    _patch_outbox(monkeypatch, oldest=50, rows=[])
+
+    async def body():
+        frames = await RealtimeHub()._backfill(sub(role="admin"), last_event_id=10)
+
+        assert "event: dashboard.refresh" in frames[0]
+
+    run(body)
+
+
+def test_a_contiguous_reconnect_gets_its_events_and_no_resync(monkeypatch):
+    """The boundary: the client stopped at 10 and row 11 is still retained, so
+    nothing was lost and `oldest == last + 1` must NOT resync. An off-by-one
+    here would resync every healthy reconnect in the system."""
+    _patch_outbox(monkeypatch, oldest=11, rows=[_row(11), _row(12)])
+
+    async def body():
+        frames = await RealtimeHub()._backfill(sub(role="resident"), last_event_id=10)
+
+        assert len(frames) == 2
+        assert "resync" not in frames[0]
+        assert "id: 11" in frames[0]
+
+    run(body)
+
+
+def test_a_horizon_behind_the_client_is_not_a_gap(monkeypatch):
+    """Nothing has been pruned past this client at all."""
+    _patch_outbox(monkeypatch, oldest=3, rows=[_row(11)])
+
+    async def body():
+        frames = await RealtimeHub()._backfill(sub(role="resident"), last_event_id=10)
+
+        assert len(frames) == 1
+        assert "resync" not in frames[0]
+
+    run(body)
+
+
+def test_an_empty_outbox_is_silence_not_a_gap(monkeypatch):
+    """`oldest_event_id` returns 0 for an empty table, which is exactly what a
+    quiet community looks like. Reading 0 as a horizon would resync everyone
+    every time the pruner emptied the outbox."""
+    _patch_outbox(monkeypatch, oldest=0, rows=[])
+
+    async def body():
+        assert await RealtimeHub()._backfill(sub(role="resident"), 10) == []
+
+    run(body)
+
+
+def test_a_failing_horizon_probe_still_delivers_the_backfill(monkeypatch):
+    """Fail open. A probe that cannot answer is not evidence of a gap, and
+    resyncing on an unhealthy database would aim a refetch storm at it at the
+    moment it is least able to serve one -- while the events themselves, if the
+    read succeeds, are still the truthful answer."""
+    _patch_outbox(
+        monkeypatch, oldest=RuntimeError("supabase is having a moment"), rows=[_row(11)]
+    )
+
+    async def body():
+        frames = await RealtimeHub()._backfill(sub(role="resident"), last_event_id=10)
+
+        assert len(frames) == 1
+        assert "resync" not in frames[0]
+
+    run(body)
+
+
+def test_a_first_connection_probes_nothing(monkeypatch):
+    """No `Last-Event-ID` means no history to have a gap in, and the poller
+    starts such a stream at the high-water mark. The probe is a query, so not
+    making it is the point."""
+    _patch_outbox(monkeypatch, oldest=AssertionError("probed without a resume point"))
+
+    async def body():
+        assert await RealtimeHub()._backfill(sub(), last_event_id=0) == []
+
+    run(body)
+
+
+class _FakeTable:
+    """Enough PostgREST builder to record what a repository read asked for."""
+
+    def __init__(self, rows, calls):
+        self._rows, self._calls = rows, calls
+
+    def select(self, columns):
+        self._calls.append(("select", columns))
+        return self
+
+    def order(self, column, desc=False):
+        self._calls.append(("order", column, desc))
+        return self
+
+    def limit(self, count):
+        self._calls.append(("limit", count))
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=self._rows)
+
+
+def test_oldest_event_id_reads_the_low_water_mark_ascending():
+    """The direction is the whole function. `desc=True` here would return the
+    high-water mark, which is greater than every `last_event_id` there is, so
+    every reconnect in the system would resync forever."""
+    from app.repositories import dashboard_repository
+
+    calls: list[tuple] = []
+    client = SimpleNamespace(table=lambda name: _FakeTable([{"id": 50}], calls))
+
+    assert dashboard_repository.oldest_event_id(client) == 50
+    assert ("order", "id", False) in calls
+    assert ("limit", 1) in calls
+
+
+def test_oldest_event_id_is_zero_on_an_empty_outbox():
+    from app.repositories import dashboard_repository
+
+    client = SimpleNamespace(table=lambda name: _FakeTable([], []))
+
+    assert dashboard_repository.oldest_event_id(client) == 0
 
 
 def test_the_backfill_narrowing_clause_never_widens_past_the_caller():

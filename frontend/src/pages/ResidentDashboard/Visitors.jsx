@@ -1,7 +1,15 @@
 import React, { useState } from 'react';
+// The QR pass modal renders through a portal to document.body. In place, it
+// sat inside ResidentLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever, so
+// `z-[999]` was trapped at <main>'s own level and the sticky header's `z-40`
+// painted above it. Same fix as the departments modals
+// (AdminDashboard/Departments.jsx).
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import {
   Users,
   UserPlus,
@@ -92,6 +100,8 @@ export default function Visitors() {
   const passesQuery = useQuery({
     queryKey: ['resident', 'visitor-passes', activeView],
     queryFn: () => residentApi.visitorPasses({ view: activeView }),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () =>
@@ -440,8 +450,11 @@ export default function Visitors() {
         </div>
       </div>
 
-      {qrModal && (
+      {qrModal && createPortal(
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Visitor QR pass"
           className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setQrModal(null);
@@ -515,7 +528,8 @@ export default function Visitors() {
               Download QR Code
             </a>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

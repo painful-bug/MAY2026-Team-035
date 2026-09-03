@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { Archive, Eye } from 'lucide-react';
 
 import ComplaintDetailModal from './ComplaintDetailModal';
@@ -68,6 +69,7 @@ export default function CompletedWork() {
   const snapshot = useQuery({
     queryKey: ['worker-snapshot'],
     queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
   });
   const engagement = supervisedEngagement(snapshot.data?.communities);
   const departmentId = engagement?.departmentId || null;
@@ -75,6 +77,7 @@ export default function CompletedWork() {
   const complaints = useQuery({
     queryKey: ['departments', departmentId, 'complaints'],
     queryFn: () => complaintRoutingApi.departmentComplaints(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
 

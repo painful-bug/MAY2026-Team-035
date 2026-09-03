@@ -36,8 +36,27 @@ competence with Postgres and Supabase, but no context on this branch's work.
 > its own post-checks, and each says for itself what the last ledger probe found
 > — this paragraph deliberately does not restate that, because a second copy of
 > an apply status is the copy that goes stale. **§28 is outstanding as of
-> 2026-08-23** and is the newest. If the section numbers below run past §28, this
-> paragraph is what needs updating.
+> 2026-08-23.**
+>
+> **Five more sections have been written since — §29 `20260823190000`
+> (assignment write repairs), §30 `20260824090000` (supervisor take-up), §31
+> `20260826090000` (realtime expansion), §32 `20260827210000` (one live job
+> per complaint) and §33 `20260828090000` (residence claim on join).** §30 must
+> follow §29 and §29 must follow §28 (each section says so, and re-issues the
+> previous one's function bodies); §31 is independent of all of them; §32 must
+> follow §28, whose `create_work_order` body it carries forward, and is
+> independent of §29–§31; §33 touches none of their objects and depends only on
+> the long-applied §23-era state, but comes last because filename order is apply
+> order. Filename order — §29, then §30, then §31, then §32, then §33 —
+> satisfies all of it, as it always does.
+>
+> **One more section has been written since — §34 `20260829120000` (drop the
+> legacy `approve_access_request` overload).** It touches no object any of
+> §29–§33 touches, and depends on none of them: the stray it drops is
+> hosted-only prototype code, absent from every migration in this tree, so §34
+> applies cleanly whether §33 has landed yet or not, and in either order.
+> Filename order puts it last regardless. **§34 is the newest.** If the section
+> numbers below run past §34, this paragraph is what needs updating.
 >
 > So **§0.2's "confirm the highest version present is `0047`" is twenty-two
 > migrations stale** and would now stop you on a database that is exactly where
@@ -4041,3 +4060,1422 @@ overwrites whatever is there, which is why pre-check (a) exists; that the hosted
 `complaint_events` constraint is the one `20260822170000` left, which is
 pre-check (b); and whether any department has leadership to use the button at
 all, which is pre-check (c).
+
+## 31. `20260826090000_realtime_expansion.sql`
+
+**Independent of §29 and §30.** It declares no function either of them names,
+touches no constraint, and fires on tables neither of them writes to. Filename
+order still puts it last, which is fine; it can also be applied on its own.
+
+**What breaks without it:** three screens that look live and are not. The outbox
+has carried `dashboard.refresh` since `0007` and `notification.created` since
+`0030`, and `0028` scoped the first of those to `{admin, manager}` — correctly,
+because it means *re-read the admin snapshot*. What that leaves is every
+non-admin surface with no frame of its own:
+
+- **A work order changes and nobody hears it.** `public.work_orders` carries no
+  SSE trigger at all. It is not one of the twelve tables `0007`'s loop names,
+  and nothing in the thirty files since attached one — so the resident watching
+  their complaint, the technician watching their queue and the supervisor
+  watching a department all learn about a status change on a manual reload.
+- **A slot is taken and the grid does not know.** `amenity_bookings` has only
+  the generic trigger, which since `0028` speaks to admins. A resident staring
+  at the availability grid finds out the slot went by trying to book it.
+- **The chat dock polls.** `0046`'s messages reach the notification bell —
+  `notify_profile` writes a `notifications` row and `0030`'s trigger turns that
+  into a `notification.created` frame — but the thread itself has no topic, so
+  the open conversation refreshes on a timer.
+
+**What it does:** three emitter functions and four triggers, in five sections.
+Nothing is dropped that this file did not create, and every function lands via
+`create or replace`.
+
+1. **`emit_work_order_sse_event` → `work_order.changed`, audience
+   `community`.** `after insert or update or delete` on `public.work_orders`,
+   as trigger `work_orders_sse_event`. The payload is the table, the work-order
+   id, the complaint id and the status word — nothing renderable. The audience
+   is the whole community on purpose: the four populations that may read a job
+   (`can_read_work_order`, `0036`) do not map onto any role list, so a `role`
+   row would have to guess, and guessing *narrow* silently drops the frame for
+   the people who needed it. Over-delivery is safe under the doctrine in
+   [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — the frame is a hint, the client
+   re-reads through the endpoint whose authorization already scopes it, and a
+   client nudged about a job it may not see re-fetches an empty answer.
+2. **`emit_amenity_sse_event` → `amenity.changed`, audience `community`.** An
+   **additional** trigger on `public.amenity_bookings`, named
+   `amenity_bookings_amenity_sse`, beside whatever generic trigger that table
+   already carries — hosted's is `amenity_bookings_sse` (§26's inventory
+   probe), a fresh database's is `dashboard_sse_amenity_bookings`, and this
+   file drops neither, so `0028`'s `{admin, manager}` scoping of
+   `dashboard.refresh` is untouched and admins converge exactly as before. The
+   payload is the table and the amenity id, so the client re-reads availability
+   it could already read. `public.amenity_booking_series` gets the same trigger
+   **if it exists**: `0023` renamed hosted's to
+   `legacy_amenity_booking_series` and creates nothing under the live name, so
+   the attach sits behind `to_regclass`, which is `0007`'s own posture for this
+   exact table.
+3. **`emit_message_sse_event` → `message.created`, audience `member`.** `after
+   insert` only, on `public.dm_messages`, as `dm_messages_sse_event` — `0046`
+   exposes no update or delete, so an update arm would be a trigger waiting on
+   a write that cannot happen. This is `0030`'s member-addressed emitter with
+   one extra hop: the thread is addressed by *profile* (`0046`) and the stream
+   by *membership* (`0028`), so each recipient participant is resolved to their
+   active `community_memberships` row in the thread's community, and a
+   participant with no active membership there gets no frame rather than a
+   malformed one. The sender is skipped by `is not distinct from` against
+   `author_profile_id`, which also means a system line (null author — `0046`'s
+   thread-lock notice) reaches **both** participants, since both have a mailbox
+   to refresh. The payload is the thread id and the message id; the body
+   travels only through the RLS-scoped read, for the reason `0030` refused to
+   put a notification title in a frame.
+4. **Grants.** All three are trigger functions, which cannot be called
+   directly, but the default `execute` grant to `public` still exists on them
+   and is revoked — `0046`'s posture for `lock_work_order_threads`.
+5. **Proof in the transaction.** A closing `do` block raises if any trigger
+   this file claims to have made is missing, **by name**, on the table it names.
+   Named rather than bare: `work_orders` had no trigger at all, so "this table
+   has some trigger" would have passed against nothing useful. The
+   `amenity_booking_series` arm is conditional on the same `to_regclass` that
+   gates its attach, so the guard and the proof cannot disagree.
+
+**Topic names are frozen.** `work_order.changed`, `amenity.changed`,
+`message.created` — the frontend listeners are being written against exactly
+these strings. Renaming one here means a listener that never fires, with no
+error anywhere.
+
+**Nothing is dropped, nothing is rewritten, no row is written.** The file
+declares no fourth function, alters no table, touches no policy and no
+constraint, and does not redefine `emit_dashboard_sse_event`,
+`emit_access_request_sse_event` or `emit_notification_sse_event`. Its only
+`drop`s are `drop trigger if exists` of its own four names.
+
+**The code half, which needs no migration and no apply order.**
+`app/core/realtime.py`'s reconnect backfill reads `id > last_event_id`, and
+`prune_sse_events` (`0024`) drops rows older than two hours, so a client that
+was away longer than the retention window was handed the tail of the outbox as
+though nothing were missing — a gap with no symptom, because the client
+believes it is caught up. The backfill now asks
+`dashboard_repository.oldest_event_id()` first and, when the oldest surviving
+row sits past the client's resume point, prepends the existing `stream.resync`
+frame (`dashboard.refresh` for an admin, whose listener already ships) so the
+client refetches instead of trusting the middle of its history. That ships in
+the deploy, is independent of this file, and works the same whether or not the
+apply has happened. Pre-check (d) below is about it: a project without
+`pg_cron` never prunes, so the gap it guards against cannot occur there yet.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) 0028 is applied. This is the one thing the static battery cannot check,
+--     and it is a hard dependency: two of the three emitters write an
+--     `audience` column, and the member-addressed one writes
+--     `recipient_membership_id`. On a database without them the insert fails
+--     and the whole file rolls back. Expect three rows.
+select column_name, data_type, is_nullable
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'sse_events'
+   and column_name in ('audience', 'audience_roles', 'recipient_membership_id')
+ order by 1;
+
+-- (b) And its shape constraint, which is what makes a malformed row
+--     unwritable rather than silently undeliverable. Expect one row naming
+--     'community', 'role' and 'member'.
+select conname, pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conrelid = 'public.sse_events'::regclass
+   and conname  = 'sse_events_audience_shape_check';
+
+-- (c) The four tables this file fires on exist, and what each already carries.
+--     Expect: work_orders with NO row at all; amenity_bookings with its
+--     generic trigger under whatever name hosted holds (`amenity_bookings_sse`
+--     per §26's probe); dm_messages with none of ours. None of this file's own
+--     four names may appear yet -- if one does, this section has already been
+--     applied and the re-run is a no-op, which is fine.
+select c.relname as table_name,
+       t.tgname  as trigger_name,
+       pg_get_triggerdef(t.oid) as definition
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  left join pg_trigger t on t.tgrelid = c.oid and not t.tgisinternal
+ where n.nspname = 'public'
+   and c.relname in ('work_orders', 'amenity_bookings', 'dm_messages',
+                     'dm_threads', 'amenity_booking_series')
+ order by 1, 2;
+-- `amenity_booking_series` returning no row at all is the EXPECTED result --
+-- 0023 parked hosted's copy as `legacy_amenity_booking_series`. The file's
+-- to_regclass guard skips it; nothing to do.
+
+-- (d) Is anything actually pruning? Informational, and it is about the code
+--     half above, not about this file. Zero rows means pg_cron is not
+--     scheduling `prune-sse-events`, so the outbox grows without bound and no
+--     client can fall off the back of it yet.
+select jobname, schedule, active
+  from cron.job
+ where jobname = 'prune-sse-events';
+-- If `cron.job` does not exist, the extension is not installed. That is the
+-- documented state of a project without pg_cron (see 0024 and ARCHITECTURE.md
+-- "Retention"), not a failure of this apply.
+```
+
+There is no data risk to check for. The file writes no row, drops no column,
+alters no table and touches no policy; the three functions are
+`create or replace` and the four triggers are `drop trigger if exists` of names
+only this file uses.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning may fire — it sees `drop trigger` and
+`create or replace function` — and it is safe to confirm: every drop names a
+trigger this file created three lines later, the whole paste is one
+transaction, so a failure anywhere rolls the entire file back. No output is
+expected on success; section 5's `do` block raises if any trigger this file
+claims to have made is missing, so a half-applied file cannot look like a
+successful one.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260826090000', 'realtime_expansion')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) The four triggers, by name, and the generic ones still standing beside
+--     them. Expect work_orders_sse_event on work_orders;
+--     amenity_bookings_amenity_sse on amenity_bookings ALONGSIDE the generic
+--     trigger that was there in pre-check (c); dm_messages_sse_event on
+--     dm_messages. `amenity_booking_series_amenity_sse` will be absent, which
+--     is correct -- the table is not there.
+select c.relname as table_name,
+       t.tgname  as trigger_name,
+       pg_get_triggerdef(t.oid) as definition
+  from pg_trigger t
+  join pg_class c on c.oid = t.tgrelid
+  join pg_namespace n on n.oid = c.relnamespace
+ where not t.tgisinternal
+   and n.nspname = 'public'
+   and c.relname in ('work_orders', 'amenity_bookings', 'dm_messages')
+ order by 1, 2;
+
+-- (b) The three emitters: security definer, search_path pinned, and no grant
+--     to public or authenticated. Expect three rows, all `security_definer`
+--     true, each `config` naming search_path=public, and no acl mentioning
+--     anon or authenticated.
+select p.proname,
+       p.prosecdef                     as security_definer,
+       array_to_string(p.proconfig, ', ') as config,
+       coalesce(array_to_string(p.proacl, ', '), '(owner only)') as acl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('emit_work_order_sse_event', 'emit_amenity_sse_event',
+                     'emit_message_sse_event')
+ order by 1;
+
+-- (c) The generic emitters were NOT rewritten. Expect dashboard.refresh still
+--     going to the {admin, manager} role audience -- true -- and the
+--     notification emitter still member-addressed -- true.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%array[''admin'', ''manager'']%'
+         as still_role_scoped
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('emit_dashboard_sse_event', 'emit_access_request_sse_event')
+ order by 1;
+
+-- (d) The topic census, before and after the functional check below. Run it
+--     now and expect the three new topics absent; run it again after and
+--     expect work_order.changed at audience `community`, amenity.changed at
+--     `community`, and message.created at `member`. Rows older than two hours
+--     may have been pruned away between the two readings, which is the
+--     retention working, not a miss.
+select topic, audience, count(*) as rows
+  from public.sse_events
+ group by 1, 2
+ order by 1, 2;
+```
+
+**Post-check, functional:** the frontend listeners for these three topics are
+being written in parallel, so read the stream itself rather than a screen —
+open the app as any member, and in the browser devtools **Network → the
+`/api/v1/events` request → EventStream** pane watch the frames arrive while a
+second browser acts:
+
+1. Move a work order's status (assign it, or complete it). The member's stream
+   gains a `work_order.changed` frame carrying the work-order id, its complaint
+   id and the new status word — including for a resident, which is the whole
+   point of the community audience.
+2. Book an amenity slot as one resident. A *second* resident's stream gains
+   `amenity.changed` with the amenity id. The admin's stream gains **both**
+   that and the generic `dashboard.refresh` it always got — two frames, which
+   is the "additional, not a replacement" design being visible.
+3. Send a direct message. The recipient's stream gains `message.created` with
+   the thread id and the message id and **no body**; the sender's stream gains
+   nothing at all. Then check the negative case that matters: a third member of
+   the same community, with the same page open, receives nothing — `member`
+   audience means one connection, and this is the frame that would be a
+   disclosure if it were wrong.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_realtime_expansion_migration.py` (16 tests) — the file
+parses (`pglast`); it sorts after its named predecessor `20260824090000` and
+after every file it reasons about, including `0007` (the outbox), `0028` (the
+audience columns), `0030` (the member-emitter template) and every file in the
+directory that creates `work_orders`, `amenity_bookings`, `dm_threads` or
+`dm_messages`, each derived from the migration texts rather than listed by
+hand; all three emitters are `security definer` with a pinned `search_path`;
+the only trigger names dropped are this file's own four, the string
+`dashboard_sse` does not appear anywhere in it, and it holds no
+`create table`, `alter table`, `drop function`, `create policy`, `delete from`
+or `update public.`; each payload is asserted for what it carries **and** for
+what it must not — no title, body, location, priority or name on the work-order
+frame, no booker, slot or status on the amenity frame, no message body on the
+message frame; the work-order emitter's `DELETE` arm reads `old` and returns
+it; the community-audience frames carry neither `audience_roles` nor
+`recipient_membership_id`, which is `0028`'s community shape; the series attach
+is proved to sit behind its `to_regclass` guard; the message trigger is proved
+`after insert` and nothing else, by exact match on the whole trigger
+definition; the sender exclusion, the `is not distinct from` spelling that
+carries the system line to both participants, and the active-membership
+predicate (`community_id`, `status = 'active'`, `ended_at is null`) are each
+pinned; and the closing `do` block is proved to name every trigger and every
+table specifically, with `not tgisinternal` and a `raise exception` per arm.
+Plus the directory battery in `test_migration_directory_is_fresh_appliable.py`.
+The code half is pinned by `backend/tests/test_realtime.py`, which covers both
+branches of the prune-horizon guard — a resume point behind the horizon gets
+the resync frame **first** and stamped with the client's own id, the contiguous
+boundary (`oldest = last + 1`) gets no resync, an empty outbox is not a gap, a
+failing horizon probe fails open and still delivers, and the repository read is
+ascending. **Not verifiable statically:** that hosted's `sse_events` carries
+`0028`'s audience columns and shape constraint — both sort long before this
+file and the ledger says they are applied, which is why pre-check (a) and (b)
+exist; and whether `pg_cron` is scheduling the pruner at all, which is
+pre-check (d).
+
+## 32. `20260827210000_one_live_job_per_complaint.sql`
+
+**Must follow §28 `20260823180000_resident_sets_the_time.sql`; independent of
+§29, §30 and §31.** It carries §28's `create_work_order` body forward whole and
+adds two things to it, so applying it against a database that has not yet had
+§28 would install the guard *and* silently roll the pick-mode fork forward on
+top of whatever was there — and applying §28 *after* it would roll the guard
+back out, with nothing in the apply output to say so. Filename order puts it
+last, which satisfies all of it. It declares nothing §29, §30 or §31 declares
+and fires on nothing they touch.
+
+**What breaks without it — and this one was observed, not reasoned about.**
+Complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` collected a **second**
+`awaiting_resident` work order fifteen seconds after the resident booked the
+first one's visit (live, 2026-08-27). Nothing refused it, because nothing has
+ever asked: `create_work_order` checks the department, the community and the
+shape of the slot, and then inserts. Two things then follow:
+
+- **The resident holds two open requests for one problem.** Both jobs notify
+  them, both arm a 24-hour deadline, and `get_schedule_request` returns
+  whichever live row it reaches first — so the screen can show the *other* one's
+  state than the one the resident answered.
+- **A technician's day goes to work another job already owns.** The second job
+  dispatches on its own, and nothing anywhere reconciles the two.
+
+The window is the triage screen's own: the "Raise it" form is drawn before the
+jobs list has finished loading, so a supervisor can raise against a complaint
+whose live job has not appeared on their screen yet. The frontend half of this
+ruling closes that window (`WorkOrderTriage.jsx`); **this file is the half that
+holds when the frontend is wrong, when two supervisors act at once, and when a
+button is double-clicked.**
+
+**The rule, in one sentence.** A complaint carries several work orders over its
+life and **one at a time** — a failed visit's replacement or a reopened
+complaint's new job comes after the previous job ends, never alongside it.
+
+**LIVE** = `draft`, `awaiting_resident`, `offered`, `scheduled`, `in_progress`.
+Terminal = `completed`, `failed`, `cancelled`. The eight are the closed list
+`work_orders_status_check` (`0036`) allows, so the two sets are exhaustive and
+this file adds no ninth word and touches no constraint. The five are exactly the
+tuple `app/services/work_orders_service.py::_OPEN_STATES` holds and the
+`get_schedule_request` resolver already calls live; the SQL list is inline with
+a comment naming that tuple, and the static suite derives the expected five
+**from the Python source** so the two cannot drift apart unnoticed.
+
+**What it does:** one `create or replace function public.create_work_order`,
+under the **unchanged eight-argument signature**, with §28's body and exactly
+two additions.
+
+1. **The complaint read takes a row lock.**
+   `select * into v_complaint from public.complaints where id = p_complaint_id
+   for update`. The guard below is a read followed by a write, which is the
+   shape that loses a race: without the lock, two concurrent raises both read
+   "no live job" and both insert, which is a fair description of what happened
+   on 2026-08-27. The **complaint** is locked, not the jobs — locking the empty
+   set the guard is checking would lock nothing at all. This is the lock
+   `resident_set_work_order_schedule` (§28) already takes on the job it is about
+   to move, for the same reason.
+2. **The refusal**, after the department and community checks and after the
+   slot-shape checks, in front of every write:
+
+   ```sql
+   raise exception
+     'A job is already live on this complaint. Finish, fail, or cancel it before raising another.'
+     using errcode = 'HB409';
+   ```
+
+   It sits *behind* the argument validation deliberately: a half-slot or a
+   backwards slot is the caller's own request being malformed and deserves its
+   422, while this is a statement about the world and deserves its 409.
+
+**The sentence is frozen** (`docs/plans/ONE_LIVE_JOB_SPEC.md` §2). `HB409` is
+the existing conflict signal — `app/core/pg_errors.py` maps it to HTTP 409 with
+envelope `code: "conflict"` and the message travels to the screen **verbatim**.
+No new envelope code, and no client parses the text. Rewording this string here
+is rewording it on a supervisor's screen.
+
+**Nothing else moves.** No table, no column, no policy, no constraint, no
+trigger, no second function, and no row is written. `complaints.status` is not
+touched and neither is any complaint-lifecycle code: the ruling is about
+`work_orders` liveness alone. The grant on the function
+(`to authenticated`, §28) survives untouched — `create or replace function`
+retains the existing ACL — and there is no `notify pgrst, 'reload schema'`
+because the signature does not change, so PostgREST's catalogue does not either.
+The only other statement in the file is a `comment on function`.
+
+**Existing duplicates are history and this file does not touch them.** The
+guard refuses **new** raises; it does not reach back. The leak complaint above
+already holds two live jobs and will keep holding them after the apply — and
+because it does, *no* further raise against that complaint will be accepted
+until one of them ends, which is the guard working. The extra
+`awaiting_resident` job `1f0bf129-d47d-4236-9082-ecf0a28b245c` is **the owner's
+to cancel from the UI**, not this file's to cancel by hand: which of two live
+jobs is the real one is a lifecycle decision that belongs to a person, and a
+migration that made it silently would be inventing it. Post-check (d) below is
+where to confirm the cancel landed.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) §28 is applied, and this is the body about to be carried forward. Expect
+--     ONE row, `has_pick_mode` true (the §28 fork is present),
+--     `has_row_lock` and `has_live_guard` both FALSE. If the two guards are
+--     already true, this section has been applied and the re-run is a no-op,
+--     which is fine. If `has_pick_mode` is false, STOP: §28 has not been
+--     applied and applying this file would install its body out of order.
+select p.oid::regprocedure                                   as signature,
+       pg_get_functiondef(p.oid) like '%''mode'', v_mode%'   as has_pick_mode,
+       pg_get_functiondef(p.oid) like '%for update%'         as has_row_lock,
+       pg_get_functiondef(p.oid) like '%A job is already live%' as has_live_guard
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'create_work_order'
+ order by 1;
+-- More than one row means an overload exists. This file replaces the
+-- eight-argument one only -- the one `work_orders_repository.create_work_order`
+-- calls -- so a second signature would keep an unguarded path open and is worth
+-- resolving before the apply, not after.
+
+-- (b) The status vocabulary is still the closed eight. The live set below is
+--     five of them and the terminal set is the other three; a ninth word would
+--     be a status this guard has no opinion about.
+select conname, pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conrelid = 'public.work_orders'::regclass
+   and conname  = 'work_orders_status_check';
+
+-- (c) Who is already carrying more than one live job. Informational, and it is
+--     the census the guard is about to stop growing. Expect at least
+--     f40e11d4-e322-4847-be2f-8f2caf6df722 with two.
+select w.complaint_id,
+       count(*)                              as live_jobs,
+       array_agg(w.id order by w.created_at) as job_ids,
+       array_agg(w.status order by w.created_at) as statuses
+  from public.work_orders w
+ where w.status in ('draft', 'awaiting_resident', 'offered',
+                    'scheduled', 'in_progress')
+ group by w.complaint_id
+having count(*) > 1
+ order by 2 desc, 1;
+
+-- (d) The two jobs of the observed leak, by name, so the post-check has a
+--     before-picture to compare against.
+select id, status, subject_kind, scheduled_start_at, resident_deadline_at,
+       created_at
+  from public.work_orders
+ where complaint_id = 'f40e11d4-e322-4847-be2f-8f2caf6df722'
+ order by created_at;
+```
+
+There is no data risk to check for. The file writes no row, drops nothing,
+alters no table and touches no policy; its one function lands via
+`create or replace` under a signature that does not change.
+
+**Apply:** paste the whole file into the SQL editor and run it. No output is
+expected on success. The closing `do` block reads the installed definition back
+out of the catalogue — signature present, `for update` present, the refusal
+sentence present, `HB409` present, the guard scoped to `w.complaint_id =
+v_complaint.id`, and each of the five live states present — and raises if any of
+it is missing, so a half-pasted file cannot look like a successful one. The
+whole paste is one transaction, so a failure anywhere rolls it back.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260827210000', 'one_live_job_per_complaint')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) The installed body is this one. Expect ONE row, all three booleans true:
+--     §28's fork survived the carry-forward, and both additions are there.
+select p.oid::regprocedure                                   as signature,
+       pg_get_functiondef(p.oid) like '%''mode'', v_mode%'   as has_pick_mode,
+       pg_get_functiondef(p.oid) like '%for update%'         as has_row_lock,
+       pg_get_functiondef(p.oid) like '%A job is already live%' as has_live_guard
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'create_work_order'
+ order by 1;
+
+-- (b) The grant survived the replace, and the posture did not change. Expect
+--     `security_definer` true, `config` naming search_path=public, and an acl
+--     that still lists `authenticated=X` -- `create or replace function`
+--     retains the ACL, and this check is here because "it silently did not" is
+--     the failure that looks exactly like a 403 for every supervisor.
+select p.prosecdef                            as security_definer,
+       array_to_string(p.proconfig, ', ')     as config,
+       coalesce(array_to_string(p.proacl, ', '), '(owner only)') as acl,
+       obj_description(p.oid, 'pg_proc')      as comment
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.oid = 'public.create_work_order(uuid,uuid,uuid,text,text,'
+               'timestamptz,timestamptz,text)'::regprocedure;
+
+-- (c) Nothing else was rewritten. Expect both true -- the resident's own
+--     setter still takes its own lock (§28) and the projection still runs off
+--     the jobs, neither of them redefined by this file.
+select p.proname,
+       pg_get_functiondef(p.oid) like '%for update%' as still_locks
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('resident_set_work_order_schedule',
+                     'respond_to_work_order_schedule')
+ order by 1;
+```
+
+**Post-check, functional — this is the one that proves the ruling, and it needs
+two complaints:**
+
+1. **The refusal.** Sign in as a supervisor of a department that owns a
+   complaint with a live job on it — any complaint in pre-check (c)'s census, or
+   raise a job on a fresh complaint and then try to raise a second. The second
+   raise must come back **409** with exactly:
+
+   > A job is already live on this complaint. Finish, fail, or cancel it before
+   > raising another.
+
+   Read the response in devtools → Network, not only the screen: the envelope
+   must be `{"code": "conflict", "message": "<the sentence>"}`, and a **500** or
+   a "Could not raise that job" means `HB409` is not reaching
+   `app/core/pg_errors.py` and the guard is raising into a generic handler.
+2. **The rule is one at a time, not one ever.** Cancel (or complete, or fail)
+   that live job, then raise again on the same complaint. It must succeed. This
+   is the half that makes the feature usable — a failed visit's replacement and
+   a reopened complaint's new job are exactly what `create_work_order` is for —
+   and a guard that refused here would be a complaint nobody can ever work
+   again.
+3. **A second complaint is unaffected.** Raise a job on a *different* complaint
+   in the same department while the first one's job is live. It must succeed:
+   the guard is scoped to `complaint_id` and to nothing else.
+4. **The lock.** Optional, and the only way to see it directly: open two SQL
+   editor sessions, `begin` in both, and call `create_work_order` for the same
+   complaint in each without committing. The second call must **block** until
+   the first commits, and then refuse. A second call that returns immediately
+   with a new id means the `for update` did not land — re-read post-check (a).
+
+**And (d), the housekeeping the guard deliberately does not do.** The leak
+complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` still holds two live jobs after
+this apply. Cancel the extra `awaiting_resident` one,
+`1f0bf129-d47d-4236-9082-ecf0a28b245c`, **from the UI** — the supervisor's
+"Cancel" on the work-order triage screen, which writes the cancellation reason,
+the event and the resident's notification the way every other cancellation does.
+Do not `update public.work_orders set status = 'cancelled'` by hand: that skips
+all three. Then re-run pre-check (c); the complaint should have dropped to one
+live job, and raising against it should be possible again once that one ends.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_one_live_job_migration.py` (18 tests) — the file exists
+under the frozen name and parses (`pglast`); it sorts after
+`20260823180000`, and is proved to be the **last** declarer of
+`create_work_order` in the directory, which is what decides which body the
+database ends up holding; the eight-argument signature is unchanged, parameter
+by parameter, and the function is still `security definer` with a pinned
+`search_path`; **the body is diffed line by line against §28's**, and the only
+removed line is the unlocked `select` while every added line is a comment, the
+`for update` continuation, or part of the guard — so the fork, the deadline in
+both modes, the event word and the notification are proved to have survived the
+carry-forward rather than spot-checked; the lock is proved to come before the
+guard and the guard before all three writes (`work_orders`,
+`complaint_events`, `notify_member`); the refusal sentence is pinned character
+for character with its `HB409`, and the file's whole SQLSTATE census is proved
+to be `{HB403, HB404, HB409, 22004}` — no new code invented; the five live
+states are **derived from `work_orders_service._OPEN_STATES`** and each asserted
+present in the guard, the three terminal states asserted absent, and the guard
+asserted scoped to `complaint_id` alone (no department, community or supervisor
+term); the file is proved to declare exactly one function and to contain no
+`create/alter/drop table`, no policy, no constraint, no trigger, no
+`update public.work_orders`, no `'cancelled'` and no
+`update public.complaints` — the last three being the "it does not touch history
+and does not touch the lifecycle" promise stated as absences; the closing
+`do` block is proved to probe by explicit signature and to check every clause it
+claims; and the route docstring is proved to carry the new 409 row and the
+corrected multiplicity prose. Plus the directory battery in
+`test_migration_directory_is_fresh_appliable.py`, and the whole backend suite.
+`test_resident_sets_the_time_migration.py` was amended in the same commit: its
+"last word on every function it redefines" check now excludes
+`create_work_order` and asserts instead that this file is its one successor,
+which is the property that is actually true after 2026-08-27.
+**Not verifiable statically:** that two concurrent raises actually serialize on
+the lock, and that `HB409` surfaces as a 409 with the sentence rather than a 500
+— post-checks 1 and 4 are the only proof of either.
+
+## 33. `20260828090000_residence_claim_on_join.sql`
+
+**Apply this AFTER §31 and after §32
+`20260827210000_one_live_job_per_complaint.sql`.** Not because they share
+an object — this file touches `access_requests`, `approve_access_request` and
+`pending_access_request_overview`, none of which §29, §30, §31 or §32's
+migration name — but because filename order is apply order and this file's
+version sorts after all of theirs. If any of them is somehow still outstanding
+when you get here, applying this one first breaks nothing; apply them anyway,
+and apply all of it in filename order.
+
+**What breaks without it:** every self-service join approval mints a resident
+with no residency. The wire contract for a unit exists end to end —
+`access_requests.requested_unit_id`, the approve RPC's `p_unit_id`, and a
+`unit_residencies` insert that fires when either is set — but both ends send
+null: the join form has no unit field and the admin's Accept button posts `{}`.
+So `membership.unit` is null, flat/tower render '—' across both portals, and
+`_has_active_residency` (`backend/app/api/deps.py`) 403s people who genuinely
+live there. Live testing surfaced it on 2026-08-27. An admin cannot even repair
+it by hand: apartment communities carry exactly one `units` row (the founder's
+own flat, seeded by `20260805144502`), and there is no unit CRUD anywhere in
+the product.
+
+The product owner's rulings (2026-08-27, plan-mode Q&A), verbatim:
+
+1. *"Applicant states their residence as **free text at request time** —
+   Tower/Block + Flat for `apartment`, Villa number for `layout_villa` — stored
+   on `access_requests`. No unit exposure to non-members; the privacy invariant
+   stands."*
+2. *"**Approval requires a unit**: the RPC refuses a resident approval without
+   one, so every approved resident gets a `unit_residencies` row."*
+3. *"Inventory gap solved by **find-or-create at approval**: admin
+   confirms/edits the claimed residence; the RPC matches an existing active
+   unit in that community or creates it (with its building) inline. No
+   unit-management screen in this work."*
+
+**What it does:** two columns, one signature change, one view append, in five
+sections.
+
+1. **Two claim columns (ruling 1)** — `requested_building_text` and
+   `requested_unit_text` on `access_requests`, each null or a non-blank string
+   of at most 120 characters (the `rejection_reason` convention with the blank
+   refusal added). Two columns and not one so tower and flat stay separable —
+   the approval prefill feeds `normalize_unit_code(tower, flat)` on the Python
+   side, and a single concatenated field is how the documented C-C-505
+   double-prefix hazard happens. `add column if not exists` plus
+   `pg_constraint`-guarded CHECK adds, so a re-run is a no-op.
+   `backend/tests/test_residence_claim_migration.py::test_both_claim_columns_are_added_idempotently_with_the_trim_length_check`
+   pins the shape.
+2. **`approve_access_request` re-issued as six arguments (rulings 2 and 3)** —
+   the 4-argument signature is **dropped first**, not overloaded: PostgREST
+   cannot dispatch overloads, and with both in the catalogue
+   `POST /rpc/approve_access_request` answers 300 for every caller
+   (`test_the_old_signature_is_dropped_by_name_and_before_the_create`). The
+   body is the applied `20260730170036`'s — the lock, the reviewer check, the
+   idempotent already-approved return, the membership insert with its
+   `unique_violation` fallback, the residency insert with the hosted-only
+   `created_by_membership_id`, the final update — proved surviving span by
+   span, each span extracted from that file's own text rather than retyped
+   (`test_every_load_bearing_statement_of_the_old_body_survives`). Added
+   between the existing validation and the membership insert: `p_unit_code` is
+   matched case-insensitively against the community's units (found-but-inactive
+   refuses in words as `HB422`,
+   `test_an_inactive_unit_is_a_refusal_in_words_not_a_silent_duplicate`); not
+   found is find-or-create mirroring the founder RPC — for `layout_villa` the
+   building code defaults to the unit code itself and each villa gets its own
+   `buildings` row (`building_type 'villa'`, `unit_type 'villa'`), apartment
+   creates or reuses a `block` from `p_building_code` — both inserts
+   `on conflict do nothing` with a re-select, so two admins approving into the
+   same new tower race against the unique constraints instead of each other
+   (`test_the_find_or_create_is_race_safe_and_mirrors_the_founder_shape`).
+3. **THE GATE (ruling 2)** — a resolution that still holds no unit refuses the
+   whole approval with the new SQLSTATE `HBUNT`, **before the membership
+   insert**, so a refused approval writes nothing and the request stays cleanly
+   pending for the retry that carries a unit
+   (`test_the_gate_refuses_before_anything_is_written`). The residency insert
+   loses its `if target_unit_id is not null` guard: after the gate the
+   condition is always true, and a guard that can no longer be false is a
+   sentence claiming this function still mints unitless residents
+   (`test_the_residency_insert_lost_its_guard_and_nothing_else`). `HBUNT` maps
+   in `backend/app/core/pg_errors.py` to a 422 with code
+   `approval_requires_unit` — its own code, not `HB422`'s generic
+   `validation_error`, because "you forgot the unit" is an omission the client
+   can point a form field at
+   (`test_the_new_code_is_a_validation_error_the_client_can_point_at_a_field`).
+4. **`pending_access_request_overview` re-issued (ruling 1's admin half)** —
+   the same columns in the same order with three APPENDED:
+   `requested_building_text`, `requested_unit_text`, `community_type` (the
+   admin card needs the claim to prefill and the community type to label
+   Tower/Flat vs Villa). `create or replace view` permits appending and nothing
+   else; the old order is derived from `0024`'s own text and proved surviving
+   as a prefix, `security_invoker = true` included
+   (`test_the_view_appends_and_keeps_every_column_where_it_was`,
+   `test_the_view_keeps_security_invoker_and_reissues_its_comment`).
+5. **Proof in the transaction, then comment-only post-checks.** The proof
+   raises if the 4-argument signature survived the drop, if the new body lost
+   the `HBUNT` gate, or if the view's tail is not exactly the three appended
+   columns — each an apply that would otherwise *look* clean. The post-checks
+   are reproduced below; every one is a guard-free catalogue inspection
+   (§28's lesson — and this RPC is service-role-only and **writes** on
+   success, so calling it would either refuse or mint a real membership).
+
+**What it does NOT do, and each absence is deliberate.** The `audit_events`
+insert that `20260730170036` dropped is **not restored** — that was a
+hosted-compat decision (the hosted table's shape drifted from the migrations')
+and it stands; recorded as DERIVED in the change log. No unit CRUD screen —
+ruling 3 closes the inventory gap at approval, not with a new surface. No SSE
+payload change — the `access_requests` triggers from `0024` fire on the UPDATE
+this function already does, and the admin queue refetches through the view,
+which now carries the new fields. And `requested_unit_id` keeps working — a
+validated FK path invitations already use and a future villa picker could,
+still the highest-precedence input after `p_unit_id` itself.
+
+**Deploy the code AFTER the apply.** This migration has a backend half: the
+join endpoint stores the two claim columns and the approve endpoint sends
+`p_unit_code`/`p_building_code`. The Python repository includes the new RPC
+keys **only when non-null**, so the old backend against the new database
+degrades gracefully (a 4-key payload binds to the 6-argument function through
+its defaults) — but the new backend against the old database does not: an
+insert naming `requested_unit_text` errors on the missing column, and an RPC
+payload carrying `p_unit_code` finds no 4-argument function that accepts it.
+Apply first, deploy second.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The function being replaced is the 4-argument `20260730170036` body.
+--     Expect exactly one row, pronargs = 4. Two rows means an overload
+--     already exists and PostgREST is already broken; zero means the drop
+--     will no-op and only the create matters. Neither stops the apply.
+select p.oid::regprocedure as signature, p.pronargs
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'approve_access_request';
+
+-- (b) The case-insensitive match assumes one unit per spelling. Expect zero
+--     rows; a row here means two units in one community differ only by case,
+--     and the match will pick one of them arbitrarily (limit 1). Rename one
+--     of the pair first if any appear.
+select community_id, upper(unit_code) as code, count(*)
+  from public.units
+ group by 1, 2
+having count(*) > 1;
+
+-- (c) The view being replaced is 0024's eleven-column shape. Expect 11; a
+--     different number means another definition won at some point, and the
+--     append below would not be an append.
+select count(*) as view_columns
+  from information_schema.columns
+ where table_schema = 'public'
+   and table_name = 'pending_access_request_overview';
+```
+
+There is no data risk to check for. The two columns arrive null everywhere, the
+CHECKs accept null, no existing row is touched, and the function and view
+swaps replace code, not data. The one behavioural change is the intended one:
+an approval that names no unit, which used to half-succeed, now refuses whole.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop function` — and it
+is safe to confirm: the drop is the overload rule, the create follows in the
+same paste, and the whole paste is one transaction, so a failure anywhere rolls
+the entire file back. The only output expected is one notice at the end:
+*"residence_claim_on_join: two claim columns, a 6-arg approve with the unit
+gate, and the view carries the claim."* Section 5's proof raises rather than
+reports, so a half-applied file cannot look like a successful one.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260828090000', 'residence_claim_on_join')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only — every one guard-free (§28's lesson):**
+
+```sql
+-- (a) One approve_access_request, with six arguments, security definer,
+--     granted to service_role only. Expect exactly one row, pronargs = 6.
+select p.oid::regprocedure           as signature,
+       p.pronargs                    as args,
+       p.prosecdef                   as security_definer,
+       array_to_string(p.proacl, ', ') as acl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname = 'approve_access_request';
+
+-- (b) The two claim columns and their CHECKs. Expect two rows from each.
+select column_name, data_type, is_nullable
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'access_requests'
+   and column_name in ('requested_building_text', 'requested_unit_text');
+select conname, pg_get_constraintdef(oid)
+  from pg_constraint
+ where conrelid = 'public.access_requests'::regclass
+   and conname like 'access_requests_requested_%_text_check';
+
+-- (c) The view's tail is the three appended columns, in this order, and
+--     nothing before them moved. Expect 14 rows, positions 12-14 being
+--     requested_building_text, requested_unit_text, community_type.
+select ordinal_position, column_name
+  from information_schema.columns
+ where table_schema = 'public'
+   and table_name = 'pending_access_request_overview'
+ order by ordinal_position;
+
+-- (d) Nobody has claimed a residence yet, which is what day one looks like.
+--     Expect zero until the join form ships.
+select count(*) as requests_with_a_claim
+  from public.access_requests
+ where requested_unit_text is not null;
+```
+
+**Post-check, functional (after the backend and frontend deploys):** as an
+apartment applicant, submit a join request — the form now requires Tower/Block
+and Flat Number — and as that community's admin, open Pending Registrations:
+the card shows the claim, Accept expands an inline panel prefilled from it, and
+Confirm approves. The new resident's `membership.unit` is populated and the
+resident-guarded pages load instead of 403ing. Approve a **pre-migration**
+pending request by typing the unit into the empty panel. Then approve with the
+unit field cleared: the API answers `422` with code `approval_requires_unit`
+and the request stays pending. Last, approve into a tower that does not exist
+yet and confirm the building and unit rows were created (`select * from
+public.units order by created_at desc limit 3`).
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_residence_claim_migration.py` (21 tests) — the file parses
+(`pglast`), sorts after the three files it reasons about, and is the **last**
+definer of `approve_access_request`, that list derived by scanning the
+directory's own text; it declares no second function; the drop names the exact
+4-argument signature and precedes the create; the six-argument signature,
+`security definer`, `search_path`, and the service-role-only revoke/grant pair
+are pinned on the new signature, with exactly one grant in the file; every
+load-bearing statement of `20260730170036`'s body survives, each span
+extracted from that file's text; the residency insert's guard is removed and
+nothing else around it; the `HBUNT` gate stands before the membership insert
+and after the carried validation; the code match is case-insensitive, the
+create exact-case, the find-or-create `on conflict`-guarded against both
+unique constraints with the villa defaulting rule stated; the SQLSTATE set is
+exactly `{HB422, HBUNT}` and both are mapped, `HBUNT` as a `ValidationError`
+with code `approval_requires_unit` distinct from `HB422`'s; both columns carry
+the trim+length CHECK behind idempotent guards; the view's old column order is
+derived from `0024`'s text and survives as a prefix with exactly the three
+appended columns and `security_invoker = true`; the in-transaction proof
+checks the three failures with no symptom; the file's **last statement** is
+`notify pgrst, 'reload schema'`; and the post-checks are comment-only and call
+nothing guarded. Plus the directory battery in
+`test_migration_directory_is_fresh_appliable.py` and the SQLSTATE precedent
+suite in `test_leadership_exclusivity_migration.py`, both green beside it.
+**Not verifiable statically:** that hosted's `approve_access_request` is
+`20260730170036`'s 4-argument body before the drop (pre-check (a)); that no
+community holds two units differing only by case (pre-check (b)); and that the
+hosted view is `0024`'s eleven columns (pre-check (c)).
+
+## 34. `20260829120000_drop_legacy_approve_overload.sql`
+
+**Filename order is apply order. This file sorts after §33
+`20260828090000_residence_claim_on_join.sql`, so apply it there — but applying
+it BEFORE §33 breaks nothing.** The drop targets only the stray 4-argument
+overload described below, which shares no name, no object and no dependency
+with §33's 6-argument `approve_access_request`. Apply in filename order
+regardless.
+
+**Where the stray came from.** The hosted database carries a prototype-era
+overload of `approve_access_request` that exists in **no migration in this
+tree**:
+
+```sql
+approve_access_request(p_access_request_id uuid, p_profile_id uuid,
+  p_default_invoice_amount numeric, p_due_at timestamptz)
+```
+
+`SECURITY DEFINER`, returns `uuid`. In one call it approves an access request
+and inserts a `community_membership`, a `unit_residencies` row, and an ISSUED
+`maintenance` invoice numbered `'MNT-YYYYMMDD-<request uuid>'`. It surfaced
+during §33's pre-check (a) on 2026-08-29: that query
+(`select p.oid::regprocedure, p.pronargs ... where p.proname =
+'approve_access_request'`) returns more than the one row §33 assumes it is
+replacing, because this stray has sat beside the real overload the whole time,
+undeclared anywhere in this repository.
+
+**Why it goes.** It is dead legacy code that, if ever invoked, writes real
+membership, residency and invoice rows nobody asked for. Nothing in this tree
+references its parameter names (`p_access_request_id`,
+`p_default_invoice_amount`, `p_due_at`) or its invoice prefix (`MNT-`) —
+verified by grep across the repository — and the current backend calls the
+residency-shaped overload by its own named parameters
+(`p_request_id`, `p_reviewer_profile_id`, ...), never this one's. Dropping it
+also makes `approve_access_request` unambiguous by signature: **after §33 and
+§34 are both applied, §33's post-check (a) finally returns its expected
+"exactly one row, pronargs = 6"** — before §34, the stray survives §33 (that
+file's drop only targets the residency-shaped 4-arg
+`(uuid, uuid, uuid, public.residency_relationship)`, not this numeric/timestamp
+one) and the census keeps reporting two rows.
+
+**What it does:** one statement of substance —
+`drop function if exists public.approve_access_request(uuid, uuid, numeric,
+timestamptz);` — idempotent (`if exists`, so a re-run or an already-clean
+database no-ops), followed by an in-transaction proof and a schema-cache
+reload. It does not create, drop or reference the 6-arg signature §33 installs
+— this file owns the stray alone, and applies whether or not §33 has run.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The overload census. Expect the stray plus whichever real overload is
+--     current: two rows if §33 has been applied (pronargs 4 and 6), or two
+--     4-arg rows if it has not (the stray, and the residency-shaped one §33
+--     has not yet replaced). Either is fine -- this file only removes the
+--     numeric/timestamptz stray, identified by name below, not by count.
+select p.oid::regprocedure, p.pronargs
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'approve_access_request';
+
+-- (b) Informational only: the stray's ACL, so there is a before-picture. Any
+--     result is fine and the drop proceeds regardless -- a SECURITY DEFINER
+--     function's grants do not change what dropping it costs.
+select proacl from pg_proc
+ where oid = 'public.approve_access_request(uuid,uuid,numeric,timestamptz)'::regprocedure;
+```
+
+There is no data risk to check for. The statement drops a function, writes no
+row, and touches no table, column, policy or constraint.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop function` — and it
+is safe to confirm: the file's only other statements are the in-transaction
+proof and the schema-cache reload, and the whole paste is one transaction, so
+a failure anywhere rolls it back. The only output expected is one notice:
+*"drop_legacy_approve_overload: the prototype 4-arg approve is gone;
+approve_access_request is unambiguous."*
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260829120000', 'drop_legacy_approve_overload')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- Re-run the overload census. Expect the stray absent. Once §33 is also
+-- applied, expect exactly one row, pronargs = 6 -- the result §33's own
+-- post-check (a) was written to find, and the reason this file exists.
+select p.oid::regprocedure, p.pronargs
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'approve_access_request';
+```
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_drop_legacy_approve_overload_migration.py` — the file
+exists under the frozen name and sorts after `20260828090000`; the drop
+statement names exactly the `(uuid, uuid, numeric, timestamptz)` signature
+with `if exists`; the in-transaction proof probes that exact signature via
+`to_regprocedure` and raises if it survives; the file contains
+`notify pgrst, 'reload schema'`; and the file does not name the 6-argument
+signature in any `drop` or `create`, proving its independence from §33.
+**Not verifiable statically:** that the stray actually exists on the hosted
+database before the apply (pre-checks (a) and (b) are the only proof of
+that), and that PostgREST's schema cache actually drops the stray signature
+rather than continuing to answer for it until the next restart.
+
+## 35. `20260830090000_hiring_skill_union.sql`
+
+**Independent of §32, §33 and §34, and of every file before them.** It replaces
+three functions none of those declare, touches no table, and fires on no
+trigger. Filename order puts it last; apply it there.
+
+**What breaks without it — reported from the live app, issue #55.** A community
+runs a security department. Its complaint category is named "Security" (or
+"Security Management"); the skills catalogue holds *Security Guard* and *Gate
+Officer*. `link_category_skill` (`0034` 216-233) fills
+`complaint_categories.skill_id` by **exact name match**, so that category
+derives no skill at all — `skill_id` stays null, silently, and every reader
+that gates on the category path alone concludes the department needs nothing.
+
+`20260812090100_skills_and_categories.sql` gave the department a way out of
+exactly this — `department_skills`, a list it declares for itself — and taught
+**one** reader about it: `search_hireable_service_providers`, whose `needed`
+CTE became the union of the two paths (that file's `-- CHANGED` note at 681,
+carried forward whole by §14 `20260821113000_location_labels.sql` 524-535).
+Three readers were left behind, and the result is a hiring flow that
+contradicts itself inside one screen:
+
+- **The manager is offered a candidate and then refused.** The candidate list
+  reads `department_skills`, so the guard appears on it. Pressing invite calls
+  `invite_service_provider`, which does not, and the manager is told *"This
+  person does not have a required skill."* about somebody the same screen just
+  recommended.
+- **The guard cannot find the community.** `search_serviceable_communities`
+  builds its `matching_departments` CTE from categories alone, so the community
+  either does not appear with a department to apply to, or appears with none.
+- **And could not apply if they did.** `apply_to_department` gates the same
+  way and answers *"Your skills do not match this department."*
+
+One table, four readers, one of them taught. A department in this position can
+hire nobody through either direction of the handshake, and nothing in the
+product says why.
+
+**The rule, in one sentence.** A department needs a skill if it has **declared**
+that skill, **or** if one of its complaint categories implies it — the union,
+in every function that asks the question.
+
+**UNION, not replacement.** A department that has declared no skills keeps
+hiring off its categories exactly as it did yesterday. This file adds a second
+way for a department to say what it needs; it withdraws neither the first nor
+anything else. Nobody who could be hired before this file can be refused after
+it.
+
+**What it does:** three `create or replace function` statements, each carrying
+its live body forward **whole** —
+`20260811162409_service_professional_onboarding.sql` 566 for
+`apply_to_department` and 648 for `invite_service_provider`,
+`20260812181443_search_nearby_communities.sql` 5 for
+`search_serviceable_communities` — with only the skill-gate predicate
+rewritten and marked `-- CHANGED` in place (the `20260812113000` convention).
+The two scalar guards gain a `needed` CTE spelled exactly as
+`search_hireable_service_providers` spells it; the search gains a
+`department_needs` CTE feeding `matching_departments` in place of its inlined
+category join. Then the three `revoke`/`grant` pairs, one refreshed
+`comment on function`, `notify pgrst, 'reload schema'`, and an in-transaction
+proof.
+
+**Signatures are byte-identical**, so the existing ACLs survive the replace
+untouched — the grants are reissued anyway, matching what both source files
+do. Nothing else moves: no table, no column, no policy, no constraint, no
+trigger, no fourth function. `department_skills` is only read.
+
+Idempotent: three `create or replace` statements and their grants may all be
+run again. One transaction — the SQL editor wraps the paste, so a failure
+anywhere rolls back everything.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The three deployed bodies are category-only. Expect three rows, each
+--     with reads_department_skills = false and reads_categories = true. A row
+--     already reading department_skills means somebody applied this file (or
+--     something like it) already; stop and find out which.
+select p.oid::regprocedure as signature,
+       position('department_skills' in pg_get_functiondef(p.oid)) > 0
+         as reads_department_skills,
+       position('complaint_categories' in pg_get_functiondef(p.oid)) > 0
+         as reads_categories
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities');
+
+-- (b) The signature census, so "unchanged" in the post-check has a
+--     before-picture. Expect exactly three rows, pronargs 2, 6 and 3
+--     respectively. More than one row for any name means an overload this
+--     file does not know about, and replacing the wrong one would leave the
+--     gate shut with every other check passing -- stop and report it.
+select p.proname, p.oid::regprocedure as signature, p.pronargs, p.proacl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities')
+ order by p.proname;
+
+-- (c) The fourth reader, for contrast -- the one that already knows. Expect
+--     true. If this is false, section 14 (20260821113000) has not been
+--     applied and the union shape this file copies is not on the database
+--     yet; that is not a blocker for the apply, but it means the candidate
+--     list and these three will still disagree afterwards, in the other
+--     direction.
+select position('department_skills' in pg_get_functiondef(
+         'public.search_hireable_service_providers(uuid, text, integer, integer)'
+         ::regprocedure)) > 0 as candidate_search_reads_department_skills;
+
+-- (d) Informational -- the departments this actually unblocks. Rows here are
+--     departments with declared skills whose categories derive none, which is
+--     the reported shape. Zero rows is fine; the guard is still wrong without
+--     it, and the reporter's community may be one you cannot see from here.
+select d.id, d.name, d.community_id,
+       count(distinct ds.skill_id) as declared_skills,
+       count(distinct cc.skill_id) as category_skills
+  from public.departments d
+  left join public.department_skills ds on ds.department_id = d.id
+  left join public.department_categories dc on dc.department_id = d.id
+  left join public.complaint_categories cc
+    on cc.id = dc.category_id and cc.skill_id is not null
+ where d.is_active
+ group by d.id, d.name, d.community_id
+having count(distinct ds.skill_id) > 0 and count(distinct cc.skill_id) = 0
+ order by d.name;
+```
+
+There is no data risk to check for. The file replaces three function bodies,
+writes no row, and touches no table, column, policy or constraint.
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning will **not** fire — there is no `drop` in the
+file. The only output expected is one notice: *"hiring_skill_union:
+apply_to_department, invite_service_provider and search_serviceable_communities
+all read department_skills."* Anything else is a failure and the whole paste
+rolls back.
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260830090000', 'hiring_skill_union')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) Re-run pre-check (a). Expect three rows with reads_department_skills
+--     AND reads_categories both true -- the union, not a replacement. A row
+--     with reads_categories = false would mean the category path was dropped
+--     and a department that has declared nothing just stopped hiring.
+select p.oid::regprocedure as signature,
+       position('department_skills' in pg_get_functiondef(p.oid)) > 0
+         as reads_department_skills,
+       position('complaint_categories' in pg_get_functiondef(p.oid)) > 0
+         as reads_categories
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities');
+
+-- (b) Re-run pre-check (b). Expect the SAME three rows, same signatures, same
+--     pronargs, same proacl. A fourth row is the failure this check exists
+--     for: `create or replace` with a changed argument list creates a SECOND
+--     function and leaves the category-only original standing for
+--     app/repositories/hiring_repository.py to keep calling.
+select p.proname, p.oid::regprocedure as signature, p.pronargs, p.proacl
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('apply_to_department', 'invite_service_provider',
+                     'search_serviceable_communities')
+ order by p.proname;
+```
+
+**Post-check, functional — this is the one that proves the ruling, and it needs
+a real department.** Pick a department from pre-check (d), or make one: attach
+a skill to a department whose categories derive none
+(`PUT /api/v1/departments/{id}/skills`), then, signed in as a manager of it:
+
+- **(c)** `GET /api/v1/departments/{id}/candidates` — a provider holding that
+  skill appears. This worked before the apply too; it is the control.
+- **(d)** `POST /api/v1/departments/{id}/invitations` for that provider —
+  **201**, where before the apply it was a **409** reading *"This person does
+  not have a required skill."* This is the contradiction the issue reported.
+- **(e)** Signed in as that provider, `GET /api/v1/worker/communities/search` —
+  the community appears with the department in its `departments` array and the
+  skill in `matchingSkillNames`.
+- **(f)** `POST /api/v1/worker/applications` with that `departmentId` —
+  **201**, where before the apply it was a **403** reading *"Your skills do not
+  match this department."*
+- **(g)** The other half of the union, and the half a careless fix breaks:
+  pick a department with categories that **do** derive skills and no declared
+  skills at all, and repeat (c) and (e). The same candidates and the same
+  community must still appear. Nobody who could be hired before this file may
+  be refused after it.
+
+**Rollback.** Re-apply the pre-image: the `apply_to_department` and
+`invite_service_provider` sections of
+`20260811162409_service_professional_onboarding.sql` (566-646 and 648-726,
+plus their `revoke`/`grant` pairs at 864-867) and
+`20260812181443_search_nearby_communities.sql` whole. Both hold the
+category-only bodies verbatim — which is exactly why this file copied rather
+than retyped them — and both are same-signature `create or replace`, so the
+ACLs survive the rollback as they survived the apply. Follow with
+`notify pgrst, 'reload schema'`. Rolling back restores the reported defect; it
+does not lose data, because this file never wrote any.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_hiring_skill_union_migration.py` — the file exists under
+the frozen name, parses as PostgreSQL, and sorts after `20260829120000` and
+after all four files whose shapes it copies; it is the last declaration of
+each of the three functions in the tree; it re-issues **exactly** those three
+and no fourth; each signature block is compared character-for-character with
+its source and each body is **diffed line by line** against that source, so
+any change outside the marked skill gate fails the suite; all three bodies
+contain both `department_skills` and the category path joined by `union`; none
+of the three category-only join shapes survives anywhere in the file; the
+union fragment is asserted to be the same text `20260821113000` uses for
+`search_hireable_service_providers`, derived from that file rather than typed
+in; the two refusal sentences and their `HB403`/`HB409` codes are unchanged and
+no new SQLSTATE is invented; the file declares no other object, writes only the
+`service_applications` row those two functions always wrote, reloads the schema
+cache, and probes each installed definition by exact signature in an
+in-transaction `do` block. **Not verifiable statically:** everything post-check
+(c) through (g) covers — that a department whose categories derive no skill can
+now actually be found, applied to and hired from, and that a department with
+categories and no declared skills sees exactly what it saw before.
+
+## 36. `20260830093000_invoice_total_amount_generated.sql`
+
+**Filename order is apply order. This file sorts after
+`20260830090000_hiring_skill_union.sql` (§35, immediately above) and after §34
+`20260829120000_drop_legacy_approve_overload.sql`, so apply it there — but its
+order relative to either breaks nothing.** It touches one column of
+`public.invoice_line_items` and shares no table, view, function or constraint
+with them. Apply in filename order regardless.
+
+**What is wrong on hosted.** `0021_money_on_baseline.sql` declares
+`public.invoice_line_items.total_amount` as
+
+```sql
+total_amount numeric(12, 2)
+  generated always as (round(quantity * unit_amount, 2)) stored
+```
+
+and the hosted database carries it as a **plain `not null` column** —
+`pg_attribute.attgenerated = ''` rather than `'s'`. `0021` anticipated an older
+hosted shape and left `issue_invoice` a defence for it (lines 466-476: *"the
+older hosted schema has a stored total rather than the baseline's generated
+column; populate it only in that shape"*), but that defence is an `update` that
+runs **after** the line inserts. The insert at `0021`:450-462 lists
+`description, quantity, unit_amount, amount, sort_order` and does **not** list
+`total_amount`, because on the declared shape it must not. So on the drifted
+shape the first line insert violates the NOT NULL, the whole RPC rolls back, and
+the repair statement is never reached. Every invoice create on hosted has been
+failing there.
+
+This is the second half of issue #54. The first half — `money_service.create_invoice`
+building the payload with key `"lines"` where the RPC reads
+`p_payload -> 'line_items'` — is a backend-only code fix in the same change and
+needs no SQL. **Both are required:** with only the code fix, the RPC receives the
+lines and then dies on this NOT NULL; with only this migration, the RPC still
+refuses with *"An invoice needs at least one line item."*
+
+**What it does:** one guarded, idempotent `do` block. It reads `attgenerated`
+for that exact column and then:
+
+* `'s'` (already correct) — raises a notice and **returns without acting**. Safe
+  to re-run, and this is the branch every fresh replay of the migrations
+  directory takes, since `0021` creates the generated column a few files
+  earlier.
+* `''` (drifted) — probes `pg_depend` for dependents, counts the rows the
+  recomputation will change, then `drop column` + `add column … generated always
+  as (round(quantity * unit_amount, 2)) stored`.
+* column absent, or any other `attgenerated` — raises and stops, rather than
+  guessing at a third shape nobody has seen.
+
+Then a `comment on column`, an in-transaction read-back proving the column is
+generated with the right expression, and `notify pgrst, 'reload schema'`.
+
+**No `CASCADE`, by census and by probe.** The repository was enumerated first:
+`invoice_overview` (`0021`:216) and `resident_invoice_overview` (`0033`:211)
+both carry a column called `total_amount`, and in both it is
+**`invoices.total_amount`** — the invoice's own total, a different table.
+Neither view selects from `invoice_line_items` at all. The only index on the
+table is `invoice_line_items_invoice_idx (invoice_id, sort_order)` (`0021`:151).
+No materialized view, generated column or column default in
+`backend/supabase/migrations/` reads it. (`issue_invoice`,
+`money_repository.py` and `dashboard_repository.py` all read the column, and
+none of those is a DDL dependency: a plpgsql body is not parsed until it runs
+and a PostgREST select is a query. Neither blocks a `drop column`.) Because
+hosted has already proved it carries objects this tree never declared, the file
+does not rely on that census alone — it probes `pg_depend` for views,
+materialized views, rules and indexes attached to this exact column and
+**refuses the apply by name** if it finds one, rather than cascading it away.
+
+**Pre-check, read-only — run this BEFORE the apply and read the result:**
+
+```sql
+-- (a) The shape. Expect attgenerated = '' (drifted) -- which is what this file
+--     repairs. If it comes back 's', the database is already correct and the
+--     apply will be a no-op notice; run it anyway to keep the ledger honest.
+select a.attgenerated, a.attnotnull, format_type(a.atttypid, a.atttypmod)
+  from pg_attribute a
+ where a.attrelid = 'public.invoice_line_items'::regclass
+   and a.attname  = 'total_amount'
+   and a.attnum > 0
+   and not a.attisdropped;
+
+-- (b) THE DATA QUESTION. Re-adding the column as generated RECOMPUTES it for
+--     every row as round(quantity * unit_amount, 2). These are the rows whose
+--     stored value disagrees with their own inputs and will therefore CHANGE.
+--     Expect zero: issue_invoice has always written exactly that expression.
+--     A non-empty result is not a blocker, but read it before continuing --
+--     each row is a stored total that was written by something other than the
+--     RPC, and the apply overwrites it.
+select li.id,
+       li.invoice_id,
+       i.invoice_number,
+       li.description,
+       li.quantity,
+       li.unit_amount,
+       li.total_amount                       as stored_total,
+       round(li.quantity * li.unit_amount, 2) as recomputed_total,
+       li.amount                             as sibling_amount
+  from public.invoice_line_items li
+  join public.invoices i on i.id = li.invoice_id
+ where li.total_amount is distinct from round(li.quantity * li.unit_amount, 2)
+ order by i.invoice_number, li.sort_order;
+
+-- (c) The dependent census, on the live database. Expect zero rows. Any row is
+--     a view, materialized view, rule or index this repository never declared;
+--     the apply will REFUSE by name rather than cascade it away, and it must be
+--     re-issued around the swap by hand before this file can be applied.
+select distinct c.relname, c.relkind
+  from pg_depend d
+  join pg_rewrite r on r.oid = d.objid
+  join pg_class   c on c.oid = r.ev_class
+ where d.classid    = 'pg_rewrite'::regclass
+   and d.refclassid = 'pg_class'::regclass
+   and d.refobjid   = 'public.invoice_line_items'::regclass
+   and d.refobjsubid = (select attnum from pg_attribute
+                         where attrelid = 'public.invoice_line_items'::regclass
+                           and attname  = 'total_amount')
+   and c.oid <> 'public.invoice_line_items'::regclass
+union
+select c.relname, c.relkind
+  from pg_depend d
+  join pg_class c on c.oid = d.objid
+ where d.classid    = 'pg_class'::regclass
+   and d.refclassid = 'pg_class'::regclass
+   and d.refobjid   = 'public.invoice_line_items'::regclass
+   and d.refobjsubid = (select attnum from pg_attribute
+                         where attrelid = 'public.invoice_line_items'::regclass
+                           and attname  = 'total_amount')
+   and c.relkind = 'i';
+
+-- (d) Scale, so the notice the apply prints can be checked against something.
+select count(*) as line_items from public.invoice_line_items;
+```
+
+**Apply:** paste the whole file into the SQL editor and run it. The editor's
+destructive-operation warning **will** fire — it sees `drop column` — and it is
+safe to confirm once pre-check (b) has been read: the drop is immediately
+followed by the re-add in the same `do` block, the whole paste is one
+transaction, so a failure anywhere rolls back everything, and the column's
+values are computable from `quantity` and `unit_amount`, which are not touched.
+The sibling `amount` column is not touched either.
+
+Expected output on a drifted database, two notices:
+
+> *"invoice_total_amount_generated: repairing the drifted plain column; N row(s)
+> will be recomputed to round(quantity * unit_amount, 2)."*
+> *"invoice_total_amount_generated: total_amount is generated always as
+> round((quantity * unit_amount), 2) stored."*
+
+N must match the row count pre-check (b) returned. On an already-correct
+database the only notice is *"total_amount is already GENERATED ALWAYS AS
+STORED; nothing to repair."*
+
+**Ledger:**
+
+```sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260830093000', 'invoice_total_amount_generated')
+on conflict (version) do nothing;
+```
+
+**Post-check, read-only:**
+
+```sql
+-- (a) The shape, re-read. Expect attgenerated = 's'.
+select a.attgenerated,
+       pg_get_expr(d.adbin, d.adrelid) as generation_expression
+  from pg_attribute a
+  left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+ where a.attrelid = 'public.invoice_line_items'::regclass
+   and a.attname  = 'total_amount'
+   and a.attnum > 0
+   and not a.attisdropped;
+
+-- (b) Nothing disagrees with its own inputs any more. Expect zero rows --
+--     structurally, now, rather than by convention.
+select count(*) as still_drifted
+  from public.invoice_line_items
+ where total_amount is distinct from round(quantity * unit_amount, 2);
+
+-- (c) The index and the policies survived the column swap. Expect
+--     invoice_line_items_invoice_idx, and the read policy.
+select indexname from pg_indexes
+ where schemaname = 'public' and tablename = 'invoice_line_items';
+select polname from pg_policy
+ where polrelid = 'public.invoice_line_items'::regclass;
+```
+
+**Probe insert — the check that actually answers issue #54.** Do this from the
+app, not from SQL: sign in as a community admin and create an invoice with one
+line from the Maintenance screen. It must now succeed and the line's total must
+read `quantity × unit amount`. That single action exercises both halves — the
+payload key the backend now sends, and the generated column this file restored
+— and it is the only way to see them working together. A SQL-only equivalent is
+`select public.issue_invoice('<community uuid>', '{"title":"probe",
+"unit_code":"<an existing flat>","line_items":[{"description":"probe",
+"quantity":1,"unit_amount":1}]}'::jsonb);` run **as an admin of that community**
+(the RPC's first guard is `is_community_admin`, so the SQL editor's default role
+will be refused) — and if it is run, delete the probe invoice afterwards.
+
+**Rollback.** The declared shape is the correct one, so there is nothing worth
+rolling back to; the pre-repair state is the bug. Should it be needed, it is
+re-declaring the plain column, which is what the file header lists:
+
+```sql
+alter table public.invoice_line_items drop column total_amount;
+alter table public.invoice_line_items add column total_amount numeric(12, 2);
+update public.invoice_line_items
+   set total_amount = round(quantity * unit_amount, 2);
+alter table public.invoice_line_items alter column total_amount set not null;
+notify pgrst, 'reload schema';
+```
+
+No data is lost either way: the column's values are a function of `quantity` and
+`unit_amount`, which this file never touches.
+
+**What was checked before this section was written:** the static battery in
+`backend/tests/test_invoice_total_amount_migration.py` — the file exists under
+the frozen name, parses with `pglast`, sorts after `0021` and is the last
+migration to declare or alter this column; the guard reads
+`pg_attribute.attgenerated` for `public.invoice_line_items.total_amount` and
+excludes dropped columns; the `'s'` branch returns before the drop; an
+unrecognised `attgenerated` raises; the re-add carries `0021`'s expression
+**derived from `0021` itself** rather than typed into the test; no `cascade` on
+any drop; the `pg_depend` probe runs before the drop and refuses by name; the
+sibling `amount` column is not named in any drop, add or update; the file writes
+no row, alters no other table, and creates or drops no view, policy, trigger,
+constraint or function; the read-back block runs after the repair; and
+`notify pgrst, 'reload schema'` is present. The dependent-view census is
+re-derived in that suite too — every `create view` statement in the directory is
+extracted and none selects from `invoice_line_items`.
+**Not verifiable statically:** that the hosted column is in fact drifted before
+the apply (pre-check (a) is the only proof), that no hosted-only view or index
+depends on it (pre-check (c) and the file's own `pg_depend` probe), how many
+rows the recomputation changes (pre-check (b)), and that `issue_invoice` then
+succeeds end to end (the probe insert above).

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { securityApi } from '../../features/security/securityApi';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import {
   Empty,
   ErrorText,
@@ -80,14 +81,17 @@ function Shifts() {
   const shifts = useQuery({
     queryKey: ['security', 'shifts', { from, to }],
     queryFn: () => securityApi.shifts({ from, to }),
+    ...QUERY_POLICIES.list,
   });
   const posts = useQuery({
     queryKey: ['security', 'posts', {}],
     queryFn: () => securityApi.posts(),
+    ...QUERY_POLICIES.list,
   });
   const roster = useQuery({
     queryKey: ['security', 'roster'],
     queryFn: () => securityApi.roster(),
+    ...QUERY_POLICIES.list,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['security', 'shifts'] });
@@ -369,6 +373,8 @@ function Posts() {
   const posts = useQuery({
     queryKey: ['security', 'posts', { includeInactive }],
     queryFn: () => securityApi.posts(includeInactive ? { includeInactive: true } : {}),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['security', 'posts'] });

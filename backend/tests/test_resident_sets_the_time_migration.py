@@ -83,28 +83,57 @@ def test_it_sorts_after_the_file_it_had_to_follow_and_parses() -> None:
     parse_sql(sql())
 
 
+def declarers_of(function: str) -> list[str]:
+    """Every migration declaring ``function``, in apply order."""
+    return sorted(
+        path.name
+        for path in MIGRATIONS.glob("*.sql")
+        if re.search(
+            r"^create (or replace )?function public\." + function + r"\b",
+            path.read_text(encoding="utf-8"),
+            re.M,
+        )
+    )
+
+
 def test_it_is_the_last_word_on_every_function_it_redefines() -> None:
     """Not "it is last in the directory". The property is being last *among the
     files that declare each function*, which is what decides which body the
-    database ends up holding."""
+    database ends up holding.
+
+    `create_work_order` left this set on 2026-08-27 and is checked separately
+    below -- it has a deliberate successor now, which is a different claim.
+    """
     for function in (
-        "create_work_order",
         "dispatch_resident_timeout",
         "sync_dispatch_tasks",
         "fire_dispatch_task",
         "supervisor_triage_snapshot",
     ):
-        declares = sorted(
-            path.name
-            for path in MIGRATIONS.glob("*.sql")
-            if re.search(
-                r"^create (or replace )?function public\." + function + r"\b",
-                path.read_text(encoding="utf-8"),
-                re.M,
-            )
-        )
+        declares = declarers_of(function)
         assert declares, f"nothing declares {function} at all"
         assert declares[-1] == MIGRATION.name, function
+
+
+def test_create_work_order_has_exactly_one_successor_and_it_is_the_live_job_guard() -> None:
+    """`20260827210000_one_live_job_per_complaint.sql` (owner ruling 2026-08-27,
+    `docs/plans/ONE_LIVE_JOB_SPEC.md`) carries this file's body forward and adds
+    a complaint-row lock and a one-live-job refusal. So this file is no longer
+    the last word on `create_work_order`, and the property worth pinning moved:
+    the successor is that file, by name, and nothing else has slipped in behind
+    it.
+
+    That the successor preserves everything below -- the G1 fork, the deadline
+    in both modes, the event word, the notification -- is proved line by line in
+    `test_one_live_job_migration.py`, which diffs the two bodies. Without that
+    pairing, "this file is not last" would simply mean these tests stopped
+    describing the database.
+    """
+    declares = declarers_of("create_work_order")
+    assert MIGRATION.name in declares, declares
+    assert declares[declares.index(MIGRATION.name) + 1 :] == [
+        "20260827210000_one_live_job_per_complaint.sql"
+    ], declares
 
 
 # ---------------------------------------------------------------------------

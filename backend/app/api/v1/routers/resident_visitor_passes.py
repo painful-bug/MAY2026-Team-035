@@ -36,7 +36,7 @@ router = APIRouter(tags=["visitors"], dependencies=[Depends(require_csrf_unsafe)
     response_model=Page[VisitorPass],
     summary="List my visitor passes",
 )
-async def list_my_visitor_passes(
+def list_my_visitor_passes(
     view: str | None = Query(
         None,
         description="`current` | `history`. Omitted returns both.",
@@ -72,7 +72,7 @@ async def list_my_visitor_passes(
     status_code=status.HTTP_201_CREATED,
     summary="Pre-approve a visitor",
 )
-async def create_visitor_pass(
+def create_visitor_pass(
     body: CreateVisitorPassRequest,
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -103,7 +103,7 @@ async def create_visitor_pass(
     response_model=VisitorPass,
     summary="One of my visitor passes",
 )
-async def get_visitor_pass(
+def get_visitor_pass(
     pass_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -125,7 +125,7 @@ async def get_visitor_pass(
     response_model=VisitorPass,
     summary="Approve a gate request",
 )
-async def approve_visitor_pass(
+def approve_visitor_pass(
     pass_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -155,7 +155,7 @@ async def approve_visitor_pass(
     response_model=VisitorPass,
     summary="Reject a gate request",
 )
-async def reject_visitor_pass(
+def reject_visitor_pass(
     pass_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),
@@ -174,7 +174,7 @@ async def reject_visitor_pass(
     response_model=VisitorPass,
     summary="Cancel a visitor pass",
 )
-async def cancel_visitor_pass(
+def cancel_visitor_pass(
     pass_id: str = Path(...),
     membership: MembershipContext = Depends(get_active_membership),
     client: Client = Depends(get_request_client),

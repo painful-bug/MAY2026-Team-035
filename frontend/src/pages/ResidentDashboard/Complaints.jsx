@@ -1,4 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+// The detail drawer and the raise-complaint modal render through a portal to
+// document.body. In place, they sat inside ResidentLayout's
+// `<main class="animate-fade-in">` — a fill-forwards opacity animation keeps
+// <main> a stacking context forever, so `z-[999]` was trapped at <main>'s own
+// level and the sticky header's `z-40` painted above it. Same fix as the
+// departments modals (AdminDashboard/Departments.jsx).
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -21,7 +28,8 @@ import {
   X,
 } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
-import { residentKeys, useResidentLiveUpdates } from '../../features/resident/residentEvents';
+import { residentKeys } from '../../features/resident/residentEvents';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import { residentFaqs } from '../../data/residentFaqs';
 import { ComplaintTracker } from '../../features/complaints/ComplaintTracker';
 import { canCancelUnstartedWork } from '../../features/complaints/trackerProjection';
@@ -158,6 +166,7 @@ export function ProposedVisit({ complaintId }) {
   const request = useQuery({
     queryKey: residentKeys.schedule(complaintId),
     queryFn: () => residentApi.scheduleRequest(complaintId),
+    ...QUERY_POLICIES.detail,
     // A 404 is an answer, not a failure to get one; retrying it three times
     // would only delay the empty state.
     retry: false,
@@ -397,6 +406,7 @@ function ComplaintDrawer({ complaintId, onClose }) {
   const detail = useQuery({
     queryKey: residentKeys.complaint(complaintId),
     queryFn: () => residentApi.complaint(complaintId),
+    ...QUERY_POLICIES.detail,
   });
 
   const afterWrite = (complaint) => {
@@ -460,8 +470,11 @@ function ComplaintDrawer({ complaintId, onClose }) {
   const complaint = detail.data;
   const canCancelWork = canCancelUnstartedWork(complaint?.timeline);
 
-  return (
+  return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Complaint details"
       className="fixed inset-0 z-[999] bg-slate-900/50 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -837,7 +850,8 @@ function ComplaintDrawer({ complaintId, onClose }) {
           </div>
         )}
       </aside>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -852,7 +866,11 @@ function RaiseComplaintModal({ onClose, onCreated }) {
     queryFn: () => residentApi.directoryContacts(),
     staleTime: 5 * 60_000,
   });
-  const skills = useQuery({ queryKey: ['skills'], queryFn: residentApi.skills, staleTime: 5 * 60_000 });
+  const skills = useQuery({
+    queryKey: ['skills'],
+    queryFn: residentApi.skills,
+    ...QUERY_POLICIES.reference,
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -878,14 +896,20 @@ function RaiseComplaintModal({ onClose, onCreated }) {
   const set = (field) => (event) =>
     setForm((current) => ({ ...current, [field]: event.target.value }));
 
-  return (
+  // items-start, not items-center: the form is taller than small viewports,
+  // and a centered child taller than the viewport loses its top edge — the
+  // title — so the panel anchors to the top and scrolls internally instead.
+  return createPortal(
     <div
-      className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Raise a complaint"
+      className="fixed inset-0 z-[999] flex items-start justify-center bg-slate-900/60 px-4 py-8 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
+      <div className="max-h-[calc(100vh-4rem)] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-extrabold text-slate-900">Raise a Complaint</h2>
@@ -1015,13 +1039,13 @@ function RaiseComplaintModal({ onClose, onCreated }) {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
 export default function Complaints() {
   const queryClient = useQueryClient();
-  useResidentLiveUpdates();
 
   const [isRaiseModalOpen, setIsRaiseModalOpen] = useState(false);
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
@@ -1045,6 +1069,8 @@ export default function Complaints() {
   const list = useQuery({
     queryKey: residentKeys.complaints(params),
     queryFn: () => residentApi.complaints(params),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   // Per membership, so opening a thread clears the resident's own marker and

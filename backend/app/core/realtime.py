@@ -319,11 +319,42 @@ class RealtimeHub:
         events behind it. `accepts` then decides, because a mistake in a
         hand-written PostgREST expression should be able to lose an event and
         never to leak one.
+
+        The outbox keeps two hours (`prune-sse-events`, `0024`). A client that
+        was away longer reconnects with a `Last-Event-ID` from before the
+        oldest retained row, and the id-range read above would silently skip
+        everything already pruned -- a gap with no symptom. So when the oldest
+        retained id sits past `last_event_id + 1`, a resync frame is prepended
+        and the client re-reads everything instead of trusting the middle of
+        its history. Over-resync is safe by doctrine (docs/ARCHITECTURE.md):
+        the frame is a hint, and the re-read is scoped by what the client may
+        see anyway. An *empty* outbox proves nothing either way and does not
+        resync -- see `oldest_event_id`.
         """
         if last_event_id <= 0:
             return []
         from app.core.supabase_client import get_service_client
         from app.repositories import dashboard_repository
+
+        frames: list[str] = []
+
+        def _oldest() -> int:
+            return dashboard_repository.oldest_event_id(get_service_client())
+
+        try:
+            oldest_retained = await asyncio.to_thread(_oldest)
+        except Exception:  # noqa: BLE001 - a failed probe must not kill the stream
+            logger.exception(
+                "SSE prune-horizon probe failed for community %s",
+                subscriber.community_id,
+            )
+            oldest_retained = 0
+
+        if oldest_retained > last_event_id + 1:
+            # The id is the client's own `last_event_id`, not the horizon: the
+            # backfilled rows that follow carry higher ids, so the stream's id
+            # sequence stays monotonic and a second drop replays from here.
+            frames.append(_resync_event(last_event_id, subscriber.role).frame())
 
         def _read() -> list[dict[str, Any]]:
             return dashboard_repository.read_events(
@@ -340,9 +371,12 @@ class RealtimeHub:
             logger.exception(
                 "SSE backfill failed for community %s", subscriber.community_id
             )
-            return []
+            return frames
 
-        return [_event_from(row).frame() for row in rows if subscriber.accepts(row)]
+        frames.extend(
+            _event_from(row).frame() for row in rows if subscriber.accepts(row)
+        )
+        return frames
 
 
 def _event_from(row: Mapping[str, Any]) -> Event:

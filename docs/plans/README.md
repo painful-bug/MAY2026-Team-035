@@ -32,6 +32,7 @@ actually exists, read the migrations and the generated spec.
 | [`AUTH_REGISTRATION_IMPLEMENTATION_PLAN.md`](AUTH_REGISTRATION_IMPLEMENTATION_PLAN.md) | Auth and registration — **owned by the auth workstream, not by us** | Superseded as the architecture reference by [`../ARCHITECTURE.md`](../ARCHITECTURE.md) |
 | [`SCHEMA_RECONCILIATION_PLAN.md`](SCHEMA_RECONCILIATION_PLAN.md) | Rebuilding our migrations onto the merged baseline | Complete |
 | [`RECONCILIATION_ADDENDUM.md`](RECONCILIATION_ADDENDUM.md) | Extends the above; does not replace it | Complete |
+| [`REALTIME_AND_CACHING_STANDARD.md`](REALTIME_AND_CACHING_STANDARD.md) | The layering rule for client cache / SSE / server TTL cache / no-store HTTP, the SSE audience and topic rules, the one-`EventSource`-per-tab frontend, the scheduler non-interference rules, and the new-feature checklist | **Doctrine, standing.** Not a build record — read this before adding any read, mutable surface, or time-based feature |
 
 ---
 

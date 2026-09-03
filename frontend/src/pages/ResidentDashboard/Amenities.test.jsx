@@ -15,7 +15,7 @@ import Amenities from './Amenities';
 const mocks = vi.hoisted(() => ({
   availableAmenities: vi.fn(),
   amenityBookings: vi.fn(),
-  checkBookingSlotAvailability: vi.fn(),
+  fetchBookingConflicts: vi.fn(),
   showToast: vi.fn(),
   addActivity: vi.fn(),
 }));
@@ -27,13 +27,21 @@ vi.mock('../../features/resident/residentApi.js', () => ({
   },
 }));
 
-vi.mock('../../features/amenities/services/amenityBookingsService.js', () => ({
-  cancelResidentAmenityBookingDays: vi.fn(),
-  createResidentAmenityBookingSeries: vi.fn(),
-  // `{ available, verified }`: the slot hint reads the ADMIN-guarded snapshot,
-  // so "we could not check" is one of its normal answers (issue #48 D5).
-  checkBookingSlotAvailability: mocks.checkBookingSlotAvailability,
-}));
+vi.mock(
+  '../../features/amenities/services/amenityBookingsService.js',
+  async (importOriginal) => ({
+    // The real `evaluateBookingSlot` stays: it is pure arithmetic over the
+    // bookings handed to it, and the page's slot filtering is what is under
+    // test. Only the network half is mocked.
+    ...(await importOriginal()),
+    cancelResidentAmenityBookingDays: vi.fn(),
+    createResidentAmenityBookingSeries: vi.fn(),
+    // `{ bookings, verified }`: the conflict read is the ADMIN-guarded
+    // snapshot, so "we could not check" is one of its normal answers
+    // (issue #48 D5).
+    fetchBookingConflicts: mocks.fetchBookingConflicts,
+  })
+);
 
 vi.mock('../../store/appStore.js', () => ({
   useAppStore: (selector) =>
@@ -84,9 +92,9 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ items: [bookableAmenity()] });
   mocks.amenityBookings.mockReset().mockResolvedValue({ items: [] });
-  mocks.checkBookingSlotAvailability
+  mocks.fetchBookingConflicts
     .mockReset()
-    .mockResolvedValue({ available: true, verified: true });
+    .mockResolvedValue({ bookings: [], verified: true });
 });
 
 const renderPage = () => {
@@ -166,8 +174,8 @@ describe('resident booking dialog when availability cannot be checked', () => {
 
   it('offers the slots and says the check did not happen, rather than hanging', async () => {
     mocks.availableAmenities.mockResolvedValue({ items: [hoursAmenity()] });
-    mocks.checkBookingSlotAvailability.mockResolvedValue({
-      available: true,
+    mocks.fetchBookingConflicts.mockResolvedValue({
+      bookings: [],
       verified: false,
     });
     const user = userEvent.setup();
@@ -192,7 +200,7 @@ describe('resident booking dialog when availability cannot be checked', () => {
 
   it('recovers the same way when the hint throws outright', async () => {
     mocks.availableAmenities.mockResolvedValue({ items: [hoursAmenity()] });
-    mocks.checkBookingSlotAvailability.mockRejectedValue(
+    mocks.fetchBookingConflicts.mockRejectedValue(
       new Error('Network request failed.')
     );
     const user = userEvent.setup();
@@ -205,5 +213,41 @@ describe('resident booking dialog when availability cannot be checked', () => {
     expect(
       within(dialog).getByRole('button', { name: /book 1 day/i })
     ).toBeEnabled();
+  });
+});
+
+// Pins the stacking-context escape for the booking modal. Rendered in place,
+// it sat inside ResidentLayout's `<main class="animate-fade-in">` — a
+// fill-forwards opacity animation keeps <main> a stacking context forever, so
+// the overlay's z-[999] was trapped below the sticky header's z-40. The portal
+// to document.body is what makes the overlay immune. (The manage-booking-days
+// modal takes the same portal; it needs a live booking group to open, so the
+// booking form stands in for the contract here.)
+describe('resident booking modal portal contract', () => {
+  it('portals the dialog to document.body, top-anchored with internal scroll', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const dialog = await openDialog(user);
+
+    const overlay = dialog.parentElement;
+    expect(overlay.parentElement).toBe(document.body);
+    expect(overlay.className).toContain('fixed inset-0');
+    expect(overlay.className).toContain('z-[999]');
+    // Top-anchored: a panel taller than the viewport clips at the bottom into
+    // its own scrollbar, never at the title.
+    expect(overlay.className).toContain('items-start');
+    expect(dialog.className).toContain('overflow-y-auto');
+    expect(dialog.className).toContain('max-h-[calc(100vh-4rem)]');
+  });
+
+  it('keeps the close-button behavior', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openDialog(user);
+
+    await user.click(
+      screen.getByRole('button', { name: 'Close booking form' })
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

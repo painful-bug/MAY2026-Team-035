@@ -32,11 +32,12 @@ FRONTEND_ORIGIN = "http://localhost:5173"
 def remember_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[TestClient, None, None]:
-    """`api_client` with a realistic provider timeout.
+    """`api_client` without redirect-following, on the default provider timeout.
 
-    The shared fixture pins the budget to a millisecond so it can prove the
-    timeout path fires. Every provider call below is patched to return instantly
-    and would race that budget on a loaded machine.
+    This fixture predates `api_client` growing a realistic provider budget (it
+    used to pin a millisecond, which these instantly-returning provider stubs
+    raced on a loaded machine). What still matters here is
+    `follow_redirects=False` below.
     """
     for key, value in {
         "SUPABASE_URL": "https://example.supabase.co",

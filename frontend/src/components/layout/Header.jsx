@@ -14,15 +14,13 @@ import {
 } from 'lucide-react';
 
 export default function Header({ onMenuClick }) {
-  const {
-    currentUser,
-    notices,
-    visitors,
-    complaints,
-    activities,
-    searchQuery,
-    setSearchQuery
-  } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
+  const notices = useApp((state) => state.notices);
+  const visitors = useApp((state) => state.visitors);
+  const complaints = useApp((state) => state.complaints);
+  const activities = useApp((state) => state.activities);
+  const searchQuery = useApp((state) => state.searchQuery);
+  const setSearchQuery = useApp((state) => state.setSearchQuery);
 
   // Residency labels come from GET /auth/session. The header can render as
   // soon as authentication finishes instead of waiting for the much larger

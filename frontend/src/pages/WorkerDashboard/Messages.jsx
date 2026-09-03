@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import { ChevronLeft, MessageSquare, Send } from 'lucide-react';
 import { workerApi } from '../../features/worker/workerApi';
 import { communityColor } from '../../lib/communityColor';
@@ -43,16 +44,22 @@ export default function WorkerMessages() {
   const [draft, setDraft] = useState('');
   const bottom = useRef(null);
 
-  const snapshot = useQuery({ queryKey: ['worker-snapshot'], queryFn: workerApi.snapshot });
+  const snapshot = useQuery({
+    queryKey: ['worker-snapshot'],
+    queryFn: workerApi.snapshot,
+    ...QUERY_POLICIES.snapshot,
+  });
   const leadership = holdsLeadershipEngagement(snapshot.data?.communities);
   const threads = useQuery({
     queryKey: ['worker-conversations'],
     queryFn: workerApi.conversations,
+    ...QUERY_POLICIES.list,
     enabled: snapshot.isSuccess && !leadership,
   });
   const thread = useQuery({
     queryKey: ['worker-conversation', openId],
     queryFn: () => workerApi.conversation(openId),
+    ...QUERY_POLICIES.detail,
     enabled: Boolean(openId) && snapshot.isSuccess && !leadership,
   });
 

@@ -2,9 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import WorkerLanding from './WorkerLanding';
+import { __resetStreamForTests } from '../../lib/realtime/eventStream';
+import { WORKER_EVENT_MAP } from '../../lib/realtime/portalMaps';
+import { useLiveUpdates } from '../../lib/realtime/useLiveUpdates';
 
 // The supervisor triage dashboard, and the fork that decides who sees it.
 //
@@ -40,7 +43,10 @@ vi.mock('../../lib/api/client', () => ({ api: mocks.api }));
 // The portal base for the "Raise job request" deep link. `usePortalScope` reads
 // it off the session, which no test renders — the real one is `/worker`.
 vi.mock('../../store/useApp', () => ({
-  useApp: () => ({ currentUser: { portal: 'worker', departmentId: null } }),
+  useApp: (selector) => {
+    const state = { currentUser: { portal: 'worker', departmentId: null } };
+    return selector ? selector(state) : state;
+  },
 }));
 
 const SUPERVISOR = {
@@ -280,9 +286,18 @@ const CANDIDATES = [
   { staffAssignmentId: 'staff-9', displayName: 'Meena Rao', openJobs: 2, excluded: false },
 ];
 
-function renderLanding() {
+// What `WorkerLayout` puts above every page in this portal, minus the chrome:
+// one subscription to the tab's shared event stream, mapped by
+// `WORKER_EVENT_MAP`. The page itself holds no listener — see "staying
+// current" below for why it used to and no longer does.
+function LivePortal() {
+  useLiveUpdates(WORKER_EVENT_MAP);
+  return <WorkerLanding />;
+}
+
+function renderLanding(Page = WorkerLanding) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const router = createMemoryRouter([{ path: '/worker', element: <WorkerLanding /> }], {
+  const router = createMemoryRouter([{ path: '/worker', element: <Page /> }], {
     initialEntries: ['/worker'],
   });
   render(
@@ -895,19 +910,78 @@ describe('taking a complaint up', () => {
   });
 });
 
+// The queue's live half used to hang off `homebandhu:dashboard-refresh`, a
+// window event dispatched by `DashboardDataBootstrap` — which mounts in
+// `AdminLayout` and nowhere else. In the worker portal it never fired once, so
+// what this block used to assert was that a dead listener was wired to a dead
+// event. It is a real frame on the real stream now.
 describe('staying current', () => {
-  it('refetches when the SSE beat fires the dashboard-refresh event', async () => {
+  const sources = [];
+
+  class FakeEventSource {
+    constructor(url) {
+      this.url = url;
+      this.listeners = new Map();
+      sources.push(this);
+    }
+
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+
+    close() {
+      this.closed = true;
+    }
+
+    fire(type, data) {
+      for (const listener of this.listeners.get(type) || []) listener({ type, data });
+    }
+  }
+
+  beforeEach(() => {
+    sources.length = 0;
+    vi.stubGlobal('EventSource', FakeEventSource);
+  });
+
+  afterEach(() => {
+    __resetStreamForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it('refetches the queue when a work-order frame arrives on the shared stream', async () => {
     serve();
-    renderLanding();
+    renderLanding(LivePortal);
 
     await screen.findByText('Sewage backing up');
     const before = triageCalls().length;
 
-    act(() => {
-      window.dispatchEvent(new CustomEvent('homebandhu:dashboard-refresh'));
-    });
+    // Audience `community`: another supervisor dispatching, a technician
+    // claiming. Nothing in the payload is read — the frame only says "re-read".
+    act(() => sources[0].fire('work_order.changed', '{}'));
 
     await waitFor(() => expect(triageCalls().length).toBeGreaterThan(before));
+  });
+
+  it('refetches the queue when a complaint notification arrives', async () => {
+    serve();
+    renderLanding(LivePortal);
+
+    await screen.findByText('Sewage backing up');
+    const before = triageCalls().length;
+
+    act(() => sources[0].fire('notification.created', '{"kind":"complaint.reassigned"}'));
+
+    await waitFor(() => expect(triageCalls().length).toBeGreaterThan(before));
+  });
+
+  it('opens exactly one stream for the portal, whatever is mounted under it', async () => {
+    serve();
+    renderLanding(LivePortal);
+
+    await screen.findByText('Sewage backing up');
+    expect(sources).toHaveLength(1);
+    expect(sources[0].url).toBe('/api/v1/events');
   });
 
   it('says so plainly when the department read fails, and offers a retry', async () => {

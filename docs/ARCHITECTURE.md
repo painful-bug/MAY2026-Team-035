@@ -88,6 +88,14 @@ sequenceDiagram
 
 ## Live updates
 
+> The full client-side contract this section's transport feeds — the
+> React-Query/SSE/server-cache layering, the per-endpoint cache-policy
+> table, the SSE audience rules restated as a checklist, and what a new
+> feature must do to hold up its end — is
+> [`plans/REALTIME_AND_CACHING_STANDARD.md`](plans/REALTIME_AND_CACHING_STANDARD.md).
+> This section stays the backend/transport reference; that document is the
+> standard for building on top of it.
+
 **What we use: server-sent events over a Postgres outbox, fanned out by a
 single in-process poller.** Concretely, three parts:
 
@@ -164,11 +172,31 @@ a community-wide firehose and one unrelated write costs five hundred fetches.
 
 - **Ordering** is by `sse_events.id` within a community.
 - **Reconnects** are covered: the browser resends `Last-Event-ID`, and the
-  stream backfills from the database before attaching to the live feed. The
+  stream backfills from the database before attaching to the live feed. One
+  close the browser will *not* retry on its own — an HTTP error response
+  (a 403 between sign-in and approval, a 5xx) parks `EventSource` at `CLOSED`
+  permanently — is reopened by the client itself, with 5 s→60 s backoff
+  (`eventStream.js`, doctrine in
+  `docs/plans/REALTIME_AND_CACHING_STANDARD.md` §4, added 2026-08-27). The
   backfill applies the audience filter twice — once in the query, so a burst of
   admin traffic cannot fill the 100-row page and hide a resident's own events
   behind it, and again in Python, so a mistake in the hand-written PostgREST
   clause can only lose an event and never leak one.
+- **A resume point older than the outbox's retention also resyncs, not just
+  silently backfills (added 2026-08-26).** The outbox keeps two hours
+  (`prune_sse_events`, `0024`). Before this, a client away longer reconnected
+  with a `Last-Event-ID` older than the oldest surviving row, the id-range
+  read silently skipped everything already pruned, and the client believed it
+  was caught up — a gap with no symptom. `app/core/realtime.py`'s `_backfill`
+  now probes `dashboard_repository.oldest_event_id()` first and, when the
+  oldest retained row sits past the client's resume point, prepends the
+  existing resync frame (`stream.resync`, or `dashboard.refresh` with
+  `{"resync": true}` for an admin/manager) before playing back the backfill,
+  so the client re-fetches instead of trusting the middle of its history.
+  **The probe fails open**: a probe error skips the resync frame rather than
+  blocking the reconnect, so an unrelated failure degrades to the pre-existing
+  behavior instead of refusing service. An empty outbox proves nothing either
+  way and does not resync.
 - **Slow consumers** degrade rather than block. A connection more than 64
   events behind stops receiving detail and is sent a resync frame:
   `dashboard.refresh` with `{"resync": true}` for an admin or manager, whose
@@ -205,11 +233,44 @@ a community-wide firehose and one unrelated write costs five hundred fetches.
 | `access_request.created` | `{admin, manager}` | `emit_access_request_sse_event` (`0024`, retargeted by `0028`) | request id, applicant name, relationship, `pending_count` |
 | `access_request.decided` | `{admin, manager}` | same | request id, `from`, `to`, `pending_count` |
 | `notification.created` | the one recipient | trigger on `notifications` (`0030`) | notification id, kind |
+| `work_order.changed` | every subscriber in the community | `emit_work_order_sse_event` on `work_orders` (`20260826090000`) | table, work order id, complaint id, status |
+| `amenity.changed` | every subscriber in the community | `emit_amenity_sse_event` on `amenity_bookings`, and `amenity_booking_series` where present (`20260826090000`) | table, amenity id |
+| `message.created` | the one recipient | `emit_message_sse_event` on `dm_messages`, insert only (`20260826090000`) | thread id, message id — no body |
 | `stream.resync` | the affected connection | `app/core/realtime.py`, never the database | `{"resync": true}` |
 
 `pending_count` is included so a badge can update from the event itself. The
 frontend currently re-snapshots instead, which is also correct — the field is
 there so a toast does not need a round trip.
+
+**Why `work_order.changed` and `amenity.changed` are community-scoped rather
+than role-scoped (2026-08-26):** the populations that may read a given work
+order (`can_read_work_order`, `0036`) don't collapse onto any role list, and a
+`role` row would have to guess — guessing narrow risks silently dropping the
+frame for someone who needed it, where over-delivery only ever costs an
+extra, correctly-scoped re-read. Narrowing `work_order.changed` to the owning
+department is recorded as future work, not done today. `message.created`
+stays `member`-scoped: the thread is addressed by profile (`0046`) and the
+stream by membership (`0028`), so each recipient participant is resolved to
+their own active membership in the thread's community before the frame is
+written.
+
+**The consumer side is now one connection per tab, not one per listener
+(2026-08-27).** `frontend/src/lib/realtime/eventStream.js` opens a single
+ref-counted `EventSource` against `GET /api/v1/events` on the first
+subscriber and closes it on the last; a pure mapper (`frameQueries.js`) turns
+a frame into the query-key prefixes a portal's map says it invalidates
+(`portalMaps.js`, plus the resident map beside `residentKeys` at
+`features/resident/residentEvents.js`), and `useLiveUpdates`/`useStreamLive`/
+`useSseFallbackInterval` (`useLiveUpdates.js`) wire that into React Query.
+The hooks are mounted portal-wide in the Resident, Worker and Manager
+layouts; the admin portal keeps `DashboardDataBootstrap`, now fed by the same
+shared stream through `subscribeToDashboard` instead of opening its own
+connection; the security portal is not wired yet. Every poll that used to run
+continuously — the notification bell, the chat dock — now runs only as a
+uniform 5-minute degraded fallback while `useStreamLive()` is false; `stream.resync`
+is the only frame a map treats as "everything you show may be stale",
+`dashboard.refresh` is never implicitly one. The full contract is
+[`plans/REALTIME_AND_CACHING_STANDARD.md`](plans/REALTIME_AND_CACHING_STANDARD.md).
 
 ## Out-of-app delivery: notifications and Web Push
 

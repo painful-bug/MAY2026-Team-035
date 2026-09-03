@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import CommunitySearch from '../../../components/common/CommunitySearch';
 import { useCommunitySearch } from '../hooks/useCommunitySearch';
 import { registrationApi } from '../registrationApi';
+import { COMMUNITY_TYPES } from '../../../data/onboarding';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 
 const relationships = [
   ['tenant', 'Tenant'],
@@ -20,9 +22,18 @@ export default function JoinCommunityTab() {
   const [relationship, setRelationship] = useState('tenant');
   const [countryCode, setCountryCode] = useState('+91');
   const [phone, setPhone] = useState('');
+  // Residence claim: free text only (privacy invariant — non-members never see
+  // the community's unit inventory). Apartment communities split tower + flat;
+  // villa communities take a single villa number.
+  const [buildingText, setBuildingText] = useState('');
+  const [unitText, setUnitText] = useState('');
   const [dismissedRejected, setDismissedRejected] = useState(false);
   const search = useCommunitySearch(query);
-  const mine = useQuery({ queryKey: ['my-access-requests'], queryFn: registrationApi.myAccessRequests });
+  const mine = useQuery({
+    queryKey: ['my-access-requests'],
+    queryFn: registrationApi.myAccessRequests,
+    ...QUERY_POLICIES.list,
+  });
   const pending = useMemo(
     () => mine.data?.items?.find((item) => item.status === 'pending'),
     [mine.data]
@@ -36,13 +47,27 @@ export default function JoinCommunityTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-access-requests'] }),
   });
 
+  const apartmentMode = selected?.community_type === COMMUNITY_TYPES.APARTMENT;
+  const residenceComplete = Boolean(unitText.trim()) && (!apartmentMode || Boolean(buildingText.trim()));
+
+  const selectCommunity = (community) => {
+    setSelected(community);
+    setQuery(community.name);
+    // A different community means a different address scheme — never carry a
+    // residence claim across.
+    setBuildingText('');
+    setUnitText('');
+  };
+
   const submit = (event) => {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || !residenceComplete) return;
     request.mutate({
       community_id: selected.id,
       requested_relationship: relationship,
       phone: phone.trim() ? `${countryCode.trim()}${phone.trim()}` : null,
+      requested_unit_text: unitText.trim(),
+      ...(apartmentMode ? { requested_building_text: buildingText.trim() } : {}),
     });
   };
 
@@ -70,7 +95,7 @@ export default function JoinCommunityTab() {
       <CommunitySearch
         label="Find your community"
         value={query}
-        onChange={(event) => { setQuery(event.target.value); setSelected(null); }}
+        onChange={(event) => { setQuery(event.target.value); setSelected(null); setBuildingText(''); setUnitText(''); }}
         placeholder="Start typing a community name"
         hint={query.trim().length > 0 && query.trim().length < 2 ? <p className="text-xs font-medium text-slate-500">Enter at least two characters.</p> : null}
         isLoading={search.isFetching}
@@ -81,7 +106,7 @@ export default function JoinCommunityTab() {
         resultsRole="listbox"
         resultsClassName="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
         renderResult={(community) => (
-          <button key={community.id} type="button" role="option" aria-selected={selected?.id === community.id} onClick={() => { setSelected(community); setQuery(community.name); }} className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-indigo-50 ${selected?.id === community.id ? 'bg-indigo-50' : ''}`}>
+          <button key={community.id} type="button" role="option" aria-selected={selected?.id === community.id} onClick={() => selectCommunity(community)} className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-indigo-50 ${selected?.id === community.id ? 'bg-indigo-50' : ''}`}>
             <Building2 className="h-4 w-4 text-indigo-600" />
             <span><span className="block font-bold text-slate-800">{community.name}</span><span className="block text-xs text-slate-500">{community.city || 'Location unavailable'}{community.state ? `, ${community.state}` : ''}</span></span>
           </button>
@@ -100,10 +125,24 @@ export default function JoinCommunityTab() {
               <input aria-label="Phone number" value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" placeholder="9876543210" className="block min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
             </span>
           </label>
+          {apartmentMode ? (
+            <>
+              <label className="space-y-2 text-xs font-bold uppercase tracking-wider text-slate-500">Tower / Block
+                <input value={buildingText} onChange={(event) => setBuildingText(event.target.value)} required placeholder="C" className="block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
+              </label>
+              <label className="space-y-2 text-xs font-bold uppercase tracking-wider text-slate-500">Flat Number
+                <input value={unitText} onChange={(event) => setUnitText(event.target.value)} required placeholder="505" className="block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
+              </label>
+            </>
+          ) : (
+            <label className="space-y-2 text-xs font-bold uppercase tracking-wider text-slate-500">Villa Number
+              <input value={unitText} onChange={(event) => setUnitText(event.target.value)} required placeholder="Villa-17" className="block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700" />
+            </label>
+          )}
         </div>
       ) : null}
       {request.error ? <p role="alert" className="text-sm font-semibold text-rose-600">{request.error.message}</p> : null}
-      <button type="submit" disabled={!selected || request.isPending} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60">
+      <button type="submit" disabled={!selected || !residenceComplete || request.isPending} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60">
         {request.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
         Request to join {selected?.name || 'community'}
       </button>

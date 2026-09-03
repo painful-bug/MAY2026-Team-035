@@ -48,7 +48,7 @@ router = APIRouter(
     response_model=list[Skill],
     summary="The global catalogue of trades",
 )
-async def list_skills(
+def list_skills(
     query: str | None = Query(
         None,
         max_length=80,
@@ -103,7 +103,7 @@ async def list_skills(
     status_code=status.HTTP_201_CREATED,
     summary="Register as a service person",
 )
-async def register(
+def register(
     body: SaveServiceProviderRequest,
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -128,7 +128,7 @@ async def register(
     response_model=ServiceProviderProfile,
     summary="My service-provider profile",
 )
-async def get_mine(
+def get_mine(
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
 ) -> ServiceProviderProfile:
@@ -151,7 +151,7 @@ async def get_mine(
     response_model=ServiceProviderProfile,
     summary="Edit my service-provider profile",
 )
-async def update_mine(
+def update_mine(
     body: UpdateServiceProviderRequest,
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -197,7 +197,7 @@ async def update_mine(
     summary="One service person, for a hiring manager",
     dependencies=[Depends(require_admin_or_manager)],
 )
-async def get_candidate(
+def get_candidate(
     provider_id: str = Path(...),
     client: Client = Depends(get_request_client),
 ) -> CandidateProfile:
@@ -232,7 +232,7 @@ async def get_candidate(
     response_model=SkillsSavedResult,
     summary="Set which trades I offer",
 )
-async def set_skills(
+def set_skills(
     body: SetSkillsRequest,
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
@@ -257,7 +257,7 @@ async def set_skills(
     response_model=AvailabilityResult,
     summary="Go online or offline for new work",
 )
-async def set_availability(
+def set_availability(
     body: SetAvailabilityRequest,
     _: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),

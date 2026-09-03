@@ -7,7 +7,11 @@ import { getDashboardSnapshot } from '../../lib/dashboard/dashboardApi';
 import AdminRaiseComplaintModal from '../../features/complaints/components/AdminRaiseComplaintModal';
 
 export default function Complaints() {
-  const { complaints, updateComplaint, addComplaintComment, hydrateDashboard, showToast } = useApp();
+  const complaints = useApp((state) => state.complaints);
+  const updateComplaint = useApp((state) => state.updateComplaint);
+  const addComplaintComment = useApp((state) => state.addComplaintComment);
+  const hydrateDashboard = useApp((state) => state.hydrateDashboard);
+  const showToast = useApp((state) => state.showToast);
   const queryClient = useQueryClient();
   const [filterStatus, setFilterStatus] = useState('All');
   const [isRaiseOpen, setIsRaiseOpen] = useState(false);

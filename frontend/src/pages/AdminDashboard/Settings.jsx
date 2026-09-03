@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/useApp';
 import { Settings, Shield, Bell, CreditCard, Save } from 'lucide-react';
 import { api } from '../../lib/api/client';
+import { QUERY_POLICIES } from '../../lib/api/queryClient';
 import LocationPicker from '../../components/common/LocationPicker';
 import { moneyApi } from '../../features/money/moneyApi';
 
@@ -48,34 +49,43 @@ function billingFormFromSettings(settings) {
 }
 
 export default function SettingsPage() {
-  const { showToast } = useApp();
+  const showToast = useApp((state) => state.showToast);
   const queryClient = useQueryClient();
   const [gateSecurity, setGateSecurity] = useState(false);
   const [noticeAlert, setNoticeAlert] = useState(false);
   const [coordinates, setCoordinates] = useState({ latitude: '', longitude: '', locationLabel: '' });
   const [billingForm, setBillingForm] = useState(DEFAULT_BILLING_FORM);
 
+  // Was a hand-rolled `useEffect` + local try/catch; now a plain query so it
+  // participates in the same cache as `billingSettings` below (and so a
+  // successful `PUT` can warm it via `setQueryData` instead of the screen
+  // just trusting its own just-saved form state).
+  const settingsQuery = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api('/settings'),
+    ...QUERY_POLICIES.detail,
+  });
+
   useEffect(() => {
-    async function loadSettings() {
-      try {
-        const data = await api('/settings');
-        setNoticeAlert(data.preferences?.noticeSmsBroadcastEnabled ?? false);
-        setGateSecurity(data.preferences?.requireVisitorPreapproval ?? false);
-        setCoordinates({
-          latitude: data.community?.latitude ?? '',
-          longitude: data.community?.longitude ?? '',
-          locationLabel: data.community?.locationLabel ?? '',
-        });
-      } catch {
-        showToast('Failed to load current settings', 'error');
-      }
-    }
-    loadSettings();
-  }, [showToast]);
+    if (!settingsQuery.data) return;
+    const data = settingsQuery.data;
+    setNoticeAlert(data.preferences?.noticeSmsBroadcastEnabled ?? false);
+    setGateSecurity(data.preferences?.requireVisitorPreapproval ?? false);
+    setCoordinates({
+      latitude: data.community?.latitude ?? '',
+      longitude: data.community?.longitude ?? '',
+      locationLabel: data.community?.locationLabel ?? '',
+    });
+  }, [settingsQuery.data]);
+
+  useEffect(() => {
+    if (settingsQuery.isError) showToast('Failed to load current settings', 'error');
+  }, [settingsQuery.isError, showToast]);
 
   const billingSettings = useQuery({
     queryKey: ['billing-settings'],
     queryFn: moneyApi.getBillingSettings,
+    ...QUERY_POLICIES.detail,
   });
 
   useEffect(() => {
@@ -124,7 +134,7 @@ export default function SettingsPage() {
       return;
     }
     try {
-      await Promise.all([
+      const [updatedSettings] = await Promise.all([
         api('/settings', {
           method: 'PUT',
           body: JSON.stringify({
@@ -151,6 +161,10 @@ export default function SettingsPage() {
           lateFeePeriod: billingForm.lateFeePeriod,
         }),
       ]);
+      // `PUT /settings` returns the same snapshot shape `GET` does — warm the
+      // cache with it directly rather than invalidating and waiting on a
+      // refetch for data the response already carries.
+      queryClient.setQueryData(['settings'], updatedSettings);
       showToast('Admin Settings Saved Successfully', 'success');
     } catch (error) {
       showToast(error.message || 'Failed to save settings', 'error');

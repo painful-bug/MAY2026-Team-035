@@ -29,7 +29,7 @@ router = APIRouter(tags=["notices"], dependencies=[Depends(require_csrf_unsafe)]
     status_code=status.HTTP_201_CREATED,
     summary="Post a notice",
 )
-async def create_notice(
+def create_notice(
     body: CreateNoticeRequest,
     membership: MembershipContext = Depends(require_admin),
     client: Client = Depends(get_request_client),

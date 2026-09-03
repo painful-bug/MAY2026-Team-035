@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, Check, X } from 'lucide-react';
 
 import { complaintRoutingApi } from '../routingApi';
+import { QUERY_POLICIES } from '../../../lib/api/queryClient';
 
 // "This isn't ours" — waiting on the manager who has to answer.
 //
@@ -27,6 +28,7 @@ export default function ChangeRequests({ departmentId }) {
   const requests = useQuery({
     queryKey: ['departments', departmentId, 'change-requests'],
     queryFn: () => complaintRoutingApi.changeRequests(departmentId),
+    ...QUERY_POLICIES.list,
     enabled: Boolean(departmentId),
   });
 

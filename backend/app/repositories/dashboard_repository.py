@@ -21,16 +21,11 @@ from supabase import Client
 
 @lru_cache(maxsize=1)
 def schema_generation() -> str:
-    """Detect the deployed normalized schema once per backend process."""
-    # The legacy schema has visitor_access_requests; the clean baseline has
-    # visitor_requests.  Keeping this detection here avoids leaking schema
-    # compatibility into API handlers or the browser.
     from app.core.supabase_client import get_service_client
-
     try:
         get_service_client().table("visitor_access_requests").select("id").limit(1).execute()
         return "legacy"
-    except Exception:  # noqa: BLE001 - a missing relation is the feature test
+    except Exception:
         return "baseline"
 
 
@@ -206,7 +201,7 @@ def list_invoices(client: Client, community_id: str, *, legacy: bool) -> list[di
     columns = (
         "id,liable_unit_id,status,due_at,total_amount,invoice_number,invoice_type,created_at,updated_at,invoice_line_items(description,total_amount)"
         if legacy
-        else "id,membership_id,status,due_at,total_amount,created_at,updated_at,invoice_line_items(description,amount)"
+        else "id,membership_id,status,due_at,total_amount,title,invoice_number,created_at,updated_at,invoice_line_items(description,amount)"
     )
     return (
         client.table("invoices").select(columns).eq("community_id", community_id)
@@ -465,13 +460,31 @@ def latest_event_id(client: Client) -> int:
     return int(rows[0]["id"]) if rows else 0
 
 
+def oldest_event_id(client: Client) -> int:
+    """Low-water mark: the oldest row the prune job has left standing.
+
+    `prune-sse-events` (`0024`) deletes anything older than two hours, so a
+    reconnecting client whose `Last-Event-ID` predates this row has a gap the
+    backfill cannot replay -- `app.core.realtime` uses this to tell it to
+    resync instead. `0` means the outbox is empty, which is indistinguishable
+    from "nothing happened"; the caller treats it as no evidence of a gap.
+    """
+    rows = (
+        client.table("sse_events").select("id").order("id").limit(1)
+        .execute().data
+        or []
+    )
+    return int(rows[0]["id"]) if rows else 0
+
+
 def list_pending_access_requests(client: Client, community_id: str) -> list[dict[str, Any]]:
     """Pending join requests, newest first -- the admin sidebar badge's source."""
     return (
         client.table("pending_access_request_overview")
         .select(
             "id,applicant_name,applicant_email,applicant_phone_e164,"
-            "requested_relationship,status,created_at,requested_unit_code,community_name"
+            "requested_relationship,status,created_at,requested_unit_code,community_name,"
+            "requested_building_text,requested_unit_text,community_type"
         )
         .eq("community_id", community_id).order("created_at", desc=True).limit(200)
         .execute().data

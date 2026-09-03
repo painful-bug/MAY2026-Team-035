@@ -1,10 +1,10 @@
 # HomeBandhu API reference
 
-**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-21
+**Version:** v1 · **Base path:** `/api/v1` · **Last updated:** 2026-08-28
 
 > ## Where the numbers stand
 >
-> The live surface is **201 operations across 170 paths**, all of them in
+> The live surface is **211 operations across 180 paths**, all of them in
 > [`openapi.yaml`](openapi.yaml), all carrying a user-story verdict (§16). Every `###` heading below
 > corresponds to an operation that exists; that is checked mechanically rather than by eye.
 >
@@ -25,6 +25,12 @@
 > *(And **199 across 168** until 2026-08-21, moved here rather than found stale: §21's two `geo`
 > reads are this session's, the count was accurate before them, and the line is updated in the same
 > change that invalidated it. Read off `export_openapi.py`'s own summary, not counted by eye.)*
+>
+> *(And **201 across 170** until 2026-08-28, which is the fourth drift by the same mechanism: the
+> supervisor-triage, card-action, schedule-time and take-up sessions moved the spec to 211 across
+> 180 — §17's own rows record every step — while this banner sat still. Found while documenting the
+> seven access-request operations, a change that itself adds **no** operations; corrected off the
+> exporter's summary line, as the 2026-08-21 note says to.)*
 >
 > **Two contract-wide rules that apply to every endpoint below.**
 >
@@ -757,12 +763,24 @@ data: {"request_id":"…","applicant_name":"Asha R","requested_relationship":"te
 | `access_request.created` | `{admin, manager}` | someone asks to join the community | `request_id`, `applicant_name`, `requested_relationship`, `status`, `created_at`, `pending_count` |
 | `access_request.decided` | `{admin, manager}` | a request is approved, rejected or blacklisted | `request_id`, `applicant_name`, `from`, `to`, `pending_count` |
 | `dashboard.refresh` | `{admin, manager}` | any write to one of 12 domain tables | `{"table": "…"}`, or `{"resync": true}` if this connection fell behind and events were dropped |
-| `stream.resync` | the affected connection | this connection fell behind and events were dropped | `{"resync": true}` |
+| `work_order.changed` | every community subscriber | a work order is created, updated or deleted | work order id, complaint id, status |
+| `amenity.changed` | every community subscriber | an amenity booking (or booking series) is created or updated | amenity id |
+| `message.created` | the one recipient | a direct message is sent in a thread they're a participant of | thread id, message id — no message body |
+| `stream.resync` | the affected connection | this connection fell behind and events were dropped, **or** it reconnected with a `Last-Event-ID` older than the outbox's oldest surviving row | `{"resync": true}` |
 
 `stream.resync` and `dashboard.refresh`-with-`resync` are the same instruction — *you have a gap, re-read
 everything*. They differ only in name: an admin gets the topic its listener is already wired to, and every
 other role gets one that does not claim to be about the admin dashboard. **Any client that opens this stream
 must handle `stream.resync`**; it is the only frame that can arrive without a preceding domain event.
+
+**A reconnect past the prune horizon resyncs too, not just a slow live connection.** The outbox retains two
+hours of rows (`prune_sse_events`). A `Last-Event-ID` older than that — a tab reopened after a long sleep, a
+laptop woken the next day — used to backfill silently starting mid-history, with nothing telling the client it
+had missed anything. The backfill now checks the oldest surviving row before replaying and prepends
+`stream.resync` (or `dashboard.refresh` with `{"resync": true}`, per the role rule above) when the resume point
+predates it, so a client away that long is told to re-fetch rather than left believing a partial backfill was
+the whole story. The check fails open: if it errors, the backfill proceeds without the extra frame rather than
+refusing the reconnect.
 
 **Contract notes**
 
@@ -948,13 +966,163 @@ rather than guarded.
 
 ## 6. People
 
-**Also intentionally empty**, for the same reason: `GET /admins` is served by the snapshot's `users[]`, which
-carries `role` and lets the page filter client-side, and the registration trio duplicated their
-`/admin/access-requests` endpoints that the frontend already calls.
+**This section said "intentionally empty" until 2026-08-28, and half of that sentence was hiding a
+finding.** The empty half is still true: `GET /admins` is served by the snapshot's `users[]`, which
+carries `role` and lets the page filter client-side, and the old `/registrations` trio was retired
+because it duplicated `/admin/access-requests`. But "the endpoints the frontend already calls" was
+doing the work of a reference section for seven live operations — the join flow — which is exactly
+the gap [`api_yaml_mapper.md`](api_yaml_mapper.md) §5.2 has carried since 2026-08-08: five of the
+seven had no `###` heading anywhere in this file, and the other two only this paragraph. They are
+documented below now, in the same pass that taught the flow to capture a residence.
 
-The one addition that came out of this area, `POST /admins`, is documented in **[§12](#12-notices-and-administrator-promotion)**
+The one addition that came out of this area earlier, `POST /admins`, is documented in **[§12](#12-notices-and-administrator-promotion)**
 alongside `POST /notices` — both were added together because both served a frontend handler with no endpoint
 anywhere.
+
+### 6.1 The join flow — a residence claim in, a residency out
+
+Backed by `0024` (the review RPCs, the pending view, the two SSE topics) and, since 2026-08-28,
+`20260828090000_residence_claim_on_join.sql` (runbook §33). Three product rulings of 2026-08-27
+shape the flow end to end:
+
+1. The applicant states their residence as **free text at request time** — Tower/Block + Flat for an
+   `apartment` community, Villa number for `layout_villa` — stored on `access_requests`. No unit
+   exposure to non-members; the AUTH plan §5 privacy invariant stands.
+2. **Approval requires a unit**: the RPC refuses a resident approval without one, so every approved
+   resident gets a `unit_residencies` row — before this ruling, a self-service approval minted a
+   membership with no residency, `membership.unit` rendered `—` everywhere, and the resident guards
+   `403`'d people who genuinely live there.
+3. The inventory gap is solved by **find-or-create at approval**: the admin confirms or edits the
+   claimed residence, and the RPC matches an existing active unit case-insensitively or creates it
+   (with its building) inline. No unit-management screen exists, deliberately.
+
+> **Every write below moves a role-scoped SSE topic** (§5.1): a new request emits
+> `access_request.created` and every decision emits `access_request.decided`, both to
+> `{admin, manager}` only and both carrying the live `pending_count`, so the sidebar badge updates
+> without a round trip. The admin queue itself refetches through
+> `pending_access_request_overview`, which since `20260828090000` also carries the claim and the
+> `community_type` that labels it.
+
+### `POST /api/v1/access-requests`
+
+Apply to join a community. **Any signed-in identity with an email** — the applicant holds no
+membership yet, so there is nothing else to guard on. `201 Created`.
+
+**Request**
+```json
+{
+  "community_id": "…",
+  "requested_relationship": "tenant",
+  "phone": "+919876543210",
+  "requested_building_text": "C",
+  "requested_unit_text": "505"
+}
+```
+
+| Field | Notes |
+|---|---|
+| `requested_building_text`, `requested_unit_text` | The residence claim, as the applicant typed it — tower/block and flat for an apartment, the villa number alone for a villa layout. **Free text by ruling 1**: the applicant is never shown the community's unit list, so there is nothing to validate against here, and the claim binds nobody — the unit actually assigned is whatever the admin confirms at approval. Each ≤ 120 characters; blank or whitespace is stored as null, both here and in the database's own CHECKs |
+| `requested_unit_id` | The validated-FK path, kept working: it must name an active unit in this community or the answer is `422`. Nothing applicant-facing sends it today — invitations carry `intended_unit_id` instead — but a future villa picker could |
+| `phone` | Optional; normalised to E.164 or refused |
+
+The response is `AccessRequestResponse`: the request's own fields plus a `community` summary
+(`id`, `name`, and — since 2026-08-28 — `community_type`, which is what lets the client label the
+claim *Tower/Flat* versus *Villa*).
+
+| Status | Code | Cause |
+|---|---|---|
+| `404` | `community_not_found` | Unknown or inactive community — **and a community the caller is blacklisted from answers identically**, so the refusal confirms nothing |
+| `409` | `membership_already_active` | Already an active member of this community |
+| `409` | `access_request_pending` | A request to this community is already pending |
+| `409` | `access_request_rejected_cooldown` | Rejected by this community within the past 24 hours |
+| `409` | `professional_account_separate` | The caller is registered as a service professional. Refused **here**, at filing time, with the same code and wording as the membership trigger downstream — otherwise the request would sit in a queue for days and fail in an administrator's hands, telling the applicant nothing |
+| `422` | `invalid_requested_unit` | `requested_unit_id` names a unit outside this community, or an inactive one |
+| `422` | `identity_email_missing` | The sign-in account provides no email address |
+| `422` | `validation_failed` | `phone` is not E.164 |
+
+### `GET /api/v1/access-requests/mine`
+
+The caller's own join requests, every status, newest first. Scoped by identity rather than by a
+parameter, so there is nothing to tamper with. Returns `AccessRequestListResponse`; a rejected
+item carries `rejection_reason` and `reviewed_at`, which is what the join tab's rejected banner
+renders.
+
+### `POST /api/v1/access-requests/{request_id}/withdraw`
+
+Withdraw a pending request. Only a request still pending, and only the caller's own; anything else
+is `409` `access_request_not_pending`. Withdrawal is a status transition, not a deletion — the
+community's trail keeps the attempt.
+
+### `GET /api/v1/admin/access-requests`
+
+The administrator's review queue, scoped to the caller's (default) admin community. **Requires an
+active admin membership** — `403` `community_role_required` otherwise.
+
+| Query | Notes |
+|---|---|
+| `status` | `pending` (default) \| `approved` \| `rejected` \| `withdrawn`. Anything else is `422` rather than a silent empty page |
+| `limit` | 1–100, default 25 |
+
+Each item is the same `AccessRequestResponse` as above — which is how the queue card shows the
+claimed residence before the admin ever opens the approval panel.
+
+### `POST /api/v1/admin/access-requests/{request_id}/approve`
+
+Approve a join request, creating the resident membership **and its residency**. Idempotent for a
+request already approved. Requires an active admin membership in the request's community.
+
+**Request** — all fields optional in the schema, but see the gate below:
+```json
+{
+  "unit_code": "505",
+  "building_code": "C",
+  "relationship": "tenant"
+}
+```
+
+**Unit resolution, in precedence order** (rulings 2 and 3):
+
+1. `unit_id`, when sent — must be an active unit of this community;
+2. else the request's own validated `requested_unit_id`;
+3. else `unit_code` (+ `building_code`): the API composes the canonical code with
+   `normalize_unit_code` — `('C', 'C-505')` stays `C-505`, never `C-C-505` — and the RPC matches it
+   **case-insensitively** against the community's units. Matched and active is used; matched but
+   inactive is `422` in words. Unmatched is **find-or-create**, mirroring the founder RPC's shape:
+   apartment gets a `block` building from `building_code` and a `flat` unit; `layout_villa` gets one
+   `villa` building per villa (code defaulting to the unit code) and a `villa` unit. Both inserts
+   are race-safe, so two admins approving into the same new tower create it once;
+4. **nothing resolved is a refusal** — `422` `approval_requires_unit`, raised fail-fast in the API
+   and again by the RPC (SQLSTATE `HBUNT`) **before any row is written**, so the request stays
+   cleanly pending and the admin retries with a unit.
+
+The response is `AccessRequestDecisionResponse` — `{request_id, status, membership_id, unit_id}` —
+which replaced the raw RPC `dict` these three decision routes returned until 2026-08-28 (the
+mapper's §5.1 *"Under-documented, `-> dict`"* finding). `membership_id` and `unit_id` are populated
+only by an approval, and `unit_id` only once the applied RPC returns it, so absence is tolerated.
+
+| Status | Code | Cause |
+|---|---|---|
+| `404` | `access_request_not_found` | No such request |
+| `403` | `community_role_required` | Not an active admin of the request's community |
+| `409` | `professional_account_separate` | The applicant registered as a service professional after filing; the membership trigger refuses the resident row |
+| `409` | `access_request_not_pending` | Decided in the meantime — what the second of two admins clicking the same row gets |
+| `422` | `approval_requires_unit` | No `unit_id`, no `requested_unit_id`, and no non-blank `unit_code`. The fix is in the caller's own body, which is why this is not `409` — no other row is in the way |
+| `422` | `validation_error` | The code names a unit that exists here but is inactive, so nobody can be placed in it (`HB422`, refused in words) |
+
+### `POST /api/v1/admin/access-requests/{request_id}/reject`
+
+Reject a join request. `reason` is **required, 3–500 characters**, stored on the request and shown
+to the applicant in `/mine`. The applicant may apply again after the 24-hour cool-off, which
+`POST /access-requests` enforces. Returns the same `AccessRequestDecisionResponse` (decision fields
+null). `404` and `403` as on approve; `409` `access_request_not_pending` for a request already
+decided.
+
+### `POST /api/v1/admin/access-requests/{request_id}/blacklist`
+
+Reject a request **and bar the applicant from re-applying**. `reason` required, 3–500 characters.
+The difference from `reject` is the cool-off: a blacklisted applicant has no expiry to wait out —
+their next `POST /access-requests` answers `404` `community_not_found`, indistinguishable from a
+community that does not exist. Same statuses and response shape as `reject`.
 
 ## 7. Complaints
 
@@ -4193,6 +4361,17 @@ transition it describes.
 | [`POST /work-orders/{workOrderId}/take-up`](#post-apiv1work-ordersworkorderidtake-up) | Added 2026-08-24 with ruling R8: the department's manual valve. When the member-only eligibility rule leaves nobody able to hold a job, a supervisor puts themselves on it — and the resident is still told who is coming and when, which is the whole of what this story asks |
 | [`POST /complaints/{complaintId}/schedule-time`](#post-apiv1complaintscomplaintidschedule-time) | Added 2026-08-23 with ruling F1: *when to expect action* becomes the resident's own answer, so the visit happens when they said it could instead of at an hour a supervisor guessed and they had to ring up to move |
 
+> **No row moved on 2026-08-27, and one existing answer stopped being ambiguous.** The one-live-job
+> ruling ([`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md),
+> `20260827210000_one_live_job_per_complaint.sql`) added **no operation** — the surface is unchanged
+> at 211 across 180 paths, and `POST /complaints/{id}/work-orders` stays in the *no user story* table
+> below, where it has always been, for the reason given there. What it repairs belongs to this story:
+> with two live jobs on one complaint,
+> [`GET /complaints/{id}/schedule-request`](#get-apiv1complaintscomplaintidschedule-request) returns
+> whichever live row it reaches first, so *when to expect action* and *who is responsible* were being
+> answered from an arbitrary one of two. One live job at a time makes that resolver's answer the only
+> answer there is.
+
 > **Closed, 2026-08-04, by `0031`.** All three things the story asks for — who is responsible, when to
 > expect action, and overdue flagging — now reach the person who raised the complaint. `isOverdue` is
 > computed in `complaint_overview` rather than by a client, against the same clock and the same
@@ -4398,8 +4577,19 @@ downloadable report — the same export gap as US-1.6.
 
 ### 16.6 Endpoints that serve no story, and why that is fine
 
-**124 of the 199 operations map to no story in the document.** Not a defect — the team wrote stories
+**130 of the 211 operations map to no story in the document.** Not a defect — the team wrote stories
 about pain points in an existing product, not about the plumbing every product needs.
+
+> **~~124 of the 199~~ — recounted 2026-08-28, off §6.3's command, while documenting the seven
+> access-request operations.** That change itself moved nothing here: the `/access-requests/*` group
+> still holds its ten operations and stays untraced for the reason its row states. What had moved was
+> everything since the 2026-08-20 recount — the supervisor dashboard, the card actions, schedule-time
+> and take-up sessions took the surface 199 → 211 and the split 75/124 → **81 mapped / 130 unmapped**
+> (`Feature` 83, `Master data` 21, `Functional` 18, `Non-functional` 5, `Configuration` 3) — while
+> this headline sat still, the same failure mode as the banner at the top of this file, found in the
+> same pass. **The table's rows below have not been rebuilt in this recount**: the groups that grew
+> are the supervisor/work-order families, whose sessions carry their own §17 rows, and the counts
+> here are corrected only where the diff is this session's to state.
 
 > **~~106 of the 179~~ — recounted 2026-08-12, and the table below rebuilt from the spec a second
 > time.** Sessions 67–68 added sixteen net operations and four whole `x-no-user-story` groups the
@@ -4456,7 +4646,7 @@ about pain points in an existing product, not about the plumbing every product n
 **The API type is the point of this table, not the absence.** Each of these operations carries
 `x-no-user-story` in [`openapi.yaml`](openapi.yaml), stating `Not covered by user story` and then
 what the operation *is*. `Functional`, `Configuration`, `Master data` and `Non-functional` are
-plumbing, and their absence from the story set is expected. **`Feature` is not**: ~~72~~ **77**
+plumbing, and their absence from the story set is expected. **`Feature` is not**: ~~72~~ ~~77~~ **83**
 operations here are user-facing capability nobody wrote a story for. That is a finding about the
 story set, not about the API, and §16.7 is where it turns into work.
 
@@ -4609,6 +4799,9 @@ that is the whole difference this item made.
 
 | Date | Change |
 |---|---|
+| 2026-08-30 | **A department's declared skills count everywhere it hires — no operation added, three refusals narrowed.** Surface **unchanged at 211 across 180 paths**; no new envelope code and no new SQLSTATE. `20260812090100_skills_and_categories.sql` gave a department an explicit skill list (`department_skills`, `PUT /departments/{id}/skills`) and taught exactly one reader about it: `search_hireable_service_providers`, behind `GET /departments/{id}/candidates`. Three others kept gating on the category path alone — and that path runs through `complaint_categories.skill_id`, filled by **exact name match** against the catalogue, so a category named "Security Management" against catalogue entries *Security Guard* and *Gate Officer* derives nothing at all. The result contradicted itself inside one screen: the candidate list offered a guard, `POST /departments/{id}/invitations` refused them `409` *"This person does not have a required skill."*, `GET /worker/communities/search` showed that guard no department to apply to, and `POST /worker/applications` would have answered `403` *"Your skills do not match this department."* `20260830090000_hiring_skill_union.sql` (runbook §35) re-issues `apply_to_department`, `invite_service_provider` and `search_serviceable_communities` with each body carried forward whole and only the skill gate rewritten to the union `search_hireable_service_providers` has used since 2026-08-12. **UNION, not replacement**: a department that has declared no skills matches on its categories exactly as before, so nobody who could be hired yesterday is refused today. Signatures are byte-identical, the two refusal sentences and their `HB403`/`HB409` codes are unchanged, and nothing else in the schema moves. Issue #55 (B+D). |
+| 2026-08-28 | **The join flow captures a residence, approval requires one — and §6 stops being "intentionally empty".** No operation added or removed (surface stays **211 across 180 paths**); what moved is shapes and prose. Backed by `20260828090000_residence_claim_on_join.sql` (runbook §33) under the three 2026-08-27 rulings: free-text residence claim at request time (`requested_building_text`/`requested_unit_text` on `CreateAccessRequest` and `AccessRequestResponse`, ≤120, blank→null — non-members still never see the unit list), **approval requires a unit** (new `422` `approval_requires_unit`, fail-fast in the API and SQLSTATE `HBUNT` in the RPC, refused before any row is written), and **find-or-create at approval** (`unit_code`/`building_code` on approve; case-insensitive match, `HB422` in words for an inactive unit, else the unit and its building are created in the founder RPC's shape). The three admin decision routes gain `AccessRequestDecisionResponse` `{request_id, status, membership_id?, unit_id?}`, retiring the raw `-> dict` bodies the mapper's §5.1 had flagged since 2026-08-08; the community summary gains `community_type`. **§6 now documents all seven access-request operations** — the mapper's §5.2 five-with-no-section finding, closed — and the banner above was found four sessions stale (201/170) and corrected in the same pass. SSE topics, triggers and the invitation path unchanged |
+| 2026-08-27 | **One live job per complaint — no operation added, one refusal added.** `POST /complaints/{complaintId}/work-orders` gains a second `409 conflict` cause: the raise is refused while any job on the complaint is still `draft`, `awaiting_resident`, `offered`, `scheduled` or `in_progress`. Surface **unchanged at 211 across 180 paths**; no new envelope code, no new SQLSTATE (`HB409` already maps to 409), no request or response field moved. Backed by `20260827210000_one_live_job_per_complaint.sql` and frozen in [`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md) under the owner's 2026-08-27 ruling. **The defect was observed, not theorised**: complaint `f40e11d4-e322-4847-be2f-8f2caf6df722` collected a second `awaiting_resident` job fifteen seconds after the resident booked the first one's visit, because nothing asked whether a job was already running and the triage screen drew its raise form under a jobs list it had not finished reading. The live set is `work_orders_service._OPEN_STATES` verbatim — the same five the `get_schedule_request` resolver calls live — inlined in the guard rather than referenced, so a reader sees the whole rule; terminal is the remaining `completed`, `failed`, `cancelled` of `work_orders_status_check`. `create_work_order` also now opens with `select * from complaints ... for update`, which is what makes the guard unraceable: two supervisors, or one double-clicked button, are serialized on the complaint row, so the second transaction reads the first one's insert. **`complaints.status` is untouched** and no complaint-lifecycle code moved — this is a statement about work-order liveness and nothing else — and existing duplicates are left as history, since cancelling a row is a person's decision. `US-2.8` gains no row and loses an ambiguity: `GET /complaints/{id}/schedule-request` was answering *when to expect action* from whichever of two live jobs it reached first. |
 | 2026-08-24 | **Supervisor take-up — the manual valve behind the member-only rule.** One operation added — `POST /work-orders/{workOrderId}/take-up` (surface **210 → 211 across 180 paths**) — backed by `20260824090000_supervisor_take_up.sql` and frozen in [`plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md`](plans/ASSIGNMENT_ELIGIBILITY_AND_DRIFT_SPEC.md)'s *Addendum 2026-08-24*, under rulings R8–R13. The 2026-08-23 eligibility repair made every assignment path member-only, which leaves a thin department with work nobody may hold; ruling R8 answers it with **a separate deliberate verb**, not an exception inside the rule — the candidate list, the ping, the auto-book and the open board are all still member-only. The request carries **no `staffAssignmentId`**: the holder is the caller's own active `manager`/`supervisor` roster row on the job's department, resolved from the session inside Postgres, so the route cannot put anybody else on a job and refuses a community admin, who holds no roster row. Everything after the pick is `assign`'s — optional slot, withdraw-not-delete, `scheduled`, the resident told by name, the same double-booking `409`. The timeline gains **two** entries and one new `complaint_events` word, `job_taken_up` (distinct from `taken_up`, which is complaint triage ownership); the department hears `job.taken_up` minus the person who pressed the button. Two functions were re-issued verbatim beside it: `force_assign_work_order` now stamps the **acting caller** on its two timeline rows instead of the department's supervisor of record (ruling R12, closing the backlogged R7 — an attribution defect, no shape change), and `claim_open_work_order`'s leadership refusal now points at the new verb (R13). No new SQLSTATE: the whole migration raises only HB403/HB404/HB409, so `pg_errors.py` is unchanged. |
 | 2026-08-23 | **The resident sets the time, and the system books what nobody schedules.** One operation added — `POST /complaints/{complaintId}/schedule-time` (surface **209 → 210 across 179 paths**) — plus `mode` on `GET /complaints/{id}/schedule-request` and `awaitingResident` on `TriageSnapshot`, both additive. Backed by `20260823180000_resident_sets_the_time.sql` and frozen in [`plans/RESIDENT_SETS_THE_TIME_SPEC.md`](plans/RESIDENT_SETS_THE_TIME_SPEC.md) under the 2026-08-23 rulings F1–F3. **The raise form loses its date and time for everyone.** A resident-subject job now arrives as a request to the resident to name the hour, and only their answer puts it on the open pile; a facility job is booked by the system into the first free slot, but only after every urgent (`high`) resident job in the department has somebody on it. Twenty-four hours of resident silence and the dispatcher books the first hour a serviceman can take and assigns them — the existing `resident_timeout` timer, which the deadline already armed, branching on whether a slot exists. **No new work-order status and no new event word**: pick-mode is `awaiting_resident` with a **null slot**, approve-mode is the same status with one, and the distinctions ride in payloads (`mode`, `resident_set`, `auto_assigned`) because both vocabularies are closed CHECKs on live tables. The one constraint widened is `dispatch_tasks_kind_check`, for the new `facility_auto_assign` task. `dispatch_candidates` was **refactored, not forked**: the body moved to `dispatch_candidates_at`, parameterised by a hypothetical hour so `find_first_available_slot` can walk the calendar without writing trial slots to `work_orders` — six triggers fire on that table — and the three-argument entry point became a delegate with the same signature, ordering and grants. The triage snapshot gains a **sixth** array, `awaitingResident`, and `openRequests` narrows to `draft`/`offered`: a job waiting on a resident is not work the supervisor can pick up. `US-2.8` gains two rows; the board predicate, the supervisor's offer and force-assign paths, and `respond_to_work_order_schedule` are untouched. |
 | 2026-08-22 | **The supervisor's card actions — amendment 2, four operations and one flag.** `POST /complaints/{complaintId}/resolve`, `/priority-raise`, `/notes` and `/chat` (surface **203 → 207 across 176 paths**), plus `force` on `POST /work-orders/{workOrderId}/assign` and a guard widening on `GET /complaints/staff/complaints/{complaintId}` — backed by `20260822170000_supervisor_actions.sql` and frozen in [`plans/SUPERVISOR_TRIAGE_SPEC.md`](plans/SUPERVISOR_TRIAGE_SPEC.md)'s *Amendment 2*, under four product rulings. **Resolve** cancels every other live job with its workers told why and refuses while one is `in_progress`; it moves the complaint to `resolved` and leaves the timeline entry, the resident's notification and both auto-close timers to `complaints_on_resolved`, which already writes them. **Priority** is one-way `Low → Medium → High`, carried onto the complaint's live jobs because a job's urgency *is* its complaint's, and it is the one new `complaint_events` word this amendment cost (`priority_changed` — an enumerating CHECK means a word is a migration, the lesson of `20260822150000`). **Notes** are internal by a payload flag, invisible to the resident and untouched for the admin's resident-visible ones. **Chat** is a real `dm_threads` thread of a third kind, one per complaint, shared by the raiser and the whole department, locked when the complaint closes and unlocked when it reopens. `force: true` on assign routes to `force_assign_work_order` — the dispatch engine's own forced mechanics with the picking removed and a supervisor's guard added — while `false` is the offer flow byte for byte. The snapshot was **re-bucketed into five arrays**: *engaged* became *committed* (an unaccepted offer no longer counts, ruling A3), `openRequests` was added, and the two complaint sections now exclude **any** live work order, so a complaint appears exactly once across the five. `TriageWorkOrder` gains `offeredToName`, additively. |
@@ -4790,9 +4983,15 @@ Every complaint category in the caller's community, with the trade each one reso
 **`skillName: null` is the row this endpoint exists to surface.** `complaint_categories.skill_id` is
 filled by exact name match against the catalogue (`link_category_skill`, `0034`), and a category
 matching no trade is not an error — a community may name one the catalogue has no word for. But it
-has a consequence nobody could see: that category matches no service person in
-`search_hireable_service_providers` or `search_serviceable_communities`, so complaints filed under it
-reach nobody, silently. The department form renders it as a warning.
+has a consequence nobody could see: that category contributes no skill to the hiring searches, so
+complaints filed under it reach nobody, silently. The department form renders it as a warning.
+
+**The escape hatch is `PUT /departments/{departmentId}/skills`**, and since
+`20260830090000_hiring_skill_union.sql` (runbook §35) every function that asks what a department
+needs reads the union of the two paths — `search_hireable_service_providers`,
+`search_serviceable_communities`, `apply_to_department` and `invite_service_provider`. A department
+whose category names find no catalogue entry declares its trades directly and hires normally. The
+warning stays, because a category with no skill still routes no complaint.
 
 `departmentCount` is how many departments claim the category. Zero means complaints filed under it
 route to no department at all.
@@ -5197,10 +5396,22 @@ built. Two parallel arrays were rejected as the fix: `array_agg(distinct …)` s
 argument, so the ids would arrive in uuid order and the names in alphabetical order and the two
 would correspond only by accident.
 
-Three rules, all applied in SQL: the community has a department whose categories need one of the
-caller's skills, it has not blacklisted them, and they are not already a member of it. That last one
+Three rules, all applied in SQL: the community has a department that needs one of the caller's
+skills, it has not blacklisted them, and they are not already a member of it. That last one
 is why a resident cannot apply to work in their own society — one person holds one live membership
 per community, so the hire would be refused and offering it would be offering a dead end.
+
+**"Needs" is a union of two paths, and it has been since 2026-08-30** (`20260830090000_hiring_skill_union.sql`,
+runbook §35). A department needs a skill it has **declared** for itself through
+`PUT /departments/{id}/skills`, **or** one its complaint categories imply.
+`complaint_categories.skill_id` is filled by exact name match against the catalogue, so a category
+called "Security Management" against catalogue entries *Security Guard* and *Gate Officer* derives
+nothing at all — and before that migration this search, `POST /worker/applications` and
+`POST /departments/{id}/invitations` all read the category path alone, so such a department was
+invisible here, unappliable, and unable to invite anybody. `GET /departments/{id}/candidates` had
+read the union since 2026-08-12, which is how a manager came to be offered a candidate one screen
+would then refuse. The union never narrows: a department that has declared no skills matches on its
+categories exactly as before.
 
 Only active matching departments in communities inside the provider-controlled service radius are
 returned. Missing community coordinates are excluded; a provider with missing coordinates receives
@@ -5340,7 +5551,11 @@ Service people this department could hire, nearest first. **Requires `admin` or 
 ```
 
 The mirror of `GET /worker/communities/search`: the same three rules seen from the other end, plus
-"not already on this roster".
+"not already on this roster". "Needs a skill the candidate holds" is the same union described
+there — declared through `PUT .../skills`, or implied by a complaint category. This endpoint has
+read both paths since 2026-08-12; the other three hiring functions only caught up on 2026-08-30
+(`20260830090000_hiring_skill_union.sql`, runbook §35), and until they did, a manager could be
+offered a candidate here and refused at `POST .../invitations`.
 
 **`locationLabel` (2026-08-21) is nullable and is not the coordinate.** `distanceKm` is measured
 from the community's pin and is the fact; the label is a coarse name the provider wrote for
@@ -6430,11 +6645,22 @@ reason.
 | `cancelled` | Called off, with a reason. Terminal. | `POST /work-orders/{id}/cancel` |
 | `in_progress` · `completed` · `failed` | The worker's own transitions. | *Not yet reachable — see above* |
 
-**A complaint may carry several work orders**, and that is why the assignment is not columns on
-`complaints`. A failed visit is rescheduled and a reopened complaint goes to a different supervisor;
-both are a second job. Assignee columns on `complaints` would have been the smaller change and would
-also have closed `DECISIONS_NEEDED` **B2**, but one complaint could then only ever have one scheduled
-visit — and the second visit is the one that matters.
+**A complaint may carry several work orders over its life, one live at a time**, and that is why the
+assignment is not columns on `complaints`. A failed visit is rescheduled and a reopened complaint goes
+to a different supervisor; both are a second job, and each of them comes *after* the one before it
+ends rather than alongside it. Assignee columns on `complaints` would have been the smaller change and
+would also have closed `DECISIONS_NEEDED` **B2**, but one complaint could then only ever have one
+scheduled visit — and the second visit is the one that matters.
+
+> **Sequence, not concurrency — owner ruling 2026-08-27**
+> ([`plans/ONE_LIVE_JOB_SPEC.md`](plans/ONE_LIVE_JOB_SPEC.md)). "Several" was read as "several at
+> once" by both the raise path and the triage screen, and a complaint collected a second
+> `awaiting_resident` job fifteen seconds after the resident booked the first one's visit. Since
+> `20260827210000_one_live_job_per_complaint.sql`, `create_work_order` refuses the raise with `HB409`
+> → `409 conflict` while **any** job on the complaint is still `draft`, `awaiting_resident`,
+> `offered`, `scheduled` or `in_progress` — the same five `work_orders_service._OPEN_STATES` calls
+> open. Terminal (`completed`, `failed`, `cancelled`) releases the complaint for the next job. The
+> guard **does not touch `complaints.status`**: it is a statement about work-order liveness only.
 
 #### One asymmetry, stated because it is the only one
 
@@ -6526,12 +6752,25 @@ deliberately — so the only role filter that admits every legitimate caller adm
 The real check is `can_supervise_department(uuid)` inside Postgres, applied by every RPC on this
 surface. An id arriving in a URL is never an authorization decision.
 
+**One live job per complaint — since 2026-08-27.** The raise is refused while any job on the complaint
+is still `draft`, `awaiting_resident`, `offered`, `scheduled` or `in_progress`, with the message
+*"A job is already live on this complaint. Finish, fail, or cancel it before raising another."*
+carried verbatim in the `409 conflict` envelope. The guard lives in the database
+(`20260827210000_one_live_job_per_complaint.sql`), not in the router or the service: the same
+`create_work_order` call opens by locking the complaint row `for update`, so two supervisors — or one
+double-clicked button — are serialized and the second read sees the first insert. **It cannot race**,
+which a check in Python could not promise. The admin triage screen asks the same question off the
+jobs list it has already fetched and hides the raise form rather than letting the button be pressed
+([`FRONTEND_CHANGES.md`](FRONTEND_CHANGES.md)); a raced `409` still surfaces as an ordinary failure.
+Existing duplicates are untouched history — the guard refuses *new* raises and does not reach back.
+
 | Status | Code | Cause |
 |---|---|---|
 | 401 | `authentication_error` | No credentials |
 | 403 | `csrf_invalid`, `forbidden` | The CSRF pair failed; you do not supervise that department; or it belongs to another community |
 | 404 | `not_found` | No such complaint |
 | 409 | `conflict` | The complaint names no department and none was supplied |
+| 409 | `conflict` | A job on this complaint is still live — finish, fail or cancel it first |
 | 422 | `validation_error` | Half a slot, an end before its start, or an unknown `subjectKind` |
 | 500 | `internal_error` | Unhandled |
 

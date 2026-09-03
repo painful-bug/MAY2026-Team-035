@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user, require_csrf
 from app.domain.schemas import (
+    AccessRequestDecisionResponse,
     AccessRequestListResponse,
     AccessRequestResponse,
     ApproveAccessRequest,
@@ -62,35 +63,44 @@ def admin_access_requests(
 
 @router.post(
     "/admin/access-requests/{request_id}/approve",
+    response_model=AccessRequestDecisionResponse,
     dependencies=[Depends(require_csrf)],
 )
 def approve_access_request(
     request_id: str,
     body: ApproveAccessRequest,
     principal: Principal = Depends(get_current_user),
-) -> dict:
-    return access_request_service.approve(request_id, body, principal)
+) -> AccessRequestDecisionResponse:
+    return AccessRequestDecisionResponse.model_validate(
+        access_request_service.approve(request_id, body, principal)
+    )
 
 
 @router.post(
     "/admin/access-requests/{request_id}/reject",
+    response_model=AccessRequestDecisionResponse,
     dependencies=[Depends(require_csrf)],
 )
 def reject_access_request(
     request_id: str,
     body: RejectAccessRequest,
     principal: Principal = Depends(get_current_user),
-) -> dict:
-    return access_request_service.reject(request_id, body, principal)
+) -> AccessRequestDecisionResponse:
+    return AccessRequestDecisionResponse.model_validate(
+        access_request_service.reject(request_id, body, principal)
+    )
 
 
 @router.post(
     "/admin/access-requests/{request_id}/blacklist",
+    response_model=AccessRequestDecisionResponse,
     dependencies=[Depends(require_csrf)],
 )
 def blacklist_access_request(
     request_id: str,
     body: BlacklistAccessRequest,
     principal: Principal = Depends(get_current_user),
-) -> dict:
-    return access_request_service.blacklist(request_id, body, principal)
+) -> AccessRequestDecisionResponse:
+    return AccessRequestDecisionResponse.model_validate(
+        access_request_service.blacklist(request_id, body, principal)
+    )

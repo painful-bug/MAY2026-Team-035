@@ -1,4 +1,10 @@
 import { useEffect } from 'react';
+// GateModal renders through a portal to document.body, like every other modal
+// in the repo (see AdminDashboard/Departments.jsx). SecurityLayout's <main>
+// carries no animation today, so this overlay is not trapped the way the
+// admin and resident ones were — the portal is what keeps that true if
+// anyone ever animates the layout.
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 // The pieces every gate screen repeats. Lifted from the two demo dashboards,
@@ -106,8 +112,11 @@ export function GateModal({ title, description, onClose, children, wide = false 
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
       className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -136,7 +145,8 @@ export function GateModal({ title, description, onClose, children, wide = false 
         </div>
         <div className="mt-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

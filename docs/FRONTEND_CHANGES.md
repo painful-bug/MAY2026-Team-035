@@ -39,6 +39,17 @@ The Join Community tab debounces its database search, cancels stale requests,
 shows explicit empty/pending/rejected states, and lets applicants provide an
 optional E.164 phone number through separate country-code and local-number
 controls. The country code defaults to `+91` and can be changed before submit.
+Since 2026-08-28 it also captures the applicant's **residence claim** as
+required free text, branched on the selected community's `community_type`
+(which the search results already carried and the form previously ignored):
+an apartment community asks for Tower/Block and Flat Number, a villa layout
+for a single Villa Number. Free text is deliberate — the privacy invariant
+keeps a community's unit inventory away from non-members, so there is nothing
+to offer in a picker. The claim posts as `requested_unit_text` (plus
+`requested_building_text` in apartment mode), trimmed; submit stays disabled
+until the claim is complete, and picking a different community clears it —
+another community means another address scheme. See "The join request claims
+a residence, and approval resolves it" below for the admin half.
 
 ## Dashboard data flow
 
@@ -661,6 +672,230 @@ wire body asserted not to contain the two slot keys) and
 its place in the DOM order of the six sections, and the no-verb popup). The
 work-order vocabulary needed nothing: `awaiting_resident` has read *"Waiting on
 the resident"* since the day the queue shipped.
+
+## One job at a time, said before the button rather than after it
+
+Owner ruling 2026-08-27 (`docs/COMPLAINT_ENGINE_HANDOFF.md` §26); frozen
+interface in `docs/plans/ONE_LIVE_JOB_SPEC.md` §3. The database now refuses a
+raise while a job on the complaint is still live
+(`20260827210000_one_live_job_per_complaint.sql`, `HB409` → `409 conflict`), and
+this is the same refusal said on screen before the request is worth making.
+
+**The gate.** `AdminDashboard/WorkOrderTriage.jsx`'s `ComplaintWorkOrders`
+computes `liveJob` from the jobs list it has *already* fetched — no second read
+— using the new `LIVE_WORK_ORDER_STATUSES` export from
+`features/workOrders/workOrderVocabulary.js`: `draft`, `awaiting_resident`,
+`offered`, `scheduled`, `in_progress`. The list is shared with the database's
+guard on purpose, so the screen and the function that would refuse it cannot
+disagree about what *live* means — a narrower list here draws a form the server
+rejects, a wider one hides a form that would have worked.
+
+**What replaces the form.** An amber panel headed **"One job at a time"**
+carrying the frozen sentence verbatim — *"A job is already live on this
+complaint. Finish it, fail it, or cancel it before raising another."* — plus a
+button naming the blocker's state and opening it, **`Open the live job —
+{statusLabel}`** (e.g. *"Open the live job — Waiting on the resident"*; see
+the 2026-08-28 entry below), so the supervisor learns which job to finish, fail
+or cancel without scrolling up to find it in the list above.
+
+**It is drawn on no answer as well as on a live one.** While the jobs query is
+pending or errored, neither the form nor the panel renders. This is not
+defensive tidiness: the observed duplicate raise happened because the form was
+drawn under a list that had not finished loading, and a form rendered in that
+window *is* the duplicate-raise window. When the list resolves with no live job,
+`CreateForm` renders exactly as before. A raced `409` — two supervisors, both
+past the gate — still surfaces through the existing `Failure` renderer, which
+prints the server's sentence; there is no special handling, because the message
+is the same one.
+
+5 new tests in `WorkOrderTriage.test.jsx` (a new file): the frozen sentence
+replacing the form on a live job, the form returning when every job is terminal,
+the form on a complaint with no jobs at all, and no form drawn while the list is
+loading or after it has failed.
+
+## The one-job panel opens the live job directly
+
+Owner ruling 2026-08-28. The panel above named the live job's state but left
+the supervisor to scroll back up to the jobs-already-raised list to actually
+open it. `ComplaintWorkOrders` in `AdminDashboard/WorkOrderTriage.jsx` now
+draws that line as a button — **`Open the live job — {statusLabel}`** — that
+calls the same `onOpenJob(liveJob.id)` the list's own rows already call, so it
+lands on the identical `JobDetail` panel with no new navigation path to
+maintain. Nothing about the gate itself changed: `liveJob` is still derived
+from the jobs list already in hand, and the panel still only draws when that
+list has resolved with a live job on it.
+
+1 new test in `WorkOrderTriage.test.jsx`: clicking the button opens the live
+job's detail, and the existing frozen-copy test now asserts the button by its
+accessible name instead of the retired plain-text line.
+
+## The stream reopens the one close the browser will not
+
+`lib/realtime/eventStream.js`. An `EventSource` retries a dropped transport by
+itself, but an HTTP error **response** is fatal: the browser fires `error` once,
+parks `readyState` at `CLOSED`, and never tries again. Observed in the live app
+as the `403` a session gets on `GET /api/v1/events` between signing in and
+having its membership approved — after which the tab's realtime was dead for the
+life of the page, and the approval arriving seconds later had nowhere to land.
+
+The client now schedules its own reopen on a fatal close: **5 s, doubling to a
+60 s cap, reset to 5 s whenever a connection reaches `open`.** `CLOSED` is read
+off the global rather than hard-coded (spec `2` as the fallback), so a polyfill
+that renumbers the states is understood and a stub with no `readyState` reads as
+*not fatal*; a transient error returns early and is left to the browser. The
+reopen is scheduled only while `subscribers.size > 0` and re-checks that when
+the timer fires, and `close()` — the last unsubscribe — cancels the pending
+timer and resets the delay, so a signed-out tab still holds nothing open and
+schedules nothing. Through the whole wait the connection reads as not live, so
+`useSseFallbackInterval`'s degraded poll is already covering the screens; the
+reconnect is the upgrade back to live updates, never the only path to the data.
+Doctrine recorded in `docs/plans/REALTIME_AND_CACHING_STANDARD.md` §4.
+
+6 new tests in `eventStream.test.js`: the five-second reopen, the doubling and
+its one-minute ceiling, the reset after a successful `open`, the pending reopen
+dropped with the last listener and kept while others remain, and nothing
+scheduled for a transient error.
+
+## The join request claims a residence, and approval resolves it
+
+Added 2026-08-28, the frontend half of `20260828090000_residence_claim_on_join.sql`
+(runbook §33) under the three product rulings of 2026-08-27: the applicant
+states their residence as free text at request time, approval requires a unit,
+and the unit inventory gap is closed by find-or-create at approval. The join
+tab's half is described under "Authentication and registration" above; this
+section is the admin's.
+
+`PendingRegistrations.jsx` renders the claimed residence on every card — a
+`Claims:` line showing "Tower C · Flat 505" or the villa number, with
+"Not stated" for pre-migration rows and the resolved unit code for the rare
+invitation-era row that carries a validated `requested_unit_id`. **Accept no
+longer fires the mutation directly.** The backend now refuses an approval
+without a unit (`422 approval_requires_unit`), so Accept toggles an inline
+expansion panel — not a modal — prefilled from the claim, its labels branched
+on the community's `community_type` exactly as the join form's are. A match
+indicator reads the previously unused `GET /communities/admin/units` through
+the `['admin-units']` query (fetched only while a panel is open) and a small
+JS mirror of the backend's unit-code normalizer
+(`src/features/registration/utils/unitCode.js`) to say **"Matches existing
+unit C-505"** or **"Will create unit C-505"** before the admin commits — the
+mirror only previews; the backend recomputes the canonical code itself, so a
+drift can mislabel the preview but never corrupt data. Confirm posts
+`{unit_code, building_code}`; the panel refuses to submit with no unit, and a
+backend refusal surfaces through the existing `role="alert"` line. Reject,
+blacklist and the `homebandhu:dashboard-refresh` invalidation are untouched.
+
+`AdminHome.jsx`'s pending-requests card had a live defect: it read the
+demo-era `req.name` / `req.flat` / `req.tower` keys, which never existed on
+the snapshot's snake_case view rows, and rendered **"Flat undefined • Tower
+undefined"** under an empty name. It now renders `applicant_name` and a
+residence label — the resolved `requested_unit_code`, else the claimed text,
+else `—` (the snapshot rows carry the claim since the same migration extended
+`pending_access_request_overview`).
+
+Tests: `JoinCommunityTab.test.jsx` (the apartment/villa branching, submit
+gating, payload shape, the clear-on-reselect rule),
+`PendingRegistrations.test.jsx` (the claims line, the panel's prefill, the
+match/create indicator, the posted body shape) and new `AdminHome.test.jsx`
+cases pinning that "undefined" never renders.
+
+## Worker settings hardening, and a department's `kind`
+
+Added 2026-08-30. `/worker/settings` is the only per-user notification control
+in the app — shared by workers, managers and supervisors — and it failed
+silently in two independent ways, plus two smaller defects on the same
+screen and one on the admin department form.
+
+**`src/lib/push/pushClient.js` now actually honors its own contract.** The
+module header has always promised it is "safe to call in a browser that
+supports none of it," with callers consuming `{ ok, reason }` — but six sites
+threw straight past that: `Notification.requestPermission()`,
+`navigator.serviceWorker.ready` (which also never *rejects*, so a wedged
+service worker hung the toggle's spinner forever), `existing.unsubscribe()`,
+`pushManager.subscribe()` (a real `AbortError` on Chromium when the push
+service is unreachable), the unwrapped subscribe-POST, and `disablePush`'s
+unwrapped unregister-POST. Every one of them is now caught and turned into a
+resolved `{ ok: false, reason }`; `pushEnabled()` resolves `false` instead of
+rejecting; and `enablePush()` races `serviceWorker.ready` against a 10s bound
+(`withTimeout`) so a browser that never finishes activating the worker still
+resolves rather than hanging. `AbortError` gets its own reason ("The push
+service could not be reached. Try again shortly.") since it is a known,
+recoverable Chromium condition rather than a generic failure.
+
+**`PushCard` in `src/pages/WorkerDashboard/Settings.jsx`** gained
+belt-and-suspenders guards over the above: the mount effect's `pushEnabled()`
+call now has a `.catch()` so an unexpected rejection cannot leave the toggle
+permanently disabled, and `toggle()` wraps both calls in try/catch/finally so
+`busy` always clears even if a future regression reintroduces a throw.
+
+**The registration-gate redirect in `src/layouts/WorkerLayout.jsx` now
+exempts `/worker/settings`.** The gate (added 2026-08-21) sends every deep
+link to `/worker` when the profile is incomplete and the caller holds no
+leadership engagement — which, applied to Settings, locked a worker with an
+incomplete profile out of the one screen that can fix it (trades, travel
+radius, location, and the push toggle all live there). Settings itself
+already renders correctly for both shapes of "incomplete": no `service_providers`
+row at all (`noMarketplaceProfile`, unchanged) and a present-but-incomplete
+one (the ordinary form, prefilled), so the layout only needed to stop
+redirecting the URL away from itself. Every other deep link is still
+redirected exactly as before.
+
+**The settings save is no longer un-atomic (C-iii).** The mutation used to
+`await updateProfile(...)` then `await setSkills(skillIds)`; a skills refusal
+(the RPC's `"Choose at least one skill."` on zero trades) landed *after* the
+profile half had already committed, so one red "Could not save" banner hid a
+save that had, in fact, half-succeeded. `setSkills` — the one call that can be
+refused — now runs first, and a failure there leaves nothing committed. If
+`updateProfile` fails afterward (skills already saved), the banner now reads
+`"Trades saved. <reason>"` rather than a bare "Could not save," so the two
+outcomes are distinguishable. Submit is also disabled at `skillIds.length === 0`,
+matching `RegisterProvider.jsx`'s existing pattern.
+
+**Admin-created security departments now actually carry `kind: 'security'`.**
+`Departments.jsx`'s `DepartmentForm` already computed an `isSecurityDepartment`
+heuristic (name contains "security", or a "Security" category is selected) to
+require a phone number and show a note — but `handleSubmit`, where the create
+and update payloads are actually assembled, never read it, so every
+admin-created department stored `kind = NULL` and
+`professional_membership_role(null)` resolved every member of it to `'worker'`
+regardless. `handleSubmit` now recomputes the same heuristic and sets
+`kind: isSecurityDepartment ? 'security' : null` on the payload it hands to
+`createDepartment/updateDepartment`; `createDepartmentsSlice.js` forwards
+`kind` on both the `POST /departments` and `PATCH /departments/{id}` bodies
+when it is truthy (`department_schemas.py`'s `CreateDepartmentRequest` and
+`UpdateDepartmentRequest` both accept `kind: "service" | "security"` — verified
+read-only, not changed here) and omits the key otherwise, so a `null` from a
+non-matching form neither errors nor silently overwrites an existing `kind` on
+edit.
+
+Judgment calls:
+- The registration-gate exemption lets `/worker/settings` render the full
+  portal chrome (sidebar included) for a profile-incomplete worker, rather
+  than rendering the bare `RegisterProvider` form under the settings path —
+  the alternative the brief offered. The chrome was judged the better fit: it
+  is the same screen a complete profile sees, Settings already handles both
+  incomplete shapes on its own, and a second bespoke rendering path would have
+  been more to maintain for no behavioral gain.
+- A department edited *away* from the heuristic (renamed off "security", its
+  Security category removed) sends no `kind` and therefore does not clear a
+  previously-set `kind: 'security'` on the server — `updateDepartment`'s
+  contract already treats an omitted key as "leave alone," and clearing it
+  would need an explicit `null` sent deliberately, which risks wiping a kind
+  the operator set through some other path. Left as an omission for a
+  possible follow-up rather than guessed at here.
+
+Tests: `pushClient.test.js` is new — 21 cases covering every failure mode
+listed above (`{ok:false}`, never a rejection) plus the ready-timeout and the
+full happy path, using `vi.stubGlobal`/`Object.defineProperty` to install a
+configurable service-worker/PushManager/Notification surface jsdom does not
+provide. `Settings.test.jsx` gained a `PushCard resilience` block (the file's
+other suites all stub `pushSupported: () => false`, so the interactive toggle
+path had never actually run) and `SettingsLocation.test.jsx` gained the
+skills-first-save and submit-disabled cases. `WorkerLayout.test.jsx`'s deep-link
+redirect test was repointed at `/worker/calendar` (still redirected) and two
+new cases pin that `/worker/settings` is not, for both the no-provider and the
+incomplete-provider shapes. `Departments.test.jsx` and new
+`createDepartmentsSlice.test.js` cover the `kind` payload from both the form
+and the slice.
 
 ## Retired client code
 

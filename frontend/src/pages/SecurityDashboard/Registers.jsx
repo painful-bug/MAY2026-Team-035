@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { securityApi } from '../../features/security/securityApi';
+import { QUERY_POLICIES, PAGINATED } from '../../lib/api/queryClient';
 import ExportButton from '../../features/security/components/ExportButton';
 import {
   Empty,
@@ -120,6 +121,8 @@ function Materials({ range }) {
   const movements = useQuery({
     queryKey: ['security', 'movements', filters],
     queryFn: () => securityApi.movements(filters),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () =>
@@ -457,6 +460,8 @@ function Tankers({ range }) {
   const tankers = useQuery({
     queryKey: ['security', 'tankers', filters],
     queryFn: () => securityApi.tankers(filters),
+    ...QUERY_POLICIES.list,
+    ...PAGINATED,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['security', 'tankers'] });

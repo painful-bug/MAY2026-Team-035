@@ -111,3 +111,31 @@ describe('worker settings location', () => {
     })));
   });
 });
+
+// C-iii: the save used to await updateProfile then setSkills, so a skills
+// refusal (the RPC's "Choose at least one skill.") landed after the profile
+// half had already committed — one red "Could not save" banner over a save
+// that had, in fact, half-succeeded. setSkills now runs first.
+describe('worker settings save ordering', () => {
+  it('does not call updateProfile, and reports the real reason, when setSkills is refused', async () => {
+    const user = userEvent.setup();
+    mocks.setSkills.mockRejectedValue(new Error('Choose at least one skill.'));
+    renderSettings();
+
+    await screen.findByLabelText(/Location label/);
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    expect(await screen.findByText('Choose at least one skill.')).toBeVisible();
+    expect(mocks.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it('disables submit once every trade is deselected', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    await screen.findByLabelText(/Location label/);
+    await user.click(screen.getByRole('button', { name: 'Plumbing' }));
+
+    expect(screen.getByRole('button', { name: /Save changes/i })).toBeDisabled();
+  });
+});

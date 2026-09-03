@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, CheckCheck, Inbox } from 'lucide-react';
 import { notificationsApi } from '../../features/notifications/notificationsApi';
 import { portalNotificationUrl } from '../../features/notifications/portalUrl';
+import { NOTIFICATION_EVENT_MAP } from '../../lib/realtime/portalMaps';
+import { useLiveUpdates, useSseFallbackInterval } from '../../lib/realtime/useLiveUpdates';
 import { useApp } from '../../store/useApp';
 
 // The real bell. Until Phase 2 Step 5 the only bell in the app was a hard-coded
@@ -29,23 +31,89 @@ export default function NotificationBell() {
   const panelRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { currentUser } = useApp();
+  const currentUser = useApp((state) => state.currentUser);
 
+  // The bell carries its own live-update subscription rather than relying on a
+  // layout's, because it mounts in four portals and one of them — admin — has
+  // no layout-level mount at all. It is a subscription to the tab's single
+  // shared `EventSource`, not a connection of its own.
+  //
+  // `notification.created` is audience `member`: the frame arrives for the one
+  // person the row is addressed to, which is precisely when this badge is
+  // wrong. That replaces the 60s poll outright; what is left is the uniform
+  // degraded fallback — five minutes, and only while the stream is unavailable
+  // or in error.
+  useLiveUpdates(NOTIFICATION_EVENT_MAP);
+  const refetchInterval = useSseFallbackInterval();
   const feed = useQuery({
     queryKey: ['notifications'],
     queryFn: () => notificationsApi.list({ pageSize: 20 }),
-    // The badge is the one thing on screen that should notice the world
-    // changed while the tab sat idle.
-    refetchInterval: 60_000,
+    refetchInterval,
   });
 
+  // Both mutations update the cached feed directly instead of invalidating
+  // it — a single row flipping to read shouldn't force a refetch of the
+  // whole list. `onMutate` flips the row (and the badge) the instant the
+  // click happens; `onError` rolls back to the exact snapshot taken before
+  // the optimistic write, so a failed request leaves no trace once the
+  // rollback lands. No settle-time invalidation on success: both endpoints
+  // already return the server-computed `unread` count in their response
+  // (`{ marked, unread }`), which `onSuccess` writes straight into the
+  // cache — that's the one field the optimistic update can't compute
+  // locally with full confidence, and refetching the whole feed to get it
+  // would be exactly the round trip this change removes.
   const markRead = useMutation({
     mutationFn: (id) => notificationsApi.markRead(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ['notifications'] });
+      const previous = queryClient.getQueryData(['notifications']);
+      queryClient.setQueryData(['notifications'], (old) => {
+        if (!old) return old;
+        const target = old.items?.find((item) => item.id === id);
+        if (!target?.isUnread) return old;
+        return {
+          ...old,
+          unread: Math.max(0, (old.unread ?? 0) - 1),
+          items: old.items.map((item) =>
+            item.id === id ? { ...item, isUnread: false } : item
+          ),
+        };
+      });
+      return { previous };
+    },
+    onError: (error, id, context) => {
+      if (context?.previous) queryClient.setQueryData(['notifications'], context.previous);
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(['notifications'], (old) =>
+        old ? { ...old, unread: result.unread } : old
+      );
+    },
   });
   const markAll = useMutation({
     mutationFn: () => notificationsApi.markAllRead(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['notifications'] });
+      const previous = queryClient.getQueryData(['notifications']);
+      queryClient.setQueryData(['notifications'], (old) =>
+        old
+          ? {
+              ...old,
+              unread: 0,
+              items: old.items.map((item) => ({ ...item, isUnread: false })),
+            }
+          : old
+      );
+      return { previous };
+    },
+    onError: (error, variables, context) => {
+      if (context?.previous) queryClient.setQueryData(['notifications'], context.previous);
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(['notifications'], (old) =>
+        old ? { ...old, unread: result.unread } : old
+      );
+    },
   });
 
   // Click-away and Escape both close; a dropdown that only closes on its own

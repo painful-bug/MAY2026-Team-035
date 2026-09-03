@@ -30,7 +30,7 @@ router = APIRouter(tags=["resident-home"])
     response_model=ResidentSnapshot,
     summary="The resident home aggregate",
 )
-async def resident_snapshot(
+def resident_snapshot(
     membership: MembershipContext = Depends(get_active_membership),
     principal: Principal = Depends(get_current_user),
     client: Client = Depends(get_request_client),
