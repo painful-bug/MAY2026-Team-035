@@ -48,6 +48,7 @@ def _status(service: Client, complaint_id: str) -> str:
 
 
 def test_complaint_engine_v2_real_jwt_rpcs_and_triggers() -> None:
+    """Cover one live job, a reopened successor, status projection and access guards."""
     url = os.environ["SUPABASE_URL"]
     anon_key = os.environ["SUPABASE_ANON_KEY"]
     service = create_client(url, os.environ["SUPABASE_SERVICE_ROLE_KEY"])
@@ -336,7 +337,37 @@ def test_complaint_engine_v2_real_jwt_rpcs_and_triggers() -> None:
     worker_a.rpc("start_work_order", {"p_work_order_id": job_one}).execute()
     assert _status(service, complaint_id) == "in_progress"
 
+    # The August 27 guard permits successive visits, never concurrent ones,
+    # including when an administrator raises the second job.
+    with pytest.raises(APIError) as duplicate_job:
+        create_job(admin, complaint_id, 2)
+    assert duplicate_job.value.code == "HB409"
+    assert duplicate_job.value.message == (
+        "A job is already live on this complaint. "
+        "Finish, fail, or cancel it before raising another."
+    )
+    assert [
+        row["id"]
+        for row in service.table("work_orders")
+        .select("id")
+        .eq("complaint_id", complaint_id)
+        .execute()
+        .data
+    ] == [job_one]
+    assert _status(service, complaint_id) == "in_progress"
+
+    worker_a.rpc(
+        "complete_work_order", {"p_work_order_id": job_one, "p_notes": "Fixed"}
+    ).execute()
+    assert _status(service, complaint_id) == "resolved"
+    resident.rpc(
+        "reopen_complaint",
+        {"p_complaint_id": complaint_id, "p_reason": "The fixture is leaking again"},
+    ).execute()
+    assert _status(service, complaint_id) == "open"
+
     job_two = create_job(admin, complaint_id, 2)
+    assert job_two != job_one
     admin.rpc(
         "assign_work_order",
         {
@@ -347,9 +378,7 @@ def test_complaint_engine_v2_real_jwt_rpcs_and_triggers() -> None:
         },
     ).execute()
     worker_b.rpc("accept_work_order_offer", {"p_work_order_id": job_two}).execute()
-    worker_a.rpc(
-        "complete_work_order", {"p_work_order_id": job_one, "p_notes": "Fixed"}
-    ).execute()
+    worker_b.rpc("start_work_order", {"p_work_order_id": job_two}).execute()
     assert _status(service, complaint_id) == "in_progress"
     worker_b.rpc(
         "complete_work_order",

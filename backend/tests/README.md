@@ -273,7 +273,7 @@ Real-JWT coverage for the repaired Complaint Engine v2 database flow.
 
 | Test Function | Description |
 |---------------|-------------|
-| `test_complaint_engine_v2_real_jwt_rpcs_and_triggers` | No description provided. |
+| `test_complaint_engine_v2_real_jwt_rpcs_and_triggers` | Cover one live job, a reopened successor, status projection and access guards. |
 
 
 ## `test_department_mapping.py`
@@ -2111,5 +2111,4 @@ No description provided.
 | Test Function | Description |
 |---------------|-------------|
 | `test_worker_job_read_retries_without_the_v2_column_on_legacy_view` | No description provided. |
-
 
