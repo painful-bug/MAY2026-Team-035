@@ -21,16 +21,11 @@ from supabase import Client
 
 @lru_cache(maxsize=1)
 def schema_generation() -> str:
-    """Detect the deployed normalized schema once per backend process."""
-    # The legacy schema has visitor_access_requests; the clean baseline has
-    # visitor_requests.  Keeping this detection here avoids leaking schema
-    # compatibility into API handlers or the browser.
     from app.core.supabase_client import get_service_client
-
     try:
         get_service_client().table("visitor_access_requests").select("id").limit(1).execute()
         return "legacy"
-    except Exception:  # noqa: BLE001 - a missing relation is the feature test
+    except Exception:
         return "baseline"
 
 
@@ -206,7 +201,7 @@ def list_invoices(client: Client, community_id: str, *, legacy: bool) -> list[di
     columns = (
         "id,liable_unit_id,status,due_at,total_amount,invoice_number,invoice_type,created_at,updated_at,invoice_line_items(description,total_amount)"
         if legacy
-        else "id,membership_id,status,due_at,total_amount,created_at,updated_at,invoice_line_items(description,amount)"
+        else "id,membership_id,status,due_at,total_amount,title,invoice_number,created_at,updated_at,invoice_line_items(description,amount)"
     )
     return (
         client.table("invoices").select(columns).eq("community_id", community_id)

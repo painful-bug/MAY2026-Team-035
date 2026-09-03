@@ -237,7 +237,7 @@ def _payments(invoices: list[dict[str, Any]], payments: list[dict[str, Any]], us
         owner = users.get(invoice.get("membership_id"), {}) if not legacy else {}
         is_own = invoice.get("membership_id") == membership.id if not legacy else invoice.get("liable_unit_id") in unit_ids
         result.append({
-            "id": invoice["id"], "title": invoice.get("invoice_number") or invoice.get("invoice_type") or "Community invoice",
+            "id": invoice["id"], "title": invoice.get("title") or invoice.get("invoice_number") or invoice.get("invoice_type") or "Community invoice",
             "amount": float(invoice.get("total_amount") or 0), "dueDate": _iso_date(invoice.get("due_at")),
             "status": "Paid" if invoice["id"] in paid_invoice_ids or invoice.get("status") == "paid" else "Unpaid",
             "userId": owner.get("id"), "flat": owner.get("flat", "—"), "tower": owner.get("tower", "—"),
@@ -275,9 +275,9 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
         # The one genuine dependency: the legacy payments read filters by the
         # invoice ids it just fetched. Chained inside a single task, so the
         # pair costs two round trips in one worker, concurrent with the rest.
-        invoices = dashboard_repository.list_invoices(client, community_id, legacy=legacy)
+        invoices = dashboard_repository.list_invoices(client, community_id, legacy=False)
         payment_rows = dashboard_repository.list_payments(
-            client, community_id, legacy=legacy,
+            client, community_id, legacy=False,
             invoice_ids=[row["id"] for row in invoices],
         )
         return invoices, payment_rows
@@ -325,7 +325,7 @@ def snapshot(membership: MembershipContext) -> DashboardSnapshot:
         payments = _payments(
             invoices,
             payment_rows,
-            users_by_membership, membership, legacy=legacy,
+            users_by_membership, membership, legacy=False,
         )
         notices = [{"id": r["id"], "title": r["title"], "description": r.get("body") or "", "date": _iso_date(r.get("published_at") or r.get("created_at")), "createdAt": r.get("created_at")} for r in notices_f.result()]
         departments = [{"id": r["id"], "name": r["name"], "description": r.get("description") or "", "status": "Active" if r.get("is_active") else "Inactive", "staff": [], "categories": []} for r in departments_f.result()]
