@@ -1,43 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, KeyRound, LogIn, ScanLine, X } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { Camera, KeyRound, LogIn, ScanLine } from 'lucide-react';
+import QrCaptureModal from './QrCaptureModal';
 
-// The camera half of the gate, carried over from the demo dashboard unchanged
-// in substance — `BarcodeDetector` + `getUserMedia` is real browser code and was
-// the one part of that file worth keeping. What changed is the seam: it used to
-// call the zustand store directly, and now it hands the raw scanned string to
-// `onScan` and knows nothing about what happens next.
-//
-// **The manual code path is not a fallback, it is the primary path on most
-// devices.** `BarcodeDetector` ships in Chromium and nowhere else; a guard on an
-// iPhone will type every code they ever verify. So the input is always visible
-// rather than hidden behind a "scanning didn't work" state.
+// Only decoded credentials leave this component. Manual entry remains available
+// when the browser does not expose the native QR decoder or camera access.
 
 export default function QrScanner({ onScan, busy = false, disabled = false, hint }) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const timerRef = useRef(null);
-  const scanBusyRef = useRef(false);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const [active, setActive] = useState(false);
   const [message, setMessage] = useState('');
   const [code, setCode] = useState('');
 
-  const stop = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setActive(false);
-    scanBusyRef.current = false;
-  }, []);
+  const stop = useCallback(() => setActive(false), []);
+  const blocked = busy || disabled || submitting;
 
-  // The camera must be released when the guard navigates away. Without this the
-  // light stays on until the tab closes.
-  useEffect(() => stop, [stop]);
-
-  const start = async () => {
+  const start = () => {
+    if (blocked || submittingRef.current || active) return;
     setMessage('');
     const BarcodeDetector = globalThis.BarcodeDetector;
     if (!BarcodeDetector || !navigator.mediaDevices?.getUserMedia) {
@@ -46,52 +25,31 @@ export default function QrScanner({ onScan, busy = false, disabled = false, hint
       );
       return;
     }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      setActive(true);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      if (!videoRef.current) {
-        stop();
-        return;
-      }
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-      const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    setActive(true);
+  };
 
-      timerRef.current = setInterval(async () => {
-        if (scanBusyRef.current || !videoRef.current || videoRef.current.readyState < 2) {
-          return;
-        }
-        scanBusyRef.current = true;
-        try {
-          const codes = await detector.detect(videoRef.current);
-          if (codes[0]?.rawValue) {
-            stop();
-            onScan(codes[0].rawValue);
-          }
-        } catch {
-          setMessage('That QR could not be read. Hold it steady, or type the code.');
-        } finally {
-          scanBusyRef.current = false;
-        }
-      }, 500);
+  const verify = async (credential) => {
+    if (blocked || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setMessage('');
+    stop();
+    try {
+      await onScan(credential);
+      setCode('');
     } catch {
-      stop();
-      setMessage('Camera permission was refused. Type the code instead.');
+      setMessage('The pass could not be verified. Please try again.');
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
   const submit = (event) => {
     event.preventDefault();
     const trimmed = code.trim();
-    if (!trimmed) return;
-    stop();
-    onScan(trimmed);
-    setCode('');
+    if (!trimmed || active) return;
+    void verify(trimmed);
   };
 
   return (
@@ -110,34 +68,20 @@ export default function QrScanner({ onScan, busy = false, disabled = false, hint
 
       <div className="mt-5 space-y-4">
         {active ? (
-          <div className="relative overflow-hidden rounded-2xl bg-slate-950">
-            <video ref={videoRef} muted playsInline className="aspect-video w-full object-cover" />
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-36 w-36 rounded-2xl border-2 border-white/80 shadow-[0_0_0_999px_rgba(15,23,42,0.35)]" />
-            </div>
-            <button
-              type="button"
-              onClick={stop}
-              aria-label="Stop scanning"
-              className="absolute right-3 top-3 rounded-full bg-slate-950/70 p-2 text-white"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={start}
-            disabled={disabled}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 py-3 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
-          >
-            <Camera className="h-4 w-4" />
-            Start QR camera scanner
-          </button>
-        )}
+          <QrCaptureModal onClose={stop} onCapture={verify} disabled={blocked} />
+        ) : null}
+        <button
+          type="button"
+          onClick={start}
+          disabled={blocked}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 py-3 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+        >
+          <Camera className="h-4 w-4" />
+          Start QR camera scanner
+        </button>
 
         {message ? (
-          <p className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-[11px] font-semibold text-amber-800">
+          <p role="alert" className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-[11px] font-semibold text-amber-800">
             {message}
           </p>
         ) : null}
@@ -154,6 +98,7 @@ export default function QrScanner({ onScan, busy = false, disabled = false, hint
             <KeyRound className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               required
+              disabled={blocked || active}
               inputMode="numeric"
               value={code}
               onChange={(event) => setCode(event.target.value.trimStart())}
@@ -163,11 +108,11 @@ export default function QrScanner({ onScan, busy = false, disabled = false, hint
           </div>
           <button
             type="submit"
-            disabled={busy || disabled}
+            disabled={blocked || active}
             className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-60"
           >
             <LogIn className="h-4 w-4" />
-            {busy ? 'Checking…' : 'Verify'}
+            {busy || submitting ? 'Checking…' : 'Verify'}
           </button>
         </form>
       </div>

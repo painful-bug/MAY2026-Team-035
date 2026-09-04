@@ -7,6 +7,29 @@ import a Supabase SDK, retain provider credentials, or treat browser storage as
 tenant data. The selected authentication mechanism and all authorization
 decisions are resolved by the backend.
 
+## Security QR camera capture
+
+The gate scanner opens a modal with a live rear-camera preview. It reads a
+single captured frame only when the guard selects **Take picture**; opening the
+camera never automatically verifies a pass. Unreadable pictures can be retried
+in the same popup. Successful decoding closes the popup and sends only the
+credential through the existing online/offline verification flow. Images stay
+in browser memory and are neither uploaded nor persisted.
+
+Closing the popup, pressing Escape, navigating away, or successfully capturing
+a code releases the camera. Late camera permission grants and decode results
+after closing are discarded. Capture waits for a usable frame; capture and
+verification prevent overlapping submissions. The gate's mutation pending state
+covers both online and offline verification, with automatic retries disabled.
+
+Manual security-code entry remains available when camera access or the browser's
+native `BarcodeDetector` QR support is unavailable. No decoder fallback is added.
+Component tests mock camera/decoder APIs. The focused Playwright test covers the
+security manager gate at desktop and mobile Chromium sizes using a simulated
+camera stream and decoder, including native modal focus, Escape dismissal, frame
+capture, credential-only submission, and camera release. Real phone camera
+behavior still needs device verification.
+
 ## Authentication and registration
 
 `src/lib/api/client.js` is the one HTTP boundary. It sends cookies with every

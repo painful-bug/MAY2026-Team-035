@@ -39,10 +39,23 @@ export default function GateHome() {
   const gate = useOfflineGate();
 
   const verify = useMutation({
-    mutationFn: (credential) => securityApi.verify({ credential }),
-    onSuccess: (result) => {
+    mutationFn: async (credential) => {
+      if (gate.online) {
+        try {
+          const result = await securityApi.verify({ credential });
+          return { result, provisional: false };
+        } catch {
+          // Preserve the existing cached verification path on connection failure.
+        }
+      }
+      const result = await gate.verifyOffline(credential);
+      return { result, provisional: true };
+    },
+    // Repeating verification can check a visitor out, so never retry it automatically.
+    retry: false,
+    onSuccess: ({ result, provisional }) => {
       setVerdict(result);
-      setProvisional(false);
+      setProvisional(provisional);
     },
   });
 
@@ -56,24 +69,6 @@ export default function GateHome() {
       setProvisional(false);
     }
   }, [gate.outcome, provisional]);
-
-  const scan = async (credential) => {
-    if (gate.online) {
-      try {
-        const result = await securityApi.verify({ credential });
-        setVerdict(result);
-        setProvisional(false);
-        return;
-      } catch {
-        // The link said online and the request failed anyway. Rather than show
-        // the guard a network error while somebody waits at the barrier, fall
-        // through to the cached list — the queue makes it recoverable.
-      }
-    }
-    const local = await gate.verifyOffline(credential);
-    setVerdict(local);
-    setProvisional(true);
-  };
 
   const expected = gate.bundle?.passes || [];
 
@@ -94,7 +89,7 @@ export default function GateHome() {
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-4">
           <QrScanner
-            onScan={scan}
+            onScan={verify.mutateAsync}
             busy={verify.isPending}
             hint={
               gate.online

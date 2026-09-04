@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProposedVisit } from './Complaints';
 
@@ -96,7 +96,16 @@ const SLOT_START = localSlot(3, 10);
 const SLOT_END = localSlot(3, 11);
 
 beforeEach(() => {
+  // Keep the fixture's visit in the future so datetime-local's min validation
+  // cannot prevent submission as the real calendar advances. Leave async timers
+  // real for userEvent, React Query, and Testing Library.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-08-23T09:00:00.000Z'));
   mocks.api.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('pick-mode — the resident names the hour', () => {
