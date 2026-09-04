@@ -1,9 +1,14 @@
 import { expect, test } from '@playwright/test';
 import QRCode from 'qrcode';
+import { buildVisitorQrPayload } from '../src/lib/visitorQr.js';
 
 test('security manager previews, dismisses, and explicitly captures a visitor QR', async ({ page }, testInfo) => {
-  const qrImage = await QRCode.toDataURL('test-visitor-pass', { width: 240 });
-  await page.addInitScript(({ qrImage }) => {
+  const payload = buildVisitorQrPayload(
+    { id: 'pass-1', guestCount: 2 },
+    { passToken: 'test-visitor-pass', securityCode: '123456' },
+  );
+  const qrImage = await QRCode.toDataURL(payload, { width: 240 });
+  await page.addInitScript(({ qrImage, payload }) => {
     window.__qrDecodes = 0;
     window.__cameraStreams = [];
     window.EventSource = class {
@@ -33,10 +38,10 @@ test('security manager previews, dismisses, and explicitly captures a visitor QR
           throw new Error('Expected a captured camera frame');
         }
         window.__qrDecodes += 1;
-        return [{ rawValue: 'test-visitor-pass' }];
+        return [{ rawValue: payload }];
       }
     };
-  }, { qrImage });
+  }, { qrImage, payload });
   const verifications = [];
   await page.route('**/api/v1/**', (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -48,7 +53,11 @@ test('security manager previews, dismisses, and explicitly captures a visitor QR
     if (path === '/api/v1/notifications') return route.fulfill({ json: { items: [], unread: 0 } });
     if (path.endsWith('/offline-bundle')) return route.fulfill({ json: { passes: [] } });
     if (path.endsWith('/gate/verify')) {
-      verifications.push(route.request().postDataJSON());
+      const body = route.request().postDataJSON();
+      verifications.push(body);
+      if (body.credential !== 'test-visitor-pass') {
+        return route.fulfill({ json: { verdict: 'not_found', detail: 'That code is not recognised at this gate.' } });
+      }
       return route.fulfill({ json: { verdict: 'admitted', detail: 'Visitor verified from captured picture.' } });
     }
     return route.fulfill({ json: [] });

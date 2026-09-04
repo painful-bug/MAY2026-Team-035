@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
 import { useAppStore } from '../../store/appStore';
+import { buildVisitorQrPayload } from '../../lib/visitorQr';
 
 // Wired to `docs/API.md` §13 / `backend/app/api/v1/routers/resident_visitor_passes.py`.
 //
@@ -65,16 +66,6 @@ const formatWhen = (iso) => {
   });
 };
 
-const buildQrPayload = (pass, secret) =>
-  JSON.stringify({
-    type: 'homebandhu-visitor-pass',
-    version: 2,
-    passId: pass.id,
-    token: secret.passToken,
-    securityCode: secret.securityCode,
-    guestCount: pass.guestCount ?? 1,
-  });
-
 export default function Visitors() {
   const showToast = useAppStore((s) => s.showToast);
   const queryClient = useQueryClient();
@@ -110,7 +101,7 @@ export default function Visitors() {
   const renderQr = async (pass, secret) => {
     setIsGeneratingQr(true);
     try {
-      const payload = buildQrPayload(pass, secret);
+      const payload = buildVisitorQrPayload(pass, secret);
       const qrDataUrl = await QRCode.toDataURL(payload, {
         width: 320,
         margin: 2,

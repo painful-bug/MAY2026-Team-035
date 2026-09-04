@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { Camera, KeyRound, LogIn, ScanLine } from 'lucide-react';
 import QrCaptureModal from './QrCaptureModal';
+import { visitorCredential } from '../../../lib/visitorQr';
 
 // Only decoded credentials leave this component. Manual entry remains available
 // when the browser does not expose the native QR decoder or camera access.
@@ -28,8 +29,16 @@ export default function QrScanner({ onScan, busy = false, disabled = false, hint
     setActive(true);
   };
 
-  const verify = async (credential) => {
+  const verify = async (raw) => {
     if (blocked || submittingRef.current) return;
+    let credential;
+    try {
+      credential = visitorCredential(raw);
+    } catch (error) {
+      stop();
+      setMessage(error.message);
+      return;
+    }
     submittingRef.current = true;
     setSubmitting(true);
     setMessage('');

@@ -16,6 +16,12 @@ in the same popup. Successful decoding closes the popup and sends only the
 credential through the existing online/offline verification flow. Images stay
 in browser memory and are neither uploaded nor persisted.
 
+Resident QR codes carry a version-2 `homebandhu-visitor-pass` JSON envelope. The
+scanner extracts its token before verification or offline hashing; hashing the
+whole envelope does not match the stored pass hash. Resident generation and gate
+parsing share `src/lib/visitorQr.js`. Embedded pass IDs and guest counts are never
+used to authorize entry. Plain tokens and manually entered codes remain supported.
+
 Closing the popup, pressing Escape, navigating away, or successfully capturing
 a code releases the camera. Late camera permission grants and decode results
 after closing are discarded. Capture waits for a usable frame; capture and

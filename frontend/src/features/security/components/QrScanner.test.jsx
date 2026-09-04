@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import QrScanner from './QrScanner';
+import { buildVisitorQrPayload } from '../../../lib/visitorQr';
 
 function deferred() {
   let resolve;
@@ -56,6 +57,30 @@ async function openCamera() {
 }
 
 describe('QR capture', () => {
+  it('extracts the token from the resident QR before online or offline verification', async () => {
+    const payload = buildVisitorQrPayload(
+      { id: 'pass-1', guestCount: 3 },
+      { passToken: 'issued-pass-token', securityCode: '123456' },
+    );
+    detect.mockResolvedValue([{ rawValue: payload }]);
+    const onScan = vi.fn();
+    render(<QrScanner onScan={onScan} />);
+    await openCamera();
+    await userEvent.click(screen.getByRole('button', { name: 'Take picture' }));
+    expect(onScan).toHaveBeenCalledExactlyOnceWith('issued-pass-token');
+  });
+
+  it('rejects a QR envelope without a token instead of submitting its metadata', async () => {
+    detect.mockResolvedValue([{ rawValue: JSON.stringify({ type: 'homebandhu-visitor-pass', version: 2, securityCode: '123456' }) }]);
+    const onScan = vi.fn();
+    render(<QrScanner onScan={onScan} />);
+    await openCamera();
+    await userEvent.click(screen.getByRole('button', { name: 'Take picture' }));
+    expect(onScan).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('not a supported visitor QR');
+    expect(track.stop).toHaveBeenCalledOnce();
+  });
+
   it('shows a popup preview and only decodes a frozen frame after Take picture', async () => {
     const onScan = vi.fn();
     const { container } = render(<QrScanner onScan={onScan} />);
