@@ -45,6 +45,10 @@ async function mockApi(page, session) {
   await page.route('**/api/v1/**', (route) => {
     const url = new URL(route.request().url());
     requests.push(url.pathname);
+    if (url.pathname === '/api/v1/auth/logout' && route.request().method() === 'POST') {
+      session = null;
+      return route.fulfill({ status: 204 });
+    }
     if (url.pathname === '/api/v1/auth/session') {
       return route.fulfill(session
         ? { json: session }
@@ -111,8 +115,17 @@ test('admin keeps its snapshot and canonical stream scoped to the admin layout',
     () => window.__eventSources.every((source) => source.url === '/api/v1/events'),
   )).toBe(true);
 
-  await page.goto('/');
-  await expect.poll(() => page.evaluate(
-    () => window.__eventSources.every((source) => source.closed),
+  // Keep the original objects across an in-app navigation. page.goto('/')
+  // reloads the document and resets this mock, so it cannot test React cleanup.
+  const adminStreams = await page.evaluateHandle(() => window.__eventSources);
+  const streamCount = await adminStreams.evaluate((sources) => sources.length);
+  expect(streamCount).toBeGreaterThan(0);
+  await page.locator('header').getByRole('button').first().click();
+  await page.getByRole('button', { name: 'Logout', exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(() => requests.includes('/api/v1/auth/logout')).toBe(true);
+  await expect.poll(() => adminStreams.evaluate(
+    (sources) => sources === window.__eventSources && sources.every((source) => source.closed),
   )).toBe(true);
+  await adminStreams.dispose();
 });
