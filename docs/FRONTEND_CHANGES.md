@@ -7,6 +7,19 @@ import a Supabase SDK, retain provider credentials, or treat browser storage as
 tenant data. The selected authentication mechanism and all authorization
 decisions are resolved by the backend.
 
+## Resident visitor checkout
+
+The visitor panel offers **Check out** for checked-in visits, or **Check out
+group** when the pass covers multiple guests. This closes the entire visit,
+including when its entry window has expired. The action calls the authenticated
+checkout endpoint, prevents duplicate submissions while pending, and shows an
+error with a retryable button if it fails. After success, visitor queries refresh
+and the visit appears in History with its departure time. Component tests cover
+status visibility, group wording, pending submissions, errors, and History.
+
+Requires the backend checkout endpoint and migration
+`20260904120000_resident_visitor_checkout.sql` before deployment.
+
 ## Security QR camera capture
 
 The gate scanner opens a modal with a live rear-camera preview. It reads a

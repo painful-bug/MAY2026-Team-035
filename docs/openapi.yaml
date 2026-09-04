@@ -22762,6 +22762,58 @@ paths:
         role: Revocation, the other half of issuing a code. A function cancelled the night before should
           not leave a working code scheduled to activate
         title: Event-specific access codes for functions
+  /api/v1/visitor-passes/{pass_id}/checkout:
+    post:
+      description: 'Record departure for the whole checked-in pass, even after entry expiry.
+
+
+        Requires ownership through the active membership and CSRF validation.
+
+        Another resident''s pass is a 404. A visit that has not checked in is a 409.
+
+        Already checked-out visits return their existing state without another event.
+
+        The database serializes checkout against simultaneous gate verification.'
+      operationId: checkout_visitor_pass_api_v1_visitor_passes__pass_id__checkout_post
+      parameters:
+      - description: Visitor pass id, scoped to the caller's own passes. Approve and reject additionally
+          require the pass to be awaiting a decision, or the answer is 409.
+        in: path
+        name: pass_id
+        required: true
+        schema:
+          title: Pass Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VisitorPass'
+          description: Successful Response
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+      - HTTPBearer: []
+      summary: Check out my visitor group
+      tags:
+      - visitors
+      x-no-user-story:
+        api-type: Feature
+        rationale: 'Requested resident visitor-management extension: record departure for one''s own checked-in
+          group, including after entry expiry. Repeated requests preserve the original checkout event.'
+        status: Not covered by user story
+      x-user-stories: []
   /api/v1/visitor-passes/{pass_id}/reject:
     post:
       description: Turn away a visitor who arrived unannounced. Same states as `/approve`.

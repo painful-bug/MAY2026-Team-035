@@ -1,5 +1,22 @@
 # Backend changes
 
+## Resident visitor checkout
+
+`POST /api/v1/visitor-passes/{pass_id}/checkout` closes a resident's own checked-in
+visit and returns the authoritative visitor-pass projection. It uses the active
+server-derived membership and existing session/CSRF protections. The
+`checkout_visitor_pass` RPC validates ownership and community, locks the pass,
+records the departure timestamp and actor event, and notifies security/admins.
+Retries after checkout are no-ops, including after a concurrent gate checkout.
+Other states return `409`; missing or another resident's passes return `404`.
+An expired entry window does not prevent departure. Checkout closes the entire
+group, including any unused admissions on that pass.
+
+Apply `20260904120000_resident_visitor_checkout.sql` before deploying the endpoint.
+No new table or column is required. API and component tests cover the HTTP/UI
+flow; the local Supabase integration suite includes real JWT ownership checks,
+invalid states, expiration, idempotency, and concurrent resident/gate checkout.
+
 ## Security and authentication boundary
 
 FastAPI owns the full authentication lifecycle. Google OAuth is started and

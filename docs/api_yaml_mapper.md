@@ -452,6 +452,7 @@ schemas `domain/resident_complaint_schemas.py`, `domain/common_schemas.py`, `dom
 | `GET /api/v1/visitor-passes/{pass_id}` | `get_visitor_pass` :101 | `get_visitor_pass_api_v1_visitor_passes__pass_id__get` | 200 VisitorPass | § `GET /api/v1/visitor-passes/{passId}` (API.md:3297) |
 | `POST /api/v1/visitor-passes/{pass_id}/approve` | `approve_visitor_pass` :123 | `approve_visitor_pass_api_v1_visitor_passes__pass_id__approve_post` | 200 VisitorPass | § `…/approve` · `/reject` |
 | `POST /api/v1/visitor-passes/{pass_id}/cancel` | `cancel_visitor_pass` :172 | `cancel_visitor_pass_api_v1_visitor_passes__pass_id__cancel_post` | 200 VisitorPass | § `POST …/cancel` |
+| `POST /api/v1/visitor-passes/{pass_id}/checkout` | `checkout_visitor_pass` :173 | `checkout_visitor_pass_api_v1_visitor_passes__pass_id__checkout_post` | 200 VisitorPass | § `POST …/checkout` |
 | `POST /api/v1/visitor-passes/{pass_id}/reject` | `reject_visitor_pass` :153 | `reject_visitor_pass_api_v1_visitor_passes__pass_id__reject_post` | 200 VisitorPass | § `…/approve` · `/reject` |
 
 ### `backend/app/api/v1/routers/service_providers.py`

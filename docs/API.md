@@ -3315,6 +3315,26 @@ Answer a gate request. Only from `Pending Approval`.
 admins — so a community with nobody on security is not told nothing at all. **The visitor's name
 travels in the notification; the code never does** (§10.8's one hard rule).
 
+### `POST /api/v1/visitor-passes/{passId}/checkout`
+
+Record departure for the caller's checked-in visitor group. Requires an active
+session and CSRF header; no request body is needed. Membership and departure time
+are derived on the server. Returns `200` with the updated visitor-pass projection,
+including `status: "Checked Out"`, `checkedOutAt`, and `isCurrent: false`.
+
+This closes the entire group and any remaining admissions on the pass. Entry
+expiry does not block checkout. A repeated request returns the existing closed
+pass without changing its departure time or adding another event. A row lock
+serializes the operation with gate scanning. Security/admins are notified and
+existing refresh triggers update other dashboards.
+
+| Status | Code | Cause |
+|---|---|---|
+| `404` | `not_found` | Missing pass or a pass owned by another membership/community |
+| `409` | `conflict` | Pass has not checked in (already checked-out passes are idempotent) |
+
+Requires migration `20260904120000_resident_visitor_checkout.sql`.
+
 ### `POST /api/v1/visitor-passes/{passId}/cancel`
 
 Withdraw a pass that has not been used. From `Expected`, `Pending Approval` or `Approved`.

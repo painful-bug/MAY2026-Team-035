@@ -248,5 +248,11 @@ def decide(
     return get_mine(client, membership_id=membership_id, pass_id=pass_id)
 
 
+def checkout(client: Client, *, membership_id: str, pass_id: str) -> VisitorPass:
+    """Return the authoritative pass after the ownership-checked checkout RPC."""
+    repo.checkout(client, membership_id=membership_id, pass_id=pass_id)
+    return get_mine(client, membership_id=membership_id, pass_id=pass_id)
+
+
 def _isoformat(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None

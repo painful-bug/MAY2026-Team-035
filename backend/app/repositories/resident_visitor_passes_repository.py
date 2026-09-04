@@ -137,3 +137,16 @@ def decide(client: Client, *, pass_id: str, decision: str) -> None:
         raise translate(
             exc, default_message="Could not update the visitor pass."
         ) from exc
+
+
+def checkout(client: Client, *, membership_id: str, pass_id: str) -> None:
+    """Atomically close the caller's visit and record their departure event."""
+    try:
+        client.rpc(
+            "checkout_visitor_pass",
+            {"p_membership_id": membership_id, "p_pass_id": pass_id},
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise translate(
+            exc, default_message="Could not check out the visitor."
+        ) from exc

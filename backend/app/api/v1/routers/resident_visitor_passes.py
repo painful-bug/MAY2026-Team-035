@@ -1,11 +1,7 @@
 """The resident's visitor passes.
 
-There is no admin counterpart to this router, and no `routers/visitors.py`: the
-visitor surface has never had a backend at all. The gate's half — presenting a
-pass, checking a guest in, raising an approval request when somebody arrives
-unannounced — belongs to security software that does not exist in this
-repository. Both halves are named here so the gap is a stated boundary rather
-than something a reader has to infer from six routes that stop short.
+Security's gate verification handles admission and gate checkout separately.
+This router lets residents manage and check out their own visitor passes.
 
 **Every route is the caller's own pass.** No role check beyond an active
 membership: a resident, a manager and an admin all have visitors, and the passes
@@ -167,6 +163,26 @@ async def reject_visitor_pass(
         pass_id=pass_id,
         decision="reject",
     )
+
+
+@router.post(
+    "/visitor-passes/{pass_id}/checkout",
+    response_model=VisitorPass,
+    summary="Check out my visitor group",
+)
+async def checkout_visitor_pass(
+    pass_id: str = Path(...),
+    membership: MembershipContext = Depends(get_active_membership),
+    client: Client = Depends(get_request_client),
+) -> VisitorPass:
+    """Record departure for the whole checked-in pass, even after entry expiry.
+
+    Requires ownership through the active membership and CSRF validation.
+    Another resident's pass is a 404. A visit that has not checked in is a 409.
+    Already checked-out visits return their existing state without another event.
+    The database serializes checkout against simultaneous gate verification.
+    """
+    return service.checkout(client, membership_id=membership.id, pass_id=pass_id)
 
 
 @router.post(

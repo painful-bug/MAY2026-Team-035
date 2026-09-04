@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
@@ -12,6 +12,7 @@ import {
   Copy,
   ShieldCheck,
   Info,
+  LogOut,
 } from 'lucide-react';
 import { residentApi } from '../../features/resident/residentApi';
 import { useAppStore } from '../../store/appStore';
@@ -125,6 +126,27 @@ export default function Visitors() {
     },
     onSuccess: invalidate,
   });
+
+  const checkoutBusy = useRef(false);
+  const checkout = useMutation({
+    mutationFn: (passId) => residentApi.checkoutVisitorPass(passId),
+    retry: false,
+    onSuccess: async () => {
+      await invalidate();
+      showToast?.('Visit checked out. Departure is recorded in History.', 'success');
+    },
+  });
+  const handleCheckout = async (passId) => {
+    if (checkoutBusy.current || decide.isPending) return;
+    checkoutBusy.current = true;
+    try {
+      await checkout.mutateAsync(passId);
+    } catch {
+      // The mutation error is displayed beside the visitor list.
+    } finally {
+      checkoutBusy.current = false;
+    }
+  };
 
   const openQr = (pass) => {
     const secret = secretsByPassId[pass.id];
@@ -409,7 +431,21 @@ export default function Visitors() {
                               Cancel
                             </button>
                           ) : null}
-                          {activeView === 'history' && !CANCELLABLE_STATUSES.includes(pass.status) ? (
+                          {pass.status === 'Checked In' ? (
+                            <button
+                              type="button"
+                              disabled={checkout.isPending || decide.isPending}
+                              onClick={() => void handleCheckout(pass.id)}
+                              title="Record departure for all guests on this pass"
+                              className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-[10px] font-bold text-white hover:bg-indigo-700 disabled:opacity-60"
+                            >
+                              <LogOut className="h-3 w-3" />
+                              {checkout.isPending && checkout.variables === pass.id
+                                ? 'Checking out…'
+                                : (pass.guestCount ?? 1) > 1 ? 'Check out group' : 'Check out'}
+                            </button>
+                          ) : null}
+                          {activeView === 'history' && !CANCELLABLE_STATUSES.includes(pass.status) && pass.status !== 'Checked In' ? (
                             <span className="text-[10px] text-slate-400 flex items-center gap-1 font-bold">
                               <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Recorded
                             </span>
@@ -426,6 +462,11 @@ export default function Visitors() {
           {decide.error && (
             <p role="alert" className="px-6 py-3 text-xs font-semibold text-rose-600 border-t border-slate-50">
               {decide.error.message}
+            </p>
+          )}
+          {checkout.error && (
+            <p role="alert" className="border-t border-slate-50 px-6 py-3 text-xs font-semibold text-rose-600">
+              {checkout.error.message}
             </p>
           )}
         </div>

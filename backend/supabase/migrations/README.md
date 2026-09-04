@@ -12,6 +12,15 @@ Rows below that say **corrected `<date>`** describe corrections made before the
 linked deployment boundary was verified. They are historical context, not
 permission to edit those migrations again.
 
+## Resident visitor checkout (2026-09-04)
+
+`20260904120000_resident_visitor_checkout.sql` adds the authenticated
+`checkout_visitor_pass` RPC. Apply it before deploying the resident checkout
+endpoint/UI. It reuses existing visitor requests, events, notifications, and
+refresh triggers; there are no new tables or columns. Ownership checks and a row
+lock protect the whole-group checkout, and repeated requests preserve the first
+departure time and event. Expired entry windows can still be checked out.
+
 ## Number ranges
 
 Numbers are reserved **by workstream as a range**, and allocated to a file only

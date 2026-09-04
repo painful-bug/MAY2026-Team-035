@@ -1,4 +1,4 @@
-"""The resident visitor-pass surface -- six operations and one projection.
+"""The resident visitor-pass surface -- seven operations and one projection.
 
 The group that matters most here is the third. Everything a visitor pass does
 turns on **a secret appearing exactly once**, and that is a property no ordinary
@@ -83,11 +83,15 @@ def passes(monkeypatch: pytest.MonkeyPatch) -> dict:
     def fake_decide(client: Any, **kwargs: Any) -> None:
         captured["calls"].append(("decide", kwargs))
 
+    def fake_checkout(client: Any, **kwargs: Any) -> None:
+        captured["calls"].append(("checkout", kwargs))
+
     for name, replacement in {
         "list_mine": fake_list_mine,
         "get_mine": fake_get_mine,
         "create_pass": fake_create,
         "decide": fake_decide,
+        "checkout": fake_checkout,
     }.items():
         monkeypatch.setattr(resident_visitor_passes_repository, name, replacement)
     return captured
@@ -188,7 +192,7 @@ def test_reading_one_pass_back_carries_no_secret(
         assert field not in body
 
 
-@pytest.mark.parametrize("action", ["approve", "reject", "cancel"])
+@pytest.mark.parametrize("action", ["approve", "reject", "cancel", "checkout"])
 def test_no_decision_response_carries_a_secret(
     action: str,
     resident_api_client: TestClient,
@@ -473,6 +477,60 @@ def test_a_decision_reads_the_pass_back_rather_than_assuming_the_state(
 
     assert body["status"] == "Cancelled"
     assert body["isCurrent"] is False
+
+
+def test_checkout_requires_csrf(resident_api_client: TestClient, passes: dict) -> None:
+    assert resident_api_client.post(f"{PATH}/pass-id/checkout").status_code == 403
+    assert passes["calls"] == []
+
+
+def test_checkout_requires_session(
+    api_client: TestClient, csrf_headers: dict[str, str], passes: dict
+) -> None:
+    response = api_client.post(f"{PATH}/pass-id/checkout", headers=csrf_headers)
+    assert response.status_code == 401
+    assert passes["calls"] == []
+
+
+def test_checkout_uses_active_membership_and_returns_departure(
+    resident_api_client: TestClient, csrf_headers: dict[str, str], passes: dict
+) -> None:
+    passes["detail"] = row(
+        status="checked_out", checked_out_at="2026-08-05T09:00:00Z", is_current=False
+    )
+    response = resident_api_client.post(
+        f"{PATH}/pass-id/checkout", headers=csrf_headers,
+        json={"membershipId": "someone-else", "checkedOutAt": "2000-01-01"},
+    )
+    assert response.status_code == 200
+    sent = only(passes, "checkout")
+    assert sent == {"membership_id": "resident-membership-id", "pass_id": "pass-id"}
+    assert only(passes, "get_mine") == sent
+    assert response.json()["status"] == "Checked Out"
+    assert response.json()["isCurrent"] is False
+    assert response.json()["checkedOutAt"].startswith("2026-08-05T09:00:00")
+
+
+@pytest.mark.parametrize(("code", "status"), [("HB403", 403), ("HB404", 404), ("HB409", 409)])
+def test_checkout_database_refusals_reach_the_api(
+    code: str, status: int, resident_api_client: TestClient,
+    csrf_headers: dict[str, str],
+) -> None:
+    from types import SimpleNamespace
+
+    from postgrest.exceptions import APIError
+
+    from app.api.deps import get_request_client
+
+    def rpc(name: str, params: dict) -> Any:
+        assert name == "checkout_visitor_pass"
+        assert params == {"p_membership_id": "resident-membership-id", "p_pass_id": "pass-id"}
+        raise APIError({"code": code, "message": "Checkout refused", "details": None, "hint": None})
+
+    resident_api_client.app.dependency_overrides[get_request_client] = lambda: SimpleNamespace(rpc=rpc)
+    response = resident_api_client.post(f"{PATH}/pass-id/checkout", headers=csrf_headers)
+    assert response.status_code == status
+    assert "Checkout refused" in response.text
 
 
 # ---------------------------------------------------------------------------

@@ -88,6 +88,7 @@ export const residentApi = {
   approveVisitorPass: (passId) => post(`/visitor-passes/${passId}/approve`),
   rejectVisitorPass: (passId) => post(`/visitor-passes/${passId}/reject`),
   cancelVisitorPass: (passId) => post(`/visitor-passes/${passId}/cancel`),
+  checkoutVisitorPass: (passId) => post(`/visitor-passes/${passId}/checkout`),
 
   // --- money -----------------------------------------------------------------
   invoices: (params = {}) => api(`/invoices/mine${query(params)}`),

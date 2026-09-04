@@ -1381,6 +1381,15 @@ OPERATIONS: dict[tuple[str, str], dict[str, Any]] = {
             ),
         ],
     ),
+    ("post", "/api/v1/visitor-passes/{pass_id}/checkout"): op(
+        errors=["401", "403", "404", "409", "422", "500"],
+        no_story=(
+            "Feature",
+            "Requested resident visitor-management extension: record departure "
+            "for one's own checked-in group, including after entry expiry. "
+            "Repeated requests preserve the original checkout event.",
+        ),
+    ),
     ("post", "/api/v1/visitor-passes/{pass_id}/cancel"): op(
         errors=["401", "403", "404", "409", "422", "500"],
         stories=[
